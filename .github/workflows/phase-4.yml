@@ -16,7 +16,7 @@ jobs:
       # 本项目不把 src/ 装进 site-packages：CI 与本地都用同一条路径找到包。
       PYTHONPATH: src
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
