@@ -4020,10 +4020,13 @@ print("exec.pwsh 驱动被调用次数:", counters["exec.pwsh"].calls, "（block
 1. **检查顺序是固定的**：注册表 → 动作时效 → 主体 → 权限 → 命令白名单 → 组合片段 → 审批 →
    规则 → 限流 → 熔断 → 台账（重放/复用）→ 认领 → 审计。所以“首个失败检查”是稳定的：
    `approval` 排在两个命令检查之后，命令本身不合法时不会先去问“有没有审批”。
-2. **命令要过两道检查**：`command_allowlist` 做完整匹配（`Get-ChildItem; Remove-Item -Recurse .`
-   不会因为开头像白名单里的某一条而放行），`command_composition` 再挡组合片段——
-   `python -m pytest tests -q; Remove-Item -Recurse .` 能骗过 `( .*)?` 形态的正则，
-   分号却会被结构性阻断。`git status --short` 两道都过，仍然被审批门禁拦住——
+2. **命令要过三道检查**：`command_allowlist` 做完整匹配（`Get-ChildItem; Remove-Item -Recurse .`
+   不会因为开头像白名单里的某一条而放行），`command_composition` 挡组合片段，
+   `command_fragments` 挡"决定这条命令会干什么"的片段（路径穿越 `../`、会写文件的选项
+   `--output`、外部 diff `--ext-diff` / `--no-index`）——
+   `python -m pytest tests -q; Remove-Item -Recurse .` 能骗过 `( .*)?` 形态的正则，分号却会被结构性阻断；
+   `git diff --output=C:/x` 能完整匹配白名单，却会被片段检查拦下（白名单只描述"命令长什么样"，
+   描述不了"这个选项会干什么"）。`git status --short` 三道都过，仍然被审批门禁拦住——
    **默认阻断，逐项放行**。
 3. **被阻断的尝试不占用 action_id**：它们不写认领记录，因此“补齐审批 / 改对参数之后重试”
    仍然可行。失败关闭不等于死锁。
@@ -5390,6 +5393,7 @@ PHASE_4_CHECK_ORDER = (
     "permissions",
     "command_allowlist",
     "command_composition",
+    "command_fragments",
     "approval",
     "policy",
     "rate_limit",
