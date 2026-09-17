@@ -154,6 +154,28 @@ print("Phase 2 承认的事件:", list(SUPPORTED_HOOK_EVENTS))
 print("载荷必需字段:", list(REQUIRED_PAYLOAD_FIELDS))
 print("工具表:", len(TOOL_TABLE), "个工具（不在表里的一律拒绝）")
 
+
+# 表格对齐用的小工具：中文（全角）字符在等宽字体里占 2 列，而 f"{文本:<10}"
+# 数的是"字符个数"——中英混排时列会被挤歪。按显示宽度补空格才是对的。
+import unicodedata
+
+
+def display_width(text):
+    """文本在等宽字体里占多少列：全角/宽字符算 2 列，其余算 1 列。"""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in str(text))
+
+
+def pad(text, width, align="left"):
+    """按显示宽度把文本补齐到 width 列，让每一列都从同一个位置开始。"""
+    text = str(text)
+    blanks = " " * max(0, width - display_width(text))
+    if align == "right":
+        return blanks + text
+    if align == "center":
+        left = len(blanks) // 2
+        return blanks[:left] + text + blanks[left:]
+    return text + blanks
+
 # ----------------------------------------------------------------------------
 # **小结**：手册运行在仓库内，所以临时文件必须写在 `.tmp/` 下，而不是仓库根或系统临时目录。
 # 工具表、事件白名单、载荷必需字段这三样东西都不是"随手写的常量"，它们是 Phase 2 的契约：
@@ -191,13 +213,15 @@ print("工具表:", len(TOOL_TABLE), "个工具（不在表里的一律拒绝）
 # ----------------------------------------------------------------------------
 
 # 1. 先看形状：dsh 会送来哪些事件，每个事件带什么工具参数
-print(f"{'fixture':<38}{'事件':<14}{'工具':<26}参数键")
+print(pad("fixture", 38) + pad("事件", 14) + pad("工具", 26) + "参数键")
 print("-" * 100)
 for path in sorted(FIXTURES.glob("*.json")):
     payload = json.loads(path.read_text(encoding="utf-8"))
     print(
-        f"{path.name:<38}{payload['hook_event_name']:<14}{payload['tool_name']:<26}"
-        f"{','.join(sorted(payload['tool_input']))}"
+        pad(path.name, 38)
+        + pad(payload["hook_event_name"], 14)
+        + pad(payload["tool_name"], 26)
+        + ",".join(sorted(payload["tool_input"]))
     )
 
 print()
@@ -402,15 +426,18 @@ rows = (
     ("edit（真实采集）", captured_decision, "edit", "src/shop/order_controller.py"),
 )
 
-print(f"{'场景':<22}{'工具':<8}{'operation':<11}{'layer':<12}仓库相对路径")
+print(pad("场景", 22) + pad("工具", 8) + pad("operation", 11) + pad("layer", 12) + "仓库相对路径")
 print("-" * 96)
 for label, decision, expected_operation, expected_file in rows:
     assert decision.governed is True, label
     assert decision.event.operation.value == expected_operation, (label, decision.event.operation)
     assert decision.event.file == expected_file, (label, decision.event.file)
     print(
-        f"{label:<22}{decision.event.tool:<8}{decision.event.operation.value:<11}"
-        f"{decision.event.layer:<12}{decision.event.file}"
+        pad(label, 22)
+        + pad(decision.event.tool, 8)
+        + pad(decision.event.operation.value, 11)
+        + pad(decision.event.layer, 12)
+        + decision.event.file
     )
 
 print()
@@ -550,7 +577,7 @@ relaxed_decision = to_policy_event(
 )
 
 for label, detail in rejections:
-    print(f"{label:<20} 已拒绝:{detail[:104]}")
+    print(pad(label, 22) + " 已拒绝:" + detail[:104])
 print()
 print(
     "显式声明 default_layer 后:",
@@ -886,18 +913,18 @@ fail_closed_cases = [
     ("重放 event_id", replay_second),
 ]
 
-print(f"{'场景':<22}| {'原因码':<26}| 写给模型的细节")
+print(pad("场景", 22) + "| " + pad("原因码", 26) + "| 写给模型的细节")
 print("-" * 118)
 for label, outcome in fail_closed_cases:
     detail = next(
         (line for line in outcome.stderr.splitlines() if line.startswith("detail:")), ""
     )
-    print(f"{label:<22}| {outcome.reason_code:<26}| {detail[8:74]}")
+    print(pad(label, 22) + "| " + pad(outcome.reason_code, 26) + "| " + detail[8:74])
 
 print()
 for label, outcome in fail_closed_cases:
     assert outcome.exit_code == EXIT_BLOCK, (label, outcome.exit_code)
-    print(f"{label:<22} 退出码 {outcome.exit_code}｜工具不会执行")
+    print(pad(label, 22) + " 退出码 " + str(outcome.exit_code) + "｜工具不会执行")
 
 print()
 print(
@@ -1082,14 +1109,14 @@ assert audit_record["decision"] == "block"
 assert audit_record["payload_digest"].startswith("sha256:")
 
 print("审计记录:", len(documented_audit_fields), "个文档字段全部存在")
-print(f"{'字段':<24}{'值'}")
+print(pad("字段", 24) + "值")
 print("-" * 78)
 for name in (
     "timestamp", "agent", "agent_version", "reason_code", "exit_code", "executed",
     "decision", "file", "operation", "layer", "language", "dependencies",
     "payload_digest", "rule_set_hash", "matched_rules", "skipped_rules",
 ):
-    print(f"{name:<24}{audit_record[name]}")
+    print(pad(name, 24) + str(audit_record[name]))
 
 print()
 print("台账里没有源码内容:", all("from repository import" not in line for line in audit_lines))

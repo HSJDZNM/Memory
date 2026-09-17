@@ -160,6 +160,28 @@ print("核心库目录:", SRC_DIR)
 print("规则集:", rule_set.ids, "来自", list(rule_set.source_paths))
 print("提示: 全部单元应在数秒内执行完；本单元应当立刻打印上面几行。")
 
+
+# 表格对齐用的小工具：中文（全角）字符在等宽字体里占 2 列，而 f"{文本:<10}"
+# 数的是"字符个数"——中英混排时列会被挤歪。按显示宽度补空格才是对的。
+import unicodedata
+
+
+def display_width(text):
+    """文本在等宽字体里占多少列：全角/宽字符算 2 列，其余算 1 列。"""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in str(text))
+
+
+def pad(text, width, align="left"):
+    """按显示宽度把文本补齐到 width 列，让每一列都从同一个位置开始。"""
+    text = str(text)
+    blanks = " " * max(0, width - display_width(text))
+    if align == "right":
+        return blanks + text
+    if align == "center":
+        left = len(blanks) // 2
+        return blanks[:left] + text + blanks[left:]
+    return text + blanks
+
 # ----------------------------------------------------------------------------
 # ### 如果单元一直不返回，先看这里
 #
@@ -394,7 +416,13 @@ cases = [
     ("controller", [], "没有依赖，不违反"),
 ]
 
-header = f"{'layer':<11}{'dependencies':<16}{'decision':<21}{'violations':<11}说明"
+header = (
+    pad("layer", 11)
+    + pad("dependencies", 16)
+    + pad("decision", 21)
+    + pad("violations", 11)
+    + "说明"
+)
 print(header)
 print("-" * 100)
 for layer, dependencies, note in cases:
@@ -402,7 +430,13 @@ for layer, dependencies, note in cases:
     result = engine.evaluate(rule_set, ctx)  # 判断：规则集 + 上下文 -> 结果
     # 把违规的规则编号拼成字符串；没有任何违规时 join 得到空串，用 or "-" 显示成短横线。
     ids = ",".join(v.rule_id for v in result.violations) or "-"
-    print(f"{layer:<11}{str(dependencies):<16}{result.decision.value:<21}{ids:<11}{note}")
+    print(
+        pad(layer, 11)
+        + pad(dependencies, 16)
+        + pad(result.decision.value, 21)
+        + pad(ids, 11)
+        + note
+    )
 
 # ----------------------------------------------------------------------------
 # **小结**：三条结论与 Phase 0 的验收标准一致——

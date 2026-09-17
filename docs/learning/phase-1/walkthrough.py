@@ -105,6 +105,28 @@ print("仓库根目录:", REPO_ROOT)
 print("规则集:", rule_set.ids, "| 规则集哈希:", rule_set.identity)
 print("决策协议版本:", models.SCHEMA_VERSION, "| 当前阶段: phase-1")
 
+
+# 表格对齐用的小工具：中文（全角）字符在等宽字体里占 2 列，而 f"{文本:<10}"
+# 数的是"字符个数"——中英混排时列会被挤歪。按显示宽度补空格才是对的。
+import unicodedata
+
+
+def display_width(text):
+    """文本在等宽字体里占多少列：全角/宽字符算 2 列，其余算 1 列。"""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in str(text))
+
+
+def pad(text, width, align="left"):
+    """按显示宽度把文本补齐到 width 列，让每一列都从同一个位置开始。"""
+    text = str(text)
+    blanks = " " * max(0, width - display_width(text))
+    if align == "right":
+        return blanks + text
+    if align == "center":
+        left = len(blanks) // 2
+        return blanks[:left] + text + blanks[left:]
+    return text + blanks
+
 # ----------------------------------------------------------------------------
 # **小结**：核心库仍然是一个普通 Python 包，多出来的两个模块同样只依赖标准库与 pydantic。
 # 规则集哈希是规则内容的指纹：规则改一个字，哈希就变，用它可以把一份决定和一份规则集绑定起来。
@@ -151,13 +173,13 @@ variants = [
     (windows_path, "src/order/controller.py"),
 ]
 
-print(f"{'输入（原样）':<36}{'规范化结果'}")
+print(pad("输入（原样）", 36) + "规范化结果")
 print("-" * 68)
 for raw, expected in variants:
     normalized = raw_context(raw, layer="  Controller ").file
     # 手册里写死的期望值必须与真实行为一致，否则这一单元直接失败。
     assert normalized == expected, (raw, normalized)
-    print(f"{raw:<36}{normalized}")
+    print(pad(raw, 36) + normalized)
 
 # 仓库内的绝对路径会被换算成仓库相对路径，便于审计记录跨机器可比。
 inside = raw_context(str(REPO_ROOT / "policies" / "architecture" / "ARCH-001.yaml"))
@@ -332,12 +354,12 @@ matrix = [
     ({}, {"layer": "service"}, "没有声明任何维度 = 不限制"),
 ]
 
-print(f"{'规则 scope':<46}{'命中':<7}{'specificity':<12}原因")
+print(pad("规则 scope", 46) + pad("命中", 7) + pad("specificity", 12) + "原因")
 print("-" * 120)
 for dimensions, overrides, note in matrix:
     outcome = scope.match_scope(sample_scope(**dimensions), sample_context(**overrides))
     reason = "; ".join(outcome.reasons) or "<没有声明维度>"
-    print(f"{str(dimensions):<46}{str(outcome.matched):<7}{outcome.specificity:<12}{reason}")
+    print(pad(dimensions, 46) + pad(outcome.matched, 7) + pad(outcome.specificity, 12) + reason)
 
 assert len(matrix) >= 6, "矩阵至少要覆盖精确值、列表、通配与缺值"
 
@@ -364,12 +386,15 @@ explained = scope.match_scope(
     sample_context(),
 )
 
-print(f"{'维度':<10}{'规则声明':<18}{'上下文':<12}{'命中':<8}原因")
+print(pad("维度", 10) + pad("规则声明", 18) + pad("上下文", 12) + pad("命中", 8) + "原因")
 print("-" * 96)
 for comparison in explained.comparisons:
     print(
-        f"{comparison.dimension:<10}{str(comparison.declared):<18}"
-        f"{str(comparison.actual):<12}{str(comparison.matched):<8}{comparison.reason}"
+        pad(comparison.dimension, 10)
+        + pad(comparison.declared, 18)
+        + pad(comparison.actual, 12)
+        + pad(comparison.matched, 8)
+        + comparison.reason
     )
 
 print()
@@ -459,13 +484,13 @@ def rule_variant(rule_id, severity, *, requires_approval=False, dependencies=("r
     )
 
 
-print(f"{'severity':<10}{'有违规':<22}{'无违规（依赖换成 service）'}")
+print(pad("severity", 10) + pad("有违规", 22) + "无违规（依赖换成 service）")
 print("-" * 68)
 for level in ("info", "warning", "error", "critical"):
     single = models.RuleSet(rules=(rule_variant("ARCH-001", level),))
     hit = engine.evaluate(single, sample_context(dependencies=("repository",)))
     clean = engine.evaluate(single, sample_context(dependencies=("service",)))
-    print(f"{level:<10}{hit.decision.value:<22}{clean.decision.value}")
+    print(pad(level, 10) + pad(hit.decision.value, 22) + clean.decision.value)
 
 # ----------------------------------------------------------------------------
 # **小结**：info 与 warning 只告警，error 与 critical 一定阻断，没有违规就是 allow。
@@ -801,12 +826,19 @@ import policy_bench
 baseline = policy_bench.run_baseline((10, 100, 1000))
 
 print("固定种子 seed =", baseline["seed"])
-print(f"{'规则数':>8}{'每次评估(ms)':>16}{'内存峰值(KiB)':>16}{'命中规则数':>12}")
+print(
+    pad("规则数", 8, "right")
+    + pad("每次评估(ms)", 16, "right")
+    + pad("内存峰值(KiB)", 16, "right")
+    + pad("命中规则数", 12, "right")
+)
 print("-" * 54)
 for measurement in baseline["samples"]:
     print(
-        f"{measurement['rules']:>8}{measurement['ms_per_evaluation']:>16.3f}"
-        f"{measurement['peak_kib']:>16.1f}{measurement['matched_rules_total']:>12}"
+        pad(measurement["rules"], 8, "right")
+        + pad(f"{measurement['ms_per_evaluation']:.3f}", 16, "right")
+        + pad(f"{measurement['peak_kib']:.1f}", 16, "right")
+        + pad(measurement["matched_rules_total"], 12, "right")
     )
 print()
 print("结论：1000 条规则仍是一次评估几十毫秒的量级；本轮不引入缓存。")

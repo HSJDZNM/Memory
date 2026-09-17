@@ -150,6 +150,28 @@ print("仓库根目录:", REPO_ROOT)
 print("临时工作区:", RUN_ROOT.relative_to(REPO_ROOT).as_posix())
 print("受控目标文件:", TARGET, "| 初始哈希:", INITIAL_DIGEST[:22] + "...")
 
+
+# 表格对齐用的小工具：中文（全角）字符在等宽字体里占 2 列，而 f"{文本:<10}"
+# 数的是"字符个数"——中英混排时列会被挤歪。按显示宽度补空格才是对的。
+import unicodedata
+
+
+def display_width(text):
+    """文本在等宽字体里占多少列：全角/宽字符算 2 列，其余算 1 列。"""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in str(text))
+
+
+def pad(text, width, align="left"):
+    """按显示宽度把文本补齐到 width 列，让每一列都从同一个位置开始。"""
+    text = str(text)
+    blanks = " " * max(0, width - display_width(text))
+    if align == "right":
+        return blanks + text
+    if align == "center":
+        left = len(blanks) // 2
+        return blanks[:left] + text + blanks[left:]
+    return text + blanks
+
 # ----------------------------------------------------------------------------
 # **小结**：`REPO_ROOT` 是从当前工作目录向上找 `registry/tool-registry.yaml` 得到的，
 # 所以这份 notebook 从仓库根目录或从它自己所在目录启动都能跑。
@@ -651,8 +673,16 @@ print("决策:", pre.decision.value, "| 原因码:", pre.reason_code.value,
 print()
 print("检查项（顺序即链路顺序；缺一项都算协议错误）:")
 for item in pre.checks:
-    print("  [{:<7}] {:<17} {:<22} {}".format(
-        item.status.value, item.check, item.reason_code.value, item.detail[:56]))
+    print(
+        "  ["
+        + pad(item.status.value, 7)
+        + "] "
+        + pad(item.check, 20)
+        + " "
+        + pad(item.reason_code.value, 22)
+        + " "
+        + item.detail[:56]
+    )
 check_names = tuple(item.check for item in pre.checks)
 print()
 print("授权 grant:", grant.grant_id)

@@ -445,7 +445,13 @@ cases = [
     ("controller", [], "没有依赖，不违反"),
 ]
 
-header = f"{'layer':<11}{'dependencies':<16}{'decision':<21}{'violations':<11}说明"
+header = (
+    pad("layer", 11)
+    + pad("dependencies", 16)
+    + pad("decision", 21)
+    + pad("violations", 11)
+    + "说明"
+)
 print(header)
 print("-" * 100)
 for layer, dependencies, note in cases:
@@ -453,7 +459,13 @@ for layer, dependencies, note in cases:
     result = engine.evaluate(rule_set, ctx)  # 判断：规则集 + 上下文 -> 结果
     # 把违规的规则编号拼成字符串；没有任何违规时 join 得到空串，用 or "-" 显示成短横线。
     ids = ",".join(v.rule_id for v in result.violations) or "-"
-    print(f"{layer:<11}{str(dependencies):<16}{result.decision.value:<21}{ids:<11}{note}")
+    print(
+        pad(layer, 11)
+        + pad(dependencies, 16)
+        + pad(result.decision.value, 21)
+        + pad(ids, 11)
+        + note
+    )
 """
     ),
     markdown(
@@ -931,13 +943,13 @@ variants = [
     (windows_path, "src/order/controller.py"),
 ]
 
-print(f"{'输入（原样）':<36}{'规范化结果'}")
+print(pad("输入（原样）", 36) + "规范化结果")
 print("-" * 68)
 for raw, expected in variants:
     normalized = raw_context(raw, layer="  Controller ").file
     # 手册里写死的期望值必须与真实行为一致，否则这一单元直接失败。
     assert normalized == expected, (raw, normalized)
-    print(f"{raw:<36}{normalized}")
+    print(pad(raw, 36) + normalized)
 
 # 仓库内的绝对路径会被换算成仓库相对路径，便于审计记录跨机器可比。
 inside = raw_context(str(REPO_ROOT / "policies" / "architecture" / "ARCH-001.yaml"))
@@ -1110,12 +1122,12 @@ matrix = [
     ({}, {"layer": "service"}, "没有声明任何维度 = 不限制"),
 ]
 
-print(f"{'规则 scope':<46}{'命中':<7}{'specificity':<12}原因")
+print(pad("规则 scope", 46) + pad("命中", 7) + pad("specificity", 12) + "原因")
 print("-" * 120)
 for dimensions, overrides, note in matrix:
     outcome = scope.match_scope(sample_scope(**dimensions), sample_context(**overrides))
     reason = "; ".join(outcome.reasons) or "<没有声明维度>"
-    print(f"{str(dimensions):<46}{str(outcome.matched):<7}{outcome.specificity:<12}{reason}")
+    print(pad(dimensions, 46) + pad(outcome.matched, 7) + pad(outcome.specificity, 12) + reason)
 
 assert len(matrix) >= 6, "矩阵至少要覆盖精确值、列表、通配与缺值"
 """
@@ -1142,12 +1154,15 @@ explained = scope.match_scope(
     sample_context(),
 )
 
-print(f"{'维度':<10}{'规则声明':<18}{'上下文':<12}{'命中':<8}原因")
+print(pad("维度", 10) + pad("规则声明", 18) + pad("上下文", 12) + pad("命中", 8) + "原因")
 print("-" * 96)
 for comparison in explained.comparisons:
     print(
-        f"{comparison.dimension:<10}{str(comparison.declared):<18}"
-        f"{str(comparison.actual):<12}{str(comparison.matched):<8}{comparison.reason}"
+        pad(comparison.dimension, 10)
+        + pad(comparison.declared, 18)
+        + pad(comparison.actual, 12)
+        + pad(comparison.matched, 8)
+        + comparison.reason
     )
 
 print()
@@ -1236,13 +1251,13 @@ def rule_variant(rule_id, severity, *, requires_approval=False, dependencies=("r
     )
 
 
-print(f"{'severity':<10}{'有违规':<22}{'无违规（依赖换成 service）'}")
+print(pad("severity", 10) + pad("有违规", 22) + "无违规（依赖换成 service）")
 print("-" * 68)
 for level in ("info", "warning", "error", "critical"):
     single = models.RuleSet(rules=(rule_variant("ARCH-001", level),))
     hit = engine.evaluate(single, sample_context(dependencies=("repository",)))
     clean = engine.evaluate(single, sample_context(dependencies=("service",)))
-    print(f"{level:<10}{hit.decision.value:<22}{clean.decision.value}")
+    print(pad(level, 10) + pad(hit.decision.value, 22) + clean.decision.value)
 """
     ),
     markdown(
@@ -1574,12 +1589,19 @@ import policy_bench
 baseline = policy_bench.run_baseline((10, 100, 1000))
 
 print("固定种子 seed =", baseline["seed"])
-print(f"{'规则数':>8}{'每次评估(ms)':>16}{'内存峰值(KiB)':>16}{'命中规则数':>12}")
+print(
+    pad("规则数", 8, "right")
+    + pad("每次评估(ms)", 16, "right")
+    + pad("内存峰值(KiB)", 16, "right")
+    + pad("命中规则数", 12, "right")
+)
 print("-" * 54)
 for measurement in baseline["samples"]:
     print(
-        f"{measurement['rules']:>8}{measurement['ms_per_evaluation']:>16.3f}"
-        f"{measurement['peak_kib']:>16.1f}{measurement['matched_rules_total']:>12}"
+        pad(measurement["rules"], 8, "right")
+        + pad(f"{measurement['ms_per_evaluation']:.3f}", 16, "right")
+        + pad(f"{measurement['peak_kib']:.1f}", 16, "right")
+        + pad(measurement["matched_rules_total"], 12, "right")
     )
 print()
 print("结论：1000 条规则仍是一次评估几十毫秒的量级；本轮不引入缓存。")
@@ -1859,13 +1881,15 @@ dsh 把事件写成 JSON 放进 Hook 进程的 stdin。字段形状（0.1.5-rc.1
     ),
     code(
         """# 1. 先看形状：dsh 会送来哪些事件，每个事件带什么工具参数
-print(f"{'fixture':<38}{'事件':<14}{'工具':<26}参数键")
+print(pad("fixture", 38) + pad("事件", 14) + pad("工具", 26) + "参数键")
 print("-" * 100)
 for path in sorted(FIXTURES.glob("*.json")):
     payload = json.loads(path.read_text(encoding="utf-8"))
     print(
-        f"{path.name:<38}{payload['hook_event_name']:<14}{payload['tool_name']:<26}"
-        f"{','.join(sorted(payload['tool_input']))}"
+        pad(path.name, 38)
+        + pad(payload["hook_event_name"], 14)
+        + pad(payload["tool_name"], 26)
+        + ",".join(sorted(payload["tool_input"]))
     )
 
 print()
@@ -2070,15 +2094,18 @@ rows = (
     ("edit（真实采集）", captured_decision, "edit", "src/shop/order_controller.py"),
 )
 
-print(f"{'场景':<22}{'工具':<8}{'operation':<11}{'layer':<12}仓库相对路径")
+print(pad("场景", 22) + pad("工具", 8) + pad("operation", 11) + pad("layer", 12) + "仓库相对路径")
 print("-" * 96)
 for label, decision, expected_operation, expected_file in rows:
     assert decision.governed is True, label
     assert decision.event.operation.value == expected_operation, (label, decision.event.operation)
     assert decision.event.file == expected_file, (label, decision.event.file)
     print(
-        f"{label:<22}{decision.event.tool:<8}{decision.event.operation.value:<11}"
-        f"{decision.event.layer:<12}{decision.event.file}"
+        pad(label, 22)
+        + pad(decision.event.tool, 8)
+        + pad(decision.event.operation.value, 11)
+        + pad(decision.event.layer, 12)
+        + decision.event.file
     )
 
 print()
@@ -2217,7 +2244,7 @@ relaxed_decision = to_policy_event(
 )
 
 for label, detail in rejections:
-    print(f"{label:<20} 已拒绝:{detail[:104]}")
+    print(pad(label, 22) + " 已拒绝:" + detail[:104])
 print()
 print(
     "显式声明 default_layer 后:",
@@ -2550,18 +2577,18 @@ fail_closed_cases = [
     ("重放 event_id", replay_second),
 ]
 
-print(f"{'场景':<22}| {'原因码':<26}| 写给模型的细节")
+print(pad("场景", 22) + "| " + pad("原因码", 26) + "| 写给模型的细节")
 print("-" * 118)
 for label, outcome in fail_closed_cases:
     detail = next(
         (line for line in outcome.stderr.splitlines() if line.startswith("detail:")), ""
     )
-    print(f"{label:<22}| {outcome.reason_code:<26}| {detail[8:74]}")
+    print(pad(label, 22) + "| " + pad(outcome.reason_code, 26) + "| " + detail[8:74])
 
 print()
 for label, outcome in fail_closed_cases:
     assert outcome.exit_code == EXIT_BLOCK, (label, outcome.exit_code)
-    print(f"{label:<22} 退出码 {outcome.exit_code}｜工具不会执行")
+    print(pad(label, 22) + " 退出码 " + str(outcome.exit_code) + "｜工具不会执行")
 
 print()
 print(
@@ -2743,14 +2770,14 @@ assert audit_record["decision"] == "block"
 assert audit_record["payload_digest"].startswith("sha256:")
 
 print("审计记录:", len(documented_audit_fields), "个文档字段全部存在")
-print(f"{'字段':<24}{'值'}")
+print(pad("字段", 24) + "值")
 print("-" * 78)
 for name in (
     "timestamp", "agent", "agent_version", "reason_code", "exit_code", "executed",
     "decision", "file", "operation", "layer", "language", "dependencies",
     "payload_digest", "rule_set_hash", "matched_rules", "skipped_rules",
 ):
-    print(f"{name:<24}{audit_record[name]}")
+    print(pad(name, 24) + str(audit_record[name]))
 
 print()
 print("台账里没有源码内容:", all("from repository import" not in line for line in audit_lines))
@@ -2990,10 +3017,24 @@ print("清单:", loaded.corpus_path, "| 版本", loaded.manifest.version,
       "| 数据集", len(loaded.manifest.datasets), "| 入口", len(loaded.entries))
 print("输入指纹:", loaded.input_hash[:26] + "...")
 print()
-print("数据集 | 许可 | 层级 | 可见性 | 入口数")
+# 许可的文案长度差得多（"CC BY 3.0" 与 "public domain（…）"），把它放在最后一列，
+# 前面四列才能用固定宽度排齐 —— 自由文本放最后一列是这几张表的统一约定。
+print(
+    pad("数据集", 24) + " | " + pad("层级", 10) + " | " + pad("可见性", 10)
+    + " | " + pad("入口数", 8) + " | 许可"
+)
 for dataset in loaded.manifest.datasets:
-    print(" -", dataset.name, "|", dataset.license, "|", dataset.tier.value,
-          "|", dataset.visibility.value, "|", len(dataset.entries))
+    print(
+        pad(dataset.name, 24)
+        + " | "
+        + pad(dataset.tier.value, 10)
+        + " | "
+        + pad(dataset.visibility.value, 10)
+        + " | "
+        + pad(len(dataset.entries), 8)
+        + " | "
+        + dataset.license
+    )
 print()
 print("完整性校验通过:", verification.ok, "| 问题:", [issue.kind for issue in verification.issues])
 print("预算（来自清单，不写在代码里）: 片段数", policy.top_k,
@@ -3048,9 +3089,17 @@ front, demo_chunks = chunk_document(
 print("front matter 类型:", front.kind, "| 提取到的元数据:", dict(front.metadata))
 print("正文里已经没有 front matter:", "title:" not in split_front_matter(sample)[1])
 print()
-print("序号 | 标题锚点 | 形态 | 字符数")
+print(pad("序号", 6) + "| " + pad("标题锚点", 34) + "| " + pad("形态", 10) + "| 字符数")
 for chunk in demo_chunks:
-    print(chunk.ordinal, "|", chunk.heading_anchor, "|", chunk.kind.value, "|", chunk.char_count)
+    print(
+        pad(chunk.ordinal, 6)
+        + "| "
+        + pad(chunk.heading_anchor, 34)
+        + "| "
+        + pad(chunk.kind.value, 10)
+        + "| "
+        + str(chunk.char_count)
+    )
 sections = find_sections(split_front_matter(sample)[1])
 print()
 print("空章节（被跳过，不会变成空片段）:", [item.anchor for item in sections if item.is_empty])
@@ -4000,8 +4049,16 @@ print("决策:", pre.decision.value, "| 原因码:", pre.reason_code.value,
 print()
 print("检查项（顺序即链路顺序；缺一项都算协议错误）:")
 for item in pre.checks:
-    print("  [{:<7}] {:<17} {:<22} {}".format(
-        item.status.value, item.check, item.reason_code.value, item.detail[:56]))
+    print(
+        "  ["
+        + pad(item.status.value, 7)
+        + "] "
+        + pad(item.check, 20)
+        + " "
+        + pad(item.reason_code.value, 22)
+        + " "
+        + item.detail[:56]
+    )
 check_names = tuple(item.check for item in pre.checks)
 print()
 print("授权 grant:", grant.grant_id)
@@ -4822,9 +4879,51 @@ def cell_source(text: str) -> list[str]:
     return [line + chr(10) for line in lines[:-1]] + ([lines[-1]] if lines else [])
 
 
+TABLE_HELPER = '''
+
+# 表格对齐用的小工具：中文（全角）字符在等宽字体里占 2 列，而 f"{文本:<10}"
+# 数的是"字符个数"——中英混排时列会被挤歪。按显示宽度补空格才是对的。
+import unicodedata
+
+
+def display_width(text):
+    """文本在等宽字体里占多少列：全角/宽字符算 2 列，其余算 1 列。"""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in str(text))
+
+
+def pad(text, width, align="left"):
+    """按显示宽度把文本补齐到 width 列，让每一列都从同一个位置开始。"""
+    text = str(text)
+    blanks = " " * max(0, width - display_width(text))
+    if align == "right":
+        return blanks + text
+    if align == "center":
+        left = len(blanks) // 2
+        return blanks[:left] + text + blanks[left:]
+    return text + blanks
+'''
+
+
+def phase_cells(spec: "PhaseNotebook") -> list[tuple[str, str]]:
+    """单元序列，并在第一个代码单元里附上表格对齐工具。
+
+    生成 notebook、生成 walkthrough.py、以及生成期逐单元执行，三处都必须看到同一份
+    单元文本——否则"写出来的手册能跑"和"校验时跑的代码"会悄悄分叉。
+    """
+
+    cells = list(spec.cells)
+    if not any("pad(" in text for _, text in cells):
+        # 这一阶段没有中英混排的表格，就别塞用不上的代码进手册。
+        return cells
+    first_code = next(index for index, (kind, _) in enumerate(cells) if kind == "code")
+    kind, text = cells[first_code]
+    cells[first_code] = (kind, text.rstrip() + chr(10) + TABLE_HELPER)
+    return cells
+
+
 def build_notebook(spec: "PhaseNotebook") -> dict:
     cells = []
-    for index, (kind, text) in enumerate(spec.cells):
+    for index, (kind, text) in enumerate(phase_cells(spec)):
         source = cell_source(text)
         if source:
             source[-1] = source[-1].rstrip(chr(10))
@@ -4869,7 +4968,7 @@ def extract_script(spec: "PhaseNotebook") -> str:
         "内容改动请修改 tools/build_learning_notebook.py 后重新生成，不要直接编辑本文件。",
         '"""',
     ]
-    for kind, text in spec.cells:
+    for kind, text in phase_cells(spec):
         lines = text.splitlines()
         parts.append("")
         if kind == "markdown":
@@ -5564,7 +5663,7 @@ def run_cells(spec: PhaseNotebook, workdir: Path) -> list[str]:
     previous = Path.cwd()
     os.chdir(workdir)
     try:
-        for index, (kind, text) in enumerate(spec.cells):
+        for index, (kind, text) in enumerate(phase_cells(spec)):
             if kind != "code":
                 continue
             buffer = io.StringIO()

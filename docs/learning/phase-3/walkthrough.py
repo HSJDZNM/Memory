@@ -113,6 +113,28 @@ print("仓库根目录:", REPO_ROOT)
 print("临时工作区:", WORKSPACE.relative_to(REPO_ROOT).as_posix())
 print("索引库:", DB_PATH.relative_to(REPO_ROOT).as_posix())
 
+
+# 表格对齐用的小工具：中文（全角）字符在等宽字体里占 2 列，而 f"{文本:<10}"
+# 数的是"字符个数"——中英混排时列会被挤歪。按显示宽度补空格才是对的。
+import unicodedata
+
+
+def display_width(text):
+    """文本在等宽字体里占多少列：全角/宽字符算 2 列，其余算 1 列。"""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in str(text))
+
+
+def pad(text, width, align="left"):
+    """按显示宽度把文本补齐到 width 列，让每一列都从同一个位置开始。"""
+    text = str(text)
+    blanks = " " * max(0, width - display_width(text))
+    if align == "right":
+        return blanks + text
+    if align == "center":
+        left = len(blanks) // 2
+        return blanks[:left] + text + blanks[left:]
+    return text + blanks
+
 # ----------------------------------------------------------------------------
 # **小结**：`REPO_ROOT` 是从当前工作目录向上找 `knowledge/corpus.yaml` 得到的，
 # 所以这份 notebook 从仓库根目录或从它自己所在目录启动都能跑。索引库在 `.tmp/` 下：
@@ -129,10 +151,24 @@ print("清单:", loaded.corpus_path, "| 版本", loaded.manifest.version,
       "| 数据集", len(loaded.manifest.datasets), "| 入口", len(loaded.entries))
 print("输入指纹:", loaded.input_hash[:26] + "...")
 print()
-print("数据集 | 许可 | 层级 | 可见性 | 入口数")
+# 许可的文案长度差得多（"CC BY 3.0" 与 "public domain（…）"），把它放在最后一列，
+# 前面四列才能用固定宽度排齐 —— 自由文本放最后一列是这几张表的统一约定。
+print(
+    pad("数据集", 24) + " | " + pad("层级", 10) + " | " + pad("可见性", 10)
+    + " | " + pad("入口数", 8) + " | 许可"
+)
 for dataset in loaded.manifest.datasets:
-    print(" -", dataset.name, "|", dataset.license, "|", dataset.tier.value,
-          "|", dataset.visibility.value, "|", len(dataset.entries))
+    print(
+        pad(dataset.name, 24)
+        + " | "
+        + pad(dataset.tier.value, 10)
+        + " | "
+        + pad(dataset.visibility.value, 10)
+        + " | "
+        + pad(len(dataset.entries), 8)
+        + " | "
+        + dataset.license
+    )
 print()
 print("完整性校验通过:", verification.ok, "| 问题:", [issue.kind for issue in verification.issues])
 print("预算（来自清单，不写在代码里）: 片段数", policy.top_k,
@@ -187,9 +223,17 @@ front, demo_chunks = chunk_document(
 print("front matter 类型:", front.kind, "| 提取到的元数据:", dict(front.metadata))
 print("正文里已经没有 front matter:", "title:" not in split_front_matter(sample)[1])
 print()
-print("序号 | 标题锚点 | 形态 | 字符数")
+print(pad("序号", 6) + "| " + pad("标题锚点", 34) + "| " + pad("形态", 10) + "| 字符数")
 for chunk in demo_chunks:
-    print(chunk.ordinal, "|", chunk.heading_anchor, "|", chunk.kind.value, "|", chunk.char_count)
+    print(
+        pad(chunk.ordinal, 6)
+        + "| "
+        + pad(chunk.heading_anchor, 34)
+        + "| "
+        + pad(chunk.kind.value, 10)
+        + "| "
+        + str(chunk.char_count)
+    )
 sections = find_sections(split_front_matter(sample)[1])
 print()
 print("空章节（被跳过，不会变成空片段）:", [item.anchor for item in sections if item.is_empty])
