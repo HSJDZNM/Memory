@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "engineering-policy-platform"
+version = "0.0.0"
+description = "独立于 Coding Agent 的软件工程治理层：机器可执行规则、策略决策与确定性验证"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Memory repository maintainers" }]
+dependencies = [
+  "pydantic>=2.9,<3",
+  "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<10",
+]
+
+[project.scripts]
+policy-check = "policy.check:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+  "contract: 核心协议契约测试",
+  "integration: 真实 CLI 与文件系统边界的集成测试",
+  "security: 对抗测试（注入、越权、缓存失效、失败关闭）",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/policy", "src/retrieval"]

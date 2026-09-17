@@ -1,0 +1,5 @@
+# 直接依赖（人工维护）。锁文件由 tools/lock_requirements.py 生成。
+# 与 pyproject.toml 的 [project] dependencies / [project.optional-dependencies] dev 保持一致。
+pydantic>=2.9,<3
+PyYAML>=6.0,<7
+pytest>=8.3,<10

@@ -1,0 +1,21 @@
+# Phase 0 唯一的一条机器可执行规则。
+# 规则标识与版本共同决定审计身份：修改语义必须递增 version。
+id: ARCH-001
+version: 1
+name: controller-service-boundary
+description: Controller 不得直接访问 Repository，必须经过 Service。
+scope:
+  language: python
+  layer: controller
+severity: error
+enforcement:
+  type: deterministic
+  checker: forbidden_dependency
+rule:
+  forbidden_dependency:
+    - repository
+message: Controller 必须通过 Service 访问 Repository。
+source:
+  kind: project-policy
+  path: policies/architecture/ARCH-001.yaml
+  note: 依赖必须由确定性证据提供（AST 或依赖图），不得由 LLM 裁决。

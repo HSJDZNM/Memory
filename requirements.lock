@@ -1,0 +1,11 @@
+# 锁定文件：Phase 0 的直接依赖与本次验证环境中的实际版本。
+#
+# 维护方式：
+#   1) 上限与来源在 requirements.in 与 pyproject.toml 中维护；
+#   2) 版本在有网络的环境用 uv 重新解析：uv lock（会生成带哈希的全量 uv.lock）；
+#   3) 本文件是"没有 uv 时也能装出同一组直接依赖"的最小锁定，只锁直接依赖。
+#
+# 当前环境验证版本（Python 3.13.11，Windows）：
+pydantic==2.12.3
+PyYAML==6.0.3
+pytest==9.1.1

@@ -97,6 +97,13 @@ wheels/
 htmlcov/
 .ipynb_checkpoints/
 
+# ---- uv / 本地沙箱缓存 ----
+.uv-cache/
+
+# ---- 会话临时目录：pytest 缓存、阶段证据、notebook 演示等一次性产物 ----
+# 由 tools/cleanup.py 一键删除；不进入版本库。
+.tmp/
+
 # ---- 数据与产物（按需放开）----
 *.sqlite
 *.sqlite3
