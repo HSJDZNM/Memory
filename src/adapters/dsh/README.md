@@ -73,8 +73,8 @@ Hook 是一个外部命令，它的**退出码**就是决定：
 | edit | file_path / old_string / new_string / replace_all | operation=edit |
 | write | file_path / content | operation=create |
 | str_replace_editor | command / path / file_text / new_str / ... | operation=edit（标准装配里不启用） |
-| read / read_image | file_path | 只读，不治理 |
-| glob / grep | pattern / path | 只读，不治理 |
+| read / read_image | file_path | 只读：不做前置授权，但**目标必须在受控项目内**，越界拒绝 |
+| glob / grep | pattern / path | 只读：同上；未给 path 时按会话 cwd 判定范围，两者都证明不了就拒绝 |
 | pwsh / bash | command / description / timeoutMs / workdir / run_in_background / sandbox_permissions / justification | 执行类，**Phase 4 已纳入受控链路**（注册表 exec.pwsh / exec.bash） |
 | run_code | code / description | 执行类，**Phase 4 已纳入受控链路**（registry exec.run_code；平台侧 driver=none） |
 
@@ -165,6 +165,9 @@ edit 的 new_string 通常是代码片段而不是完整模块，因此用行级
    Phase 4 把它们交给 Tool Registry（风险级别、参数白名单、命令白名单、权限、审批、限流），
    授权与具体 action_hash 绑定。只读工具（read / glob / grep）仍然"允许显式降级但仍记录"——
    这是写下来的策略，不是异常处理里的偷偷放行。
+   降级的是**授权链路**，不是**范围校验**：注册表给只读工具声明了 `path_scope: workspace`，
+   因此 Adapter 会把目标路径归一化后写进审计（范围等于项目根时记为 `.`），
+   越界、穿越、或者既没有路径也没有 cwd 时一律失败关闭。
 4. **matcher 留空**：与"最小权限"直觉相反，但原因见第 3 节——窄 matcher 会让新工具绕过 Hook。
 5. **hooks.py 与 adapter.py 之外没有第三个模块**：配置解析、glob 匹配与依赖提取
    都放在 adapter.py，因为它们同属"把 dsh 事件规范化成核心协议"这一件事。
