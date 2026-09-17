@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "decision": "allow_with_warnings",
+  "request_id": "req-snapshot",
+  "trace_id": "trace-snapshot",
+  "rule_set_hash": "sha256:41f3e1bc322a7732a6efbebfc821076dc01c440413dfa9ee21aaec7bac498ed4",
+  "matched_rules": [
+    "ARCH-001@1",
+    "CODING-002@1"
+  ],
+  "skipped_rules": [
+    {
+      "rule_id": "ARCH-004@1",
+      "reasons": [
+        "operation <missing> != delete"
+      ]
+    },
+    {
+      "rule_id": "SEC-003@1",
+      "reasons": [
+        "operation <missing> != execute"
+      ]
+    }
+  ],
+  "violations": [
+    {
+      "rule_id": "CODING-002",
+      "rule_version": 1,
+      "severity": "warning",
+      "message": "Controller 必须通过 Service 访问 Repository。",
+      "evidence": {
+        "kind": "dependency",
+        "subject": "src/order/controller.py",
+        "value": "logging",
+        "file": "src/order/controller.py",
+        "detail": "layer=controller 直接依赖 logging"
+      }
+    }
+  ],
+  "required_action": null,
+  "policy_version": "phase-1"
+}
