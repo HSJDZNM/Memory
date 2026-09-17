@@ -1,0 +1,47 @@
+---
+title: "Nested Types"
+source_url: "https://learn.microsoft.com/en-us/dotnet/standard/design-guidelines/nested-types/"
+role: "指南文档 · Nested types"
+why: "上游目录路径：Framework design guidelines > Type design guidelines > Nested types（同级第 7 篇）"
+copyright: "CC BY 4.0（上游文档仓库 dotnet/docs）"
+fetched_at: "2026-09-16T08:05:08Z"
+---
+
+# Nested Types
+
+Note
+
+This content is reprinted by permission of Pearson Education, Inc. from _Framework Design Guidelines: Conventions, Idioms, and Patterns for Reusable .NET Libraries, 2nd Edition_. That edition was published in 2008, and the book has since been fully revised in the [third edition](https://www.informit.com/store/framework-design-guidelines-conventions-idioms-and-9780135896464). Some of the information on this page may be out-of-date.
+
+A nested type is a type defined within the scope of another type, which is called the enclosing type. A nested type has access to all members of its enclosing type. For example, it has access to private fields defined in the enclosing type and to protected fields defined in all ascendants of the enclosing type.
+
+In general, nested types should be used sparingly. There are several reasons for this. Some developers are not fully familiar with the concept. These developers might, for example, have problems with the syntax of declaring variables of nested types. Nested types are also very tightly coupled with their enclosing types, and as such are not suited to be general-purpose types.
+
+Nested types are best suited for modeling implementation details of their enclosing types. The end user should rarely have to declare variables of a nested type and almost never should have to explicitly instantiate nested types. For example, the enumerator of a collection can be a nested type of that collection. Enumerators are usually instantiated by their enclosing type, and because many languages support the foreach statement, enumerator variables rarely have to be declared by the end user.
+
+✔️ DO use nested types when the relationship between the nested type and its outer type is such that member-accessibility semantics are desirable.
+
+❌ DO NOT use public nested types as a logical grouping construct; use namespaces for this.
+
+❌ AVOID publicly exposed nested types. The only exception to this is if variables of the nested type need to be declared only in rare scenarios such as subclassing or other advanced customization scenarios.
+
+❌ DO NOT use nested types if the type is likely to be referenced outside of the containing type.
+
+For example, an enum passed to a method defined on a class should not be defined as a nested type in the class.
+
+❌ DO NOT use nested types if they need to be instantiated by client code. If a type has a public constructor, it should probably not be nested.
+
+If a type can be instantiated, that seems to indicate the type has a place in the framework on its own (you can create it, work with it, and destroy it without ever using the outer type), and thus should not be nested. Inner types should not be widely reused outside of the outer type without any relationship whatsoever to the outer type.
+
+❌ DO NOT define a nested type as a member of an interface. Many languages do not support such a construct.
+
+_Portions © 2005, 2009 Microsoft Corporation. All rights reserved._
+
+_Reprinted by permission of Pearson Education, Inc. from[Framework Design Guidelines: Conventions, Idioms, and Patterns for Reusable .NET Libraries, 2nd Edition](https://www.informit.com/store/framework-design-guidelines-conventions-idioms-and-9780321545619) by Krzysztof Cwalina and Brad Abrams, published Oct 22, 2008 by Addison-Wesley Professional as part of the Microsoft Windows Development Series._
+
+## See also
+
+  * [Type Design Guidelines](type.md)
+  * [Framework Design Guidelines](index.md)
+
+_源站标注：Last updated on 2023-10-03_

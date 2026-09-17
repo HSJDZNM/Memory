@@ -1,0 +1,129 @@
+# Phase 3 摄取清单（knowledge/corpus.yaml）
+#
+# 这是"找到什么值得告诉 Agent"的**数据**，不是代码：新增/移除语料只改这里。
+# 每个数据集对应仓库里的一个离线镜像目录，条目必须能在该镜像的 manifest.json 中找到，
+# 并由 tools/retrieval_eval.py + tests/integration/test_retrieval_index.py 校验：
+#   - 文件存在，且本地内容哈希等于镜像 manifest 记录的 sha256（漂移会被记录并报出，不静默）；
+#   - 许可（license）与来源（source_url）必填，缺失即加载失败；
+#   - dataset / tier / visibility 三件事分开：tier 决定 Context 中的优先级，
+#     visibility 决定谁能检索（restricted 的数据集必须由调用方显式授予）。
+#
+# 维护方式（改动语料后必须重跑）：
+#   python -m retrieval.cli verify      # 清单与镜像 manifest、许可、哈希是否一致
+#   python -m retrieval.cli index       # 幂等重建索引
+#   python tools/retrieval_eval.py      # 固定评测集基线是否仍达标
+
+version: 1
+
+# 检索策略：预算与阈值在这里声明，测试与 CLI 都读它，代码里不留"脱离数据的常数"。
+policy:
+  top_k: 5                  # 每次检索返回的最大片段数
+  max_query_chars: 200      # 自由文本规范化后的字符上限（超出即截断并记录）
+  max_query_terms: 24       # FTS 词项上限，防止超长查询放大
+  max_chunk_chars: 1200     # 单个 chunk 的目标预算（分块器按它打包）
+  hard_max_chunk_chars: 8000  # 原子单元（超长代码块/单行）的硬上限，超过即截断并记录
+  context_budget_chars: 4000   # Engineering Context 的总字符预算（严格上限）
+  max_snippet_chars: 1000      # Context 中单个片段的字符上限
+  max_snippets: 8              # Context 中参考片段数量上限
+  expansion: knowledge/query_expansion.yaml  # 受控中英术语表（数据，不是代码）
+
+# 数据集：name 是权限与过滤的稳定标识，不要重命名（重命名等于换数据集）。
+datasets:
+  - name: google-eng-practices
+    title: Google Engineering Practices
+    mirror: docs/google-eng-practices
+    license: CC BY 3.0
+    license_source: docs/google-eng-practices/LICENSE.txt
+    tier: guidance
+    visibility: public
+    entries:
+      - review/reviewer/looking-for.md
+      - review/developer/small-cls.md
+
+  - name: gitlab-code-review
+    title: GitLab Code Review Guidelines
+    mirror: docs/gitlab-code-review
+    license: CC BY-SA 4.0
+    license_source: docs/gitlab-code-review/README.md
+    tier: guidance
+    visibility: public
+    entries:
+      - development/code_review/index.md
+      - development/permissions/review_guidelines/index.md
+      - development/ai_instruction_files_review/index.md
+
+  - name: owasp-cheatsheets
+    title: OWASP Cheat Sheet Series
+    mirror: docs/owasp-cheatsheets
+    license: CC BY-SA 4.0
+    license_source: docs/owasp-cheatsheets/LICENSE.txt
+    tier: guidance
+    visibility: public
+    entries:
+      - 14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md
+      - 14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md
+      - 14_AI与LLM应用安全/MCP_Security_Cheat_Sheet.md
+
+  - name: python-pep-code-style
+    title: Python PEP 8 / PEP 257
+    mirror: docs/python-pep-code-style
+    license: public domain（PEP 各篇 Copyright 声明）
+    license_source: docs/python-pep-code-style/LICENSE.md
+    tier: guidance
+    visibility: public
+    entries:
+      - pep-8-python-code/index.md
+      - pep-257-docstrings/index.md
+
+  - name: dotnet-design-guidelines
+    title: .NET Framework Design Guidelines
+    mirror: docs/dotnet-design-guidelines
+    license: CC BY 4.0（上游 dotnet/docs；正文另含 Pearson Education 授权摘录声明）
+    license_source: docs/dotnet-design-guidelines/README.md
+    tier: guidance
+    visibility: public
+    entries:
+      - naming-guidelines.md
+      - general-naming-conventions.md
+      - exceptions.md
+      - exception-throwing.md
+      - using-standard-exception-types.md
+
+  # 2026-09 新增：DORA 能力模型镜像（抓取时间 2026-09-17，37 篇）。
+  # 只选与"工程治理"直接相关的权威入口：变更审批、小批量、测试与 CI、可维护性、文档、
+  # 安全、可观测性、主干开发，以及 AI 能力模型里与"数据可达性 / AI 立场"有关的两篇；
+  # 目录页本身也收录，便于回答"有哪些能力、各自属于哪个模型"。
+  - name: dora-capabilities
+    title: DORA Capability Model (Google Cloud DORA)
+    mirror: docs/dora-capabilities
+    license: CC BY 4.0（Google LLC；站点页脚声明）
+    license_source: docs/dora-capabilities/README.md
+    tier: guidance
+    visibility: public
+    entries:
+      - index.md
+      - core/code-maintainability.md
+      - core/continuous-integration.md
+      - core/documentation-quality.md
+      - core/monitoring-and-observability.md
+      - core/pervasive-security.md
+      - core/streamlining-change-approval.md
+      - core/test-automation.md
+      - core/working-in-small-batches.md
+      - unlabeled/trunk-based-development.md
+      - ai/ai-accessible-internal-data.md
+      - ai/clear-and-communicated-ai-stance.md
+
+# 受限数据集示例位：默认留空。授权来自调用方显式声明的 AccessScope，
+# 绝不从查询文本、文件路径或数据集名推断。新增受限数据集时在此登记并补访问测试。
+restricted_datasets: []
+
+# 已知恶意 chunk 的隔离清单：条目 (chunk_id, text_hash, reason)。
+# text_hash 必须与当前 chunk 文本一致才生效；源文变更后隔离自动失效（旧记录清理并记录在 run 报告里）。
+quarantine: []
+
+# curated guidance → project policy 的溯源（rules(id, version, source_chunk_id)）。
+# 当前仓库只有 ARCH-001 一条规则，且它源自项目架构决策而非镜像文档，因此这里为空。
+# 新增"由镜像文档提炼出的规则"时在这里登记 {rule_id, rule_version, dataset, source_path, heading_path}，
+# 索引器会把标题路径解析成稳定的 chunk_id 并写入 rule_sources 表；解析不到时索引失败（不静默）。
+rule_sources: []

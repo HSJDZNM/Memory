@@ -1,0 +1,93 @@
+# Phase 3 固定评测集（版本 2）
+#
+# 来源：docs/engineering-policy-platform/02-repository-data-sources.md#评测查询集。
+# 这份文件是**评测资产**，不是"为了让基线好看"的参数：查询、期望文档与门槛一起版本化，
+# 改动它必须同时更新 version 并在阶段记录里说明（旧基线与新基线不可直接比较）。
+#
+# 判定口径（tools/retrieval_eval.py 实现）：
+#   - hit@k：每个查询的**期望文档**至少有一个 chunk 出现在 top k：
+#   - support@k：top k 中至少有一个来自期望文档的 chunk 含有 supporting_terms 之一
+#     （即"片段本身足以支持答案"，而不是只命中了相关文档的无关段落）；
+#   - source_completeness：返回项必须全部带 source_path / source_url / license / text_hash；
+#   - order_stable：同一查询连续两次运行排名完全一致；
+#   - reference_rank：计划书数据源映射点名的来源当前的排名（**只记录，不作为门槛**）——
+#     语料扩充后"正确答案集合"会变大，这个字段让"原来的来源掉到第几名"依然可见；
+#   - 相似度分数不作为授权信号，也不进入门槛。
+#
+# v2 变更（2026-09）：语料新增 DORA 能力模型镜像（6 个数据集 / 27 个入口）。
+#   Q2「生产代码是否应与测试同时提交」的直接答案来源随之扩大：DORA 的 test-automation /
+#   continuous-integration / trunk-based-development 三篇里都有能独立回答该问题的原句
+#   （例如「Have developers practice test-driven development by writing unit tests before
+#   writing production code for all changes to the codebase」），因此把它们加入期望文档；
+#   **门槛没有放宽**（hit@5 与 support@5 仍为 1.0）。原来点名的两篇 Google 文档改记在
+#   reference_documents 里，排名进基线但不再作为门槛——它们掉出 top 5 这件事必须被看见。
+
+version: 2
+
+thresholds:
+  top_k: 5
+  hit_at_k: 1.0              # 7/7 查询的期望文档必须进 top 5
+  support_at_k: 1.0          # 每个查询 top 5 里至少一个片段能独立支持答案
+  source_completeness: 1.0   # 来源与哈希不得缺失
+  order_stable: true
+  min_precision_at_k: 0.60   # 基线实测 0.800（v1 首次记录）；门槛留出余量，只拦明显退化
+  min_recall_at_k: 0.85      # 基线实测 1.000（v1 首次记录）；同上
+
+queries:
+  - id: Q1
+    text: 代码评审需要检查哪些方面
+    expected_documents:
+      - google-eng-practices:review/reviewer/looking-for.md
+      - gitlab-code-review:development/code_review/index.md
+    supporting_terms: [design, functionality, tests, complexity, checklist, review]
+    notes: 评审关注点应是清单或分节结构，片段本身能回答"检查哪些方面"。
+
+  - id: Q2
+    text: 生产代码是否应与测试同时提交
+    expected_documents:
+      - google-eng-practices:review/developer/small-cls.md
+      - google-eng-practices:review/reviewer/looking-for.md
+      - dora-capabilities:core/test-automation.md
+      - dora-capabilities:core/continuous-integration.md
+      - dora-capabilities:unlabeled/trunk-based-development.md
+    supporting_terms: [test, tests, testing]
+    reference_documents:
+      - google-eng-practices:review/developer/small-cls.md
+      - google-eng-practices:review/reviewer/looking-for.md
+    notes: 期望命中"同一变更里带测试"的段落；v2 起 DORA 的测试/CI/主干开发三篇同样算作直接来源。
+
+  - id: Q3
+    text: RAG 检索失败时是否可以让模型自己回答
+    expected_documents:
+      - owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md
+    supporting_terms: [model memory, fail-closed, fail closed, fall back]
+    notes: 期望命中 Section 14 Fail-Closed Design。
+
+  - id: Q4
+    text: MCP 工具返回值是否可信
+    expected_documents:
+      - owasp-cheatsheets:14_AI与LLM应用安全/MCP_Security_Cheat_Sheet.md
+    supporting_terms: [untrusted, tool response, tool return, sanitize]
+    notes: 期望命中 Prompt Injection via Tool Return Values。
+
+  - id: Q5
+    text: 如何测试 Agent 越权和审批绕过
+    expected_documents:
+      - owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md
+    supporting_terms: [least privilege, authorization, approval, human-in-the-loop, test]
+    notes: 期望命中权限最小化、审批与安全测试相关章节。
+
+  - id: Q6
+    text: Python 模块、类和函数如何命名
+    expected_documents:
+      - python-pep-code-style:pep-8-python-code/index.md
+    supporting_terms: [naming, names, convention]
+    notes: 期望命中 PEP 8 Naming Conventions；.NET 命名指南出现在同一列表里属于已知跨数据集噪声，不计入失败。
+
+  - id: Q7
+    text: 公共 API 的异常设计
+    expected_documents:
+      - dotnet-design-guidelines:exception-throwing.md
+      - dotnet-design-guidelines:using-standard-exception-types.md
+    supporting_terms: [exception, throw]
+    notes: 期望命中 .NET 异常设计指南。

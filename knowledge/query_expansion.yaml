@@ -1,0 +1,68 @@
+# 受控中英术语表（Query Expansion）
+#
+# 镜像语料是英文的，而任务描述是中文的。FTS5 是词法检索，无法跨语言，
+# 所以这里维护一份**通用领域术语**的中→英映射：检索时把中文术语扩展成
+# 上游文档实际使用的英文术语，扩展结果连同原查询一起记录在 QueryPlan 里，可审计。
+#
+# 规则（测试会强制）：
+#   1. 只登记术语，不登记句子：zh 不超过 10 个字、最多两段且不含标点；en 不超过 4 个词；
+#   2. 按最长匹配生效：查询里出现更长的术语时优先用它，避免"评审"覆盖"代码评审"；
+#   3. 这里不是评测集的逆向工程：条目与具体评测查询无关，加入向量检索时同样复用；
+#   4. 术语表是数据，改动它等于改动检索行为，必须重跑 tools/retrieval_eval.py 并更新基线。
+
+version: 1
+
+terms:
+  # —— 代码评审（Google / GitLab 语料）——
+  - zh: [代码评审, 代码审查, 评审, 审查]
+    en: [code review, reviewer, review]
+  - zh: [变更, 小变更, 提交]
+    en: [small cls, change, commit, merge request]
+  - zh: [检查项, 检查哪些方面]
+    en: [what to look for, checklist, acceptance checklist]
+  - zh: [测试, 单元测试]
+    en: [tests, testing, unit test]
+  - zh: [文档]
+    en: [documentation, docs]
+  - zh: [复杂度, 可维护性]
+    en: [complexity, maintainability]
+
+  # —— 检索增强生成 / Agent / MCP（OWASP 语料）——
+  - zh: [检索增强, 检索失败, 检索]
+    en: [retrieval, rag, retrieval-augmented generation]
+  - zh: [失败, 回退, 降级]
+    en: [fail closed, failure, fallback]
+  - zh: [模型记忆, 模型自己回答, 幻觉]
+    en: [model memory, hallucination]
+  - zh: [工具返回值, 工具调用, 工具]
+    en: [tool, tool return values, tool call]
+  - zh: [注入, 提示注入, 越权]
+    en: [prompt injection, injection, privilege escalation, least privilege]
+  - zh: [审批, 人工确认, 人在回路]
+    en: [approval, human in the loop, human-in-the-loop]
+  - zh: [权限, 授权, 访问控制]
+    en: [authorization, access control, permission]
+  - zh: [密钥, 凭据]
+    en: [secrets, credentials]
+  - zh: [日志, 审计]
+    en: [logging, audit, monitoring]
+  - zh: [多租户, 隔离]
+    en: [multi-tenant, isolation, tenant]
+
+  # —— Python / .NET 语言与 API 约定 ——
+  - zh: [命名, 命名约定]
+    en: [naming, names, naming conventions]
+  - zh: [模块, 包]
+    en: [module, package, namespaces]
+  - zh: [类, 类型]
+    en: [class, type, struct]
+  - zh: [函数, 方法]
+    en: [function, method, parameter]
+  - zh: [异常, 抛出异常]
+    en: [exception, exceptions, throw]
+  - zh: [公共接口, 公共 API, 库设计]
+    en: [public api, library design, framework design]
+  - zh: [文档字符串, 注释块]
+    en: [docstring, docstrings, comments]
+  - zh: [风格, 缩进]
+    en: [style guide, indentation, pep 8]

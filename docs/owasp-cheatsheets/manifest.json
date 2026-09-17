@@ -1,0 +1,3256 @@
+{
+  "source": "https://cheatsheetseries.owasp.org/cheatsheets/Secure_Code_Review_Cheat_Sheet.html",
+  "site": "https://cheatsheetseries.owasp.org/",
+  "fetched_at": "2026-09-16T07:54:37Z",
+  "crawler": "crawl4ai 0.9.3 / AsyncHTTPCrawlerStrategy",
+  "scope": "种子页导航与正文中出现的全部 /cheatsheets/*.html 链接",
+  "taxonomy": "OWASP ASVS 5.0 章节（V1-V17）+ 技术栈／平台／AI／嵌入式专项（主题重排，见 STRUCTURE.md）",
+  "pages_candidate": 122,
+  "pages_saved": 124,
+  "pages_excluded": 4,
+  "pages": [
+    {
+      "local_path": "01_安全需求、架构与治理/Abuse_Case_Cheat_Sheet.md",
+      "guide": "01_安全需求、架构与治理",
+      "guide_name": "开发早期的安全需求、威胁建模、攻击面分析、安全设计、安全术语，以及遗留系统、漏洞披露、虚拟补丁、第三方支付集成等治理类指南。",
+      "role": "cheat-sheet",
+      "parent": "01_安全需求、架构与治理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Abuse_Case_Cheat_Sheet.html",
+      "title": "Abuse Case Cheat Sheet (Historical)",
+      "source_repo_path": "master/cheatsheets/Abuse_Case_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 27479,
+      "sha256": "0a1b74d9523b78d3ffa1ad2aef73b9672a496b9d9be08361ebbaf49e0b04547f",
+      "saved": true,
+      "category": "01_安全需求、架构与治理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V2.1",
+          "V2.3",
+          "V14.1",
+          "V15.1:"
+        ],
+        "proactive_controls": [
+          "C1"
+        ],
+        "top10_2021": [
+          "A04"
+        ],
+        "masvs": [
+          "MASVS-RESILIENCE"
+        ]
+      }
+    },
+    {
+      "local_path": "01_安全需求、架构与治理/Attack_Surface_Analysis_Cheat_Sheet.md",
+      "guide": "01_安全需求、架构与治理",
+      "guide_name": "开发早期的安全需求、威胁建模、攻击面分析、安全设计、安全术语，以及遗留系统、漏洞披露、虚拟补丁、第三方支付集成等治理类指南。",
+      "role": "cheat-sheet",
+      "parent": "01_安全需求、架构与治理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Attack_Surface_Analysis_Cheat_Sheet.html",
+      "title": "Attack Surface Analysis Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Attack_Surface_Analysis_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 13920,
+      "sha256": "da26a6ca998176aaaa13a2bb1af64258a6af7b9385913a9ba59251f3049270cf",
+      "saved": true,
+      "category": "01_安全需求、架构与治理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V15.1:"
+        ],
+        "proactive_controls": [
+          "C1"
+        ],
+        "top10_2021": [
+          "A04"
+        ],
+        "masvs": [
+          "MASVS-PLATFORM",
+          "MASVS-RESILIENCE"
+        ]
+      }
+    },
+    {
+      "local_path": "01_安全需求、架构与治理/Legacy_Application_Management_Cheat_Sheet.md",
+      "guide": "01_安全需求、架构与治理",
+      "guide_name": "开发早期的安全需求、威胁建模、攻击面分析、安全设计、安全术语，以及遗留系统、漏洞披露、虚拟补丁、第三方支付集成等治理类指南。",
+      "role": "cheat-sheet",
+      "parent": "01_安全需求、架构与治理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Legacy_Application_Management_Cheat_Sheet.html",
+      "title": "Legacy Application Management Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Legacy_Application_Management_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 14065,
+      "sha256": "e48cf7d001d7bb59828dd4c119dc11a3a7459861a4bfc3a83bdb0f5e27d62dc9",
+      "saved": true,
+      "category": "01_安全需求、架构与治理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "01_安全需求、架构与治理/Microservices_based_Security_Arch_Doc_Cheat_Sheet.md",
+      "guide": "01_安全需求、架构与治理",
+      "guide_name": "开发早期的安全需求、威胁建模、攻击面分析、安全设计、安全术语，以及遗留系统、漏洞披露、虚拟补丁、第三方支付集成等治理类指南。",
+      "role": "cheat-sheet",
+      "parent": "01_安全需求、架构与治理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Microservices_based_Security_Arch_Doc_Cheat_Sheet.html",
+      "title": "Microservices based Security Arch Doc Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Microservices_based_Security_Arch_Doc_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 15160,
+      "sha256": "f343b7b8221186b5473c752fd383d7a8447e4b1a4c88f9123d6e3730f681617d",
+      "saved": true,
+      "category": "01_安全需求、架构与治理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "01_安全需求、架构与治理/Secure_Code_Review_Cheat_Sheet.md",
+      "guide": "01_安全需求、架构与治理",
+      "guide_name": "开发早期的安全需求、威胁建模、攻击面分析、安全设计、安全术语，以及遗留系统、漏洞披露、虚拟补丁、第三方支付集成等治理类指南。",
+      "role": "cheat-sheet",
+      "parent": "01_安全需求、架构与治理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Secure_Code_Review_Cheat_Sheet.html",
+      "title": "Secure Code Review Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Secure_Code_Review_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 22365,
+      "sha256": "e7616bd957e7cc26ffb83196784c3071018e059907706b30d6ae1b18cca24ab3",
+      "saved": true,
+      "category": "01_安全需求、架构与治理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V15.4:"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "01_安全需求、架构与治理/Secure_Product_Design_Cheat_Sheet.md",
+      "guide": "01_安全需求、架构与治理",
+      "guide_name": "开发早期的安全需求、威胁建模、攻击面分析、安全设计、安全术语，以及遗留系统、漏洞披露、虚拟补丁、第三方支付集成等治理类指南。",
+      "role": "cheat-sheet",
+      "parent": "01_安全需求、架构与治理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Secure_Product_Design_Cheat_Sheet.html",
+      "title": "Secure Product Design Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Secure_Product_Design_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 11201,
+      "sha256": "6d7c3f3c587f5d1095f4a377da6a432d541013b7b9605f6d03e6044d712b428c",
+      "saved": true,
+      "category": "01_安全需求、架构与治理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "01_安全需求、架构与治理/Security_Terminology_Cheat_Sheet.md",
+      "guide": "01_安全需求、架构与治理",
+      "guide_name": "开发早期的安全需求、威胁建模、攻击面分析、安全设计、安全术语，以及遗留系统、漏洞披露、虚拟补丁、第三方支付集成等治理类指南。",
+      "role": "cheat-sheet",
+      "parent": "01_安全需求、架构与治理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Security_Terminology_Cheat_Sheet.html",
+      "title": "Security Terminology Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Security_Terminology_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 6370,
+      "sha256": "f5e69b7c1a62acfe5a63a42ecd369330029d4e28c03f9926a0d89e2dc70ade57",
+      "saved": true,
+      "category": "01_安全需求、架构与治理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.1",
+          "V6.1",
+          "V8.1",
+          "V11.1",
+          "V15.1:"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "01_安全需求、架构与治理/Third_Party_Payment_Gateway_Integration_Cheat_Sheet.md",
+      "guide": "01_安全需求、架构与治理",
+      "guide_name": "开发早期的安全需求、威胁建模、攻击面分析、安全设计、安全术语，以及遗留系统、漏洞披露、虚拟补丁、第三方支付集成等治理类指南。",
+      "role": "cheat-sheet",
+      "parent": "01_安全需求、架构与治理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Payment_Gateway_Integration_Cheat_Sheet.html",
+      "title": "Secure Integration of Third-Party Payment Gateways Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Third_Party_Payment_Gateway_Integration_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 4874,
+      "sha256": "928c47f3b1584761ff311e49ce1111f8c132d239adaaae381798894b1d32a324",
+      "saved": true,
+      "category": "01_安全需求、架构与治理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "01_安全需求、架构与治理/Threat_Modeling_Cheat_Sheet.md",
+      "guide": "01_安全需求、架构与治理",
+      "guide_name": "开发早期的安全需求、威胁建模、攻击面分析、安全设计、安全术语，以及遗留系统、漏洞披露、虚拟补丁、第三方支付集成等治理类指南。",
+      "role": "cheat-sheet",
+      "parent": "01_安全需求、架构与治理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html",
+      "title": "Threat Modeling Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Threat_Modeling_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 19811,
+      "sha256": "09c3eea98609da1665a81439eb014295c91db05d437a65f4b506fb03b4150a2b",
+      "saved": true,
+      "category": "01_安全需求、架构与治理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V15.1:"
+        ],
+        "proactive_controls": [
+          "C1"
+        ],
+        "top10_2021": [
+          "A04"
+        ],
+        "masvs": [
+          "MASVS-RESILIENCE"
+        ]
+      }
+    },
+    {
+      "local_path": "01_安全需求、架构与治理/Virtual_Patching_Cheat_Sheet.md",
+      "guide": "01_安全需求、架构与治理",
+      "guide_name": "开发早期的安全需求、威胁建模、攻击面分析、安全设计、安全术语，以及遗留系统、漏洞披露、虚拟补丁、第三方支付集成等治理类指南。",
+      "role": "cheat-sheet",
+      "parent": "01_安全需求、架构与治理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Virtual_Patching_Cheat_Sheet.html",
+      "title": "Virtual Patching Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Virtual_Patching_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 19932,
+      "sha256": "b1edd54778867485470c7b5e872126e34130c887b3a64d163de6cf674f8732e8",
+      "saved": true,
+      "category": "01_安全需求、架构与治理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V15.2:"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "01_安全需求、架构与治理/Vulnerability_Disclosure_Cheat_Sheet.md",
+      "guide": "01_安全需求、架构与治理",
+      "guide_name": "开发早期的安全需求、威胁建模、攻击面分析、安全设计、安全术语，以及遗留系统、漏洞披露、虚拟补丁、第三方支付集成等治理类指南。",
+      "role": "cheat-sheet",
+      "parent": "01_安全需求、架构与治理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Vulnerability_Disclosure_Cheat_Sheet.html",
+      "title": "Vulnerability Disclosure Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Vulnerability_Disclosure_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 25571,
+      "sha256": "068d9f5783ffe4cb737abc38ea781a688d045b1d617f7ddb05556ef52e9d3618",
+      "saved": true,
+      "category": "01_安全需求、架构与治理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/Bean_Validation_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Bean_Validation_Cheat_Sheet.html",
+      "title": "Bean Validation Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Bean_Validation_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 13254,
+      "sha256": "b2e99589c38852e3f809b23ab32a6ed532965f323df4520d220c227af5b9cf18",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.2"
+        ],
+        "proactive_controls": [
+          "C5"
+        ],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/Cross_Site_Scripting_Prevention_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html",
+      "title": "Cross Site Scripting Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 28426,
+      "sha256": "d0c64130883902b9664b79c276dd6f7c4773b10a17978b3f1d590175f87e376b",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.1",
+          "V1.2",
+          "V1.3"
+        ],
+        "proactive_controls": [
+          "C4"
+        ],
+        "top10_2021": [
+          "A03"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/DOM_based_XSS_Prevention_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/DOM_based_XSS_Prevention_Cheat_Sheet.html",
+      "title": "DOM based XSS Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/DOM_based_XSS_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 29921,
+      "sha256": "170060cc79edcdb7435bc132998613b79de464c2547fcb6fe1f837c1b1c8ce0c",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.2",
+          "V1.3"
+        ],
+        "proactive_controls": [
+          "C4"
+        ],
+        "top10_2021": [
+          "A03"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/Deserialization_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html",
+      "title": "Deserialization Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Deserialization_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 23794,
+      "sha256": "a0d5bb9a40f96f8a2fd5813a1b53859e731fbc1c2779737bb809fd920c2b70c3",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.5"
+        ],
+        "proactive_controls": [
+          "C5"
+        ],
+        "top10_2021": [
+          "A08"
+        ],
+        "masvs": [
+          "MASVS-CODE"
+        ]
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/File_Upload_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html",
+      "title": "File Upload Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/File_Upload_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 12412,
+      "sha256": "ada5d0c10f19dabbc8a21d7051b4018fb0f5afd285f294c053eadb58f519db6f",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.2",
+          "V5.1",
+          "V5.2",
+          "V5.4"
+        ],
+        "proactive_controls": [
+          "C5"
+        ],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/Injection_Prevention_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html",
+      "title": "Injection Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Injection_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 18397,
+      "sha256": "6601f6eb4fd781228f38b6ad2fb56f55bcc572c381f55fa8153021b87465b0e2",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.2",
+          "V1.3"
+        ],
+        "proactive_controls": [
+          "C4",
+          "C5"
+        ],
+        "top10_2021": [
+          "A03"
+        ],
+        "masvs": [
+          "MASVS-CODE"
+        ]
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/Input_Validation_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html",
+      "title": "Input Validation Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Input_Validation_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 19933,
+      "sha256": "337854c93aab3d86824c2356ba5b1e1b6aa4cbab90c6861da7c24638cf686df4",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.2",
+          "V1.3",
+          "V2.2",
+          "V5.1",
+          "V5.2",
+          "V5.3"
+        ],
+        "proactive_controls": [
+          "C5"
+        ],
+        "top10_2021": [],
+        "masvs": [
+          "MASVS-CODE"
+        ]
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/LDAP_Injection_Prevention_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/LDAP_Injection_Prevention_Cheat_Sheet.html",
+      "title": "LDAP Injection Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/LDAP_Injection_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 9755,
+      "sha256": "bae2a517e5049f0af2b1ab35fa285cba4bbc7d5580a18249d9dec5e56c1fcbea",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.2",
+          "V1.3"
+        ],
+        "proactive_controls": [
+          "C4"
+        ],
+        "top10_2021": [
+          "A03"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/Mass_Assignment_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html",
+      "title": "Mass Assignment Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Mass_Assignment_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 8108,
+      "sha256": "2c5fa73dccc0078a398773fe1229d7aa22c1d7dd63f828d67b25a7e750d5302c",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V15.3:"
+        ],
+        "proactive_controls": [
+          "C5"
+        ],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/NoSQL_Security_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/NoSQL_Security_Cheat_Sheet.html",
+      "title": "NoSQL Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/NoSQL_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 7682,
+      "sha256": "afbfae3de3c06a31eda2aba2eb88a0fcf175946e6cc3c6998a47d4b51b4ce03f",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/OS_Command_Injection_Defense_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html",
+      "title": "OS Command Injection Defense Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 11969,
+      "sha256": "99682f279de7b1c3a5d63649da686374b166dce8177a7f6134dcb8de95e86624",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.2"
+        ],
+        "proactive_controls": [
+          "C5"
+        ],
+        "top10_2021": [
+          "A03"
+        ],
+        "masvs": [
+          "MASVS-CODE"
+        ]
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/Prototype_Pollution_Prevention_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Prototype_Pollution_Prevention_Cheat_Sheet.html",
+      "title": "Prototype Pollution Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Prototype_Pollution_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 2570,
+      "sha256": "9bbf8a24e0df4e83992774bf49967a257dee88a48ee26f7013ecf3a897bb3c8c",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V15.3:"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/Query_Parameterization_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Query_Parameterization_Cheat_Sheet.html",
+      "title": "Query Parameterization Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Query_Parameterization_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 8023,
+      "sha256": "ae8dfd236df6f4611ddc5609480e0d16a4342ac2a7f7283ed92fd94fd0fdc7eb",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.2"
+        ],
+        "proactive_controls": [
+          "C3"
+        ],
+        "top10_2021": [
+          "A03"
+        ],
+        "masvs": [
+          "MASVS-CODE"
+        ]
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/SQL_Injection_Prevention_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html",
+      "title": "SQL Injection Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 19684,
+      "sha256": "3278592a2465e828d965bd6f9acbe316947a3091c8312dea4480ce06c40874d3",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.2"
+        ],
+        "proactive_controls": [
+          "C3"
+        ],
+        "top10_2021": [
+          "A03"
+        ],
+        "masvs": [
+          "MASVS-CODE"
+        ]
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html",
+      "title": "Server-Side Request Forgery Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 29962,
+      "sha256": "f1420c0527436c1d5e435af0f3a7e9b16aaeb29634bed15970e030907dee7919",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.3",
+          "V1.5",
+          "V5.3",
+          "V13.1",
+          "V13.2"
+        ],
+        "proactive_controls": [
+          "C5"
+        ],
+        "top10_2021": [
+          "A10"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/XML_External_Entity_Prevention_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html",
+      "title": "XML External Entity Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 45638,
+      "sha256": "0c98561cb3866d5e1e7eb47116cc2051224370579114f2985583663354d09749",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.2",
+          "V1.3",
+          "V1.5"
+        ],
+        "proactive_controls": [
+          "C5"
+        ],
+        "top10_2021": [
+          "A05"
+        ],
+        "masvs": [
+          "MASVS-CODE"
+        ]
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/XML_Security_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/XML_Security_Cheat_Sheet.html",
+      "title": "XML Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/XML_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 43219,
+      "sha256": "a5b29dfa530addd2b8e5b4bf84e6bc4963a3c516c54885105c260b5f0b5b4d3e",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.2",
+          "V1.5"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": [
+          "MASVS-CODE"
+        ]
+      }
+    },
+    {
+      "local_path": "02_输入验证、注入与文件处理/XSS_Filter_Evasion_Cheat_Sheet.md",
+      "guide": "02_输入验证、注入与文件处理",
+      "guide_name": "所有「不可信输入 → 危险汇聚点」类缺陷的防御：输入校验，SQL／命令／LDAP／NoSQL／XML 注入，XSS 输出编码，反序列化，文件上传，批量赋值，原型污染，SSRF。",
+      "role": "cheat-sheet",
+      "parent": "02_输入验证、注入与文件处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/XSS_Filter_Evasion_Cheat_Sheet.html",
+      "title": "XSS Filter Evasion Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/XSS_Filter_Evasion_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 44919,
+      "sha256": "c61da97f0ee58c77c29ad9660356266cfccf0b18ee7b9d969966b8e13b6e35bf",
+      "saved": true,
+      "category": "02_输入验证、注入与文件处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.2"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [
+          "A03"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/AJAX_Security_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/AJAX_Security_Cheat_Sheet.html",
+      "title": "AJAX Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/AJAX_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 9279,
+      "sha256": "bb1af8146234ea7803b69fcd5a36ff12af3272f608399ef85fde15c887fed3c6",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/Browser_Extension_Vulnerabilities_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Browser_Extension_Vulnerabilities_Cheat_Sheet.html",
+      "title": "Browser Extension Security Vulnerabilities Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Browser_Extension_Vulnerabilities_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 15009,
+      "sha256": "e707ae697c7e2847c1c429d83ab7109cca697bad28c97c7dae4f7fc71571fb21",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V10.7"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/Clickjacking_Defense_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Clickjacking_Defense_Cheat_Sheet.html",
+      "title": "Clickjacking Defense Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Clickjacking_Defense_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 15642,
+      "sha256": "ea84a7e029e5f096c7029292d3c61314afdc2a4468ae1d926599d2f18e41fffb",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [
+          "C2"
+        ],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/Content_Security_Policy_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html",
+      "title": "Content Security Policy Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Content_Security_Policy_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 19425,
+      "sha256": "7f9e65e9877000d2789c0e5751465fcd5d8295f0e5d1fcf5b960f4b444dbc392",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V3.1"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [
+          "A03"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html",
+      "title": "Cross-Site Request Forgery Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 74650,
+      "sha256": "93e3871eb75ab3283b86abb0be96eeb62de3c867effb962fc7fab10f6e6946ef",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V1.3",
+          "V3.1",
+          "V3.2",
+          "V3.3",
+          "V3.4",
+          "V3.5",
+          "V3.7",
+          "V4.1"
+        ],
+        "proactive_controls": [
+          "C7"
+        ],
+        "top10_2021": [
+          "A01"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/DOM_Clobbering_Prevention_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/DOM_Clobbering_Prevention_Cheat_Sheet.html",
+      "title": "DOM Clobbering Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/DOM_Clobbering_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 13009,
+      "sha256": "25c55edf3d111f795d1c2ba73703e5619cad59241e18e4afd2bc82fd5cee6192",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V3.2"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/HTML5_Security_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html",
+      "title": "HTML5 Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/HTML5_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 16658,
+      "sha256": "c5319b11928086ea2eb590c12f473ed82a1429894260db4141b4fb0e1855f746",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V3.2",
+          "V3.4",
+          "V3.5",
+          "V14.2",
+          "V14.3"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/HTTP_Headers_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html",
+      "title": "HTTP Security Response Headers Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/HTTP_Headers_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 21752,
+      "sha256": "4f19f77d20d6731962aaf0b4aa9987bd70291ca2c83c40fc399304e79c0ab551",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/HTTP_Strict_Transport_Security_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html",
+      "title": "HTTP Strict Transport Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 4403,
+      "sha256": "43c907a7101fa0ec0713961fde206c148461248529bb3801d9ee0fcf1598c0a8",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V3.1",
+          "V3.4",
+          "V3.7"
+        ],
+        "proactive_controls": [
+          "C8"
+        ],
+        "top10_2021": [
+          "A02"
+        ],
+        "masvs": [
+          "MASVS-NETWORK"
+        ]
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/Securing_Cascading_Style_Sheets_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Securing_Cascading_Style_Sheets_Cheat_Sheet.html",
+      "title": "Securing Cascading Style Sheets Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Securing_Cascading_Style_Sheets_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 6844,
+      "sha256": "1f745a2c3f3ced07146c8c74b55a438b372edafdce6459047fcce712bcde444c",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/Third_Party_Javascript_Management_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Javascript_Management_Cheat_Sheet.html",
+      "title": "Third Party JavaScript Management Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Third_Party_Javascript_Management_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 24312,
+      "sha256": "d89aba056e140213f60c5bf25c62f8d8581b4f6b885a079e4578bb8a1cba3d7f",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V3.2",
+          "V3.6",
+          "V3.7",
+          "V15.1:",
+          "V15.2:"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [
+          "A06"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html",
+      "title": "Unvalidated Redirects and Forwards Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 8368,
+      "sha256": "f253fc9afbdc318ff9d7490ad75c1c0e5fb75e5c1c5578b5187e305ea48d0183",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V3.7",
+          "V10.4",
+          "V15.3:"
+        ],
+        "proactive_controls": [
+          "C5"
+        ],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "03_Web前端与浏览器安全/XS_Leaks_Cheat_Sheet.md",
+      "guide": "03_Web前端与浏览器安全",
+      "guide_name": "浏览器侧安全控制：CSP、安全响应头、点击劫持、HTML5、DOM 冲突、CSRF、XS-Leaks、CSS 安全、AJAX、第三方 JS 管理、HSTS、开放重定向、浏览器扩展。",
+      "role": "cheat-sheet",
+      "parent": "03_Web前端与浏览器安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/XS_Leaks_Cheat_Sheet.html",
+      "title": "Cross-site leaks Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/XS_Leaks_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 17279,
+      "sha256": "9f88475048928931a4ff77fb04b41686da5a7478a57f54bf8371456a6dea81cf",
+      "saved": true,
+      "category": "03_Web前端与浏览器安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "04_API、微服务与Web服务安全/GraphQL_Cheat_Sheet.md",
+      "guide": "04_API、微服务与Web服务安全",
+      "guide_name": "服务间与对外接口的安全：REST、GraphQL、gRPC、WebSocket、Web Service（SOAP）、微服务架构安全。",
+      "role": "cheat-sheet",
+      "parent": "04_API、微服务与Web服务安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/GraphQL_Cheat_Sheet.html",
+      "title": "GraphQL Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/GraphQL_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 29254,
+      "sha256": "244af367728c8304ec4d269eb920280bdb7e5b43994d124e27e3ff8c645307a9",
+      "saved": true,
+      "category": "04_API、微服务与Web服务安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V4.3"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "04_API、微服务与Web服务安全/Microservices_Security_Cheat_Sheet.md",
+      "guide": "04_API、微服务与Web服务安全",
+      "guide_name": "服务间与对外接口的安全：REST、GraphQL、gRPC、WebSocket、Web Service（SOAP）、微服务架构安全。",
+      "role": "cheat-sheet",
+      "parent": "04_API、微服务与Web服务安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Microservices_Security_Cheat_Sheet.html",
+      "title": "Microservices Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Microservices_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 22996,
+      "sha256": "7fda0ca421686d11241af2f3a2420876dd8558ac63f37f350fdb6ac0547cb6c0",
+      "saved": true,
+      "category": "04_API、微服务与Web服务安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V2.2",
+          "V11.7"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "04_API、微服务与Web服务安全/REST_Assessment_Cheat_Sheet.md",
+      "guide": "04_API、微服务与Web服务安全",
+      "guide_name": "服务间与对外接口的安全：REST、GraphQL、gRPC、WebSocket、Web Service（SOAP）、微服务架构安全。",
+      "role": "cheat-sheet",
+      "parent": "04_API、微服务与Web服务安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/REST_Assessment_Cheat_Sheet.html",
+      "title": "REST Assessment Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/REST_Assessment_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 6544,
+      "sha256": "2be213a7ea90e263a7c63a825c884983ed7c382a641d68880de2daba2e60a8a9",
+      "saved": true,
+      "category": "04_API、微服务与Web服务安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V4.1"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "04_API、微服务与Web服务安全/REST_Security_Cheat_Sheet.md",
+      "guide": "04_API、微服务与Web服务安全",
+      "guide_name": "服务间与对外接口的安全：REST、GraphQL、gRPC、WebSocket、Web Service（SOAP）、微服务架构安全。",
+      "role": "cheat-sheet",
+      "parent": "04_API、微服务与Web服务安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html",
+      "title": "REST Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/REST_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 22453,
+      "sha256": "9eb45ca18368cfc7700200416df94b4b820b9c74f9555ee99c918503a2f8a52c",
+      "saved": true,
+      "category": "04_API、微服务与Web服务安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V4.1",
+          "V4.2",
+          "V9.2"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": [
+          "MASVS-NETWORK"
+        ]
+      }
+    },
+    {
+      "local_path": "04_API、微服务与Web服务安全/WebSocket_Security_Cheat_Sheet.md",
+      "guide": "04_API、微服务与Web服务安全",
+      "guide_name": "服务间与对外接口的安全：REST、GraphQL、gRPC、WebSocket、Web Service（SOAP）、微服务架构安全。",
+      "role": "cheat-sheet",
+      "parent": "04_API、微服务与Web服务安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html",
+      "title": "WebSocket Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/WebSocket_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 13017,
+      "sha256": "94264bbadca4742aea951d6519f6a5857d3088fac7593cde86075f1954ce76e5",
+      "saved": true,
+      "category": "04_API、微服务与Web服务安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V4.4"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "04_API、微服务与Web服务安全/Web_Service_Security_Cheat_Sheet.md",
+      "guide": "04_API、微服务与Web服务安全",
+      "guide_name": "服务间与对外接口的安全：REST、GraphQL、gRPC、WebSocket、Web Service（SOAP）、微服务架构安全。",
+      "role": "cheat-sheet",
+      "parent": "04_API、微服务与Web服务安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Web_Service_Security_Cheat_Sheet.html",
+      "title": "Web Service Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Web_Service_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 10053,
+      "sha256": "8cad7db91846c7445d12c7a88147aec6b3fce52aa3600ed427759c757c938fea",
+      "saved": true,
+      "category": "04_API、微服务与Web服务安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V2.2",
+          "V4.1",
+          "V4.2"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": [
+          "MASVS-NETWORK"
+        ]
+      }
+    },
+    {
+      "local_path": "04_API、微服务与Web服务安全/gRPC_Security_Cheat_Sheet.md",
+      "guide": "04_API、微服务与Web服务安全",
+      "guide_name": "服务间与对外接口的安全：REST、GraphQL、gRPC、WebSocket、Web Service（SOAP）、微服务架构安全。",
+      "role": "cheat-sheet",
+      "parent": "04_API、微服务与Web服务安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/gRPC_Security_Cheat_Sheet.html",
+      "title": "gRPC Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/gRPC_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 13842,
+      "sha256": "e819103ea471b065b199b82527fd95fda595d3eed78d50dbf0bfe5bfc494e161",
+      "saved": true,
+      "category": "04_API、微服务与Web服务安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "05_身份认证与会话管理/Authentication_Cheat_Sheet.md",
+      "guide": "05_身份认证与会话管理",
+      "guide_name": "身份认证与会话全生命周期：认证、口令存储、多因素认证、忘记密码、安全问题、撞库防护、邮箱验证、JAAS、会话管理、Cookie 窃取缓解。",
+      "role": "cheat-sheet",
+      "parent": "05_身份认证与会话管理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html",
+      "title": "Authentication Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Authentication_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 39263,
+      "sha256": "8679ed5279771609178ad959ee64b4f8098b3b1f8808a7a483b628ba5dc8ecbc",
+      "saved": true,
+      "category": "05_身份认证与会话管理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V6.2",
+          "V6.3",
+          "V6.5",
+          "V6.7",
+          "V6.8"
+        ],
+        "proactive_controls": [
+          "C6"
+        ],
+        "top10_2021": [
+          "A07"
+        ],
+        "masvs": [
+          "MASVS-AUTH"
+        ]
+      }
+    },
+    {
+      "local_path": "05_身份认证与会话管理/Choosing_and_Using_Security_Questions_Cheat_Sheet.md",
+      "guide": "05_身份认证与会话管理",
+      "guide_name": "身份认证与会话全生命周期：认证、口令存储、多因素认证、忘记密码、安全问题、撞库防护、邮箱验证、JAAS、会话管理、Cookie 窃取缓解。",
+      "role": "cheat-sheet",
+      "parent": "05_身份认证与会话管理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Choosing_and_Using_Security_Questions_Cheat_Sheet.html",
+      "title": "Choosing and Using Security Questions Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Choosing_and_Using_Security_Questions_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 12495,
+      "sha256": "69f194c4037163379e263ac248c8e50c55646a7ee3adc161324d65d435b3316d",
+      "saved": true,
+      "category": "05_身份认证与会话管理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V6.4"
+        ],
+        "proactive_controls": [
+          "C6"
+        ],
+        "top10_2021": [
+          "A07"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "05_身份认证与会话管理/Cookie_Theft_Mitigation_Cheat_Sheet.md",
+      "guide": "05_身份认证与会话管理",
+      "guide_name": "身份认证与会话全生命周期：认证、口令存储、多因素认证、忘记密码、安全问题、撞库防护、邮箱验证、JAAS、会话管理、Cookie 窃取缓解。",
+      "role": "cheat-sheet",
+      "parent": "05_身份认证与会话管理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Cookie_Theft_Mitigation_Cheat_Sheet.html",
+      "title": "Cookie Theft Mitigation Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Cookie_Theft_Mitigation_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 7682,
+      "sha256": "b4db3481dc33a07f403360dd2596ab7d354ca84509bbe4539cea284e27d8e344",
+      "saved": true,
+      "category": "05_身份认证与会话管理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "05_身份认证与会话管理/Credential_Stuffing_Prevention_Cheat_Sheet.md",
+      "guide": "05_身份认证与会话管理",
+      "guide_name": "身份认证与会话全生命周期：认证、口令存储、多因素认证、忘记密码、安全问题、撞库防护、邮箱验证、JAAS、会话管理、Cookie 窃取缓解。",
+      "role": "cheat-sheet",
+      "parent": "05_身份认证与会话管理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Credential_Stuffing_Prevention_Cheat_Sheet.html",
+      "title": "Credential Stuffing Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Credential_Stuffing_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 17940,
+      "sha256": "c609ffd6095cd5035c72bd50f82a8fff58584259c287a1baf6b718ae6f043d27",
+      "saved": true,
+      "category": "05_身份认证与会话管理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V6.1",
+          "V6.3"
+        ],
+        "proactive_controls": [
+          "C7"
+        ],
+        "top10_2021": [
+          "A07"
+        ],
+        "masvs": [
+          "MASVS-AUTH"
+        ]
+      }
+    },
+    {
+      "local_path": "05_身份认证与会话管理/Email_Validation_and_Verification_Cheat_Sheet.md",
+      "guide": "05_身份认证与会话管理",
+      "guide_name": "身份认证与会话全生命周期：认证、口令存储、多因素认证、忘记密码、安全问题、撞库防护、邮箱验证、JAAS、会话管理、Cookie 窃取缓解。",
+      "role": "cheat-sheet",
+      "parent": "05_身份认证与会话管理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Email_Validation_and_Verification_Cheat_Sheet.html",
+      "title": "Email Validation and Verification in Identity Systems Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Email_Validation_and_Verification_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 5573,
+      "sha256": "5a6ec2d7c9b68d1150b4a68d6b8be5da7ef02faec8df1eb3364055e0571d2436",
+      "saved": true,
+      "category": "05_身份认证与会话管理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "05_身份认证与会话管理/Forgot_Password_Cheat_Sheet.md",
+      "guide": "05_身份认证与会话管理",
+      "guide_name": "身份认证与会话全生命周期：认证、口令存储、多因素认证、忘记密码、安全问题、撞库防护、邮箱验证、JAAS、会话管理、Cookie 窃取缓解。",
+      "role": "cheat-sheet",
+      "parent": "05_身份认证与会话管理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html",
+      "title": "Forgot Password Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Forgot_Password_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 10335,
+      "sha256": "1ec11234b526dfe08e28d66d51d29b3effe2c0ca9bf641b5a1be0d6422043b8d",
+      "saved": true,
+      "category": "05_身份认证与会话管理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V6.3",
+          "V6.4",
+          "V6.6"
+        ],
+        "proactive_controls": [
+          "C6"
+        ],
+        "top10_2021": [
+          "A07"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "05_身份认证与会话管理/JAAS_Cheat_Sheet.md",
+      "guide": "05_身份认证与会话管理",
+      "guide_name": "身份认证与会话全生命周期：认证、口令存储、多因素认证、忘记密码、安全问题、撞库防护、邮箱验证、JAAS、会话管理、Cookie 窃取缓解。",
+      "role": "cheat-sheet",
+      "parent": "05_身份认证与会话管理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/JAAS_Cheat_Sheet.html",
+      "title": "JAAS Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/JAAS_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 8256,
+      "sha256": "d7067a946f29bf02d36366c9585c19652f50de7e35342072bb2f164f5d6670ed",
+      "saved": true,
+      "category": "05_身份认证与会话管理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [
+          "C6"
+        ],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "05_身份认证与会话管理/Multifactor_Authentication_Cheat_Sheet.md",
+      "guide": "05_身份认证与会话管理",
+      "guide_name": "身份认证与会话全生命周期：认证、口令存储、多因素认证、忘记密码、安全问题、撞库防护、邮箱验证、JAAS、会话管理、Cookie 窃取缓解。",
+      "role": "cheat-sheet",
+      "parent": "05_身份认证与会话管理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html",
+      "title": "Multifactor Authentication Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Multifactor_Authentication_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 38796,
+      "sha256": "a85baf4d995e5d2bc8140da94e5e50c016729da5e324d73f809c8e0a84038869",
+      "saved": true,
+      "category": "05_身份认证与会话管理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V6.4",
+          "V6.5",
+          "V6.6",
+          "V6.7"
+        ],
+        "proactive_controls": [
+          "C6",
+          "C7"
+        ],
+        "top10_2021": [
+          "A07"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "05_身份认证与会话管理/Password_Storage_Cheat_Sheet.md",
+      "guide": "05_身份认证与会话管理",
+      "guide_name": "身份认证与会话全生命周期：认证、口令存储、多因素认证、忘记密码、安全问题、撞库防护、邮箱验证、JAAS、会话管理、Cookie 窃取缓解。",
+      "role": "cheat-sheet",
+      "parent": "05_身份认证与会话管理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html",
+      "title": "Password Storage Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Password_Storage_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 21050,
+      "sha256": "84e3c0c54d6d8d9b7c259e4efcb2821ca7fe545358ea6a0e5a9be60ad2d3ecf4",
+      "saved": true,
+      "category": "05_身份认证与会话管理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V6.5",
+          "V11.4"
+        ],
+        "proactive_controls": [
+          "C6"
+        ],
+        "top10_2021": [
+          "A07"
+        ],
+        "masvs": [
+          "MASVS-STORAGE"
+        ]
+      }
+    },
+    {
+      "local_path": "05_身份认证与会话管理/Session_Management_Cheat_Sheet.md",
+      "guide": "05_身份认证与会话管理",
+      "guide_name": "身份认证与会话全生命周期：认证、口令存储、多因素认证、忘记密码、安全问题、撞库防护、邮箱验证、JAAS、会话管理、Cookie 窃取缓解。",
+      "role": "cheat-sheet",
+      "parent": "05_身份认证与会话管理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html",
+      "title": "Session Management Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Session_Management_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 54761,
+      "sha256": "bf833f02037fe187eb5bd8ae33ed3d25a416fc3eb71daaf33e537d7353b0f284",
+      "saved": true,
+      "category": "05_身份认证与会话管理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V3.3",
+          "V7:",
+          "V7.1",
+          "V7.2",
+          "V7.3",
+          "V7.4",
+          "V7.5",
+          "V7.6",
+          "V8.2",
+          "V16.2:"
+        ],
+        "proactive_controls": [
+          "C6"
+        ],
+        "top10_2021": [
+          "A07"
+        ],
+        "masvs": [
+          "MASVS-AUTH"
+        ]
+      }
+    },
+    {
+      "local_path": "06_授权与访问控制/Authorization_Cheat_Sheet.md",
+      "guide": "06_授权与访问控制",
+      "guide_name": "授权模型与访问控制实现：通用授权、IDOR、事务授权、多租户隔离，以及授权的自动化测试与回归测试。",
+      "role": "cheat-sheet",
+      "parent": "06_授权与访问控制/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html",
+      "title": "Authorization Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Authorization_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 32657,
+      "sha256": "2ae55d343f04a86cf68c79a40bd56f912498811e9b8d59c21ebc80b3623b2d81",
+      "saved": true,
+      "category": "06_授权与访问控制",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V8.1",
+          "V8.2",
+          "V8.4",
+          "V16.3:"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [
+          "A01"
+        ],
+        "masvs": [
+          "MASVS-AUTH"
+        ]
+      }
+    },
+    {
+      "local_path": "06_授权与访问控制/Authorization_Regression_Testing_Cheat_Sheet.md",
+      "guide": "06_授权与访问控制",
+      "guide_name": "授权模型与访问控制实现：通用授权、IDOR、事务授权、多租户隔离，以及授权的自动化测试与回归测试。",
+      "role": "cheat-sheet",
+      "parent": "06_授权与访问控制/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Regression_Testing_Cheat_Sheet.html",
+      "title": "Authorization Regression Testing Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Authorization_Regression_Testing_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 13360,
+      "sha256": "51322baf40c917f8cbf7a7b2e8da409830788032d5377352d75c550b5d244269",
+      "saved": true,
+      "category": "06_授权与访问控制",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "06_授权与访问控制/Authorization_Testing_Automation_Cheat_Sheet.md",
+      "guide": "06_授权与访问控制",
+      "guide_name": "授权模型与访问控制实现：通用授权、IDOR、事务授权、多租户隔离，以及授权的自动化测试与回归测试。",
+      "role": "cheat-sheet",
+      "parent": "06_授权与访问控制/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Testing_Automation_Cheat_Sheet.html",
+      "title": "Authorization Testing Automation Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Authorization_Testing_Automation_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 24764,
+      "sha256": "1c96145d08dee161dbde7b7074056c1edf91d5774da9aef8c783fdec8cdc3077",
+      "saved": true,
+      "category": "06_授权与访问控制",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V8.1"
+        ],
+        "proactive_controls": [
+          "C7"
+        ],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "06_授权与访问控制/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.md",
+      "guide": "06_授权与访问控制",
+      "guide_name": "授权模型与访问控制实现：通用授权、IDOR、事务授权、多租户隔离，以及授权的自动化测试与回归测试。",
+      "role": "cheat-sheet",
+      "parent": "06_授权与访问控制/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html",
+      "title": "Insecure Direct Object Reference Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 5773,
+      "sha256": "b54f6d90294c4996623f9acee58928fc30bfa34ea1be2704f7101c0f2e1764ee",
+      "saved": true,
+      "category": "06_授权与访问控制",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V8.2"
+        ],
+        "proactive_controls": [
+          "C7"
+        ],
+        "top10_2021": [
+          "A01"
+        ],
+        "masvs": [
+          "MASVS-CODE"
+        ]
+      }
+    },
+    {
+      "local_path": "06_授权与访问控制/Multi_Tenant_Security_Cheat_Sheet.md",
+      "guide": "06_授权与访问控制",
+      "guide_name": "授权模型与访问控制实现：通用授权、IDOR、事务授权、多租户隔离，以及授权的自动化测试与回归测试。",
+      "role": "cheat-sheet",
+      "parent": "06_授权与访问控制/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Multi_Tenant_Security_Cheat_Sheet.html",
+      "title": "Multi-Tenant Application Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Multi_Tenant_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 48961,
+      "sha256": "344dff9c2ab3b268e6498eafb69711e73eeebabda9927bac7eb5c9f86d9c14f8",
+      "saved": true,
+      "category": "06_授权与访问控制",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V8.4"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "06_授权与访问控制/Transaction_Authorization_Cheat_Sheet.md",
+      "guide": "06_授权与访问控制",
+      "guide_name": "授权模型与访问控制实现：通用授权、IDOR、事务授权、多租户隔离，以及授权的自动化测试与回归测试。",
+      "role": "cheat-sheet",
+      "parent": "06_授权与访问控制/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Transaction_Authorization_Cheat_Sheet.html",
+      "title": "Transaction Authorization Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Transaction_Authorization_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 18710,
+      "sha256": "b42767b62a816ca870120b439d32acb043bf48d65ef2a19a86f6e1b64612e70a",
+      "saved": true,
+      "category": "06_授权与访问控制",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V6.5",
+          "V8.3",
+          "V15.4:"
+        ],
+        "proactive_controls": [
+          "C7"
+        ],
+        "top10_2021": [
+          "A01"
+        ],
+        "masvs": [
+          "MASVS-AUTH"
+        ]
+      }
+    },
+    {
+      "local_path": "07_令牌、联合身份与密码学/Cryptographic_Storage_Cheat_Sheet.md",
+      "guide": "07_令牌、联合身份与密码学",
+      "guide_name": "自包含令牌与联邦身份（JWT、SAML、OAuth 2.0／OIDC），以及加密存储、密钥管理、机密信息管理。",
+      "role": "cheat-sheet",
+      "parent": "07_令牌、联合身份与密码学/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html",
+      "title": "Cryptographic Storage Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Cryptographic_Storage_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 18618,
+      "sha256": "8cdf645149a3610533edda377b64347be26ef1dd8842426a080ee91e37f249d3",
+      "saved": true,
+      "category": "07_令牌、联合身份与密码学",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V11.1",
+          "V11.2",
+          "V11.3",
+          "V11.5",
+          "V13.3",
+          "V14.1"
+        ],
+        "proactive_controls": [
+          "C8"
+        ],
+        "top10_2021": [
+          "A02"
+        ],
+        "masvs": [
+          "MASVS-CRYPTO",
+          "MASVS-STORAGE"
+        ]
+      }
+    },
+    {
+      "local_path": "07_令牌、联合身份与密码学/JSON_Web_Token_Cheat_Sheet.md",
+      "guide": "07_令牌、联合身份与密码学",
+      "guide_name": "自包含令牌与联邦身份（JWT、SAML、OAuth 2.0／OIDC），以及加密存储、密钥管理、机密信息管理。",
+      "role": "cheat-sheet",
+      "parent": "07_令牌、联合身份与密码学/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html",
+      "title": "JSON Web Token Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/JSON_Web_Token_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 24403,
+      "sha256": "fd90c570d2118a90e7f09eca142ccc41a4dd7ba517cac8a1f5658bcf98c36946",
+      "saved": true,
+      "category": "07_令牌、联合身份与密码学",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V9.1"
+        ],
+        "proactive_controls": [
+          "C6"
+        ],
+        "top10_2021": [
+          "A07"
+        ],
+        "masvs": [
+          "MASVS-AUTH"
+        ]
+      }
+    },
+    {
+      "local_path": "07_令牌、联合身份与密码学/Key_Management_Cheat_Sheet.md",
+      "guide": "07_令牌、联合身份与密码学",
+      "guide_name": "自包含令牌与联邦身份（JWT、SAML、OAuth 2.0／OIDC），以及加密存储、密钥管理、机密信息管理。",
+      "role": "cheat-sheet",
+      "parent": "07_令牌、联合身份与密码学/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Key_Management_Cheat_Sheet.html",
+      "title": "Key Management Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Key_Management_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 23772,
+      "sha256": "0aa16ed52aad29742fae54c9d0bc15aaf9a2e52408aac02b1ecaf35ed219c63c",
+      "saved": true,
+      "category": "07_令牌、联合身份与密码学",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V11.1",
+          "V11.3",
+          "V11.7",
+          "V13.3"
+        ],
+        "proactive_controls": [
+          "C8"
+        ],
+        "top10_2021": [
+          "A02"
+        ],
+        "masvs": [
+          "MASVS-CRYPTO"
+        ]
+      }
+    },
+    {
+      "local_path": "07_令牌、联合身份与密码学/OAuth2_Cheat_Sheet.md",
+      "guide": "07_令牌、联合身份与密码学",
+      "guide_name": "自包含令牌与联邦身份（JWT、SAML、OAuth 2.0／OIDC），以及加密存储、密钥管理、机密信息管理。",
+      "role": "cheat-sheet",
+      "parent": "07_令牌、联合身份与密码学/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/OAuth2_Cheat_Sheet.html",
+      "title": "OAuth 2.0 Protocol Cheatsheet",
+      "source_repo_path": "master/cheatsheets/OAuth2_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 15560,
+      "sha256": "d6a52ddd4c7948bf3a8b97e3bdfbf6c456eb976bf81413a64d3a1f92c70ba063",
+      "saved": true,
+      "category": "07_令牌、联合身份与密码学",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V10.1",
+          "V10.2",
+          "V10.3",
+          "V10.4",
+          "V10.5",
+          "V10.6"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "07_令牌、联合身份与密码学/SAML_Security_Cheat_Sheet.md",
+      "guide": "07_令牌、联合身份与密码学",
+      "guide_name": "自包含令牌与联邦身份（JWT、SAML、OAuth 2.0／OIDC），以及加密存储、密钥管理、机密信息管理。",
+      "role": "cheat-sheet",
+      "parent": "07_令牌、联合身份与密码学/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/SAML_Security_Cheat_Sheet.html",
+      "title": "SAML Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/SAML_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 30868,
+      "sha256": "4d8365f4667b447ac8bf198c5cd9b5695b844cdeb23b77a7c7583c1649e0662d",
+      "saved": true,
+      "category": "07_令牌、联合身份与密码学",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V9.1"
+        ],
+        "proactive_controls": [
+          "C6"
+        ],
+        "top10_2021": [
+          "A07"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "07_令牌、联合身份与密码学/Secrets_Management_Cheat_Sheet.md",
+      "guide": "07_令牌、联合身份与密码学",
+      "guide_name": "自包含令牌与联邦身份（JWT、SAML、OAuth 2.0／OIDC），以及加密存储、密钥管理、机密信息管理。",
+      "role": "cheat-sheet",
+      "parent": "07_令牌、联合身份与密码学/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html",
+      "title": "Secrets Management Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Secrets_Management_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 65442,
+      "sha256": "fe573faf17fd7121d71332a6f0e0cd9569b77d8d8d89879267e9254a491dd44c",
+      "saved": true,
+      "category": "07_令牌、联合身份与密码学",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V11.7"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [
+          "A02"
+        ],
+        "masvs": [
+          "MASVS-STORAGE"
+        ]
+      }
+    },
+    {
+      "local_path": "08_传输层、网络与数据保护/Database_Security_Cheat_Sheet.md",
+      "guide": "08_传输层、网络与数据保护",
+      "guide_name": "传输层与网络层防护（TLS、证书／公钥固定、网络分段），以及数据库安全配置与用户隐私保护。",
+      "role": "cheat-sheet",
+      "parent": "08_传输层、网络与数据保护/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Database_Security_Cheat_Sheet.html",
+      "title": "Database Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Database_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 9671,
+      "sha256": "af9ae8db49604f592347a7f4faa8e4d9ed5d4e1c5e56a4a91c1bd1cc9a3de2a6",
+      "saved": true,
+      "category": "08_传输层、网络与数据保护",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "08_传输层、网络与数据保护/Network_Segmentation_Cheat_Sheet.md",
+      "guide": "08_传输层、网络与数据保护",
+      "guide_name": "传输层与网络层防护（TLS、证书／公钥固定、网络分段），以及数据库安全配置与用户隐私保护。",
+      "role": "cheat-sheet",
+      "parent": "08_传输层、网络与数据保护/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Network_Segmentation_Cheat_Sheet.html",
+      "title": "Network segmentation Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Network_Segmentation_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 9652,
+      "sha256": "87ec63d8c7fcd0f3a9b2ad33341fb8545ffc673c794eef03653ddf6fdbc08d2e",
+      "saved": true,
+      "category": "08_传输层、网络与数据保护",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "08_传输层、网络与数据保护/Pinning_Cheat_Sheet.md",
+      "guide": "08_传输层、网络与数据保护",
+      "guide_name": "传输层与网络层防护（TLS、证书／公钥固定、网络分段），以及数据库安全配置与用户隐私保护。",
+      "role": "cheat-sheet",
+      "parent": "08_传输层、网络与数据保护/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Pinning_Cheat_Sheet.html",
+      "title": "Pinning Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Pinning_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 16580,
+      "sha256": "f1cdc2514cdb960953e96bfa6f3840f315938954cc3f8a422408f1e69eed6890",
+      "saved": true,
+      "category": "08_传输层、网络与数据保护",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [
+          "C8"
+        ],
+        "top10_2021": [
+          "A02"
+        ],
+        "masvs": [
+          "MASVS-NETWORK"
+        ]
+      }
+    },
+    {
+      "local_path": "08_传输层、网络与数据保护/Transport_Layer_Security_Cheat_Sheet.md",
+      "guide": "08_传输层、网络与数据保护",
+      "guide_name": "传输层与网络层防护（TLS、证书／公钥固定、网络分段），以及数据库安全配置与用户隐私保护。",
+      "role": "cheat-sheet",
+      "parent": "08_传输层、网络与数据保护/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html",
+      "title": "Transport Layer Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Transport_Layer_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 24406,
+      "sha256": "32d27d96b7f92ea9437d95bbc3d926b6579fadd5ad0662d8b2daf170035d21e5",
+      "saved": true,
+      "category": "08_传输层、网络与数据保护",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V3.3",
+          "V4.1",
+          "V4.4",
+          "V10.3",
+          "V10.4",
+          "V11.6",
+          "V12.1",
+          "V12.2",
+          "V12.3",
+          "V17.2"
+        ],
+        "proactive_controls": [
+          "C8"
+        ],
+        "top10_2021": [
+          "A02"
+        ],
+        "masvs": [
+          "MASVS-NETWORK"
+        ]
+      }
+    },
+    {
+      "local_path": "08_传输层、网络与数据保护/User_Privacy_Protection_Cheat_Sheet.md",
+      "guide": "08_传输层、网络与数据保护",
+      "guide_name": "传输层与网络层防护（TLS、证书／公钥固定、网络分段），以及数据库安全配置与用户隐私保护。",
+      "role": "cheat-sheet",
+      "parent": "08_传输层、网络与数据保护/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/User_Privacy_Protection_Cheat_Sheet.html",
+      "title": "User Privacy Protection Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/User_Privacy_Protection_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 11517,
+      "sha256": "142f829b586aade4e27c8a4b9589720f28100e65270f844ecdddf4ac6a954938",
+      "saved": true,
+      "category": "08_传输层、网络与数据保护",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V14.1",
+          "V14.2"
+        ],
+        "proactive_controls": [
+          "C8"
+        ],
+        "top10_2021": [],
+        "masvs": [
+          "MASVS-PRIVACY"
+        ]
+      }
+    },
+    {
+      "local_path": "09_供应链与依赖安全/Dependency_Graph_SBOM_Cheat_Sheet.md",
+      "guide": "09_供应链与依赖安全",
+      "guide_name": "软件供应链、SBOM、易受攻击依赖管理，以及 NPM 包管理安全最佳实践。",
+      "role": "cheat-sheet",
+      "parent": "09_供应链与依赖安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Dependency_Graph_SBOM_Cheat_Sheet.html",
+      "title": "Dependency Graph & SBOM Best Practices Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Dependency_Graph_SBOM_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 9148,
+      "sha256": "72b6987785e0ea167f9a698fe5f9804b5c53694e3b67301f6c50f2d2d4bd2563",
+      "saved": true,
+      "category": "09_供应链与依赖安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V15.1:"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "09_供应链与依赖安全/NPM_Security_Cheat_Sheet.md",
+      "guide": "09_供应链与依赖安全",
+      "guide_name": "软件供应链、SBOM、易受攻击依赖管理，以及 NPM 包管理安全最佳实践。",
+      "role": "cheat-sheet",
+      "parent": "09_供应链与依赖安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/NPM_Security_Cheat_Sheet.html",
+      "title": "NPM Security best practices",
+      "source_repo_path": "master/cheatsheets/NPM_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 27414,
+      "sha256": "c2b85a48744f6ef59d3f7521630d2433dc83173101bf2b0a3ac1723919877c09",
+      "saved": true,
+      "category": "09_供应链与依赖安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V13.4"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [
+          "A06"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "09_供应链与依赖安全/Software_Supply_Chain_Security_Cheat_Sheet.md",
+      "guide": "09_供应链与依赖安全",
+      "guide_name": "软件供应链、SBOM、易受攻击依赖管理，以及 NPM 包管理安全最佳实践。",
+      "role": "cheat-sheet",
+      "parent": "09_供应链与依赖安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Software_Supply_Chain_Security_Cheat_Sheet.html",
+      "title": "Software Supply Chain Security",
+      "source_repo_path": "master/cheatsheets/Software_Supply_Chain_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 22358,
+      "sha256": "1ba698017717b422f8bf4033dbab1be4ed65d6e6532d7268b89ecc0569c87415",
+      "saved": true,
+      "category": "09_供应链与依赖安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V15.1:",
+          "V15.2:"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "09_供应链与依赖安全/Vulnerable_Dependency_Management_Cheat_Sheet.md",
+      "guide": "09_供应链与依赖安全",
+      "guide_name": "软件供应链、SBOM、易受攻击依赖管理，以及 NPM 包管理安全最佳实践。",
+      "role": "cheat-sheet",
+      "parent": "09_供应链与依赖安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Vulnerable_Dependency_Management_Cheat_Sheet.html",
+      "title": "Vulnerable Dependency Management Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Vulnerable_Dependency_Management_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 24536,
+      "sha256": "6759a779f89dbef6a5520b5df4424b156328ab9b715103e25f09e99d8d6d00d5",
+      "saved": true,
+      "category": "09_供应链与依赖安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V15.2:"
+        ],
+        "proactive_controls": [
+          "C2"
+        ],
+        "top10_2021": [
+          "A06"
+        ],
+        "masvs": [
+          "MASVS-CODE"
+        ]
+      }
+    },
+    {
+      "local_path": "10_日志、监控与错误处理/Error_Handling_Cheat_Sheet.md",
+      "guide": "10_日志、监控与错误处理",
+      "guide_name": "安全日志记录、日志词汇规范、日志保护与错误处理。",
+      "role": "cheat-sheet",
+      "parent": "10_日志、监控与错误处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html",
+      "title": "Error Handling Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Error_Handling_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 18326,
+      "sha256": "d46e94e579411c0bd67bab4df9cbec57d9a8600edc16e04e3fa70366b9920dcd",
+      "saved": true,
+      "category": "10_日志、监控与错误处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V16.5:"
+        ],
+        "proactive_controls": [
+          "C10"
+        ],
+        "top10_2021": [],
+        "masvs": [
+          "MASVS-CODE"
+        ]
+      }
+    },
+    {
+      "local_path": "10_日志、监控与错误处理/Logging_Cheat_Sheet.md",
+      "guide": "10_日志、监控与错误处理",
+      "guide_name": "安全日志记录、日志词汇规范、日志保护与错误处理。",
+      "role": "cheat-sheet",
+      "parent": "10_日志、监控与错误处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html",
+      "title": "Logging Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Logging_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 28590,
+      "sha256": "675a514cc4045dbf42ae8eaa85124f20d498525655d54a337785fd2e632ec960",
+      "saved": true,
+      "category": "10_日志、监控与错误处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V10.7",
+          "V16.1:",
+          "V16.2:",
+          "V16.3:",
+          "V16.4:"
+        ],
+        "proactive_controls": [
+          "C9"
+        ],
+        "top10_2021": [
+          "A09"
+        ],
+        "masvs": [
+          "MASVS-CODE",
+          "MASVS-STORAGE"
+        ]
+      }
+    },
+    {
+      "local_path": "10_日志、监控与错误处理/Logging_Vocabulary_Cheat_Sheet.md",
+      "guide": "10_日志、监控与错误处理",
+      "guide_name": "安全日志记录、日志词汇规范、日志保护与错误处理。",
+      "role": "cheat-sheet",
+      "parent": "10_日志、监控与错误处理/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Vocabulary_Cheat_Sheet.html",
+      "title": "Application Logging Vocabulary Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Logging_Vocabulary_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 39546,
+      "sha256": "3ddf4cd1ba99e2ebe3f17fc6d64acc4d0e7fe250c1d0277da8af5e4fea3de107",
+      "saved": true,
+      "category": "10_日志、监控与错误处理",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V16.1:",
+          "V16.3:"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [
+          "A09"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "11_业务逻辑与反自动化/Bot_Management_and_Anti-Automation_Cheat_Sheet.md",
+      "guide": "11_业务逻辑与反自动化",
+      "guide_name": "业务逻辑缺陷、拒绝服务，以及机器人流量与自动化滥用治理。",
+      "role": "cheat-sheet",
+      "parent": "11_业务逻辑与反自动化/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Bot_Management_and_Anti-Automation_Cheat_Sheet.html",
+      "title": "Bot Management and Anti-Automation Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Bot_Management_and_Anti-Automation_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 17412,
+      "sha256": "11c9c112406a0cbde519da572f55d3278d9b16e5bac006ea98ceb6e75ae1e778",
+      "saved": true,
+      "category": "11_业务逻辑与反自动化",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "11_业务逻辑与反自动化/Business_Logic_Security_Cheat_Sheet.md",
+      "guide": "11_业务逻辑与反自动化",
+      "guide_name": "业务逻辑缺陷、拒绝服务，以及机器人流量与自动化滥用治理。",
+      "role": "cheat-sheet",
+      "parent": "11_业务逻辑与反自动化/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Business_Logic_Security_Cheat_Sheet.html",
+      "title": "Business Logic Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Business_Logic_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 27265,
+      "sha256": "f600cf723e9e75d82220f5f6728d8fb85a9213a1e14ec3147668d29cb0421494",
+      "saved": true,
+      "category": "11_业务逻辑与反自动化",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "11_业务逻辑与反自动化/Denial_of_Service_Cheat_Sheet.md",
+      "guide": "11_业务逻辑与反自动化",
+      "guide_name": "业务逻辑缺陷、拒绝服务，以及机器人流量与自动化滥用治理。",
+      "role": "cheat-sheet",
+      "parent": "11_业务逻辑与反自动化/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html",
+      "title": "Denial of Service Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Denial_of_Service_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 15030,
+      "sha256": "16301aad054d4f52623019de0eb8726a77f589d0b1b26cd6a9ecbb8f050124bd",
+      "saved": true,
+      "category": "11_业务逻辑与反自动化",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [
+          "V2.4"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [
+          "A07",
+          "A11"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "12_编程语言与框架专项/.NET/DotNet_Security_Cheat_Sheet.md",
+      "guide": "12_编程语言与框架专项",
+      "guide_name": "面向具体语言／框架的落地清单；二级目录按技术栈划分。",
+      "role": "cheat-sheet",
+      "parent": "12_编程语言与框架专项/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/DotNet_Security_Cheat_Sheet.html",
+      "title": "DotNet Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/DotNet_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 58734,
+      "sha256": "d5653303323dbcf8f2ef61d56165d792f3d20c8f20de5f90f09aae12c16ee3d5",
+      "saved": true,
+      "category": "12_编程语言与框架专项",
+      "subcategory": ".NET",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "12_编程语言与框架专项/JavaScript与TypeScript/Nextjs_Security_Cheat_Sheet.md",
+      "guide": "12_编程语言与框架专项",
+      "guide_name": "面向具体语言／框架的落地清单；二级目录按技术栈划分。",
+      "role": "cheat-sheet",
+      "parent": "12_编程语言与框架专项/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Nextjs_Security_Cheat_Sheet.html",
+      "title": "Next.js Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Nextjs_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 20097,
+      "sha256": "6f22820eedf11c539528c07837b90e48833a93156f897464f9dd62e56339532a",
+      "saved": true,
+      "category": "12_编程语言与框架专项",
+      "subcategory": "JavaScript与TypeScript",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "12_编程语言与框架专项/JavaScript与TypeScript/Nodejs_Security_Cheat_Sheet.md",
+      "guide": "12_编程语言与框架专项",
+      "guide_name": "面向具体语言／框架的落地清单；二级目录按技术栈划分。",
+      "role": "cheat-sheet",
+      "parent": "12_编程语言与框架专项/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Nodejs_Security_Cheat_Sheet.html",
+      "title": "NodeJS Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Nodejs_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 41235,
+      "sha256": "c1e52192430d486a1d8397ed6a547f640037c90205c762b0362297fc5fe1819a",
+      "saved": true,
+      "category": "12_编程语言与框架专项",
+      "subcategory": "JavaScript与TypeScript",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "12_编程语言与框架专项/Java与C系/C-Based_Toolchain_Hardening_Cheat_Sheet.md",
+      "guide": "12_编程语言与框架专项",
+      "guide_name": "面向具体语言／框架的落地清单；二级目录按技术栈划分。",
+      "role": "cheat-sheet",
+      "parent": "12_编程语言与框架专项/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/C-Based_Toolchain_Hardening_Cheat_Sheet.html",
+      "title": "C-Based Toolchain Hardening Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/C-Based_Toolchain_Hardening_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 55599,
+      "sha256": "e08323cd6f4ee0e276c63aacb47c55dad8d87cf76df2f4e0613b7a77866b5146",
+      "saved": true,
+      "category": "12_编程语言与框架专项",
+      "subcategory": "Java与C系",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "12_编程语言与框架专项/Java与C系/Java_Security_Cheat_Sheet.md",
+      "guide": "12_编程语言与框架专项",
+      "guide_name": "面向具体语言／框架的落地清单；二级目录按技术栈划分。",
+      "role": "cheat-sheet",
+      "parent": "12_编程语言与框架专项/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Java_Security_Cheat_Sheet.html",
+      "title": "Java Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Java_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 38364,
+      "sha256": "b2f5f4b8b86b0247c3daaa89f5881e43e25a2ab9da115652d58896cdbbb49954",
+      "saved": true,
+      "category": "12_编程语言与框架专项",
+      "subcategory": "Java与C系",
+      "crosswalk": {
+        "asvs": [
+          "V1.2"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "12_编程语言与框架专项/PHP与Ruby/Laravel_Cheat_Sheet.md",
+      "guide": "12_编程语言与框架专项",
+      "guide_name": "面向具体语言／框架的落地清单；二级目录按技术栈划分。",
+      "role": "cheat-sheet",
+      "parent": "12_编程语言与框架专项/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Laravel_Cheat_Sheet.html",
+      "title": "Laravel Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Laravel_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 22393,
+      "sha256": "8787943920f82b933f6f354080ece7072a97d0ee8e146c51aa026f68df146329",
+      "saved": true,
+      "category": "12_编程语言与框架专项",
+      "subcategory": "PHP与Ruby",
+      "crosswalk": {
+        "asvs": [
+          "V13.4"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "12_编程语言与框架专项/PHP与Ruby/PHP_Configuration_Cheat_Sheet.md",
+      "guide": "12_编程语言与框架专项",
+      "guide_name": "面向具体语言／框架的落地清单；二级目录按技术栈划分。",
+      "role": "cheat-sheet",
+      "parent": "12_编程语言与框架专项/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/PHP_Configuration_Cheat_Sheet.html",
+      "title": "PHP Configuration Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/PHP_Configuration_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 5358,
+      "sha256": "d1d79b8684659a8af5c128b08fc7bdac5b1e971030781ae8b8d8c51d52b0fb06",
+      "saved": true,
+      "category": "12_编程语言与框架专项",
+      "subcategory": "PHP与Ruby",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [
+          "C2"
+        ],
+        "top10_2021": [
+          "A05"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "12_编程语言与框架专项/PHP与Ruby/Ruby_on_Rails_Cheat_Sheet.md",
+      "guide": "12_编程语言与框架专项",
+      "guide_name": "面向具体语言／框架的落地清单；二级目录按技术栈划分。",
+      "role": "cheat-sheet",
+      "parent": "12_编程语言与框架专项/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Ruby_on_Rails_Cheat_Sheet.html",
+      "title": "Ruby on Rails Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Ruby_on_Rails_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 23169,
+      "sha256": "82ece3e63f5a7a3b4922b92f768e37a1cb7d7f562b6d152658badc3ba0459ba6",
+      "saved": true,
+      "category": "12_编程语言与框架专项",
+      "subcategory": "PHP与Ruby",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "12_编程语言与框架专项/PHP与Ruby/Symfony_Cheat_Sheet.md",
+      "guide": "12_编程语言与框架专项",
+      "guide_name": "面向具体语言／框架的落地清单；二级目录按技术栈划分。",
+      "role": "cheat-sheet",
+      "parent": "12_编程语言与框架专项/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Symfony_Cheat_Sheet.html",
+      "title": "Symfony Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Symfony_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 25276,
+      "sha256": "0453f4b0ef82a8b86ff9fb5672c13925e114750acb5c578064d1cea7881d7e08",
+      "saved": true,
+      "category": "12_编程语言与框架专项",
+      "subcategory": "PHP与Ruby",
+      "crosswalk": {
+        "asvs": [
+          "V13.4"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "12_编程语言与框架专项/Python/Django_REST_Framework_Cheat_Sheet.md",
+      "guide": "12_编程语言与框架专项",
+      "guide_name": "面向具体语言／框架的落地清单；二级目录按技术栈划分。",
+      "role": "cheat-sheet",
+      "parent": "12_编程语言与框架专项/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Django_REST_Framework_Cheat_Sheet.html",
+      "title": "Django REST Framework (DRF) Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Django_REST_Framework_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 12112,
+      "sha256": "3a7512764144f97919c9ad1d811ae9752e6506bb81e50df4666ae1157cfe9d90",
+      "saved": true,
+      "category": "12_编程语言与框架专项",
+      "subcategory": "Python",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "12_编程语言与框架专项/Python/Django_Security_Cheat_Sheet.md",
+      "guide": "12_编程语言与框架专项",
+      "guide_name": "面向具体语言／框架的落地清单；二级目录按技术栈划分。",
+      "role": "cheat-sheet",
+      "parent": "12_编程语言与框架专项/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Django_Security_Cheat_Sheet.html",
+      "title": "Django Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Django_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 12275,
+      "sha256": "b52afaf7a18dfe8ea3dfe552ed8f25b6661ee28c9515606086a72cc15360ea02",
+      "saved": true,
+      "category": "12_编程语言与框架专项",
+      "subcategory": "Python",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "13_云原生、容器与基础设施/CI-CD与IaC/CI_CD_Security_Cheat_Sheet.md",
+      "guide": "13_云原生、容器与基础设施",
+      "guide_name": "容器与编排、CI/CD 与基础设施即代码、云架构与零信任；二级目录按平台划分。",
+      "role": "cheat-sheet",
+      "parent": "13_云原生、容器与基础设施/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/CI_CD_Security_Cheat_Sheet.html",
+      "title": "CI/CD Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/CI_CD_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 27186,
+      "sha256": "96d073089a6081ea7953dc12b4ef23e960da14798fa12e2484f60742dae90838",
+      "saved": true,
+      "category": "13_云原生、容器与基础设施",
+      "subcategory": "CI-CD与IaC",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "13_云原生、容器与基础设施/CI-CD与IaC/GitHub_Actions_Security_Cheat_Sheet.md",
+      "guide": "13_云原生、容器与基础设施",
+      "guide_name": "容器与编排、CI/CD 与基础设施即代码、云架构与零信任；二级目录按平台划分。",
+      "role": "cheat-sheet",
+      "parent": "13_云原生、容器与基础设施/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/GitHub_Actions_Security_Cheat_Sheet.html",
+      "title": "GitHub Actions Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/GitHub_Actions_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 20682,
+      "sha256": "4f9f479c1651cc8c5edccaefed544b9fdfb9c041c50da596a9fce67d3892694c",
+      "saved": true,
+      "category": "13_云原生、容器与基础设施",
+      "subcategory": "CI-CD与IaC",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "13_云原生、容器与基础设施/CI-CD与IaC/Infrastructure_as_Code_Security_Cheat_Sheet.md",
+      "guide": "13_云原生、容器与基础设施",
+      "guide_name": "容器与编排、CI/CD 与基础设施即代码、云架构与零信任；二级目录按平台划分。",
+      "role": "cheat-sheet",
+      "parent": "13_云原生、容器与基础设施/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html",
+      "title": "Infrastructure as Code Security Cheatsheet",
+      "source_repo_path": "master/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 8063,
+      "sha256": "5c1f5184688f3953b1d761a83216eda272a8cc34dfa4c87567f3b85683096dc8",
+      "saved": true,
+      "category": "13_云原生、容器与基础设施",
+      "subcategory": "CI-CD与IaC",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [
+          "A05"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "13_云原生、容器与基础设施/云架构与零信任/Secure_Cloud_Architecture_Cheat_Sheet.md",
+      "guide": "13_云原生、容器与基础设施",
+      "guide_name": "容器与编排、CI/CD 与基础设施即代码、云架构与零信任；二级目录按平台划分。",
+      "role": "cheat-sheet",
+      "parent": "13_云原生、容器与基础设施/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Secure_Cloud_Architecture_Cheat_Sheet.html",
+      "title": "Cloud Architecture Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Secure_Cloud_Architecture_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 29401,
+      "sha256": "127b2b75912567f8e8067d4446a529fbe45ca581472e993e6b5c0a4a29708596",
+      "saved": true,
+      "category": "13_云原生、容器与基础设施",
+      "subcategory": "云架构与零信任",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "13_云原生、容器与基础设施/云架构与零信任/Serverless_FaaS_Security_Cheat_Sheet.md",
+      "guide": "13_云原生、容器与基础设施",
+      "guide_name": "容器与编排、CI/CD 与基础设施即代码、云架构与零信任；二级目录按平台划分。",
+      "role": "cheat-sheet",
+      "parent": "13_云原生、容器与基础设施/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Serverless_FaaS_Security_Cheat_Sheet.html",
+      "title": "Serverless / FaaS Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Serverless_FaaS_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 7680,
+      "sha256": "49614899cea3c19be1fbebcbb91032ae3ec31d70da92abff4da4b8203da2f77b",
+      "saved": true,
+      "category": "13_云原生、容器与基础设施",
+      "subcategory": "云架构与零信任",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "13_云原生、容器与基础设施/云架构与零信任/Subdomain_Takeover_Prevention_Cheat_Sheet.md",
+      "guide": "13_云原生、容器与基础设施",
+      "guide_name": "容器与编排、CI/CD 与基础设施即代码、云架构与零信任；二级目录按平台划分。",
+      "role": "cheat-sheet",
+      "parent": "13_云原生、容器与基础设施/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Subdomain_Takeover_Prevention_Cheat_Sheet.html",
+      "title": "Subdomain Takeover Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Subdomain_Takeover_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 22262,
+      "sha256": "1d271558faceaf4977d17183852ef56f6d892d5ae998f3213cdc15889783cbba",
+      "saved": true,
+      "category": "13_云原生、容器与基础设施",
+      "subcategory": "云架构与零信任",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "13_云原生、容器与基础设施/云架构与零信任/Zero_Trust_Architecture_Cheat_Sheet.md",
+      "guide": "13_云原生、容器与基础设施",
+      "guide_name": "容器与编排、CI/CD 与基础设施即代码、云架构与零信任；二级目录按平台划分。",
+      "role": "cheat-sheet",
+      "parent": "13_云原生、容器与基础设施/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Zero_Trust_Architecture_Cheat_Sheet.html",
+      "title": "Zero Trust Architecture Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Zero_Trust_Architecture_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 31068,
+      "sha256": "b314e088dd816cc11785dcfd15279900d66046085c39909fa4ccad1fdb832152",
+      "saved": true,
+      "category": "13_云原生、容器与基础设施",
+      "subcategory": "云架构与零信任",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "13_云原生、容器与基础设施/容器与编排/Docker_Security_Cheat_Sheet.md",
+      "guide": "13_云原生、容器与基础设施",
+      "guide_name": "容器与编排、CI/CD 与基础设施即代码、云架构与零信任；二级目录按平台划分。",
+      "role": "cheat-sheet",
+      "parent": "13_云原生、容器与基础设施/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html",
+      "title": "Docker Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Docker_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 25542,
+      "sha256": "0c40f568c21df259795f2151dcc2e3875c5234ffd9592861cde0c3415bacffde",
+      "saved": true,
+      "category": "13_云原生、容器与基础设施",
+      "subcategory": "容器与编排",
+      "crosswalk": {
+        "asvs": [
+          "V13.2"
+        ],
+        "proactive_controls": [],
+        "top10_2021": [
+          "A05"
+        ],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "13_云原生、容器与基础设施/容器与编排/Kubernetes_Security_Cheat_Sheet.md",
+      "guide": "13_云原生、容器与基础设施",
+      "guide_name": "容器与编排、CI/CD 与基础设施即代码、云架构与零信任；二级目录按平台划分。",
+      "role": "cheat-sheet",
+      "parent": "13_云原生、容器与基础设施/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Kubernetes_Security_Cheat_Sheet.html",
+      "title": "Kubernetes Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Kubernetes_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 68977,
+      "sha256": "c9bc076d3656d9656a72abcd27d09390498bdd69c03c9342df22b7781d64765f",
+      "saved": true,
+      "category": "13_云原生、容器与基础设施",
+      "subcategory": "容器与编排",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "13_云原生、容器与基础设施/容器与编排/NodeJS_Docker_Cheat_Sheet.md",
+      "guide": "13_云原生、容器与基础设施",
+      "guide_name": "容器与编排、CI/CD 与基础设施即代码、云架构与零信任；二级目录按平台划分。",
+      "role": "cheat-sheet",
+      "parent": "13_云原生、容器与基础设施/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/NodeJS_Docker_Cheat_Sheet.html",
+      "title": "Node.js Docker Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/NodeJS_Docker_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 30666,
+      "sha256": "552f7333c82dbb35ff6701eeab762035fc48e7b1e570f6fb9c4a48a1bc04fe9a",
+      "saved": true,
+      "category": "13_云原生、容器与基础设施",
+      "subcategory": "容器与编排",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "14_AI与LLM应用安全/AI-Powered_Advertising_Systems_Security_Cheat_Sheet.md",
+      "guide": "14_AI与LLM应用安全",
+      "guide_name": "LLM 提示注入、RAG、MCP、AI Agent、AI 模型运维，以及「用 AI 写代码」的安全指南。",
+      "role": "cheat-sheet",
+      "parent": "14_AI与LLM应用安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/AI-Powered_Advertising_Systems_Security_Cheat_Sheet.html",
+      "title": "AI-Powered Advertising Systems Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/AI-Powered_Advertising_Systems_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 24649,
+      "sha256": "01db4fbaf91ec15cd7127f14f16c9969e271e21e5a6e829467f8fde8fd52b4fb",
+      "saved": true,
+      "category": "14_AI与LLM应用安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md",
+      "guide": "14_AI与LLM应用安全",
+      "guide_name": "LLM 提示注入、RAG、MCP、AI Agent、AI 模型运维，以及「用 AI 写代码」的安全指南。",
+      "role": "cheat-sheet",
+      "parent": "14_AI与LLM应用安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/AI_Agent_Security_Cheat_Sheet.html",
+      "title": "AI Agent Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/AI_Agent_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 30462,
+      "sha256": "eb3176e144e626ba9422d54c1156489a412b11c80abc04abe2e51e9e2d238a06",
+      "saved": true,
+      "category": "14_AI与LLM应用安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "14_AI与LLM应用安全/AML_Sanctions_AI_Agent_Payments_Cheat_Sheet.md",
+      "guide": "14_AI与LLM应用安全",
+      "guide_name": "LLM 提示注入、RAG、MCP、AI Agent、AI 模型运维，以及「用 AI 写代码」的安全指南。",
+      "role": "cheat-sheet",
+      "parent": "14_AI与LLM应用安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/AML_Sanctions_AI_Agent_Payments_Cheat_Sheet.html",
+      "title": "AML and Sanctions Compliance for AI Agent Payments Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/AML_Sanctions_AI_Agent_Payments_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 24396,
+      "sha256": "cc88bc6555a5dc49b672b23d838bb976d9bd3dc88dfed13d71f70a598ff12ad7",
+      "saved": true,
+      "category": "14_AI与LLM应用安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "14_AI与LLM应用安全/LLM_Prompt_Injection_Prevention_Cheat_Sheet.md",
+      "guide": "14_AI与LLM应用安全",
+      "guide_name": "LLM 提示注入、RAG、MCP、AI Agent、AI 模型运维，以及「用 AI 写代码」的安全指南。",
+      "role": "cheat-sheet",
+      "parent": "14_AI与LLM应用安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html",
+      "title": "LLM Prompt Injection Prevention Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 23860,
+      "sha256": "a2b788397a81fcbf4028e0a57f291a2e48d3e2f6a10eab200910cfc2134b1e2f",
+      "saved": true,
+      "category": "14_AI与LLM应用安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "14_AI与LLM应用安全/MCP_Security_Cheat_Sheet.md",
+      "guide": "14_AI与LLM应用安全",
+      "guide_name": "LLM 提示注入、RAG、MCP、AI Agent、AI 模型运维，以及「用 AI 写代码」的安全指南。",
+      "role": "cheat-sheet",
+      "parent": "14_AI与LLM应用安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/MCP_Security_Cheat_Sheet.html",
+      "title": "MCP (Model Context Protocol) Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/MCP_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 13556,
+      "sha256": "ec7243acc9e4564113a7c4cd21033da3827612f197e6f07c93118dace21667c8",
+      "saved": true,
+      "category": "14_AI与LLM应用安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md",
+      "guide": "14_AI与LLM应用安全",
+      "guide_name": "LLM 提示注入、RAG、MCP、AI Agent、AI 模型运维，以及「用 AI 写代码」的安全指南。",
+      "role": "cheat-sheet",
+      "parent": "14_AI与LLM应用安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/RAG_Security_Cheat_Sheet.html",
+      "title": "Retrieval-Augmented Generation (RAG) Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/RAG_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 28662,
+      "sha256": "af6f6d1bc774872a77bd00b90aca3aa36e0de47f40b460f4c93115381ce5744e",
+      "saved": true,
+      "category": "14_AI与LLM应用安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "14_AI与LLM应用安全/Secure_AI_Model_Ops_Cheat_Sheet.md",
+      "guide": "14_AI与LLM应用安全",
+      "guide_name": "LLM 提示注入、RAG、MCP、AI Agent、AI 模型运维，以及「用 AI 写代码」的安全指南。",
+      "role": "cheat-sheet",
+      "parent": "14_AI与LLM应用安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Secure_AI_Model_Ops_Cheat_Sheet.html",
+      "title": "Secure AI/ML Model Ops Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Secure_AI_Model_Ops_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 8431,
+      "sha256": "9865bf4061d66d915c5fb746d8a6faac3c97b93d199416816dc3b4c49dd92a6e",
+      "saved": true,
+      "category": "14_AI与LLM应用安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "14_AI与LLM应用安全/Secure_Coding_with_AI_Cheat_Sheet.md",
+      "guide": "14_AI与LLM应用安全",
+      "guide_name": "LLM 提示注入、RAG、MCP、AI Agent、AI 模型运维，以及「用 AI 写代码」的安全指南。",
+      "role": "cheat-sheet",
+      "parent": "14_AI与LLM应用安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Secure_Coding_with_AI_Cheat_Sheet.html",
+      "title": "Secure Coding with AI Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Secure_Coding_with_AI_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 26927,
+      "sha256": "523fd6aa0973c75d93f484d08de7f169d1867c8bf0ae99b160d44cb30e0b6c3e",
+      "saved": true,
+      "category": "14_AI与LLM应用安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "15_移动与嵌入式安全/Automotive_Security_Cheat_Sheet.md",
+      "guide": "15_移动与嵌入式安全",
+      "guide_name": "移动应用、汽车、无人机等终端与嵌入式场景的安全指南。",
+      "role": "cheat-sheet",
+      "parent": "15_移动与嵌入式安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Automotive_Security_Cheat_Sheet.html",
+      "title": "Top 10 Automotive Security Vulnerabilities",
+      "source_repo_path": "master/cheatsheets/Automotive_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 4528,
+      "sha256": "ac57eabb3d73dd75f288b2518bfd12bf7367be79b33371f370414cd3e9c47ef6",
+      "saved": true,
+      "category": "15_移动与嵌入式安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "15_移动与嵌入式安全/Drone_Security_Cheat_Sheet.md",
+      "guide": "15_移动与嵌入式安全",
+      "guide_name": "移动应用、汽车、无人机等终端与嵌入式场景的安全指南。",
+      "role": "cheat-sheet",
+      "parent": "15_移动与嵌入式安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Drone_Security_Cheat_Sheet.html",
+      "title": "Drone Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Drone_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 15563,
+      "sha256": "b25aa29eedcd7f8e445ab5c0cbc4f35000478ab5d6936590e9b2eb23bc76c5d2",
+      "saved": true,
+      "category": "15_移动与嵌入式安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "15_移动与嵌入式安全/Mobile_Application_Security_Cheat_Sheet.md",
+      "guide": "15_移动与嵌入式安全",
+      "guide_name": "移动应用、汽车、无人机等终端与嵌入式场景的安全指南。",
+      "role": "cheat-sheet",
+      "parent": "15_移动与嵌入式安全/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Mobile_Application_Security_Cheat_Sheet.html",
+      "title": "Mobile Application Security Cheat Sheet",
+      "source_repo_path": "master/cheatsheets/Mobile_Application_Security_Cheat_Sheet.md",
+      "status": 200,
+      "bytes": 17238,
+      "sha256": "ec690c3002469f6a31b7b0c45877b71fbfb74dbe6105589fa30b392080306265",
+      "saved": true,
+      "category": "15_移动与嵌入式安全",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": [
+          "MASVS-RESILIENCE"
+        ]
+      }
+    },
+    {
+      "local_path": "00_索引与标准/05_索引-字母顺序总索引.md",
+      "guide": "index",
+      "guide_name": "站点索引页",
+      "role": "site-index",
+      "parent": "00_索引与标准/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/Glossary.html",
+      "title": "Index Alphabetical",
+      "source_repo_path": null,
+      "status": 200,
+      "bytes": 23714,
+      "sha256": "b6b2b38a46475c0dd9061504b922d809513ae8e8912db71e3293ce7554d00910",
+      "saved": true,
+      "category": "00_索引与标准",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "00_索引与标准/01_索引-OWASP-ASVS-5.0.md",
+      "guide": "index",
+      "guide_name": "站点索引页",
+      "role": "site-index",
+      "parent": "00_索引与标准/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/IndexASVS.html",
+      "title": "ASVS Index",
+      "source_repo_path": "master/IndexASVS.md",
+      "status": 200,
+      "bytes": 32978,
+      "sha256": "a35b0b9511f4fece84ce515fc91ae3816a3700e7c96e4f7e60f4e69910b7de92",
+      "saved": true,
+      "category": "00_索引与标准",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "00_索引与标准/04_索引-MASVS.md",
+      "guide": "index",
+      "guide_name": "站点索引页",
+      "role": "site-index",
+      "parent": "00_索引与标准/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/IndexMASVS.html",
+      "title": "MASVS Index",
+      "source_repo_path": "master/IndexMASVS.md",
+      "status": 200,
+      "bytes": 5165,
+      "sha256": "a0f142c184e963793c925dfa4f459b3350c0ddccc8a5f28a21981ac3b24f5f28",
+      "saved": true,
+      "category": "00_索引与标准",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "00_索引与标准/02_索引-OWASP-Proactive-Controls-2018.md",
+      "guide": "index",
+      "guide_name": "站点索引页",
+      "role": "site-index",
+      "parent": "00_索引与标准/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/IndexProactiveControls.html",
+      "title": "Proactive Controls Index",
+      "source_repo_path": "master/IndexProactiveControls.md",
+      "status": 200,
+      "bytes": 11357,
+      "sha256": "05fd292c994664c26affea85696618f7599a8e1126e4db58c2e81c59e399c6da",
+      "saved": true,
+      "category": "00_索引与标准",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "00_索引与标准/03_索引-OWASP-Top-10-2021.md",
+      "guide": "index",
+      "guide_name": "站点索引页",
+      "role": "site-index",
+      "parent": "00_索引与标准/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/IndexTopTen.html",
+      "title": "OWASP Top Ten 2021 : Related Cheat Sheets",
+      "source_repo_path": "master/IndexTopTen.md",
+      "status": 200,
+      "bytes": 7192,
+      "sha256": "4887342c3f5dbc1c4bf0a10d0edbe7cef9ed6722f12ee4712ac2d9734afe437f",
+      "saved": true,
+      "category": "00_索引与标准",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    },
+    {
+      "local_path": "00_索引与标准/00_OWASP-Cheat-Sheet-Series-总览.md",
+      "guide": "index",
+      "guide_name": "站点索引页",
+      "role": "site-index",
+      "parent": "00_索引与标准/README.md",
+      "source_url": "https://cheatsheetseries.owasp.org/index.html",
+      "title": "OWASP Cheat Sheet Series 总览",
+      "source_repo_path": "master/Index.md",
+      "status": 200,
+      "bytes": 1518,
+      "sha256": "1912c3af0a5a664c796faa313b6556c688d29f3923bc289cd57cac5559d0604e",
+      "saved": true,
+      "category": "00_索引与标准",
+      "subcategory": "",
+      "crosswalk": {
+        "asvs": [],
+        "proactive_controls": [],
+        "top10_2021": [],
+        "masvs": []
+      }
+    }
+  ],
+  "excluded": [
+    {
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html",
+      "title": "Access Control Cheat Sheet",
+      "reason": "DEPRECATED：正文仅一句废弃声明（约 220 字符）",
+      "superseded_by": "https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html",
+      "saved": false
+    },
+    {
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/TLS_Cipher_String_Cheat_Sheet.html",
+      "title": "TLS Cipher String Cheat Sheet",
+      "reason": "DEPRECATED：正文仅一句废弃声明（约 250 字符）",
+      "superseded_by": "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html",
+      "saved": false
+    },
+    {
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Protection_Cheat_Sheet.html",
+      "title": "Transport Layer Protection Cheat Sheet",
+      "reason": "DEPRECATED：正文仅一句废弃声明（约 270 字符）",
+      "superseded_by": "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html",
+      "saved": false
+    },
+    {
+      "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_in_Java_Cheat_Sheet.html",
+      "title": "Injection Prevention in Java Cheat Sheet",
+      "reason": "内容已并入 Java Security（约 230 字符）",
+      "superseded_by": "https://cheatsheetseries.owasp.org/cheatsheets/Java_Security_Cheat_Sheet.html",
+      "saved": false
+    }
+  ]
+}

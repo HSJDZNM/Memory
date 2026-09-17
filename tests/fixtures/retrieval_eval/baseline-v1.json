@@ -1,0 +1,394 @@
+{
+  "corpus": {
+    "datasets": [
+      "dotnet-design-guidelines",
+      "gitlab-code-review",
+      "google-eng-practices",
+      "owasp-cheatsheets",
+      "python-pep-code-style"
+    ],
+    "entries": 15,
+    "input_hash": "sha256:9a4a5abd6604be6b559a97d04cf94d63b668a948cce59a384d4edc914730352a",
+    "path": "knowledge/corpus.yaml",
+    "version": 1
+  },
+  "eval_set_version": 1,
+  "index": {
+    "chunks": 329,
+    "documents": 15,
+    "run_status": "completed"
+  },
+  "methods": [
+    {
+      "hit_rate": 1.0,
+      "mean_precision_at_k": 0.7999999999999999,
+      "mean_recall_at_k": 1.0,
+      "method": "fts5",
+      "order_stable": true,
+      "outcomes": [
+        {
+          "first_expected_rank": 1,
+          "id": "Q1",
+          "plan_terms": [
+            "代码评审需要检查哪些方面",
+            "code review",
+            "reviewer",
+            "review",
+            "what to look for",
+            "checklist",
+            "acceptance checklist"
+          ],
+          "results": [
+            "gitlab-code-review:development/code_review/index.md",
+            "gitlab-code-review:development/code_review/index.md",
+            "google-eng-practices:review/reviewer/looking-for.md",
+            "gitlab-code-review:development/code_review/index.md",
+            "gitlab-code-review:development/code_review/index.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 1
+        },
+        {
+          "first_expected_rank": 4,
+          "id": "Q2",
+          "plan_terms": [
+            "生产代码是否应与测试同时提交",
+            "tests",
+            "testing",
+            "unit test",
+            "small cls",
+            "change",
+            "commit",
+            "merge request"
+          ],
+          "results": [
+            "gitlab-code-review:development/code_review/index.md",
+            "gitlab-code-review:development/code_review/index.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md",
+            "google-eng-practices:review/developer/small-cls.md",
+            "google-eng-practices:review/reviewer/looking-for.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 4
+        },
+        {
+          "first_expected_rank": 1,
+          "id": "Q3",
+          "plan_terms": [
+            "rag",
+            "检索失败时是否可以让模型自己回答",
+            "retrieval",
+            "retrieval-augmented generation",
+            "model memory",
+            "hallucination"
+          ],
+          "results": [
+            "owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 2
+        },
+        {
+          "first_expected_rank": 1,
+          "id": "Q4",
+          "plan_terms": [
+            "mcp",
+            "工具返回值是否可信",
+            "tool",
+            "tool return values",
+            "tool call"
+          ],
+          "results": [
+            "owasp-cheatsheets:14_AI与LLM应用安全/MCP_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/MCP_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/MCP_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/MCP_Security_Cheat_Sheet.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 1
+        },
+        {
+          "first_expected_rank": 1,
+          "id": "Q5",
+          "plan_terms": [
+            "如何测试",
+            "agent",
+            "越权和审批绕过",
+            "tests",
+            "testing",
+            "unit test",
+            "prompt injection",
+            "injection",
+            "privilege escalation",
+            "least privilege",
+            "approval",
+            "human in the loop",
+            "human-in-the-loop"
+          ],
+          "results": [
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 1
+        },
+        {
+          "first_expected_rank": 1,
+          "id": "Q6",
+          "plan_terms": [
+            "python",
+            "模块",
+            "类和函数如何命名",
+            "module",
+            "package",
+            "namespaces",
+            "class",
+            "type",
+            "struct",
+            "function",
+            "method",
+            "parameter",
+            "naming",
+            "names",
+            "naming conventions"
+          ],
+          "results": [
+            "python-pep-code-style:pep-8-python-code/index.md",
+            "dotnet-design-guidelines:naming-guidelines.md",
+            "python-pep-code-style:pep-257-docstrings/index.md",
+            "python-pep-code-style:pep-8-python-code/index.md",
+            "python-pep-code-style:pep-8-python-code/index.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 1
+        },
+        {
+          "first_expected_rank": 1,
+          "id": "Q7",
+          "plan_terms": [
+            "公共",
+            "api",
+            "的异常设计",
+            "public api",
+            "library design",
+            "framework design",
+            "exception",
+            "exceptions",
+            "throw"
+          ],
+          "results": [
+            "dotnet-design-guidelines:exception-throwing.md",
+            "dotnet-design-guidelines:exception-throwing.md",
+            "dotnet-design-guidelines:using-standard-exception-types.md",
+            "dotnet-design-guidelines:using-standard-exception-types.md",
+            "dotnet-design-guidelines:exceptions.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 1
+        }
+      ],
+      "passed": true,
+      "source_completeness": 1.0,
+      "support_rate": 1.0,
+      "top_k": 5
+    },
+    {
+      "hit_rate": 1.0,
+      "mean_precision_at_k": 0.6,
+      "mean_recall_at_k": 1.0,
+      "method": "vector",
+      "order_stable": true,
+      "outcomes": [
+        {
+          "first_expected_rank": 2,
+          "id": "Q1",
+          "plan_terms": [
+            "代码评审需要检查哪些方面",
+            "code review",
+            "reviewer",
+            "review",
+            "what to look for",
+            "checklist",
+            "acceptance checklist"
+          ],
+          "results": [
+            "gitlab-code-review:development/ai_instruction_files_review/index.md",
+            "gitlab-code-review:development/code_review/index.md",
+            "gitlab-code-review:development/code_review/index.md",
+            "google-eng-practices:review/reviewer/looking-for.md",
+            "gitlab-code-review:development/code_review/index.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 2
+        },
+        {
+          "first_expected_rank": 1,
+          "id": "Q2",
+          "plan_terms": [
+            "生产代码是否应与测试同时提交",
+            "tests",
+            "testing",
+            "unit test",
+            "small cls",
+            "change",
+            "commit",
+            "merge request"
+          ],
+          "results": [
+            "google-eng-practices:review/reviewer/looking-for.md",
+            "google-eng-practices:review/developer/small-cls.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md",
+            "gitlab-code-review:development/code_review/index.md",
+            "gitlab-code-review:development/code_review/index.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 1
+        },
+        {
+          "first_expected_rank": 1,
+          "id": "Q3",
+          "plan_terms": [
+            "rag",
+            "检索失败时是否可以让模型自己回答",
+            "retrieval",
+            "retrieval-augmented generation",
+            "model memory",
+            "hallucination"
+          ],
+          "results": [
+            "owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md"
+          ],
+          "status": "ok",
+          "supporting_rank": null
+        },
+        {
+          "first_expected_rank": 1,
+          "id": "Q4",
+          "plan_terms": [
+            "mcp",
+            "工具返回值是否可信",
+            "tool",
+            "tool return values",
+            "tool call"
+          ],
+          "results": [
+            "owasp-cheatsheets:14_AI与LLM应用安全/MCP_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/MCP_Security_Cheat_Sheet.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 5
+        },
+        {
+          "first_expected_rank": 1,
+          "id": "Q5",
+          "plan_terms": [
+            "如何测试",
+            "agent",
+            "越权和审批绕过",
+            "tests",
+            "testing",
+            "unit test",
+            "prompt injection",
+            "injection",
+            "privilege escalation",
+            "least privilege",
+            "approval",
+            "human in the loop",
+            "human-in-the-loop"
+          ],
+          "results": [
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/AI_Agent_Security_Cheat_Sheet.md",
+            "python-pep-code-style:pep-8-python-code/index.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/RAG_Security_Cheat_Sheet.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 1
+        },
+        {
+          "first_expected_rank": 1,
+          "id": "Q6",
+          "plan_terms": [
+            "python",
+            "模块",
+            "类和函数如何命名",
+            "module",
+            "package",
+            "namespaces",
+            "class",
+            "type",
+            "struct",
+            "function",
+            "method",
+            "parameter",
+            "naming",
+            "names",
+            "naming conventions"
+          ],
+          "results": [
+            "python-pep-code-style:pep-8-python-code/index.md",
+            "owasp-cheatsheets:14_AI与LLM应用安全/MCP_Security_Cheat_Sheet.md",
+            "python-pep-code-style:pep-8-python-code/index.md",
+            "python-pep-code-style:pep-8-python-code/index.md",
+            "dotnet-design-guidelines:general-naming-conventions.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 1
+        },
+        {
+          "first_expected_rank": 2,
+          "id": "Q7",
+          "plan_terms": [
+            "公共",
+            "api",
+            "的异常设计",
+            "public api",
+            "library design",
+            "framework design",
+            "exception",
+            "exceptions",
+            "throw"
+          ],
+          "results": [
+            "dotnet-design-guidelines:exceptions.md",
+            "dotnet-design-guidelines:using-standard-exception-types.md",
+            "dotnet-design-guidelines:exception-throwing.md",
+            "dotnet-design-guidelines:exception-throwing.md",
+            "dotnet-design-guidelines:using-standard-exception-types.md"
+          ],
+          "status": "ok",
+          "supporting_rank": 2
+        }
+      ],
+      "passed": false,
+      "source_completeness": 1.0,
+      "support_rate": 0.8571428571428571,
+      "top_k": 5
+    }
+  ],
+  "thresholds": {
+    "hit_at_k": 1.0,
+    "min_precision_at_k": 0.6,
+    "min_recall_at_k": 0.85,
+    "order_stable": true,
+    "source_completeness": 1.0,
+    "support_at_k": 1.0,
+    "top_k": 5
+  }
+}
