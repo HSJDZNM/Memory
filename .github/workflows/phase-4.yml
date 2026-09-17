@@ -84,7 +84,7 @@ jobs:
         run: |
           .venv/bin/python -m retrieval.cli index --json > /tmp/index-1.json
           .venv/bin/python -m retrieval.cli index --json > /tmp/index-2.json
-          python - <<'PY'
+          .venv/bin/python - <<'PY'
           import json
           first = json.load(open("/tmp/index-1.json", encoding="utf-8"))
           second = json.load(open("/tmp/index-2.json", encoding="utf-8"))
