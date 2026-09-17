@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -214,6 +215,37 @@ def check_docs_and_config() -> list[str]:
     return issues
 
 
+def check_notebook_form() -> list[str]:
+    """手册必须是生成器的规范形态。
+
+    在 Jupyter / VS Code 里"运行并保存"会把执行输出与 execution_count 写回 .ipynb，
+    而生成器写出来的形态里这两样永远是空的，于是 CI 的"手册同步"步骤会逐字节比较失败。
+    这里只做形态判断、不跑生成器（那个要几分钟），让问题在本地一秒暴露。
+    """
+
+    issues: list[str] = []
+    for path in sorted((ROOT / "docs" / "learning").glob("*/walkthrough.ipynb")):
+        relative = path.relative_to(ROOT).as_posix()
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            issues.append("%s 不可解析：%s" % (relative, error))
+            continue
+        for index, cell in enumerate(document.get("cells", [])):
+            if cell.get("outputs"):
+                issues.append(
+                    "%s 第 %d 个单元带执行输出：这份文件在 Jupyter 里跑过并保存了；"
+                    "重新生成即可恢复（python tools/build_learning_notebook.py）"
+                    % (relative, index)
+                )
+            if cell.get("execution_count") is not None:
+                issues.append(
+                    "%s 第 %d 个单元的 execution_count 不为空（同样是被编辑器写回的痕迹）"
+                    % (relative, index)
+                )
+    return issues
+
+
 def check_tool_inventory() -> list[str]:
     """只认表格第一列的脚本名：散文里提到的别处脚本（例如 enforcement/audit.py）不是本目录的清单。"""
 
@@ -246,6 +278,7 @@ def main(argv: list[str]) -> int:
     sections = (
         ("依赖锁", check_lock()),
         ("文档与配置", check_docs_and_config()),
+        ("手册形态", check_notebook_form()),
         ("工具清单", check_tool_inventory()),
     )
     total = 0

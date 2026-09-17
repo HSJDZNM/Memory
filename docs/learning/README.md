@@ -34,6 +34,21 @@ docs/learning/<phase>/
 4. 想验证某个判断，直接改单元里的输入重跑——手册里的所有结论都来自真实模块，不是复述文档；
 5. 想先看设计意图再动手，读同目录的 `note.md`。
 
+## 跑过之后手册"变脏"了？这是正常的
+
+在 Jupyter / VS Code 里**运行并保存**会把每个单元的执行结果与执行序号写回 `.ipynb`，
+而生成器写出来的形态里这两样永远是空的（生成器只写代码与说明，不写运行痕迹）。于是：
+
+- **本地学习**：随便跑，没有副作用；
+- **提交之前**：不要提交带运行痕迹的手册。恢复方式二选一——
+  `python tools/build_learning_notebook.py`（重新生成全部手册），或
+  `git checkout -- docs/learning/<phase>/walkthrough.ipynb`（只还原这一个文件）；
+- **想彻底避开**：直接运行 `python docs/learning/<phase>/walkthrough.py`。它和 notebook
+  内容逐字相同，是纯 Python 脚本，不会往仓库里写任何东西。
+
+两道检查盯着这件事：`python tools/check_repo_consistency.py` 一秒内告诉你哪个手册被写脏了，
+CI 里的 `tools/build_learning_notebook.py --check` 做逐字节比对——任一不通过都会让流水线失败。
+
 ## 怎么维护（新增阶段时照做）
 
 1. 新建 `docs/learning/<phase>/` 目录，放齐上面四个文件；
