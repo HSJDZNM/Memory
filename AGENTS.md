@@ -60,7 +60,7 @@
 | --- | --- | --- |
 | 语言 | Python ≥ 3.11 | `src/policy/`（src 布局） |
 | 依赖清单 | pydantic 2、PyYAML 6；dev: pytest 8+ | `pyproject.toml` |
-| 依赖锁定 | `requirements.in` / `requirements.lock`；uv 用 `uv lock` 生成 `uv.lock` | 仓库根目录 |
+| 依赖锁定 | `requirements.in`（声明）+ `requirements.lock`（固定直接依赖版本，CI 从它安装）；仓库不提交 `uv.lock` | 仓库根目录 |
 | 测试 | pytest：`tests/unit`、`tests/contract`、`tests/integration`、`tests/security` | `pytest.ini`、`tests/conftest.py` |
 | 检索 | SQLite FTS5（标准库 sqlite3；向量检索是可替换端口，本阶段未采纳） | `src/retrieval/`、`knowledge/corpus.yaml` |
 | CI | GitHub Actions | `.github/workflows/phase-4.yml`（含 Phase 0–3 的重放用例、dsh 接线自检、检索基线、注册表审核与受控执行闭环） |

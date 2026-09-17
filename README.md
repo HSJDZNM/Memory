@@ -15,17 +15,23 @@
 
 ### 安装
 
-推荐用 [uv](https://docs.astral.sh/uv/) 同步锁定的依赖（会创建 `.venv` 并以可编辑方式安装 `src/`）：
+依赖锁定以 [requirements.lock](requirements.lock) 为准（固定直接依赖的版本，CI 与本地用同一份）。
+推荐用 [uv](https://docs.astral.sh/uv/) 建虚拟环境并从锁文件安装：
 
 ```powershell
-uv sync --all-extras
+uv venv
+uv pip install -r requirements.lock
 ```
 
-没有 uv 时，用现有解释器直接安装直接依赖（版本见 [requirements.lock](requirements.lock)）：
+没有 uv 时，用现有解释器从同一份锁文件安装：
 
 ```powershell
-python -m pip install -r requirements.in
+python -m pip install -r requirements.lock
 ```
+
+> 本仓库**没有提交 `uv.lock`**：生成它需要在能探测解释器的环境里运行 `uv lock`（受控沙箱会拒绝）。
+> 因此在锁文件这件事上只有一份真相——`requirements.lock`；`uv sync` 在没有 `uv.lock` 时是重新解析，
+> 不是锁定安装，CI 里不使用它。`python tools/check_repo_consistency.py` 会守住这条一致性。
 
 ### 运行规则检查（CLI）
 
@@ -46,11 +52,12 @@ uv run python -m policy.check --check-rules
 未使用 uv 时，`python -m policy.check` 需要先让解释器找到 `src/`：
 
 ```powershell
-$env:PYTHONPATH = "src"     # 仅当前会话；uv sync 安装过项目后就不需要了
+$env:PYTHONPATH = "src"     # 让解释器找到 src/；CI 也用同一条路径
 python -m policy.check examples/bad_controller.py --dependencies repository
 ```
 
-`uv sync --all-extras` 会以可编辑方式安装本项目，之后 `uv run python -m policy.check` 直接可用。
+上面用 `uv run` 的写法等价于在已装好依赖的环境里 `python -m ...`：本项目不把 `src/` 装进
+site-packages，而是靠 `PYTHONPATH=src`（CI 的 workflow 里就是这条）。
 学习手册不受这条限制：各阶段的 notebook 与 `walkthrough.py` 会自己把 `src/` 与 `tools/` 加进搜索路径。
 
 退出码：`0` 通过（allow）、`1` 发现违规（block / allow_with_warnings，含需要人工审批的 block）、
@@ -279,8 +286,8 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 | 检索 | SQLite FTS5（标准库 sqlite3，无第三方依赖） | Phase 3 的可解释检索基线；向量检索是可替换端口，本阶段**未采纳**（评测见阶段记录） |
 | 受控执行 | 标准库 + pydantic（无第三方依赖） | Phase 4：Tool Registry 是数据（YAML），授权 / 幂等 / 审计链落在追加写 JSONL 上，执行驱动按注册表声明选择 |
 | 测试 | pytest 8+（本机验证 9.1.1） | 单元 + 契约 + 集成三层 |
-| 包管理 | uv（`uv.lock` 由 `uv lock` 生成） | CI 用 `uv sync --all-extras` |
-| CI | GitHub Actions | `.github/workflows/phase-3.yml`（含 Phase 0–2 的重放用例、dsh 接线自检与检索基线） |
+| 包管理 | uv（建虚拟环境与安装）；锁文件是 `requirements.lock` | 仓库未提交 `uv.lock`，依赖锁定以 `requirements.lock` 为准，CI 从它安装 |
+| CI | GitHub Actions | `.github/workflows/phase-4.yml`（Phase 0–3 重放、dsh 接线自检、检索基线、注册表审核、受控执行闭环、仓库一致性、凭据扫描） |
 
 Phase 0–4 明确不引入：LangGraph、向量数据库、FastAPI、MCP、Agent SDK 与任何 LLM 调用。
 Phase 2 里 dsh 只作为**外部进程与线协议**存在：适配器不导入 dsh 的类型，核心层更不知道 dsh 的存在。

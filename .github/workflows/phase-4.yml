@@ -12,6 +12,9 @@ jobs:
   phase-4:
     name: Phase 4 tests (python 3.13)
     runs-on: ubuntu-latest
+    env:
+      # 本项目不把 src/ 装进 site-packages：CI 与本地都用同一条路径找到包。
+      PYTHONPATH: src
     steps:
       - uses: actions/checkout@v4
 
@@ -20,56 +23,67 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Sync locked dependencies
-        run: uv sync --all-extras
+      # 依赖锁定以 requirements.lock 为准：仓库没有 uv.lock，uv sync 会重新解析，不是锁定安装。
+      - name: Install pinned dependencies
+        run: |
+          uv venv
+          uv pip install -r requirements.lock
+
+      # 依赖锁、workflow 引用、工具清单是否漂移（退出码 1 即阻断）
+      - name: Repository consistency gate
+        run: .venv/bin/python tools/check_repo_consistency.py
+
+      # 规则、fixture、脚本与报告里不得出现真实凭据（门禁之一，与审计脱敏共用模式定义）
+      - name: Secret scan gate
+        run: .venv/bin/python tools/secret_scan.py
 
       - name: Unit, contract, integration and security tests
-        run: uv run python -m pytest tests/unit tests/contract tests/integration tests/security -q
+        run: .venv/bin/python -m pytest tests/unit tests/contract tests/integration tests/security -q
 
       - name: Rule set self-check
-        run: uv run python -m policy.check --check-rules
+        run: .venv/bin/python -m policy.check --check-rules
 
       - name: Example replay (bad fixture must fail with exit code 1)
         run: |
           set +e
-          uv run python -m policy.check examples/bad_controller.py --dependencies repository
+          .venv/bin/python -m policy.check examples/bad_controller.py --dependencies repository
           code=$?
           set -e
           if [ "$code" -ne 1 ]; then echo "expected exit code 1, got $code"; exit 1; fi
 
       - name: Example replay (good fixture must pass)
-        run: uv run python -m policy.check examples/good_controller.py --dependencies service
+        run: .venv/bin/python -m policy.check examples/good_controller.py --dependencies service
 
       - name: Scope skip reason is reported
         run: |
-          uv run python -m policy.check examples/good_controller.py --layer service \
+          .venv/bin/python -m policy.check examples/good_controller.py --layer service \
             --dependencies repository | tee /tmp/skip.txt
           grep -q "layer service != controller" /tmp/skip.txt
 
       # Phase 2：Adapter 的映射契约与 Hook 行为（block 不执行 / allow 一次 / 超时 / 重放 / 脱敏）
       - name: dsh adapter contract and hook behaviour
-        run: uv run python -m pytest tests/contract/test_dsh_adapter.py tests/integration/test_dsh_hook.py -q
+        run: .venv/bin/python -m pytest tests/contract/test_dsh_adapter.py tests/integration/test_dsh_hook.py -q
 
       # Phase 2：接线自检必须能识别"hooks.json 没接上"（在 dsh 侧那等于没有治理）
       - name: dsh hook wiring self-check
         run: |
-          uv run python -m adapters.dsh.hooks \
+          .venv/bin/python -m adapters.dsh.hooks \
             --config examples/dsh/dsh-adapter.yaml \
             --hooks-config examples/dsh/hooks.json --self-check
 
       # Phase 2：真实沙箱闭环需要本机 dsh；CI 上没有就跳过（退出码 0），不许假装通过
       - name: Real dsh sandbox loop (skipped without dsh)
-        run: uv run python tools/dsh_sandbox_loop.py
+        run: .venv/bin/python tools/dsh_sandbox_loop.py
 
       # Phase 3：摄取清单与镜像 manifest / 许可 / 哈希必须一致（漂移会让 verify 退出 1）
       - name: Retrieval corpus integrity
-        run: uv run python -m retrieval.cli verify
+        run: .venv/bin/python -m retrieval.cli verify
 
       # Phase 3：幂等重建 + 索引规模（同一输入连续两次不产生重复 document/chunk）
       - name: Retrieval index is idempotent
         run: |
-          uv run python -m retrieval.cli index --json > /tmp/index-1.json
-          uv run python -m retrieval.cli index --json > /tmp/index-2.json
+          .venv/bin/python -m retrieval.cli index --json > /tmp/index-1.json
+          .venv/bin/python -m retrieval.cli index --json > /tmp/index-2.json
           python - <<'PY'
           import json
           first = json.load(open("/tmp/index-1.json", encoding="utf-8"))
@@ -82,13 +96,13 @@ jobs:
 
       # Phase 3：固定评测集基线（FTS5 门槛决定退出码；向量检索只作为对照记录）
       - name: Retrieval evaluation baseline (gated on FTS5)
-        run: uv run python tools/retrieval_eval.py --method both --rebuild
+        run: .venv/bin/python tools/retrieval_eval.py --method both --rebuild
 
       # Phase 3：查询安全与失败关闭——无来源时必须显式报"知识不可用"，退出码 1 而不是 0
       - name: Retrieval refuses to answer without sources
         run: |
           set +e
-          uv run python -m retrieval.cli query "zzzzq qqqzz zzzqq" > /tmp/no-result.txt
+          .venv/bin/python -m retrieval.cli query "zzzzq qqqzz zzzqq" > /tmp/no-result.txt
           code=$?
           set -e
           if [ "$code" -ne 1 ]; then echo "expected exit code 1, got $code"; exit 1; fi
@@ -96,19 +110,19 @@ jobs:
 
       # Phase 4：Tool Registry 必须与已审核哈希一致（不一致的工具 pre-check 直接阻断）
       - name: Tool registry must match its approved hashes
-        run: uv run python -m enforcement.cli registry --verify
+        run: .venv/bin/python -m enforcement.cli registry --verify
 
       # Phase 4：注册表 / 审核 / 审计 / 台账 / 驱动自检
       - name: Enforcement self-check
-        run: uv run python -m enforcement.cli self-check --audit .tmp/artifacts/ci-enforcement-audit.jsonl --ledger .tmp/artifacts/ci-enforcement-ledger.jsonl
+        run: .venv/bin/python -m enforcement.cli self-check --audit .tmp/artifacts/ci-enforcement-audit.jsonl --ledger .tmp/artifacts/ci-enforcement-ledger.jsonl
 
       # Phase 4：受控执行闭环（允许一次 / 重放阻断 / 回滚 / 高风险阻断 / trace 可重放）
       - name: Controlled execution closed loop
-        run: uv run python tools/enforcement_loop.py
+        run: .venv/bin/python tools/enforcement_loop.py
 
       # Phase 4：审计链必须可校验（被改动或删记录都会失败）
       - name: Audit chain verification
-        run: uv run python -m enforcement.cli verify --audit .tmp/phase-4-demo/audit.jsonl
+        run: .venv/bin/python -m enforcement.cli verify --audit .tmp/phase-4-demo/audit.jsonl
 
       # Phase 4：未知参数一律拒绝（allowlist 只做完整匹配，不做前缀绕过）
       - name: Enforcement refuses unknown parameters
@@ -126,20 +140,20 @@ jobs:
             "workspace": ".tmp/phase-4-demo/workspace"
           }
           JSON
-          uv run python -m enforcement.cli precheck --request /tmp/bad-request.json
+          .venv/bin/python -m enforcement.cli precheck --request /tmp/bad-request.json
           code=$?
           set -e
           if [ "$code" -ne 2 ]; then echo "expected exit code 2, got $code"; exit 1; fi
 
       - name: Performance baseline (fixed seed, recorded not optimised)
-        run: uv run python tools/policy_bench.py --counts 10 100 1000
+        run: .venv/bin/python tools/policy_bench.py --counts 10 100 1000
 
       - name: Learning notebooks are in sync
-        run: uv run python tools/build_learning_notebook.py --check
+        run: .venv/bin/python tools/build_learning_notebook.py --check
 
       - name: Learning notebook structure
         run: |
-          uv run python tools/check_notebook.py \
+          .venv/bin/python tools/check_notebook.py \
             docs/learning/phase-0/walkthrough.ipynb \
             docs/learning/phase-1/walkthrough.ipynb \
             docs/learning/phase-2/walkthrough.ipynb \
@@ -147,10 +161,10 @@ jobs:
             docs/learning/phase-4/walkthrough.ipynb
 
       - name: Text conventions (UTF-8 / LF / trailing whitespace)
-        run: uv run python tools/check_text_conventions.py
+        run: .venv/bin/python tools/check_text_conventions.py
 
       - name: Phase 4 acceptance evidence
-        run: uv run python tools/phase_evidence.py
+        run: .venv/bin/python tools/phase_evidence.py
 
   lock-drift:
     name: Lock file drift check
