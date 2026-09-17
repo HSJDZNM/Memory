@@ -243,6 +243,14 @@ class ShellCommandDriver:
             raise DriverError(
                 f"命令包含组合/替换/重定向片段 {hits}：只允许单条语句（驱动层的第二道防线）"
             )
+        blocked = sorted(
+            {fragment for fragment in spec.forbidden_command_fragments if fragment in text}
+        )
+        if blocked:
+            raise DriverError(
+                f"命令包含被禁片段 {blocked}（路径穿越 / 会写文件的选项 / 外部 diff）："
+                "驱动层的第二道防线，拒绝执行"
+            )
         return _run_process(
             [*self.shell, text],
             timeout_ms=spec.timeout_ms,

@@ -135,6 +135,15 @@ tools:
       - "^git (status|diff|log|show)( .*)?$"
       - "^Write-Output( .*)?$"
       - "^Get-ChildItem( .*)?$"
+    # 白名单只描述"命令长什么样"，描述不了"这个选项会干什么"——下面这些片段决定它会做什么：
+    #   ../  ..\        路径穿越：python tools/../../x.py 同样能完整匹配上面的白名单
+    #   --output        git 的写文件选项：完整匹配通过，却能把内容写到受控工作区外的任意路径
+    #   --ext-diff      交给外部 diff 工具执行（代码执行的入口）
+    #   --no-index      直接读写任意两个路径，绕过仓库边界
+    # 已知边界：白名单不是沙箱。任何被允许的命令只要会读仓库内的配置（如 .git/config、
+    # .gitattributes 的 textconv/filter），就仍可能被改写成执行外部命令；真正的隔离要靠
+    # 运行时的文件系统与进程沙箱，不属于本阶段。这里只保证"选常见的写法钻不过去"。
+    forbidden_command_fragments: ["../", "..\\", "--output", "--ext-diff", "--no-index"]
     parameters:
       - name: command
         type: string
@@ -185,6 +194,15 @@ tools:
       - "^python tools/[A-Za-z0-9_./-]+\\.py( .*)?$"
       - "^git (status|diff|log|show)( .*)?$"
       - "^echo( .*)?$"
+    # 白名单只描述"命令长什么样"，描述不了"这个选项会干什么"——下面这些片段决定它会做什么：
+    #   ../  ..\        路径穿越：python tools/../../x.py 同样能完整匹配上面的白名单
+    #   --output        git 的写文件选项：完整匹配通过，却能把内容写到受控工作区外的任意路径
+    #   --ext-diff      交给外部 diff 工具执行（代码执行的入口）
+    #   --no-index      直接读写任意两个路径，绕过仓库边界
+    # 已知边界：白名单不是沙箱。任何被允许的命令只要会读仓库内的配置（如 .git/config、
+    # .gitattributes 的 textconv/filter），就仍可能被改写成执行外部命令；真正的隔离要靠
+    # 运行时的文件系统与进程沙箱，不属于本阶段。这里只保证"选常见的写法钻不过去"。
+    forbidden_command_fragments: ["../", "..\\", "--output", "--ext-diff", "--no-index"]
     parameters:
       - name: command
         type: string

@@ -263,6 +263,50 @@ def test_action_hash_is_stable_across_processes(enforcement_paths, tmp_root):
 # --------------------------------------------------------------------------- 与 dsh 工具表一致
 
 
+def test_real_registry_declares_the_fragments_that_make_a_command_dangerous(enforcement_paths):
+    """审计发现 M2：git diff --output=<任意路径> 能完整匹配命令白名单，却会把内容写到工作区外。
+
+    白名单正则只能描述"命令长什么样"。这条用例把"白名单不是沙箱"钉成回归：
+    命令类工具必须声明被禁片段，并且这些片段真的会让 pre-check 阻断。
+    """
+
+    from enforcement.action import build_action_request
+    from enforcement.audit import FileAuditSink
+    from enforcement.ledger import EnforcementLedger
+    from enforcement.models import CheckStatus
+    from enforcement.precheck import check_list
+
+    registry = load_registry(ENFORCEMENT_REGISTRY, approved_path=ENFORCEMENT_APPROVED).registry
+    spec = registry.tool("exec.pwsh")
+    assert "../" in spec.forbidden_command_fragments
+    assert "--output" in spec.forbidden_command_fragments
+
+    request = build_action_request(
+        spec,
+        {"command": "git diff --output=C:/Windows/Temp/leak.txt", "description": "probe"},
+        action_id="fragment-probe-1",
+        request_id="fragment-probe-1",
+        agent="dsh",
+        subject="local-user",
+        roles=("owner",),
+        permissions=registry.permissions_for(("owner",)),
+        workspace=enforcement_paths.workspace,
+        ttl_seconds=60,
+    )
+    checks, _spec, _warnings = check_list(
+        request,
+        registry=registry,
+        ledger=EnforcementLedger(enforcement_paths.ledger),
+        sink=FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace),
+    )
+    by_name = {item.check: item for item in checks}
+    # 白名单确实放行了它——这正是问题所在
+    assert by_name["command_allowlist"].status is CheckStatus.PASSED
+    assert by_name["command_composition"].status is CheckStatus.PASSED
+    # 片段检查才是拦住它的那一道
+    assert by_name["command_fragments"].status is CheckStatus.FAILED
+
+
 def test_registry_tools_exist_in_the_dsh_tool_table():
     """注册表与 Adapter 工具表不能漂移：两边都认识同一个工具才可能治理它。"""
 

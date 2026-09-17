@@ -300,6 +300,7 @@ class ReasonCode(str, Enum):
     DRIVER_UNAVAILABLE = "driver_unavailable"
     COMMAND_NOT_ALLOWLISTED = "command_not_allowlisted"
     COMMAND_COMPOSITION_BLOCKED = "command_composition_blocked"
+    COMMAND_FRAGMENT_BLOCKED = "command_fragment_blocked"
     EXECUTION_FAILED = "execution_failed"
     EXECUTION_TIMEOUT = "execution_timeout"
     POST_CHECK_FAILED = "post_check_failed"
@@ -451,6 +452,11 @@ class ToolSpec(StrictModel):
     rollback: RollbackMode = RollbackMode.NONE
     rate_limit: Optional[RateLimit] = None
     allowed_commands: Tuple[str, ...] = ()
+    forbidden_command_fragments: Tuple[str, ...] = Field(
+        default=(),
+        description="命令文本里出现这些片段就结构性阻断：白名单正则描述的是「命令长什么样」，"
+        "描述不了「这个选项会干什么」（例如 git diff --output 会写任意路径）",
+    )
     command_param: Optional[str] = Field(
         default=None,
         description="shell_command 驱动里承载命令文本的参数名；allowlist 检查认这个参数",
@@ -512,6 +518,10 @@ class ToolSpec(StrictModel):
             )
         if self.allowed_commands and self.driver is not DriverKind.SHELL_COMMAND:
             raise ValueError(f"{self.id}: allowed_commands 只适用于 shell_command 驱动")
+        if self.forbidden_command_fragments and self.driver is not DriverKind.SHELL_COMMAND:
+            raise ValueError(
+                f"{self.id}: forbidden_command_fragments 只适用于 shell_command 驱动"
+            )
         if self.driver is DriverKind.SHELL_COMMAND and not self.shell:
             raise ValueError(
                 f"{self.id}: shell_command 驱动必须声明 shell 前缀（argv 形式），"
