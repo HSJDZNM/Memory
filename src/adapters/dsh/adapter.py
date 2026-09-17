@@ -40,6 +40,7 @@ from policy.models import (
     PolicyContextError,
     Principal,
     canonical_identifier,
+    normalize_repo_path,
 )
 
 __all__ = [
@@ -677,6 +678,46 @@ def _resolve_file(raw_path: Any, *, cwd: Optional[str], config: AdapterConfig) -
     return repo_relative_path(str(candidate), repo_root=config.project_root)
 
 
+def _resolve_read_scope(
+    raw_path: Any, *, cwd: Optional[str], config: AdapterConfig, tool: str
+) -> str:
+    """只读工具的目标范围：允许仓库根目录本身，但必须在受控项目内。
+
+    注册表给只读工具声明了 `path_scope: workspace`；Adapter 不做授权判定，
+    但"这次读的是哪个范围"必须能被证明。读不到显式路径时退回会话 cwd，
+    证明不了就失败关闭——只读同样是越界即拒，而不是"反正不写所以不管"。
+
+    与 `_resolve_file` 的唯一区别是允许等于仓库根目录（glob 常以项目根为范围）。
+    """
+
+    candidate: Optional[Path] = None
+    if isinstance(raw_path, str) and raw_path.strip():
+        candidate = Path(raw_path.strip())
+        if not candidate.is_absolute() and cwd:
+            candidate = Path(cwd) / candidate
+    elif cwd:
+        candidate = Path(cwd)
+
+    if candidate is None:
+        raise DshEventError(
+            f"{tool} 既没有路径参数也没有会话 cwd：无法证明读取范围在受控项目内，拒绝放行"
+        )
+
+    anchor = Path(config.project_root).resolve()
+    target = candidate.resolve()
+    if target == anchor:
+        return "."
+    head = target.parts[: len(anchor.parts)]
+    if len(target.parts) <= len(anchor.parts) or [item.lower() for item in head] != [
+        item.lower() for item in anchor.parts
+    ]:
+        raise DshEventError(
+            f"{tool} 的目标 {raw_path if raw_path else cwd!r} 不在受控项目 {anchor.name} 内："
+            "只读动作同样受 path_scope=workspace 约束，越界一律拒绝"
+        )
+    return normalize_repo_path("/".join(target.parts[len(anchor.parts) :]))
+
+
 def to_policy_event(raw: Any, *, config: AdapterConfig) -> AdapterDecision:
     """把一条 dsh 事件映射成标准事件，或显式判定它不受 Phase 2 治理。"""
 
@@ -702,7 +743,14 @@ def to_policy_event(raw: Any, *, config: AdapterConfig) -> AdapterDecision:
     if spec.kind is not ToolKind.WRITE:
         # Adapter 只做协议转换，不在这里做判定：它只说明"这个工具为什么没有进入写类链路"。
         if spec.kind is ToolKind.READ_ONLY:
-            note = "只读动作：显式降级（仍记录），不做前置授权"
+            # 降级的是"授权链路"，不是"范围校验"：读了什么必须能被证明并记进审计。
+            scope = _resolve_read_scope(
+                tool_input.get(spec.path_field) if spec.path_field else None,
+                cwd=cwd,
+                config=config,
+                tool=tool_name,
+            )
+            note = f"只读动作：显式降级（仍记录），不做前置授权；范围 {scope}"
         elif spec.kind is ToolKind.EXECUTE:
             note = "执行类工具：交给 Phase 4 受控链路（权限 / 参数与命令白名单 / 审批 / 事后验证）"
         else:

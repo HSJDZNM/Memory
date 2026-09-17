@@ -84,6 +84,8 @@
    只能显式更新（`POLICY_UPDATE_SNAPSHOTS=1`），不能在断言里放宽；
 8. Adapter 只做协议转换：不导入 Agent SDK 类型、不猜 layer/language/principal，
    声明不出来就失败关闭；未知事件、未知工具、缺失路径一律拒绝；
+   **只读工具降级的只是授权链路，不是范围校验**：注册表声明了 `path_scope: workspace`，
+   目标必须归一化后落在受控项目内（范围等于项目根记为 `.`），越界或证明不了就拒绝；
    工具表是白名单，升级 Agent 版本必须先更新工具表并补契约测试；
 9. 进入下一阶段前必须更新本文件的依赖与命令，并运行 `tools/phase_evidence.py` 生成证据；
 10. 外部命令 Hook 的阻断语义由 Agent 侧决定：`exit 0` 放行、`exit 2` 阻断；

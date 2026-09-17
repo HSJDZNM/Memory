@@ -383,6 +383,107 @@ def test_proposed_dependencies_reads_only_the_changed_text():
     changed = "from service import OrderService\nfrom repository import OrderRepository"
 
     assert proposed_dependencies(changed) == ("repository", "service")
+
+# --------------------------------------------------------------------------- 只读工具的读取范围
+
+
+def test_read_outside_the_project_is_refused(dsh_config_path, dsh_project):
+    """只读不等于随便读：注册表声明了 path_scope=workspace，越界即拒。"""
+
+    config = load_config(dsh_config_path)
+    payload = event_for(
+        "pre-tool-use-read-not-governed.json",
+        dsh_project,
+        tool_input={"file_path": str(dsh_project.parent / "outside.txt")},
+    )
+
+    with pytest.raises(DshEventError):
+        to_policy_event(payload, config=config)
+
+
+def test_read_traversal_is_refused(dsh_config_path, dsh_project):
+    config = load_config(dsh_config_path)
+    payload = event_for(
+        "pre-tool-use-read-not-governed.json",
+        dsh_project,
+        tool_input={"file_path": "../../../etc/passwd"},
+    )
+
+    with pytest.raises(DshEventError):
+        to_policy_event(payload, config=config)
+
+
+def test_read_image_outside_the_project_is_refused(dsh_config_path, dsh_project):
+    config = load_config(dsh_config_path)
+    payload = event_for(
+        "pre-tool-use-read-not-governed.json",
+        dsh_project,
+        tool_name="read_image",
+        tool_input={"file_path": str(dsh_project.parent / "outside.png")},
+    )
+
+    with pytest.raises(DshEventError):
+        to_policy_event(payload, config=config)
+
+
+def test_read_inside_the_project_records_its_scope(dsh_config_path, dsh_project):
+    """降级的是授权链路，不是范围校验：读了什么要能进审计。"""
+
+    config = load_config(dsh_config_path)
+    decision = to_policy_event(
+        event_for("pre-tool-use-read-not-governed.json", dsh_project), config=config
+    )
+
+    assert decision.governed is False
+    assert "src/shop/order_controller.py" in decision.reason
+
+
+def test_glob_on_the_project_root_is_allowed(dsh_config_path, dsh_project):
+    """范围正好是项目根是常见用法（glob 全仓），必须放行并记成 "."。"""
+
+    config = load_config(dsh_config_path)
+    decision = to_policy_event(
+        event_for(
+            "pre-tool-use-read-not-governed.json",
+            dsh_project,
+            tool_name="glob",
+            tool_input={"pattern": "**/*.py", "path": str(dsh_project)},
+        ),
+        config=config,
+    )
+
+    assert decision.governed is False
+    assert "范围 ." in decision.reason
+
+
+def test_glob_without_a_path_falls_back_to_the_session_cwd(dsh_config_path, dsh_project):
+    config = load_config(dsh_config_path)
+    decision = to_policy_event(
+        event_for(
+            "pre-tool-use-read-not-governed.json",
+            dsh_project,
+            tool_name="glob",
+            tool_input={"pattern": "**/*.py"},
+        ),
+        config=config,
+    )
+
+    assert decision.governed is False
+    assert "范围 ." in decision.reason
+
+
+def test_read_without_a_path_or_cwd_is_refused(dsh_config_path, dsh_project):
+    """证明不了范围就不放行——与写类工具同一条失败关闭规矩。"""
+
+    config = load_config(dsh_config_path)
+    payload = event_for(
+        "pre-tool-use-read-not-governed.json", dsh_project, tool_input={"pattern": "**/*.py"}
+    )
+    payload.pop("cwd")
+
+    with pytest.raises(DshEventError):
+        to_policy_event(payload, config=config)
+
     assert proposed_dependencies("import os, sys\n") == ("os", "sys")
     assert proposed_dependencies("普通文本，没有 import") == ()
     assert proposed_dependencies("    from .relative import x") == ()
