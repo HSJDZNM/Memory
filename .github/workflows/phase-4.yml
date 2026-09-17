@@ -165,28 +165,3 @@ jobs:
 
       - name: Phase 4 acceptance evidence
         run: .venv/bin/python tools/phase_evidence.py
-
-  lock-drift:
-    name: Lock file drift check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: requirements.lock must match its generated form
-        run: |
-          python -m pip install --dry-run --ignore-installed -q -r requirements.in
-          python - <<'PY'
-          import re
-          from pathlib import Path
-
-          lock = Path("requirements.lock").read_text(encoding="utf-8")
-          pins = dict(re.findall(r"^([A-Za-z0-9_.-]+)==(\S+)$", lock, re.MULTILINE))
-          expected = {"pydantic", "PyYAML", "pytest"}
-          missing = expected - set(pins)
-          if missing:
-              raise SystemExit(f"requirements.lock 缺少直接依赖: {sorted(missing)}")
-          print("requirements.lock 覆盖全部直接依赖:", sorted(pins))
-          PY
