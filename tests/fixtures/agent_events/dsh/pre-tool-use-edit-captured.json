@@ -1,0 +1,13 @@
+{
+  "cwd": "/workspace/demo-shop",
+  "hook_event_name": "PreToolUse",
+  "session_id": "sess-demo-0002",
+  "tool_input": {
+    "file_path": "C:\\workspace\\demo-shop\\src\\shop\\order_controller.py",
+    "new_string": "    def create(self, payload: dict) -> dict:\n        return self.service.create(payload)\n\n    def ping(self) -> str:\n        return 'pong'",
+    "old_string": "    def create(self, payload: dict) -> dict:\n        return self.service.create(payload)"
+  },
+  "tool_name": "edit",
+  "tool_use_id": "call-captured-allow",
+  "transcript_path": ""
+}

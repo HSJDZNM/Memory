@@ -1,0 +1,13 @@
+{
+  "session_id": "sess-demo-0001",
+  "transcript_path": "",
+  "cwd": "/workspace/demo-shop",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "edit",
+  "tool_input": {
+    "old_string": "a",
+    "new_string": "b",
+    "replace_all": false
+  },
+  "tool_use_id": "call-no-path"
+}

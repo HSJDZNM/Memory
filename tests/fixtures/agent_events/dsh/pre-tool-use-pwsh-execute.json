@@ -1,0 +1,13 @@
+{
+  "session_id": "sess-demo-0001",
+  "transcript_path": "",
+  "cwd": "/workspace/demo-shop",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "pwsh",
+  "tool_input": {
+    "command": "python -m pytest tests/unit -q",
+    "description": "Run unit tests",
+    "run_in_background": false
+  },
+  "tool_use_id": "call-pwsh"
+}

@@ -1,0 +1,11 @@
+{
+  "session_id": "sess-demo-0001",
+  "transcript_path": "",
+  "cwd": "/workspace/demo-shop",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "read",
+  "tool_input": {
+    "file_path": "src/shop/order_controller.py"
+  },
+  "tool_use_id": "call-read"
+}

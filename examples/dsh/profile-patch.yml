@@ -1,0 +1,34 @@
+# 把 dsh 的工具调用接到本仓库的策略 Hook（dsh 0.1.5-rc.1）。
+#
+# 用法（不改动别人的 profile 文件，只叠加一层 patch）：
+#   dsh --profile headless --patch <本文件的绝对路径> "任务描述"
+#
+# patch 语义：顶层是 patch 列表；没有 id 的 insert 表示把条目追加到根条目列表。
+
+# —— 推荐：进程内插件转发（本仓库本机实测可阻断） ——
+# 它只做转发：组装 PreToolUse 载荷 → 用 ctx.shell 运行 Hook 命令 → exit 2 变 deny。
+# 策略判定全部在 Python 侧（src/adapters/dsh/hooks.py），插件里没有任何规则逻辑。
+- insert:
+    - id: policy-hook
+      name: '<仓库绝对路径>/src/adapters/dsh/policy-hook.plugin.mjs'
+      config:
+        # 受治理项目根目录下执行；--hooks-config 让 Hook 自己做接线自检
+        command: >-
+          python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml
+          --hooks-config .policy/hooks.json --audit .policy/audit.jsonl
+        # 必须大于 dsh-adapter.yaml 里的 timeout_ms：内部预算先触发，Hook 才能自己判 block
+        timeoutMs: 30000
+        projectDir: '<受治理项目的绝对路径>'
+
+# —— 备选：dsh 自带的 Claude Code 方言桥 ——
+# 配置形状与官方 README 一致，Hook 命令也是同一条；但在本机 0.1.5-rc.1 上实测
+# "Hook 被调用、返回 exit 2，工具仍然执行"，因此默认不启用。
+# 复现步骤与证据见 src/adapters/dsh/README.md 第 7 节。
+#
+# - insert:
+#     - id: hooks-claude-code
+#       name: '@deepseek-ai/dsh-hooks-claude-code'
+#       config:
+#         configPath: '<受治理项目>/.policy/hooks.json'
+#         projectDir: '<受治理项目>'
+#         defaultTimeoutMs: 30000

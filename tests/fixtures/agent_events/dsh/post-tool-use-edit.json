@@ -1,0 +1,15 @@
+{
+  "session_id": "sess-demo-0001",
+  "transcript_path": "",
+  "cwd": "/workspace/demo-shop",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "edit",
+  "tool_input": {
+    "file_path": "src/shop/order_controller.py",
+    "old_string": "a",
+    "new_string": "b",
+    "replace_all": false
+  },
+  "tool_response": "The file has been updated.",
+  "tool_use_id": "call-post"
+}

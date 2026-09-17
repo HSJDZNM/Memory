@@ -1,0 +1,14 @@
+{
+  "session_id": "sess-demo-0001",
+  "transcript_path": "",
+  "cwd": "/workspace/demo-shop",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "edit",
+  "tool_input": {
+    "file_path": "src/shop/order_controller.py",
+    "old_string": "from service import OrderService",
+    "new_string": "from service import OrderService\nfrom repository import OrderRepository",
+    "replace_all": false
+  },
+  "tool_use_id": "call-edit-block"
+}

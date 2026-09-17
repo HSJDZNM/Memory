@@ -1,0 +1,12 @@
+{
+  "session_id": "sess-demo-0001",
+  "transcript_path": "",
+  "cwd": "/workspace/demo-shop",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "write",
+  "tool_input": {
+    "file_path": "src/shop/cart_service.py",
+    "content": "from repository import CartRepository\n\n\nclass CartService:\n    def __init__(self) -> None:\n        self.repository = CartRepository()\n"
+  },
+  "tool_use_id": "call-write-allow"
+}

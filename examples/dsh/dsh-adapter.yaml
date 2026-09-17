@@ -1,0 +1,48 @@
+# dsh Adapter 的显式上下文来源（示例：把它复制到受治理项目的 .policy/ 下）。
+#
+# 设计原则：核心协议需要的字段里，dsh 的 Hook 载荷只提供 file/operation/agent；
+# layer、language、project、principal、trace_id 全部在这里显式声明，
+# 没有声明项时 Adapter 失败关闭，绝不从文件名或目录猜测。
+
+agent_version: "0.1.5-rc.1" # 记录用；升级 dsh 后先重跑 fixture 与沙箱闭环再改这里
+project: memory
+project_root: ../.. # 仓库相对路径的锚点；越出这个根目录的写入一律拒绝
+rules:
+  - ../../policies # 至少一个规则目录；任一文件损坏则整体不加载
+
+timeout_ms: 5000 # 内部预算：必须严格小于 hooks.json 里的 timeout
+
+# path → layer：按顺序取第一个命中；不命中则失败关闭（除非显式声明 default_layer）
+layers:
+  - pattern: "**/*_controller.py"
+    layer: controller
+  - pattern: "**/*_service.py"
+    layer: service
+  - pattern: "**/*_repository.py"
+    layer: repository
+  - pattern: "**/*.py"
+    layer: module
+  - pattern: "**/*.md"
+    layer: docs
+default_layer: null # 显式写明"不提供默认值"：未声明的路径会被阻断并要求补声明
+
+languages:
+  - pattern: "**/*.py"
+    language: python
+default_language: text # 非 Python 文件的语言显式声明为 text，而不是猜成 python
+
+audit_log: ../../.tmp/artifacts/dsh-audit.jsonl
+
+# —— Phase 4：受控执行的授权链路 ——
+# 受治理工具必须由 Tool Registry 描述（风险级别 / 参数白名单 / 权限 / 事后验证器），
+# 并且必须能追到主体；缺任何一项，Hook 都会失败关闭（受控工具不执行）。
+principal:
+  subject: local-user
+  roles:
+    - developer
+registry: ../../registry/tool-registry.yaml
+registry_approved: ../../registry/tool-registry.approved.json
+enforcement_ledger: ../../.tmp/artifacts/dsh-enforcement-ledger.jsonl
+# 高风险动作（pwsh / bash / run_code）需要事先签发、且与具体 action_hash 绑定的审批文件。
+# 生成方式见 README：python -m enforcement.cli approve --request <req.json> --out <approval.json>
+# approval_file: .policy/approval.json

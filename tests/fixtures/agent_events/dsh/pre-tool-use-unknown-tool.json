@@ -1,0 +1,12 @@
+{
+  "session_id": "sess-demo-0001",
+  "transcript_path": "",
+  "cwd": "/workspace/demo-shop",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "mcp__github__create_issue",
+  "tool_input": {
+    "repo": "demo-shop",
+    "title": "policy bypass probe"
+  },
+  "tool_use_id": "call-mcp"
+}
