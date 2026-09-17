@@ -183,6 +183,12 @@
 7. **Phase 2 的两条结论被 Phase 4 改变**（各自都有回归用例）：
    `pwsh` 不再是 `not_governed`（改为受控，默认阻断）；
    PostToolUse 不再是"未支持事件"（改为事后验证入口）。"未知事件失败关闭"仍然成立，用别的未知事件验证。
+   **Post-Phase-4 复核又改变了第三条**：只读工具（`read` / `glob` / `grep` / `read_image`）过去只记
+   `not_governed` 而从不解析路径，于是注册表给 `fs.read` 声明的 `path_scope: workspace` 没有任何执行点。
+   现在 Adapter 会把只读目标归一化并校验落在受控项目内（范围等于项目根记为 `.`），越界、穿越或既无路径又无
+   cwd 时失败关闭；**降级的仍然只是授权链路**（不做 pre-check、不签发 grant）。
+   遗留偏差：这条校验写在 Adapter 里而不是由注册表的 `path_scope` 驱动，因此该声明对只读工具仍是“只声明、不执行”；
+   两处表达同一规则，改一处不会自动改另一处——要消除它需要让 Hook 读注册表，而 Phase 4 明确决定只读不做 pre-check。
 8. **测试配置默认声明主体与注册表。** Phase 4 起"受控工具必须有主体可追"，
    因此 `tests/conftest.py::write_dsh_config` 默认写 `principal: {subject: local-user, roles: [developer]}`
    与注册表路径；对应两个 Phase 2 用例（主体语义）同步更新，语义更严而不是更松。
@@ -254,6 +260,13 @@ Phase 4 自己的闭环（`python tools/enforcement_loop.py`）不依赖 dsh，�
 2. **审批的授予者角色来自审批文件自身**：首版把审批当作“人工门禁写下的结构化记录”，不做签名与独立审批人名册；
    伪造一个 `granted_by_roles=[reviewer]` 的文件即可自批。对外部敌手而言审批文件本身就在受信任边界内（与注册表、规则同级）。
 3. **命令白名单的语义是“单条语句”**：组合命令默认阻断；确需组合时必须改注册表、重新审核，并说明为什么安全。
+4. **命令白名单不是沙箱**（Post-Phase-4 复核补记）：白名单正则只描述“命令长什么样”，描述不了“这个选项会干什么”。
+   举例：`git diff --output=<文件>` 完整匹配 `^git (status|diff|log|show)( .*)?$`，却会把内容写到受控工作区外的
+   任意路径（实测复现）。补丁把“路径穿越 / 会写文件的选项 / 外部 diff”变成注册表里的数据
+   （`forbidden_command_fragments`：`../` `..\` `--output` `--ext-diff` `--no-index`），
+   pre-check 与驱动各拦一次（`command_fragment_blocked`）。**这仍然不是沙箱**：任何被允许的命令只要会读仓库内的
+   配置（`.git/config`、`.gitattributes` 的 textconv/filter），就仍可能被改写成执行外部命令；
+   真正的隔离要靠运行时的文件系统与进程沙箱，属于本阶段之外的能力。
 
 复核也独立确认了本阶段的关键主张：未注册 / 未审核 / 越权 / 非法参数 / 路径逃逸全部在构造或决策阶段被拒；
 block 驱动 0 次、allow 恰好 1 次；同 pre 复用与删台账都拦得住；两进程并发认领恰好一个成功；
