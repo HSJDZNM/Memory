@@ -245,6 +245,47 @@ def test_compound_commands_are_structurally_blocked(enforcement_paths):
     assert plain.decision.check("command_composition").status is CheckStatus.PASSED
 
 
+def test_forbidden_command_fragments_are_blocked_before_execution(enforcement_paths):
+    """白名单正则描述的是"命令长什么样"，描述不了"这个选项会干什么"。
+
+    git diff --output=<任意路径> 能完整匹配白名单却会把内容写到工作区外；
+    片段清单是注册表里的数据，pre-check 必须在放行之前拦下它。
+    """
+
+    from enforcement_support import EnforcementPaths
+
+    paths = EnforcementPaths(enforcement_paths.root / "fragments")
+    outcome = run_pre(
+        paths,
+        "exec.shell",
+        {"command": "echo hi --output=/tmp/leak.txt", "description": "写文件"},
+        roles=("owner",),
+        action_id="fragment-output",
+    )
+    assert outcome.decision.decision is Decision.BLOCK
+    assert reason_of(outcome) is ReasonCode.COMMAND_FRAGMENT_BLOCKED
+    assert outcome.decision.check("command_fragments").status is CheckStatus.FAILED
+
+    traversal = run_pre(
+        paths,
+        "exec.shell",
+        {"command": "echo ../outside", "description": "穿越"},
+        roles=("owner",),
+        action_id="fragment-traversal",
+    )
+    assert traversal.decision.check("command_fragments").status is CheckStatus.FAILED
+
+    # 干净的命令不受影响：这一段只是把"片段检查"与"白名单检查"分开
+    clean = run_pre(
+        paths,
+        "exec.shell",
+        {"command": "echo hi", "description": "ok"},
+        roles=("owner",),
+        action_id="fragment-clean",
+    )
+    assert clean.decision.check("command_fragments").status is CheckStatus.PASSED
+
+
 def test_unregistered_tool_block_is_audited(enforcement_paths):
     """未注册工具的阻断必须留痕：CLI 侧不能出现"被拦了却什么都没有"（复核 D10）。"""
 

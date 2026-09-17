@@ -147,6 +147,8 @@ TEST_REGISTRY_TOOLS: tuple[dict[str, Any], ...] = (
         "timeout_ms": 20000,
         # 故意带上 ( .*)? 尾巴：组合命令必须被结构性检查拦住，而不是靠正则的运气
         "allowed_commands": ["^print[(]'ok'[)]$", "^echo( .*)?$"],
+        # 与生产注册表同形：白名单只看"命令长什么样"，被禁片段决定"它会做什么"
+        "forbidden_command_fragments": ["../", "..\\", "--output"],
         "parameters": [
             {"name": "command", "type": "string", "required": True, "max_chars": 400},
             {"name": "description", "type": "string", "required": True, "max_chars": 200},

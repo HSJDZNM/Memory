@@ -277,6 +277,34 @@ def check_list(
             _check("command_composition", CheckStatus.SKIPPED, ReasonCode.ALLOW, "该工具不是命令类")
         )
 
+    # 4d) 被禁片段：白名单正则描述的是"命令长什么样"，描述不了"这个选项会干什么"。
+    #     git diff --output=<任意路径> 完整匹配通过却会写文件，就是这条检查存在的理由；
+    #     片段清单是注册表里的数据（forbidden_command_fragments），不是代码里的常数。
+    if spec.command_param is not None:
+        raw = request.value_of(spec.command_param)
+        command = raw if isinstance(raw, str) else ""
+        blocked = sorted(
+            {fragment for fragment in spec.forbidden_command_fragments if fragment in command}
+        )
+        if blocked:
+            checks.append(
+                _check(
+                    "command_fragments",
+                    CheckStatus.FAILED,
+                    ReasonCode.COMMAND_FRAGMENT_BLOCKED,
+                    f"命令包含被禁片段 {blocked}（路径穿越 / 会写文件的选项 / 外部 diff）："
+                    "白名单只看命令长什么样，这些片段决定它会做什么，一律阻断",
+                )
+            )
+        else:
+            checks.append(
+                _check("command_fragments", CheckStatus.PASSED, ReasonCode.ALLOW, "无被禁片段")
+            )
+    else:
+        checks.append(
+            _check("command_fragments", CheckStatus.SKIPPED, ReasonCode.ALLOW, "该工具不是命令类")
+        )
+
     # 5) 审批：高风险动作的人工门禁。
     if spec.approval is ApprovalMode.REQUIRED:
         try:

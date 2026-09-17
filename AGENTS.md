@@ -115,7 +115,11 @@
 17. 命令类工具的最小权限：白名单只做完整匹配，且命令里出现 `;` `|` `&` 反引号 `$(` `${` `>` `<` 或换行时
     一律结构性阻断（`command_composition_blocked`，pre-check 与驱动各查一遍）——
     `( .*)?` 形态的白名单会被“分号 + 第二条语句”绕过；
-    需要组合命令时必须改注册表并重新审核，说明为什么安全；
+    同样地，命令里出现被禁片段 `../` `..\` `--output` `--ext-diff` `--no-index` 时结构性阻断
+    （`command_fragment_blocked`）：白名单正则只描述“命令长什么样”，描述不了“这个选项会干什么”
+    （`git diff --output=<文件>` 完整匹配却会写任意路径）。**白名单不是沙箱**：会读仓库内配置的
+    命令仍可能被改写成执行外部命令，真正的隔离属于运行时的文件系统与进程沙箱，不在本阶段；
+    需要组合命令或被禁片段时必须改注册表并重新审核，说明为什么安全；
 18. 评测门槛与结果都随版本记录：门槛在 `tests/fixtures/retrieval_eval/queries.yaml`，
     结果在 `tests/fixtures/retrieval_eval/baseline-v2.json`，代码里不写"脱离数据的常数"；
     换 embedding、改术语表或改语料都必须重跑 `python tools/retrieval_eval.py --method both`，
