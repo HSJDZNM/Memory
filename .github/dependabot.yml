@@ -1,0 +1,15 @@
+# 依赖与 Actions 的自动更新提案：漏洞披露后"能不能快速升级"是代码可维护性的一部分。
+# 只开提案，不自动合并：升级必须过 CI，注册表与规则集的变更仍走人工审核。
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    labels: ["dependencies", "ci"]

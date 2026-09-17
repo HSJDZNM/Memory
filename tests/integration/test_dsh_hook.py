@@ -349,7 +349,7 @@ def test_feedback_and_audit_contain_no_absolute_paths_or_secrets(dsh_config_path
             tool_input={
                 "file_path": outside.as_posix(),
                 "old_string": "a",
-                "new_string": "import repository  # sk-livekey000000000000",
+                "new_string": "import repository  # sk-livekey000000000000",  # secret-scan: allow（合成值，用于验证脱敏与拒绝逻辑）
             },
         )
     )

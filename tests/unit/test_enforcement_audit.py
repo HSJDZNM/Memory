@@ -43,7 +43,7 @@ def sink_for(tmp_root, name="audit.jsonl") -> FileAuditSink:
 
 def test_redaction_removes_secrets_and_absolute_paths(tmp_root):
     text = (
-        "key=sk-live0123456789abcdef token: ghp_ABCDEFGHIJKLMNOP "
+        "key=sk-live0123456789abcdef token: ghp_ABCDEFGHIJKLMNOP "  # secret-scan: allow（合成值，用于验证脱敏与拒绝逻辑）
         "path C:\\Users\\someone\\secret\\file.py and /home/user/x"
     )
     redacted = redact_text(text, workspace=tmp_root)
@@ -58,7 +58,7 @@ def test_bearer_tokens_and_posix_paths_are_redacted(tmp_root):
     """复核 D4：Authorization: Bearer <token> 必须整体吃掉，POSIX 绝对路径也要脱敏。"""
 
     text = (
-        'curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc.def" '
+        'curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc.def" '  # secret-scan: allow（合成值，用于验证脱敏与拒绝逻辑）
         "http://example.invalid ; cat /home/alice/.ssh/id_rsa ; token=abc123 "
         "C:/Users/bob/secret.py"
     )

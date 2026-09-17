@@ -344,7 +344,7 @@ def test_redacted_payload_hides_secret_params(enforcement_paths):
     )
     request = build_action_request(
         spec,
-        {"file_path": "a.txt", "content": "x", "token": "sk-livetoken0000000000"},
+        {"file_path": "a.txt", "content": "x", "token": "sk-livetoken0000000000"},  # secret-scan: allow（合成值，用于验证脱敏与拒绝逻辑）
         action_id="act",
         request_id="req",
         agent="dsh",
@@ -354,14 +354,14 @@ def test_redacted_payload_hides_secret_params(enforcement_paths):
 
     payload = redacted_request_payload(request)
     serialized = json.dumps(payload, ensure_ascii=False)
-    assert "sk-livetoken" not in serialized
+    assert "sk-livetoken" not in serialized  # secret-scan: allow（合成值，用于验证脱敏与拒绝逻辑）
     token = next(item for item in payload["params"] if item["name"] == "token")
     assert token["value"] is None and token["secret"] is True
     assert token["digest"].startswith("sha256:")
     # 摘要仍然把值绑进 action_hash：换一个 token 就是另一个动作。
     other = build_action_request(
         spec,
-        {"file_path": "a.txt", "content": "x", "token": "sk-othertoken0000000"},
+        {"file_path": "a.txt", "content": "x", "token": "sk-othertoken0000000"},  # secret-scan: allow（合成值，用于验证脱敏与拒绝逻辑）
         action_id="act",
         request_id="req",
         agent="dsh",
