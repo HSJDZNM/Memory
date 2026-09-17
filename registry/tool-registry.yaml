@@ -1,0 +1,235 @@
+# Phase 4 Tool Registry：所有受控工具的授权表。
+#
+# 这份文件是**数据**，不是代码：风险级别、参数白名单、权限、审批门禁、事后验证器、
+# 超时与限流都写在这里，模型在调用时无法自行声明"我这个动作属于哪一类"。
+#
+# 任何改动都必须重新审核：
+#     python -m enforcement.cli registry --verify     # 看哪些工具没被审核
+#     python -m enforcement.cli registry --approve --reviewer <name>
+# 运行时描述与已审核哈希不一致的工具**不可使用**（pre-check 直接 block）。
+#
+# 工具名来自 dsh 0.1.5-rc.1 的真实装配（证据见 src/adapters/dsh/README.md）。
+# 升级 Agent 后：先核对工具参数表，再改这里，再重新审核，最后补契约测试。
+
+registry_schema_version: "1.0"
+version: 1
+
+defaults:
+  timeout_ms: 5000 # 单次执行预算（毫秒）
+  grant_ttl_seconds: 60 # 允许结果的有效期：短时效，过期必须重走 pre-check
+  max_grant_ttl_seconds: 300 # 有效期硬上限，执行器会再校验一次
+
+permissions:
+  repo.read: 读取仓库内容（只读动作）
+  repo.write: 修改仓库内容（可逆写入）
+  repo.approve: 审批高风险动作（与执行权分离，不能自己批自己）
+  shell.exec: 执行命令或代码（高权限执行）
+  sandbox.escalate: 提升沙箱权限（例如 danger-full-access）
+
+roles:
+  developer: [repo.read, repo.write]
+  reviewer: [repo.read, repo.write, repo.approve]
+  owner: [repo.read, repo.write, repo.approve, shell.exec, sandbox.escalate]
+
+approvals:
+  require_role: reviewer
+
+tools:
+  # —— 可逆写入：需要 pre-check 与 post-check，参数与 schema 都绑定在授权里 ——
+  - id: fs.edit
+    title: 字面量替换文件内容
+    agent: dsh
+    tool_name: edit
+    schema_version: "1.0"
+    risk: reversible_write
+    effect: file_write
+    driver: file_edit
+    required_permissions: [repo.write]
+    approval: none
+    rollback: file_snapshot
+    post_checks: [content_matches, file_changed, file_syntax, diff_recorded]
+    rate_limit: {max_calls: 200, window_seconds: 60, max_failures: 5, breaker_seconds: 120}
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+        description: 目标文件（仓库相对路径；逃出工作区一律拒绝）
+      - name: old_string
+        type: string
+        required: true
+        max_chars: 20000
+      - name: new_string
+        type: string
+        required: true
+        max_chars: 20000
+      - name: replace_all
+        type: boolean
+    notes: 只检查本次引入的文本；变更前后哈希与 diff 由 post-check 记录
+
+  - id: fs.write
+    title: 整文件写入（create-or-overwrite）
+    agent: dsh
+    tool_name: write
+    schema_version: "1.0"
+    risk: reversible_write
+    effect: file_write
+    driver: file_write
+    required_permissions: [repo.write]
+    approval: none
+    rollback: file_snapshot
+    post_checks: [content_matches, target_exists, file_syntax, diff_recorded]
+    rate_limit: {max_calls: 200, window_seconds: 60, max_failures: 5, breaker_seconds: 120}
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+      - name: content
+        type: string
+        required: true
+        max_chars: 200000
+    notes: write 是 create-or-overwrite，覆盖已存在文件在 Phase 4 里按可逆写入处理；
+      content_matches 用来发现"工具声称成功、目标却不是请求声明的那个结果"
+
+  # —— 只读：显式降级（不进入 pre-check 链路）但仍然登记，便于审计与后续阶段 ——
+  - id: fs.read
+    title: 读取文件
+    agent: dsh
+    tool_name: read
+    schema_version: "1.0"
+    risk: read_only
+    effect: none
+    driver: none
+    required_permissions: [repo.read]
+    approval: none
+    post_checks: []
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+    notes: 只读动作由 Agent 侧放行并记入审计，不做 pre-check；"显式降级"写在这里而不是异常处理里
+
+  # —— 高权限执行：最小权限 + 命令白名单 + 人工门禁 + 默认 block ——
+  - id: exec.pwsh
+    title: PowerShell 命令
+    agent: dsh
+    tool_name: pwsh
+    schema_version: "1.0"
+    risk: privileged_execution
+    effect: process
+    driver: shell_command
+    shell: [pwsh, -NoLogo, -NoProfile, -NonInteractive, -Command]
+    command_param: command
+    required_permissions: [shell.exec]
+    approval: required
+    post_checks: [exit_code_zero]
+    timeout_ms: 60000
+    rate_limit: {max_calls: 20, window_seconds: 60, max_failures: 3, breaker_seconds: 300}
+    allowed_commands:
+      - "^python -m pytest( .*)?$"
+      - "^uv run python -m pytest( .*)?$"
+      - "^python tools/[A-Za-z0-9_./-]+\\.py( .*)?$"
+      - "^python -m (policy\\.check|retrieval\\.cli|enforcement\\.cli|adapters\\.dsh\\.hooks)( .*)?$"
+      - "^git (status|diff|log|show)( .*)?$"
+      - "^Write-Output( .*)?$"
+      - "^Get-ChildItem( .*)?$"
+    parameters:
+      - name: command
+        type: string
+        required: true
+        max_chars: 4000
+      - name: description
+        type: string
+        required: true
+        max_chars: 400
+      - name: timeoutMs
+        type: integer
+      - name: workdir
+        type: path
+        path_scope: workspace
+      - name: run_in_background
+        type: boolean
+      - name: sandbox_permissions
+        type: string
+        enum: [workspace-write, danger-full-access]
+        escalating_values: [danger-full-access]
+        requires_permission: sandbox.escalate
+        description: 提权参数：取值会额外要求 sandbox.escalate 权限
+      - name: justification
+        type: string
+        max_chars: 1000
+    notes: 白名单只做完整匹配；此外命令里出现分号 / 管道 / 命令替换 / 重定向 / 换行
+      一律结构性阻断（command_composition_blocked）——只靠 ( .*)? 的正则会被 " ; 任意命令" 绕过。
+      需要组合命令时必须先改这里、重新审核，并说明为什么安全
+
+  - id: exec.bash
+    title: Bash 命令
+    agent: dsh
+    tool_name: bash
+    schema_version: "1.0"
+    risk: privileged_execution
+    effect: process
+    driver: shell_command
+    shell: [bash, -lc]
+    command_param: command
+    required_permissions: [shell.exec]
+    approval: required
+    post_checks: [exit_code_zero]
+    timeout_ms: 60000
+    rate_limit: {max_calls: 20, window_seconds: 60, max_failures: 3, breaker_seconds: 300}
+    allowed_commands:
+      - "^python -m pytest( .*)?$"
+      - "^uv run python -m pytest( .*)?$"
+      - "^python tools/[A-Za-z0-9_./-]+\\.py( .*)?$"
+      - "^git (status|diff|log|show)( .*)?$"
+      - "^echo( .*)?$"
+    parameters:
+      - name: command
+        type: string
+        required: true
+        max_chars: 4000
+      - name: description
+        type: string
+        required: true
+        max_chars: 400
+      - name: timeoutMs
+        type: integer
+      - name: workdir
+        type: path
+        path_scope: workspace
+      - name: run_in_background
+        type: boolean
+      - name: sandbox_permissions
+        type: string
+        enum: [workspace-write, danger-full-access]
+        escalating_values: [danger-full-access]
+        requires_permission: sandbox.escalate
+      - name: justification
+        type: string
+        max_chars: 1000
+
+  - id: exec.run_code
+    title: 代码运行时
+    agent: dsh
+    tool_name: run_code
+    schema_version: "1.0"
+    risk: privileged_execution
+    effect: process
+    driver: none
+    required_permissions: [shell.exec]
+    approval: required
+    post_checks: []
+    timeout_ms: 120000
+    rate_limit: {max_calls: 10, window_seconds: 60, max_failures: 2, breaker_seconds: 300}
+    parameters:
+      - name: code
+        type: string
+        required: true
+        max_chars: 20000
+      - name: description
+        type: string
+        required: true
+        max_chars: 400
+    notes: 平台侧 driver=none：只有 Agent 运行时能执行它，平台绝不假装执行过（driver_unavailable）

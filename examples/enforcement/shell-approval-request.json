@@ -1,0 +1,15 @@
+{
+  "action_id": "demo:call-shell-1",
+  "request_id": "demo:call-shell-1",
+  "trace_id": "demo-trace-shell",
+  "agent": "dsh",
+  "agent_version": "0.1.5-rc.1",
+  "tool_id": "exec.pwsh",
+  "subject": "local-user",
+  "roles": ["owner"],
+  "params": {
+    "command": "git status --short",
+    "description": "查看工作区状态"
+  },
+  "workspace": ".tmp/phase-4-demo/workspace"
+}

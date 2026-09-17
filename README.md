@@ -1,25 +1,314 @@
 # Memory
 
-开发仓库根目录。
+开发仓库根目录。当前承载一个**独立于具体 Coding Agent 的软件工程治理层**：
+把工程规范变成机器可执行的规则，对固定上下文稳定地给出 allow / allow_with_warnings / block，
+并留下"命中了哪些规则、跳过了哪些、为什么"的可重放审计证据。
 
-> 当前状态：**空白基线**。仓库已完成 Git 初始化，但尚未绑定技术栈、构建系统或依赖。
+> 当前进度：**Phase 4 已完成**（受控执行：工具注册表 + 执行前授权 + 执行后验证 + 审计链）。
+> Phase 0 的 YAML Rule → Loader → Engine → CLI 链路、Phase 1 的 Context/Scope/Decision、
+> Phase 2 的 dsh Adapter 与 pre-execute Hook、Phase 3 的离线检索仍然有效，并被后续阶段的测试继续覆盖。
+> 阶段计划见 [Engineering Policy Platform 文档集](docs/engineering-policy-platform/README.md)。
 
-## 用途
+## 快速开始
 
-待补充。（此处填写项目目标、核心问题域与主要使用场景。）
+环境要求：Python ≥ 3.11。以下命令均已在本仓库实际执行验证。
+
+### 安装
+
+推荐用 [uv](https://docs.astral.sh/uv/) 同步锁定的依赖（会创建 `.venv` 并以可编辑方式安装 `src/`）：
+
+```powershell
+uv sync --all-extras
+```
+
+没有 uv 时，用现有解释器直接安装直接依赖（版本见 [requirements.lock](requirements.lock)）：
+
+```powershell
+python -m pip install -r requirements.in
+```
+
+### 运行规则检查（CLI）
+
+```powershell
+# 反例：Controller 直接依赖 Repository，退出码 1
+uv run python -m policy.check examples/bad_controller.py --dependencies repository
+
+# 正例：Controller 只依赖 Service，退出码 0
+uv run python -m policy.check examples/good_controller.py --dependencies service
+
+# 范围不匹配：layer=service 时 ARCH-001 不参与判断，输出会列出跳过原因，退出码 0
+uv run python -m policy.check examples/good_controller.py --layer service --dependencies repository
+
+# 只校验规则集本身（配置损坏时退出码 2）
+uv run python -m policy.check --check-rules
+```
+
+未使用 uv 时，`python -m policy.check` 需要先让解释器找到 `src/`：
+
+```powershell
+$env:PYTHONPATH = "src"     # 仅当前会话；uv sync 安装过项目后就不需要了
+python -m policy.check examples/bad_controller.py --dependencies repository
+```
+
+`uv sync --all-extras` 会以可编辑方式安装本项目，之后 `uv run python -m policy.check` 直接可用。
+学习手册不受这条限制：各阶段的 notebook 与 `walkthrough.py` 会自己把 `src/` 与 `tools/` 加进搜索路径。
+
+退出码：`0` 通过（allow）、`1` 发现违规（block / allow_with_warnings，含需要人工审批的 block）、
+`2` 配置或执行错误（规则不可读、规则损坏、上下文不完整、未知 checker）。
+
+加 `--json` 得到机器可读输出：顶层是 CLI 包装（`context` / `rule_set` / `reported_imports` / `exit_code`），
+其中 `result` 就是带 `schema_version` 的决策协议载荷，可被 `policy.parse_decision` 原样解析回来。
+
+常用参数：`--layer`（安全关键维度，不传时按文件名推断并在输出中标明）、`--module`（只接受显式传入）、
+`--operation`（受控枚举）、`--trace-id`（串联检索/决策/执行，不传即留空）、`--task`、`--agent`、`--project`。
+
+### 把策略接到 dsh（Phase 2）
+
+dsh 的工具调用会先经过 Adapter 与 Policy Engine，再决定是否执行：
+
+```text
+dsh tool request
+  → adapters.dsh.adapter（纯映射：dsh Event → PolicyEvent / PolicyContext）
+  → Policy Engine
+  → allow：执行一次；block：返回结构化违规，不执行
+```
+
+接线分两层（示例都在 examples/dsh/）：
+
+```powershell
+# 1) 受治理项目的 .policy/ 下放两份配置：
+#    dsh-adapter.yaml：显式声明 project_root / rules / layers / languages / 内部预算
+#    hooks.json：声明 Hook 命令（matcher 留空 = 匹配全部工具，避免新工具绕过门禁）
+# 2) 把进程内转发插件挂到 profile 上；受控沙箱闭环可以直接跑：
+uv run python tools/dsh_sandbox_loop.py     # bad 编辑被阻断且文件哈希不变 / good 编辑放行一次
+
+# 只做接线自检：hooks.json 是否存在、命令是否指向本适配器、内部预算是否小于 dsh 超时
+$env:PYTHONPATH = "src"
+python -m adapters.dsh.hooks --config examples/dsh/dsh-adapter.yaml `
+    --hooks-config examples/dsh/hooks.json --self-check
+```
+
+Hook 就是一个读 stdin JSON、按退出码表态的命令：**exit 0 = 放行，exit 2 = 阻断（stderr 即理由）**。
+dsh 对"超时 / 崩溃 / 配置读不到"一律按放行处理，所以失败关闭由 Hook 自己保证
+（内部预算小于 dsh 超时、异常全部转成 exit 2、运行期接线自检）。设计与证据见
+[Adapter README](src/adapters/dsh/README.md)。
+
+### 离线规范检索（Phase 3）
+
+从仓库已有的官方文档镜像里检索与任务相关的片段，并组装成**带来源、长度受控**的 Engineering Context。
+检索只回答"找到什么值得告诉 Agent"，不负责授权，也不执行任何工具。
+
+```powershell
+# 1) 校验摄取清单：数据集、许可、镜像 manifest 与本地文件哈希（漂移会退出 1）
+uv run python -m retrieval.cli verify
+
+# 2) 幂等重建索引（SQLite FTS5，产物在 .tmp/retrieval/ 下，可随时删掉重建）
+uv run python -m retrieval.cli index
+uv run python -m retrieval.cli index --check     # 只问"要不要重建"
+
+# 3) 检索与组装上下文（--json 得到机器可读载荷）
+uv run python -m retrieval.cli query "代码评审需要检查哪些方面" --limit 5
+uv run python -m retrieval.cli context "代码评审需要检查哪些方面" --decision decision.json
+
+# 4) 固定评测集基线：FTS5 门槛决定退出码，向量检索只作为对照记录
+#    查询与门槛在 tests/fixtures/retrieval_eval/queries.yaml，
+#    记录在案的结果在 tests/fixtures/retrieval_eval/baseline-v2.json：
+#    排名或指标变了就会失败，除非显式重新记录（--record）
+uv run python tools/retrieval_eval.py --method both
+```
+
+未安装项目时，同样可以先用 `$env:PYTHONPATH = "src"` 再运行上面的 `python -m retrieval.cli ...`。
+
+语料、许可与预算都是数据：新增/移除语料只改 [knowledge/corpus.yaml](knowledge/corpus.yaml)，
+中文术语到英文术语的受控映射在 [knowledge/query_expansion.yaml](knowledge/query_expansion.yaml)。
+"没有结果"与"知识不可用"是两个显式状态：`query` 在无命中时退出码为 1，
+Context 在检索不可用时只输出 `knowledge_unavailable`，**绝不回退到模型记忆里的规范**。
+每条片段都带来源路径、URL、许可与文本哈希，引用 ID（`[K1]`、`[K2]`…）可直接追溯。
+
+### 受控执行（Phase 4）
+
+规则说"这件事不合规"，受控执行说"这件事根本没被执行"：所有受控工具都要先拿到
+与**具体参数**绑定的短时效授权，执行后还要交出证据。
+
+```powershell
+# 1) Tool Registry 是数据：风险级别、参数白名单、权限、审批门禁、事后验证器都在
+#    registry/tool-registry.yaml 里；运行时描述与已审核哈希不一致的工具不可使用
+uv run python -m enforcement.cli registry --verify
+uv run python -m enforcement.cli registry --show fs.edit
+
+# 2) 只做执行前决策（授权 / 阻断），不执行任何工具，也不占用 action_id（dry-run）
+uv run python -m enforcement.cli precheck --request examples/enforcement/edit-allow-request.json
+
+# 3) 受控执行：pre-check → 短时效 grant → 执行一次 → 事后验证（哈希 / diff / 语法）
+uv run python -m enforcement.cli execute --request examples/enforcement/edit-allow-request.json
+
+# 4) 高风险动作（pwsh / bash / run_code）默认阻断：先由人工门禁签发与 action_hash 绑定的审批
+uv run python -m enforcement.cli approve --request examples/enforcement/shell-approval-request.json `
+    --out .tmp/artifacts/approval.json --granted-by alice --roles reviewer --ttl 300
+uv run python -m enforcement.cli execute --request examples/enforcement/shell-approval-request.json `
+    --approval .tmp/artifacts/approval.json
+
+# 5) 一条 trace 从决策到终态可以重放；审计链被改动或删记录都会失败
+uv run python -m enforcement.cli trace --audit .tmp/artifacts/enforcement-audit.jsonl --action-id <id>
+uv run python -m enforcement.cli verify --audit .tmp/artifacts/enforcement-audit.jsonl
+
+# 6) 上线自检：注册表 / 审核 / 审计 / 台账 / 驱动
+uv run python -m enforcement.cli self-check
+
+# 7) 受控执行闭环（允许一次 / 重放阻断 / 失败回滚 / 高风险阻断 / trace 可重放）
+uv run python tools/enforcement_loop.py
+```
+
+> 两条使用提示：
+> 1. 示例请求里的 `action_id` 是固定的：第二次执行会被**正确地**判成重放（`action_replay`，退出码 1）。
+>    要重复演示就换一个 `action_id`，或先 `python tools/cleanup.py` 清掉 `.tmp/` 下的台账与审计。
+> 2. 命令类示例（`exec.pwsh` / `exec.bash`）需要本机真的装了对应的 shell；
+>    没有装时执行结果是 `failed(process_error)` / `repair_required`（退出码 1）——不会静默通过，
+>    `enforcement.cli self-check` 也会把缺 shell 作为 warning 报出来。
+
+**退出码**：`0` 允许或验证通过；`1` 阻断 / 需要修复（block、repair_required、inconsistent、rolled_back）；
+`2` 配置或执行错误（注册表不合规或未审核、请求不合法、审计链损坏、用法错误）。
+
+**命令类工具的最小权限**：注册表里的命令白名单只做完整匹配，而且命令里出现 `;` `|` `&` 反引号 `$(` `${` `>` `<`
+或换行时**一律阻断**（`command_composition_blocked`）——单靠 `( .*)?` 这类正则会被 `echo hi ; 任意命令` 绕过。
+需要组合命令时必须改注册表、重新审核，并说明为什么安全。
+
+**已知边界**（不假装做到）：审计链是追加写的摘要链，能发现中间被改/被删，但**删尾部或整链重写发现不了**
+（对外证明需要 Phase 7 的外部锚定/签名）；审批首版是“人工门禁写下的结构化记录”，不做签名与独立审批人名册。
+
+**授权为什么不能“换参数复用”**：`action_hash` 覆盖工具身份、schema 哈希、规范化参数、主体、
+权限、上下文摘要与 request/action 标识。参数改一个字符，哈希就变，旧授权立即失效——
+这是数学，不是自觉。
+
+### 测试
+
+```powershell
+uv run python -m pytest tests/unit -q            # 388 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计
+uv run python -m pytest tests/contract -q        # 82 用例：决策协议快照 + dsh 映射契约 + 检索端口契约 + 受控执行协议
+uv run python -m pytest tests/integration -q     # 147 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环
+uv run python -m pytest tests/security -q        # 20 用例：注入、越权、缓存失效、检索失败关闭、审批伪造、日志失效
+uv run python -m pytest -q                       # 全部 637 用例
+```
+
+### 记录性能基线
+
+```powershell
+uv run python tools/policy_bench.py --counts 10 100 1000
+```
+
+固定随机种子生成规则，记录每次评估的耗时与内存峰值。**只建立基线，不做优化**。
+
+### 想搞懂代码在做什么
+
+看学习手册：每个阶段一份，用真实模块逐段演示，每个代码单元后面都写明"这段输出说明了什么"。
+
+| 手册 | 内容 |
+| --- | --- |
+| [Phase 0](docs/learning/phase-0/walkthrough.ipynb) | 一条规则从 YAML 到 PASS/FAIL 的完整链路 |
+| [Phase 1](docs/learning/phase-1/walkthrough.ipynb) | 上下文规范化、范围匹配、严重级别与可解释决策 |
+| [Phase 2](docs/learning/phase-2/walkthrough.ipynb) | dsh 事件映射、Hook 阻断、失败关闭与真实沙箱闭环 |
+| [Phase 3](docs/learning/phase-3/walkthrough.ipynb) | 分块、FTS5 检索、来源控制、Context 预算与"知识不可用" |
+| [Phase 4](docs/learning/phase-4/walkthrough.ipynb) | 工具注册表、参数绑定的授权、受控执行、事后验证与审计链重放 |
+
+不想开 Jupyter 就运行同内容的纯 Python 版本（`walkthrough.py`）。
+
+### 生成阶段验收证据
+
+```powershell
+uv run python tools/phase_evidence.py            # 默认写到 .tmp/artifacts/phase-4-evidence.json
+```
+
+证据包含实现版本、规则集哈希（`sha256:...`）、测试命令、用例数、失败数与 JUnit 报告路径，
+格式遵循[测试策略](docs/engineering-policy-platform/testing/test-strategy.md)，不记录密钥或隐私数据。
+
+### 清理临时文件
+
+所有会话产物都写在 `.tmp/`（pytest 缓存、阶段证据、notebook 演示文件），该目录已在 `.gitignore` 中。
+用完即删，仓库无需保留：
+
+```powershell
+uv run python tools/cleanup.py --dry-run   # 先看会删什么
+uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pytest_cache/、.uv-cache/
+```
 
 ## 目录结构
 
-```
+```text
 .
-├── .editorconfig      # 编辑器统一约定（缩进、换行、编码）
-├── .gitattributes     # 换行符与二进制文件规则
-├── .gitignore         # 忽略清单（OS / 编辑器 / 依赖 / 构建产物 / 密钥）
-├── AGENTS.md          # 面向 AI 编码代理的仓库约定
-└── README.md
+├── .github/workflows/phase-4.yml      # CI：单元 / 契约 / 集成 / 对抗测试、示例重放、检索基线、注册表审核、受控执行闭环、手册与证据
+├── docs/
+│   ├── dora-capabilities/             # DORA 软件交付能力指南离线镜像（37 篇）
+│   ├── dotnet-design-guidelines/      # .NET Framework 设计准则离线镜像（49 篇）
+│   ├── engineering-policy-platform/   # 本项目的分阶段架构、契约与测试路线
+│   ├── gitlab-code-review/            # GitLab 评审规范离线镜像（20 篇）
+│   ├── google-eng-practices/          # Google 工程实践指南离线镜像（14 篇）
+│   ├── learning/                      # 面向人的学习手册（按阶段：phase-0 … phase-4）
+│   ├── owasp-cheatsheets/             # OWASP 代码安全指南离线归档（118 篇）
+│   └── python-pep-code-style/         # PEP 8 / PEP 257 文档镜像（11 篇）
+├── examples/                          # 可重放的 CLI 示例（正例 / 反例）
+├── examples/dsh/                      # dsh 接线示例：hooks.json / dsh-adapter.yaml / profile-patch.yml
+├── examples/enforcement/              # 受控执行示例请求（编辑 / 高风险命令 + 审批）
+├── knowledge/
+│   ├── corpus.yaml                    # Phase 3 摄取清单：数据集、许可、tier、可见性、检索预算
+│   └── query_expansion.yaml           # 受控中英术语表（跨语言词法桥接，只登记术语）
+├── policies/architecture/ARCH-001.yaml # 目前唯一规则：Controller 不得直接依赖 Repository
+├── registry/                          # Phase 4 Tool Registry：工具授权表 + 已审核哈希清单
+├── src/policy/                        # 核心库：models / context / scope / loader / engine / check
+├── src/enforcement/                   # Phase 4 受控执行：registry / action / approvals / audit / ledger / precheck / executor / drivers / postcheck / trace / cli
+├── src/adapters/dsh/                  # dsh Adapter：adapter（纯映射）/ hooks（Hook 与审计）/ README
+├── src/retrieval/                     # Phase 3 检索层：chunker / corpus / store / indexer / query / retriever / vector / context / cli
+├── tests/
+│   ├── unit/                          # 模型、规范化、范围矩阵、决策聚合、分块、查询、Context
+│   ├── contract/                      # 决策协议快照、dsh 映射契约、检索端口契约
+│   ├── integration/                   # 真实 CLI 子进程、性能基线、检索索引与增量
+│   ├── security/                      # 对抗测试：注入、越权、缓存失效、检索失败关闭
+│   └── fixtures/                      # 决策快照、dsh 事件、检索语料与固定评测集
+├── tools/                             # 仓库脚本：阶段证据、性能基线、检索评测、dsh 沙箱闭环、notebook 生成、清理
+├── pyproject.toml                     # 依赖清单、包配置、pytest 配置
+├── requirements.in / requirements.lock # 直接依赖与锁定版本
+├── README.md
+└── .tmp/                              # 会话临时产物（证据、pytest 缓存、notebook 演示），用完可删
 ```
 
-尚未创建源码目录。选定技术栈后再补充 `src/`、测试目录与构建配置。
+## 技术栈
+
+| 项 | 选择 | 说明 |
+| --- | --- | --- |
+| 语言 | Python ≥ 3.11（本机验证 3.13.11） | 文档选型 Phase 0–1 指定 |
+| 依赖 | pydantic 2、PyYAML 6 | 类型化规则与 YAML 解析 |
+| 检索 | SQLite FTS5（标准库 sqlite3，无第三方依赖） | Phase 3 的可解释检索基线；向量检索是可替换端口，本阶段**未采纳**（评测见阶段记录） |
+| 受控执行 | 标准库 + pydantic（无第三方依赖） | Phase 4：Tool Registry 是数据（YAML），授权 / 幂等 / 审计链落在追加写 JSONL 上，执行驱动按注册表声明选择 |
+| 测试 | pytest 8+（本机验证 9.1.1） | 单元 + 契约 + 集成三层 |
+| 包管理 | uv（`uv.lock` 由 `uv lock` 生成） | CI 用 `uv sync --all-extras` |
+| CI | GitHub Actions | `.github/workflows/phase-3.yml`（含 Phase 0–2 的重放用例、dsh 接线自检与检索基线） |
+
+Phase 0–4 明确不引入：LangGraph、向量数据库、FastAPI、MCP、Agent SDK 与任何 LLM 调用。
+Phase 2 里 dsh 只作为**外部进程与线协议**存在：适配器不导入 dsh 的类型，核心层更不知道 dsh 的存在。
+Phase 3 的检索层不导入任何 Agent SDK、Web 框架或向量库：embedding 是端口（`retrieval.vector`），
+用确定性本地实现做对照评测；固定评测集显示它没有跑赢 FTS5，因此没有进入默认链路。
+依赖引入门禁见[技术选型与目标目录](docs/engineering-policy-platform/03-technology-and-layout.md)。
+
+## 架构约定
+
+- 规则是数据，不是提示词：`policies/**/*.yaml` 由 Loader 解析为不可变模型；
+- 核心层（`src/policy`）不导入任何 Agent 框架、Web 框架或向量库；
+- 未知顶层字段、未知严重级别、未知 scope 维度、未知操作、未知 enforcement 一律报错，不静默忽略；
+- 一次加载要么全部成功、要么不替换规则集；
+- 相同输入必须得到相同结论，violation 按 `rule_id` 稳定排序，规则集哈希与加载顺序无关；
+- 上下文只接受显式字段：不根据文件名推断主体、权限或审批状态；
+- 决策协议带 `schema_version`，未知版本拒绝消费，绝不降级为 allow；
+- Agent Adapter 只做协议转换：不猜 layer/language/principal，声明不出来就失败关闭；
+  未知事件、未知工具、缺失路径一律拒绝，并把"不受本阶段治理"显式记进审计；
+- 检索层的原始输入永不拼进 SQL / FTS 表达式：先规范化成受控词项，再以参数形式查询；
+- 权限只来自显式 AccessScope，查询文本不能扩权；返回项必须带来源路径、URL、许可与文本哈希；
+- 检索不可用时返回 `knowledge_unavailable`，绝不回退到"模型记忆里的规范"，
+  相似度分数只用于内部排序，绝不作为授权信号；
+- 受控工具的授权与**具体动作**绑定：`action_hash` 覆盖工具 schema、规范化参数、主体与上下文，
+  参数变化即失效；授权短时效、单次使用，执行器不解析任何自然语言批准；
+- 风险分类、参数白名单、权限、审批门禁与事后验证器都是 `registry/tool-registry.yaml` 里的数据，
+  模型不能自行声明"我这个动作属于哪一类"；运行时描述与已审核哈希不一致的工具不可使用；
+- 执行后必须交证据（文件前后哈希、diff 摘要、退出码、证据不足按 `repair_required` 处理），
+  回滚能力按工具声明：声明不了就写 `unsupported`，绝不假装所有副作用都可撤销。
 
 ## 约定
 
@@ -27,7 +316,7 @@
 
 遵循 [Conventional Commits](https://www.conventionalcommits.org/)：
 
-```
+```text
 <type>(<scope>): <subject>
 ```
 

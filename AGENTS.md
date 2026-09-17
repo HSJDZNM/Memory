@@ -4,12 +4,29 @@
 
 ## 仓库现状
 
-这是一个**刚初始化的空白基线仓库**，尚未绑定技术栈。因此：
+仓库已绑定 Python 技术栈（见下文），并完成 Engineering Policy Platform 的 **Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4**：
 
-- 没有构建、测试、lint 命令可用；
-- 没有源码目录、依赖清单或 CI 配置。
+- 可运行：根 `README.md` 中的安装、测试、CLI、Hook 自检、沙箱闭环、性能基线、检索索引与评测命令均已实际验证；
+- 有规则目录 `policies/`、核心源码 `src/policy/`（models / context / scope / engine / loader / check）、
+  dsh 适配器 `src/adapters/dsh/`（adapter / hooks / 进程内转发插件）、
+  检索层 `src/retrieval/`、语料清单 `knowledge/corpus.yaml`、
+  受控执行层 `src/enforcement/`、工具注册表 `registry/`、
+  测试 `tests/{unit,contract,integration,security}` 与 CI `.github/workflows/phase-4.yml`；
+- Phase 1 的决策协议为 `SCHEMA_VERSION = "1.0"`，快照在 `tests/fixtures/decisions/`；
+- Phase 2 的 Hook 契约、脱敏事件 fixture 与失败关闭设计分别在 `src/adapters/dsh/README.md`、
+  `tests/fixtures/agent_events/dsh/` 与 `docs/engineering-policy-platform/phases/phase-2-dsh-adapter.md` 的实施记录里；
+- Phase 3 的摄取清单 `knowledge/corpus.yaml`、检索层 `src/retrieval/`（chunker / corpus / store / indexer /
+  query / retriever / vector / context / cli）、固定评测集 `tests/fixtures/retrieval_eval/queries.yaml`、
+  基线脚本 `tools/retrieval_eval.py` 与实施记录见 `docs/engineering-policy-platform/phases/phase-3-retrieval.md`；
+  索引库是构建产物，落在 `.tmp/retrieval/`，可随时重建；
+- Phase 4 的受控执行层 `src/enforcement/`（models / registry / action / approvals / audit / ledger /
+  precheck / executor / drivers / postcheck / trace / cli）、数据化工具注册表
+  `registry/tool-registry.yaml` 与已审核哈希 `registry/tool-registry.approved.json`、
+  dsh 侧桥接 `src/adapters/dsh/enforcement.py`、受控执行闭环 `tools/enforcement_loop.py`；
+  实施记录见 `docs/engineering-policy-platform/phases/phase-4-tool-enforcement.md`；
+- 下一阶段计划见 `docs/engineering-policy-platform/phases/`（下一步是 Phase 5 Code Validators）。
 
-**在添加技术栈之前，不要假设任何框架、包管理器或目录布局存在。**先读 `README.md` 与实际的 `git ls-files`，再动手。
+**改动前先读 `README.md` 与实际的 `git ls-files`，不要假设未登记的目录或框架存在。**
 
 ## 工作方式
 
@@ -36,6 +53,102 @@
 主题行祈使语气、不超过 72 字符。破坏性变更在正文写明 `BREAKING CHANGE:`。
 
 示例：`chore: initialize repository`
+
+## 已选定的技术栈（Phase 0 起）
+
+| 项 | 选择 | 位置 |
+| --- | --- | --- |
+| 语言 | Python ≥ 3.11 | `src/policy/`（src 布局） |
+| 依赖清单 | pydantic 2、PyYAML 6；dev: pytest 8+ | `pyproject.toml` |
+| 依赖锁定 | `requirements.in` / `requirements.lock`；uv 用 `uv lock` 生成 `uv.lock` | 仓库根目录 |
+| 测试 | pytest：`tests/unit`、`tests/contract`、`tests/integration`、`tests/security` | `pytest.ini`、`tests/conftest.py` |
+| 检索 | SQLite FTS5（标准库 sqlite3；向量检索是可替换端口，本阶段未采纳） | `src/retrieval/`、`knowledge/corpus.yaml` |
+| CI | GitHub Actions | `.github/workflows/phase-4.yml`（含 Phase 0–3 的重放用例、dsh 接线自检、检索基线、注册表审核与受控执行闭环） |
+| 受控执行 | 标准库 + pydantic；注册表是 YAML 数据，台账与审计链是追加写 JSONL | `src/enforcement/`、`registry/` |
+| 脚本 | 锁文件生成、阶段证据、性能基线、检索评测、dsh 沙箱闭环、受控执行闭环、notebook 生成与校验、临时文件清理 | `tools/*.py`（见 `tools/README.md`） |
+
+安装、测试、运行命令以根 `README.md` 为准，且必须保持可执行。
+
+### 核心层约束（不要破坏）
+
+1. `src/policy/` 只能依赖标准库、pydantic、PyYAML；禁止导入 Agent SDK、Web 框架、向量库或工作流框架；
+2. 规则与语料都是数据：新增规则写进 `policies/<domain>/<ID>.yaml`，新增检索语料改
+   `knowledge/corpus.yaml`（数据集、许可、tier、可见性、预算），不要在代码里硬编码判断或路径；
+3. 未知字段、未知枚举、未知 scope 维度、未知操作、未知 checker、未知协议版本一律报错，
+   不得静默忽略或默认放行；
+4. 规则集加载是原子的：任一文件失败都不能替换现有规则集；
+5. 相同输入必须得到相同结论：violation 按 `rule_id` 稳定排序，`matched_rules`/`skipped_rules` 有序，
+   `RuleSet.identity` 与加载顺序无关；
+6. 上下文只接受显式字段：不得根据文件名、目录或用户消息推断主体、权限或审批状态；
+7. 决策协议带 `schema_version`，消费方看不懂必须拒绝；`tests/fixtures/decisions/` 的协议快照
+   只能显式更新（`POLICY_UPDATE_SNAPSHOTS=1`），不能在断言里放宽；
+8. Adapter 只做协议转换：不导入 Agent SDK 类型、不猜 layer/language/principal，
+   声明不出来就失败关闭；未知事件、未知工具、缺失路径一律拒绝；
+   工具表是白名单，升级 Agent 版本必须先更新工具表并补契约测试；
+9. 进入下一阶段前必须更新本文件的依赖与命令，并运行 `tools/phase_evidence.py` 生成证据；
+10. 外部命令 Hook 的阻断语义由 Agent 侧决定：`exit 0` 放行、`exit 2` 阻断；
+    "超时 / 崩溃 / 配置读不到"在 dsh 侧等于放行，因此失败关闭必须由 Hook 自己保证
+    （内部预算小于 Agent 侧超时 + 异常全部转成退出码 2 + 运行期接线自检）。
+    改动退出码语义前先读 `src/adapters/dsh/README.md`；
+11. 检索层同样是失败关闭：原始查询文本永不拼进 SQL / FTS 表达式，先规范化成受控词项；
+    权限只来自显式 `AccessScope`（查询文本不能扩权），返回项必须带来源路径、URL、许可与文本哈希；
+    无结果 / 无权限 / 检索不可用是三个不同的显式状态，检索不可用时只输出 `knowledge_unavailable`，
+    绝不回退到"模型记忆里的规范"；相似度分数只用于内部排序，不作为授权信号；
+12. 检索语料的哈希漂移不许静默：镜像 manifest 的 sha256 与本地文件不一致时写进 document 行、
+    run 报告，并让 `python -m retrieval.cli verify` 退出 1（CI 里是硬门禁）；
+13. 受控工具的授权只认结构化记录：风险级别、参数白名单、权限、审批门禁与事后验证器都在
+    `registry/tool-registry.yaml`（数据），模型不能自行声明动作类别；运行时描述与
+    `registry/tool-registry.approved.json` 的已审核哈希不一致时**该工具不可使用**
+    （改注册表后必须重新审核：`python -m enforcement.cli registry --approve --reviewer <name>`）；
+14. `action_hash` 覆盖工具 schema 哈希、规范化参数、主体、权限与上下文摘要：参数变一个字符旧授权即失效；
+    授权短时效、单次使用，执行器不解析自然语言批准，重复 `action_id` 绝不执行第二次
+    （台账 + 审计链两处都拦）；高风险动作（destructive / external / privileged）必须人工审批；
+15. 事后验证必须交证据：文件前后哈希与 diff 摘要、退出码、超时、工具返回值只作不可信数据
+    （只留摘要）；证据不足按 `repair_required` / `inconsistent` 处理，回滚能力按工具声明，
+    声明不了就写 `unsupported`——绝不假装所有副作用都可撤销；
+16. 审计链是追加写的摘要链（`sequence` + `prev_digest`）：密钥（含 `Authorization: Bearer` 后的 token）、
+    绝对路径（Windows 与 POSIX）、控制字符与超长载荷一律脱敏或转义，单条记录超过上限直接失败关闭；
+    受治理动作在审计 / 台账不可写时不执行（只有 `risk=read_only` 的工具允许声明 `audit_failure: degrade` 并记警告）。
+    它是**摘要链不是防篡改日志**：删尾部或整链重写发现不了，外部锚定/签名属于 Phase 7；
+17. 命令类工具的最小权限：白名单只做完整匹配，且命令里出现 `;` `|` `&` 反引号 `$(` `${` `>` `<` 或换行时
+    一律结构性阻断（`command_composition_blocked`，pre-check 与驱动各查一遍）——
+    `( .*)?` 形态的白名单会被“分号 + 第二条语句”绕过；
+    需要组合命令时必须改注册表并重新审核，说明为什么安全；
+18. 评测门槛与结果都随版本记录：门槛在 `tests/fixtures/retrieval_eval/queries.yaml`，
+    结果在 `tests/fixtures/retrieval_eval/baseline-v2.json`，代码里不写"脱离数据的常数"；
+    换 embedding、改术语表或改语料都必须重跑 `python tools/retrieval_eval.py --method both`，
+    行为有意变化时用 `--record` 显式重记基线并递增评测集版本（`pytest` 也会比对这份基线）。
+
+## 临时文件与产物
+
+- 会话产生的临时文件统一写在 `.tmp/`（已在 `.gitignore` 中），不要在仓库根目录散落临时文件；
+  真实 Agent 沙箱闭环（`tools/dsh_sandbox_loop.py`）的受控项目与日志都在 `.tmp/phase-2-sandbox/` 下，
+  不得把它指向真实仓库或真实凭据；
+- Phase 4 的受控执行闭环在 `.tmp/phase-4-demo/` 下运行（受控工作区、审计、台账），
+  它只动这个目录，不得指向仓库真实文件；
+- Phase 3 的索引库、评测基线与阶段证据同样在 `.tmp/`（`.tmp/retrieval/`、`.tmp/artifacts/`）下，
+  它们是构建产物，不提交；重建命令见根 `README.md`；
+- `.tmp/` 用完即删：`python tools/cleanup.py --dry-run` 预览，`python tools/cleanup.py` 执行；
+- 该脚本只删白名单路径：`.tmp/`、`.pytest_cache/`、`.uv-cache/`、`__pycache__/`、`*.pyc`；
+- 不要提交 `.tmp/` 内容；阶段证据可由 `python tools/phase_evidence.py` 随时重建。
+
+## 学习手册（每个阶段一个目录）
+
+每个阶段完成后在 `docs/learning/<phase>/` 下补齐四个文件：
+
+```text
+note.md            # 任务内容、对象清单与对象关系（手写）
+walkthrough.ipynb  # 带注解的可执行讲解（由脚本生成，不要手改）
+walkthrough.py     # 同一份内容的纯 Python 版本（由脚本生成）
+README.md          # 怎么用、怎么维护、常见问题（手写）
+```
+
+- 改 notebook 内容 = 改 `tools/build_learning_notebook.py`（新增 `PHASE_N_CELLS` 并在 `PHASES` 注册），
+  然后运行 `python tools/build_learning_notebook.py` 重新生成；
+- 生成器会从两个工作目录各跑一遍全部代码单元，并断言示例退出码与文档里写过的 JSON 键名，
+  任何不一致都会让生成失败，因此手册里的代码始终可运行、说明始终与输出一致；
+- 新增阶段时同步更新索引 `docs/learning/README.md`；
+- 提交前运行 `python tools/check_notebook.py docs/learning/*/walkthrough.ipynb` 校验结构。
 
 ## 引入新技术栈时需要同步更新
 

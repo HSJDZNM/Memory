@@ -1,0 +1,33 @@
+{
+  "approved_at": "2026-09-17T09:51:35.187628Z",
+  "approved_schema_version": "1.0",
+  "registry_digest": "sha256:118eb40ff1345ca58aa83e59d066ea4c9f3c41e5ea32e6bf7af40b0a3a21eee2",
+  "registry_version": 1,
+  "reviewed_by": "repo-maintainers",
+  "tools": {
+    "exec.bash": {
+      "schema_hash": "sha256:ebba5269830af88846dfeff6d065ead0e15f00d8cd21f2a8acc89de86219aa79",
+      "schema_version": "1.0"
+    },
+    "exec.pwsh": {
+      "schema_hash": "sha256:d81cf63cf97f09948ce52f8230b7f5f5b972eaa6699f495c9af089dd2733232f",
+      "schema_version": "1.0"
+    },
+    "exec.run_code": {
+      "schema_hash": "sha256:eaf5c991cc3ea22cd20fdcea61b37f5b4f3fb78926d12e7e25f950d3ac8febc3",
+      "schema_version": "1.0"
+    },
+    "fs.edit": {
+      "schema_hash": "sha256:3e5b2fddc2c699893616160c3f304fae0fb797785dd6591b092943789abed85d",
+      "schema_version": "1.0"
+    },
+    "fs.read": {
+      "schema_hash": "sha256:58fb5fe42c5fd0b8f67f0c07bc8378a3c7031e2dfc5b707122078ab63e0b46c7",
+      "schema_version": "1.0"
+    },
+    "fs.write": {
+      "schema_hash": "sha256:9793c581ae912640e1ffd10532ac2b27a4573a74c406546264139ac036ada5c1",
+      "schema_version": "1.0"
+    }
+  }
+}

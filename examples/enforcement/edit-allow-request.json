@@ -1,0 +1,17 @@
+{
+  "action_id": "demo:call-edit-1",
+  "request_id": "demo:call-edit-1",
+  "trace_id": "demo-trace-1",
+  "agent": "dsh",
+  "agent_version": "0.1.5-rc.1",
+  "tool_id": "fs.edit",
+  "subject": "local-user",
+  "roles": ["developer"],
+  "params": {
+    "file_path": "src/shop/order_controller.py",
+    "old_string": "from service import OrderService",
+    "new_string": "from service import OrderService\nfrom util import clock",
+    "replace_all": false
+  },
+  "workspace": ".tmp/phase-4-demo/workspace"
+}
