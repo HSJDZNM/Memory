@@ -36,6 +36,8 @@ __all__ = [
     "FileAuditSink",
     "NullAuditSink",
     "REDACTION_PATTERNS",
+    "SECRET_VALUE_PATTERNS",
+    "contains_secret_value",
     "redact_text",
     "sanitize_payload",
 ]
@@ -76,6 +78,24 @@ REDACTION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "<redacted-key>",
     ),
 )
+
+
+# 落盘判定的**窄**口径：只认形态确定的凭据。审计脱敏可以用宽口径（多抹一点没有代价），
+# 但"参数值能不能写进台账"不能用宽口径——api_key = os.environ[...] 这类普通代码
+# 会被宽口径误判，导致委派执行的事后验证大面积退化成"证据不足"。
+SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)\b(?:sk|pk|ghp|gho|glpat|xox[baprs])[-_][A-Za-z0-9_\-]{8,}"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}"),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+)
+
+
+def contains_secret_value(value: Any) -> bool:
+    """参数值里是否出现确定形态的凭据；命中就不落盘，宁可事后判"证据不足"。"""
+
+    if not isinstance(value, str):
+        value = str(value)
+    return any(pattern.search(value) for pattern in SECRET_VALUE_PATTERNS)
 
 
 def redact_text(

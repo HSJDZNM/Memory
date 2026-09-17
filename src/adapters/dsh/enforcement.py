@@ -193,7 +193,13 @@ class EnforcementBridge:
         """
 
         payload = redacted_request_payload(request)
-        has_secret = any(item.secret for item in request.params)
+        # values_withheld 是这一层的元信息，不属于 ActionRequest 的字段：留在 payload 里会让
+        # PostToolUse 的重建因为"未知字段"而失败。取出来单独记。
+        values_withheld = bool(payload.pop("values_withheld", False))
+        # "能不能重建这次请求"由两件事决定：注册表把参数标成 secret，或者取值里出现确定形态的
+        # 凭据（后者会被 redacted_request_payload 扣掉取值）。两种情况下都不落盘原文，
+        # PostToolUse 阶段因此只能判"证据不足"，而不是拿一份把密钥写进去的副本换结论。
+        has_secret = values_withheld or any(item.secret for item in request.params)
         baselines = baseline_files(request, spec, workspace=self.workspace)
         self.ledger.append(
             {
@@ -202,6 +208,7 @@ class EnforcementBridge:
                 "tool_id": request.tool_id,
                 "action_hash": request.action_hash,
                 "has_secret_params": has_secret,
+                "values_withheld": values_withheld,
                 "request": payload,
                 "baselines": [
                     {

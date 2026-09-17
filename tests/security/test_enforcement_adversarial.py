@@ -96,7 +96,7 @@ def test_parameter_text_cannot_inject_audit_records(enforcement_paths):
 
 def test_secrets_and_file_content_never_reach_the_audit_log(enforcement_paths):
     enforcement_paths.file("src/shop/order_controller.py", "from service import OrderService\n")
-    secret = "sk-live0123456789abcdefghijkl"
+    secret = "sk-live0123456789abcdefghijkl"  # secret-scan: allow（合成值，用于验证脱敏与拒绝逻辑）
 
     request = make_action(
         enforcement_paths.registry_object(),
@@ -376,3 +376,75 @@ def test_cli_refuses_a_request_that_points_outside_the_workspace(enforcement_pat
     assert completed.returncode == 2
     assert "path_out_of_scope" in completed.stderr
     assert not (enforcement_paths.root / "escape-cleaned").exists()
+
+# --------------------------------------------------------------------------- 台账落盘
+
+def test_secret_bearing_parameter_values_never_reach_the_ledger(enforcement_paths):
+    """参数取值里出现确定形态的凭据时，台账不写原文，事后按"证据不足"处理。
+
+    审计链本来就脱敏，但台账此前会把 content / new_string 的原文写进 JSONL，
+    与 ledger.py 自述的"不存参数原文"矛盾。这条用例把该不变量钉住。
+    """
+
+    from adapters.dsh.enforcement import EnforcementBridge
+    from enforcement.action import redacted_request_payload
+
+    registry = enforcement_paths.registry_object()
+    token = "ghp_" + "abcdefghijklmnopqrst"
+    request = make_action(
+        registry,
+        enforcement_paths,
+        "fs.write",
+        {"file_path": "src/config.py", "content": 'TOKEN = "' + token + '"' + chr(10)},
+    )
+
+    payload = redacted_request_payload(request)
+    assert payload["values_withheld"] is True
+    content_value = next(item for item in payload["params"] if item["name"] == "content")
+    assert content_value["value"] is None, "带凭据的参数值不得落盘"
+    # 摘要仍在：结论依然可核验，只是无法重建原文
+    assert content_value["digest"] in json.dumps(payload)
+
+    bridge = EnforcementBridge(
+        registry=registry,
+        sink=FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace),
+        ledger=EnforcementLedger(enforcement_paths.ledger),
+        workspace=enforcement_paths.workspace,
+    )
+    outcome = bridge.pre(request)
+    assert outcome.decision.decision is not Decision.BLOCK
+
+    ledger_text = enforcement_paths.ledger.read_text(encoding="utf-8")
+    assert token not in ledger_text
+    assert '"values_withheld": true' in ledger_text
+    state = bridge.state_for(request.action_id)
+    assert state is not None and state["has_secret_params"] is True
+
+
+def test_plain_parameter_values_are_still_replayable(enforcement_paths):
+    """不含凭据的参数值照旧可重建：脱敏不能把普通动作的事后验证一起打死。"""
+
+    from adapters.dsh.enforcement import EnforcementBridge
+    from enforcement.action import redacted_request_payload
+
+    registry = enforcement_paths.registry_object()
+    request = make_action(
+        registry,
+        enforcement_paths,
+        "fs.write",
+        {"file_path": "src/plain.py", "content": "VALUE = 1" + chr(10)},
+    )
+    payload = redacted_request_payload(request)
+    assert payload["values_withheld"] is False
+    content_value = next(item for item in payload["params"] if item["name"] == "content")
+    assert content_value["value"] == "VALUE = 1" + chr(10)
+
+    bridge = EnforcementBridge(
+        registry=registry,
+        sink=FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace),
+        ledger=EnforcementLedger(enforcement_paths.ledger),
+        workspace=enforcement_paths.workspace,
+    )
+    bridge.pre(request)
+    state = bridge.state_for(request.action_id)
+    assert state is not None and state["has_secret_params"] is False

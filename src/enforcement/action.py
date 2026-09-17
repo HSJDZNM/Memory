@@ -27,6 +27,7 @@ from policy.models import (
     canonical_identifier,
 )
 
+from .audit import contains_secret_value
 from .models import (
     ActionRequest,
     ActionRequestError,
@@ -300,18 +301,34 @@ def build_action_request(
 
 
 def redacted_request_payload(request: ActionRequest) -> dict[str, Any]:
-    """审计 / CLI 输出用的请求视图：secret 参数只留摘要，绝不打印原文。"""
+    """审计 / 台账用的请求视图：参数原文一律不落盘，只留类型、长度与摘要。
+
+    两类参数会被扣掉取值：注册表声明 `secret: true` 的，以及取值里出现确定形态凭据的
+    （令牌前缀、Bearer、私钥块）。后者是为了兑现"台账不存参数原文"这条不变量——
+    审计链本来就脱敏，但台账此前会把 `content` / `new_string` 的原文写进 JSONL。
+
+    扣掉取值的代价是明确的：`values_withheld=True` 的请求无法在 PostToolUse 阶段重建
+    （重建会因为 action_hash 对不上而被模型拒绝），调用方据此判"证据不足"，
+    而不是把密钥落盘换一份好看的事后证据。
+    """
 
     payload = json.loads(request.model_dump_json())
-    payload["params"] = [
-        {
-            "name": item.name,
-            "type": item.type.value,
-            "chars": item.chars,
-            "digest": item.digest,
-            "secret": item.secret,
-            "value": None if item.secret else item.canonical(),
-        }
-        for item in request.params
-    ]
+    withheld = False
+    params: list[dict[str, Any]] = []
+    for item in request.params:
+        value = item.canonical()
+        blocked = item.secret or contains_secret_value(value)
+        withheld = withheld or blocked
+        params.append(
+            {
+                "name": item.name,
+                "type": item.type.value,
+                "chars": item.chars,
+                "digest": item.digest,
+                "secret": item.secret,
+                "value": None if blocked else value,
+            }
+        )
+    payload["params"] = params
+    payload["values_withheld"] = withheld
     return payload
