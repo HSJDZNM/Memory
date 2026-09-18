@@ -27,6 +27,7 @@ from .base import (
     parse_json_output,
     run_tool,
     sanitize_text,
+    tool_label,
 )
 
 __all__ = ["run_ruff", "map_diagnostics"]
@@ -77,7 +78,7 @@ def run_ruff(
         python_paths=python_paths,
     )
     invocation = run.payload(
-        tool=spec.tool.command[0], version=probe.version, config=config_path,
+        tool=tool_label(spec.tool), version=probe.version, config=config_path,
         config_sha256=config_sha,
     )
     if run.status is not ValidatorStatus.OK:
@@ -174,13 +175,22 @@ def _owns(rule: Rule, code: str) -> bool:
 
 
 def _relative_file(raw: Any, workspace: Path, fallback: str) -> str:
-    """把工具输出里的文件名映射回仓库相对路径；无法映射时用目标文件（不臆造新路径）。"""
+    """把工具输出里的文件名映射回仓库相对路径；映射不了就回退到目标文件。
+
+    工具输出是不可信数据：filename 可以是 "src/../outside.py" 这种在工作区里
+    "算得出来、却根本不存在"的路径。只有**目标本身或工作区里真实存在的文件**
+    才被接受，其余一律回到目标文件——否则证据会指着一个与本次判定无关的位置。
+    """
 
     if not isinstance(raw, str) or not raw:
         return fallback
     candidate = Path(raw)
     try:
+        anchor = Path(workspace).resolve()
         resolved = candidate if candidate.is_absolute() else (workspace / candidate)
-        return resolved.resolve().relative_to(Path(workspace).resolve()).as_posix()
+        relative = resolved.resolve().relative_to(anchor).as_posix()
     except (OSError, ValueError):
         return fallback
+    if relative == fallback or resolved.is_file():
+        return relative
+    return fallback

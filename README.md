@@ -119,7 +119,12 @@ uv run python -m retrieval.cli index --check     # 只问"要不要重建"
 
 # 3) 检索与组装上下文（--json 得到机器可读载荷）
 uv run python -m retrieval.cli query "代码评审需要检查哪些方面" --limit 5
-uv run python -m retrieval.cli context "代码评审需要检查哪些方面" --decision decision.json
+
+# --decision 接的是**真实存在**的决策载荷：既可以是仓库里的协议快照，
+# 也可以先用 CLI 生成一份（下面这条是生成 + 消费的完整链路）
+uv run python -m policy.check examples/bad_controller.py --layer controller --json > .tmp/decision.json
+uv run python -m retrieval.cli context "代码评审需要检查哪些方面" --decision .tmp/decision.json
+uv run python -m retrieval.cli context "代码评审需要检查哪些方面" --decision tests/fixtures/decisions/block.json
 
 # 4) 固定评测集基线：FTS5 门槛决定退出码，向量检索只作为对照记录
 #    查询与门槛在 tests/fixtures/retrieval_eval/queries.yaml，
@@ -234,6 +239,8 @@ checker 提供证据"时，需要它的规则以 `critical` 违规阻断——�
 
 **外部工具**：Ruff / mypy / pytest 都是"外部工具"而不是本项目的 Python 依赖——版本区间与配置文件
 在 `validation/validators.yaml`（数据）里声明，探针负责发现，缺失即失败关闭。
+**前提**：`policies/coding/STYLE-*.yaml` 需要 PATH（或当前解释器同目录）上有 Ruff `>=0.6,<1`；
+没有它时连正例都会以 `tool.ruff@1.0 unavailable` 失败关闭（`python -m validators.cli probe` 可自查）。
 仓库当前的规则只启用了 Ruff（`policies/coding/STYLE-*.yaml`）；类型检查端口与失败语义已经就位，
 但没有启用类型规则：本机与 CI 都没有装 mypy，启用它会让所有 Python 文件在缺工具时一次性判红——
 这是数据决定的事，不是代码决定的。
@@ -241,11 +248,11 @@ checker 提供证据"时，需要它的规则以 `critical` 违规阻断——�
 ### 测试
 
 ```powershell
-uv run python -m pytest tests/unit -q            # 482 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类
-uv run python -m pytest tests/contract -q        # 110 用例：决策协议快照 + dsh 映射契约 + 检索端口契约 + 受控执行协议 + 验证器证据协议
-uv run python -m pytest tests/integration -q     # 180 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环、验证器流水线
+uv run python -m pytest tests/unit -q            # 493 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类
+uv run python -m pytest tests/contract -q        # 112 用例：决策协议快照 + dsh 映射契约 + 检索端口契约 + 受控执行协议 + 验证器证据协议
+uv run python -m pytest tests/integration -q     # 189 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环、验证器流水线
 uv run python -m pytest tests/security -q        # 34 用例：注入、越权、缓存失效、检索与验证器失败关闭、审批伪造、日志失效
-uv run python -m pytest -q                       # 全部 806 用例（本机 1 例跳过：Windows 不允许普通用户创建符号链接）
+uv run python -m pytest -q                       # 全部 828 用例（本机 1 例跳过：Windows 不允许普通用户创建符号链接）
 ```
 
 ### 记录性能基线
@@ -267,6 +274,7 @@ uv run python tools/policy_bench.py --counts 10 100 1000
 | [Phase 2](docs/learning/phase-2/walkthrough.ipynb) | dsh 事件映射、Hook 阻断、失败关闭与真实沙箱闭环 |
 | [Phase 3](docs/learning/phase-3/walkthrough.ipynb) | 分块、FTS5 检索、来源控制、Context 预算与"知识不可用" |
 | [Phase 4](docs/learning/phase-4/walkthrough.ipynb) | 工具注册表、参数绑定的授权、受控执行、事后验证与审计链重放 |
+| [Phase 5](docs/learning/phase-5/walkthrough.ipynb) | AST 事实与依赖图、外部工具适配器与失效分类、测试选择、证据 → 判定与失败关闭 |
 
 不想开 Jupyter 就运行同内容的纯 Python 版本（`walkthrough.py`）。
 
@@ -300,7 +308,7 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 │   ├── engineering-policy-platform/   # 本项目的分阶段架构、契约与测试路线
 │   ├── gitlab-code-review/            # GitLab 评审规范离线镜像（20 篇）
 │   ├── google-eng-practices/          # Google 工程实践指南离线镜像（14 篇）
-│   ├── learning/                      # 面向人的学习手册（按阶段：phase-0 … phase-4）
+│   ├── learning/                      # 面向人的学习手册（按阶段：phase-0 … phase-5）
 │   ├── owasp-cheatsheets/             # OWASP 代码安全指南离线归档（118 篇）
 │   └── python-pep-code-style/         # PEP 8 / PEP 257 文档镜像（11 篇）
 ├── examples/                          # 可重放的 CLI 示例（正例 / 反例）

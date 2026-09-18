@@ -263,7 +263,9 @@ precision@5 0.800、recall@5 1.000，向量为 support 0.857 / precision 0.600 �
     python -m retrieval.cli index                         # 幂等重建索引（.tmp/retrieval/index.sqlite3）
     python -m retrieval.cli index --check                 # 只问"要不要重建"
     python -m retrieval.cli query "代码评审需要检查哪些方面" --limit 5
-    python -m retrieval.cli context "代码评审需要检查哪些方面" --decision decision.json
+    python -m retrieval.cli context "代码评审需要检查哪些方面" --decision tests/fixtures/decisions/block.json
+                                                          # 决策载荷必须是真实存在的文件：
+                                                          # 仓库快照，或 policy.check --json > 文件 生成的一份
     python -m retrieval.cli stats                         # 文档 / chunk / 隔离 / 截断统计
     python -m retrieval.cli rules --rule ARCH-001         # 规则 → chunk 的溯源
     python -m retrieval.cli quarantine --chunk chunk_... --reason "..."

@@ -21,7 +21,7 @@ import shutil
 import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, FrozenSet, Mapping, Optional, Sequence, Tuple
 
@@ -130,6 +130,7 @@ class PipelineReport:
     evidence: Tuple[ValidationEvidence, ...] = ()
     served_checkers: Tuple[str, ...] = ()
     unmapped_findings: int = 0
+    truncated_evidence: int = 0
     selection: Mapping[str, Any] = field(default_factory=dict)
     environment: Mapping[str, str] = field(default_factory=dict)
     configs: Mapping[str, Optional[str]] = field(default_factory=dict)
@@ -172,6 +173,7 @@ class PipelineReport:
             "evidence": [item.to_payload() for item in self.evidence],
             "served_checkers": list(self.served_checkers),
             "unmapped_findings": self.unmapped_findings,
+            "truncated_evidence": self.truncated_evidence,
             "selection": dict(self.selection),
             "environment": dict(self.environment),
             "configs": {key: value for key, value in self.configs.items()},
@@ -266,6 +268,10 @@ def run_pipeline(
         target=request.target,
     )
 
+    changed_files = _validated_changed(request.changed_files)
+    if changed_files != tuple(request.changed_files):
+        request = replace(request, changed_files=changed_files)  # type: ignore[arg-type]
+
     run_id = uuid.uuid4().hex[:12]
     run_root = config.root / ".tmp" / "validators" / run_id
     state = _RunState()
@@ -336,9 +342,19 @@ def run_pipeline(
     unmapped = 0
     selection: Mapping[str, Any] = {}
 
+    evidence_limit = registry.defaults.max_evidence
+    truncated_evidence = 0
     for spec in sorted(selected_specs, key=lambda item: item.id):
         output = outputs[spec.id]
         checkers = output.served or spec.checkers
+        kept = output.evidence[:evidence_limit]
+        dropped = len(output.evidence) - len(kept)
+        truncated_evidence += dropped
+        reason = output.reason
+        if dropped:
+            # 上限是资源保护，但"截断了多少条"必须写进记录，不能静默丢证据
+            note = "证据超过上限 " + str(evidence_limit) + "，已截断 " + str(dropped) + " 条"
+            reason = note if not reason else reason + "；" + note
         records.append(
             ValidatorRecord(
                 validator_id=spec.id,
@@ -348,14 +364,14 @@ def run_pipeline(
                 status=output.status,
                 critical=spec.critical,
                 duration_ms=0 if output.tool is None else output.tool.duration_ms,
-                reason=output.reason,
+                reason=reason,
                 tool=output.tool,
-                evidence_count=len(output.evidence),
+                evidence_count=len(kept),
                 served_checkers=tuple(sorted(checkers)),
             )
         )
         dependency_facts.extend(output.dependencies)
-        evidence.extend(output.evidence)
+        evidence.extend(kept)
         unmapped += output.unmapped
         if output.payload.get("selection"):
             selection = output.payload["selection"]
@@ -416,6 +432,7 @@ def run_pipeline(
         evidence=tuple(sorted(evidence, key=lambda item: item.sort_key)),
         served_checkers=tuple(sorted(served)),
         unmapped_findings=unmapped,
+        truncated_evidence=truncated_evidence,
         selection=selection,
         environment={
             "python_version": platform.python_version(),
@@ -428,6 +445,20 @@ def run_pipeline(
             "test_layout": config_digest(config.layout_path),
         },
     )
+
+
+def _validated_changed(files: Sequence[str]) -> Tuple[str, ...]:
+    """校验变更集里的路径：越界或非法一律配置错误，绝不让它悄悄流进测试选择。"""
+
+    from policy.models import PolicyContextError, normalize_repo_path
+
+    cleaned: list[str] = []
+    for item in files:
+        try:
+            cleaned.append(normalize_repo_path(str(item).replace("\\", "/")))
+        except PolicyContextError as error:
+            raise RegistryError("变更集里的路径不合法：" + str(error)) from error
+    return tuple(sorted(set(cleaned)))
 
 
 def _select_specs(
@@ -444,6 +475,15 @@ def _select_specs(
     skip 里的 checker 由别处的证据负责（例如 CLI 显式声明的依赖），不再选验证器；
     没有任何验证器负责的 checker 会变成失败关闭的阻断点。
     """
+
+    # 语言先于"需不需要验证器"校验：一个没有 rule pack 的语言意味着"我们不知道它的规则"，
+    # 此时"没有规则命中 → allow"是假结论（--language go 曾因此 exit 0），必须失败关闭。
+    if language is not None and not registry.packs_for(language):
+        raise RegistryError(
+            "上下文声明的语言 " + language + " 没有任何 rule pack（已声明的语言："
+            + ", ".join(sorted({pack.language for pack in registry.rule_packs}))
+            + "）；拒绝在不了解该语言规则的情况下给出结论"
+        )
 
     if not needed:
         return (), []
@@ -798,7 +838,12 @@ def _run_external(
             python_paths=python_paths,
         )
     elif spec.id == "tool.pytest":
-        if not request.changed_files:
+        requires_changes = any(
+            getattr(rule.rule, "missing_tests", None) is not None
+            and rule.rule.missing_tests.changed_only
+            for rule in rules
+        ) or not any(getattr(rule.rule, "missing_tests", None) is not None for rule in rules)
+        if not request.changed_files and requires_changes:
             return ValidatorOutput(
                 status=ValidatorStatus.UNAVAILABLE,
                 reason=(

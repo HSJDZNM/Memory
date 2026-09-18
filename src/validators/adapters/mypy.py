@@ -24,6 +24,7 @@ from .base import (
     config_facts,
     run_tool,
     sanitize_text,
+    tool_label,
 )
 
 __all__ = ["MYPY_LINE_RE", "run_mypy"]
@@ -77,7 +78,7 @@ def run_mypy(
         python_paths=python_paths,
     )
     invocation = run.payload(
-        tool=spec.tool.command[0], version=probe.version, config=config_path,
+        tool=tool_label(spec.tool), version=probe.version, config=config_path,
         config_sha256=config_sha,
     )
     if run.status is not ValidatorStatus.OK:
@@ -163,9 +164,15 @@ def _owns(rule: Rule, code: str) -> bool:
 
 
 def _relative_file(raw: str, workspace: Path, fallback: str) -> str:
+    """同 Ruff 适配器：只接受目标文件或工作区里真实存在的文件，其余回退。"""
+
     candidate = Path(raw)
     try:
+        anchor = Path(workspace).resolve()
         resolved = candidate if candidate.is_absolute() else (workspace / candidate)
-        return resolved.resolve().relative_to(Path(workspace).resolve()).as_posix()
+        relative = resolved.resolve().relative_to(anchor).as_posix()
     except (OSError, ValueError):
         return fallback
+    if relative == fallback or resolved.is_file():
+        return relative
+    return fallback

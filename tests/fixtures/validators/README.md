@@ -12,6 +12,7 @@ pytest 收集（`tests/conftest.py` 里的 `collect_ignore_glob` 只屏蔽收集
 | `src/shop/order_controller_bad.py` | Controller 直接依赖 Repository | 依赖解析成 `repository`（第 3 行），block | ARCH-001 |
 | `src/shop/order_service.py` / `order_repository.py` | 依赖目标 | 分别解析成 service / repository 组件 | —— |
 | `src/shop/dynamic_dependency.py` | `importlib.import_module(name)` | 依赖无法静态确定 → 失败关闭 | ARCH-001 |
+| `src/shop/submodule_controller_bad.py` | `from shop import order_repository` | 子模块边必须落在 order_repository.py 上 → block（复核 A-F2 的回归夹具） | ARCH-001 |
 | `src/shop/unresolved_dependency.py` | 顶层包存在但模块不存在 | 解析失败 → 失败关闭 | ARCH-001 |
 | `src/shop/broken_syntax.py` | 语法错误 | 解析不了 → 失败关闭 | ARCH-001 / DOC-001 |
 | `src/shop/style_offences.py` | 超长行 + 未使用导入 | Ruff 报 E501 / F401 → 映射到 STYLE-001 / STYLE-002 | STYLE-001 / STYLE-002 |

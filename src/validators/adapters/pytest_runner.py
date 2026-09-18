@@ -29,6 +29,7 @@ from .base import (
     config_facts,
     run_tool,
     sanitize_text,
+    tool_label,
 )
 
 __all__ = ["FAILED_RE", "run_pytest", "selection_payload"]
@@ -58,9 +59,16 @@ def run_pytest(
     max_output_bytes = spec.max_output_bytes or layout.limits.max_output_bytes
     max_message_chars = config.registry.defaults.max_message_chars
 
+    # missing_tests.changed_only=false 表示这条规则不依赖变更集：即使没有变更集，
+    # 也要对目标文件本身判"有没有对应测试"（默认 true，则必须知道这次改了什么）。
+    changed_only = any(
+        getattr(rule.rule, "missing_tests", None) is not None
+        and rule.rule.missing_tests.changed_only
+        for rule in rules
+    )
     selection = select_tests(
         target_path=target_path,
-        changed_files=changed_files,
+        changed_files=changed_files if changed_only or changed_files else (target_path,),
         layout=layout,
         workspace=workspace,
         max_nodeids=layout.limits.max_nodeids,
@@ -73,7 +81,7 @@ def run_pytest(
 
     tool_config = config.config_path(spec)
     config_path, config_sha = config_facts(tool_config, root=config.root)
-    invocation_tool = spec.tool.command[0] if spec.tool.command[0] != "{python}" else "pytest"
+    invocation_tool = tool_label(spec.tool, python=python)
 
     if not selection.nodeids:
         return AdapterResult(

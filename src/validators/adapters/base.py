@@ -49,6 +49,7 @@ __all__ = [
     "run_tool",
     "sanitize_text",
     "tool_environment",
+    "tool_label",
 ]
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
@@ -386,6 +387,11 @@ def run_tool(
         status = ValidatorStatus.OK
     else:
         status = _classify_failure(completed)
+    reason = completed.reason
+    if status is not ValidatorStatus.OK and not reason:
+        # 失败分类必须能追溯到"工具自己说了什么"，否则证据只剩一个状态码
+        excerpt = sanitize_text((completed.stderr or completed.stdout).strip(), limit=300)
+        reason = "退出码 " + str(completed.exit_code) + ("：" + excerpt if excerpt else "")
     return ToolRun(
         status=status,
         exit_code=completed.exit_code,
@@ -395,8 +401,22 @@ def run_tool(
         truncated=completed.truncated,
         duration_ms=completed.duration_ms,
         timed_out=completed.timed_out,
-        reason=completed.reason,
+        reason=reason,
     )
+
+
+def tool_label(spec: ToolSpec, *, python: str = sys.executable) -> str:
+    """证据里显示的工具名。
+
+    注册表可以用 ["{python}", "-m", "pytest"] 声明工具，此时字面量 "{python}"
+    不该直接进证据（读者会以为这工具叫这个名字）；用紧随其后的模块名兜底。
+    """
+
+    parts = list(spec.command)
+    if parts and parts[0] == "{python}":
+        module = next((item for item in parts[1:] if not item.startswith("-")), None)
+        return module or Path(python).name
+    return parts[0] if parts else "<tool>"
 
 
 def _classify_failure(completed: ToolRun) -> ValidatorStatus:

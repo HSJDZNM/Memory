@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple  # noqa: F401 - Optional 用于层级返回值
 
 from .globs import glob_match
 from .models import TestLayout
@@ -29,13 +29,22 @@ class SelectionError(RegistryError):
 
 @dataclass(frozen=True)
 class TestSelection:
-    """一次测试选择的结果。"""
+    """一次测试选择的结果。
+
+    两个概念刻意分开：
+
+    - **跑什么**：related → package 找不到时升级到 suite（相关性不足就多跑一点）；
+    - **有没有对应测试**：只看 related / package。升级到 suite 不代表"这个变更带了测试"，
+      否则只要工作区里存在任意一个测试文件，TESTING-001 就永远不会触发（等价死规则）。
+    """
 
     level: str
     nodeids: Tuple[str, ...] = ()
     missing: Tuple[str, ...] = ()
     related: Tuple[str, ...] = ()
     reason: str = ""
+    escalated: bool = False
+    truncated: bool = False
 
     def to_payload(self) -> dict:
         return {
@@ -44,6 +53,8 @@ class TestSelection:
             "missing": list(self.missing),
             "related": list(self.related),
             "reason": self.reason,
+            "escalated": self.escalated,
+            "truncated": self.truncated,
         }
 
 
@@ -130,32 +141,67 @@ def select_tests(
     for path in production:
         stem = _stem_of(path)
         package = _package_of(path, layout)
-        matched: list[str] = []
-        for level in ("related", "package", "suite"):
-            patterns = _patterns_for(level, layout, stem=stem, package=package)
-            for candidate in tests:
-                if any(glob_match(pattern, candidate) for pattern in patterns):
-                    matched.append(candidate)
-            if matched:
-                highest = _wider(highest, level)
-                break
-        if not matched:
-            missing.append(path)
+        level, files = _match_levels(
+            tests, layout, ("related", "package"), stem=stem, package=package
+        )
+        if level is not None:
+            highest = _wider(highest, level)
+            selected.extend(files)
             continue
-        selected.extend(matched)
 
-    nodeids = tuple(sorted(set(selected))[:max_nodeids])
+        # 相关与同包都没有 → 这条生产变更缺少对应测试
+        missing.append(path)
+        # 相关性不足时仍然升级到整个套件去跑（升级只影响"跑什么"，不改"有没有测试"）
+        suite_level, suite_files = _match_levels(
+            tests, layout, ("suite",), stem=stem, package=package
+        )
+        if suite_level is not None:
+            highest = _wider(highest, suite_level)
+            selected.extend(suite_files)
+
+    unique = sorted(set(selected))
+    nodeids = tuple(unique[:max_nodeids])
+    truncated = len(unique) > len(nodeids)
+    escalated = highest == "suite" and bool(nodeids)
+    if nodeids:
+        reason = "按层级 " + highest + " 选中 " + str(len(nodeids)) + " 个测试文件"
+        if truncated:
+            reason += "（相关性候选 " + str(len(unique)) + " 个，超过上限 " + str(max_nodeids) + "，已截断）"
+    elif missing:
+        reason = "生产变更找不到相关或同包测试，且没有可运行的套件"
+    else:
+        reason = "没有选中任何测试文件"
     return TestSelection(
         level=highest if nodeids else "none",
         nodeids=nodeids,
         missing=tuple(sorted(set(missing))),
-        related=tuple(sorted(set(selected))),
-        reason=(
-            "按层级 " + highest + " 选中 " + str(len(nodeids)) + " 个测试文件"
-            if nodeids
-            else "没有选中任何测试文件"
-        ),
+        related=tuple(unique),
+        reason=reason,
+        escalated=escalated,
+        truncated=truncated,
     )
+
+
+def _match_levels(
+    tests: Tuple[str, ...],
+    layout: TestLayout,
+    levels: Tuple[str, ...],
+    *,
+    stem: str,
+    package: str,
+) -> Tuple[Optional[str], Tuple[str, ...]]:
+    """按给定层级顺序找测试文件；没有命中时层级返回 None（调用方据此区分"没找到"）。"""
+
+    for level in levels:
+        patterns = _patterns_for(level, layout, stem=stem, package=package)
+        matched = tuple(
+            candidate
+            for candidate in tests
+            if any(glob_match(pattern, candidate) for pattern in patterns)
+        )
+        if matched:
+            return level, matched
+    return None, ()
 
 
 _ORDER = {"related": 0, "package": 1, "suite": 2, "none": -1}

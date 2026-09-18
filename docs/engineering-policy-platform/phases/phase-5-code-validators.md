@@ -151,6 +151,7 @@ Code → AST → Dependency → Lint → Type → Tests → Evidence → Policy
 | `tests/contract/test_validator_protocol.py` | 新增：20 个用例（证据协议版本、checker 词表跨层一致、注册表 ↔ 实现对齐、核心层不导入 Adapter、载荷无绝对路径与耗时、两次运行逐字节一致） |
 | `tests/integration/test_validator_{pipeline,cli}.py` | 新增：22 + 11 个用例（真实夹具项目、真实 Ruff、失败关闭、测试选择与失败、CLI 退出码与 JSON 契约） |
 | `tests/security/test_validator_adversarial.py` | 新增：12 个对抗用例（路径逃逸与符号链接、选项注入、超大源码、工具输出注入与凭据、未实现验证器、临时目录隔离） |
+| `tests/unit/test_validator_hardening.py`、`tests/integration/test_validator_hardening_cli.py` | 新增（复核第二轮）：20 条回归用例，钉住复核发现的每一个缺陷 |
 | `tools/validator_loop.py` | 新增：验证器闭环（10 个场景，结论写给阶段证据） |
 | `tools/phase_evidence.py` | 变化：`CURRENT_PHASE=5`，新增 `validators` 段（注册表 / 项目档案 / 配置摘要 / checker 归属 / 规则覆盖 / 闭环结论） |
 | `.github/workflows/phase-5.yml` | 替换 `phase-4.yml`：保留 Phase 0–4 的重放，追加 Ruff 安装、AST 证据重放、注册表与实现对齐、工具探针、失败关闭重放、验证器闭环 |
@@ -232,9 +233,9 @@ job object（`ctypes` + `TerminateJobObject`）实现。`tests/unit/test_validat
     python -m policy.check examples/good_controller.py --layer controller
     python -m policy.check <file> --operation edit --changed <file> --workspace <project>  # 测试验证器
     python tools/validator_loop.py                          # 验证器闭环（结论进阶段证据）
-    python -m pytest tests/unit -q                          # 482 用例
-    python -m pytest tests/contract -q                      # 110 用例
-    python -m pytest tests/integration -q                   # 180 用例
+    python -m pytest tests/unit -q                          # 493 用例
+    python -m pytest tests/contract -q                      # 112 用例
+    python -m pytest tests/integration -q                   # 189 用例
     python -m pytest tests/security -q                      # 34 用例
     python tools/phase_evidence.py                          # .tmp/artifacts/phase-5-evidence.json
 
@@ -279,6 +280,32 @@ Phase 5 收尾核对阶段证据时发现：证据里的 `decision_protocol.poli
 但那是**值的集合**变化，不是协议形状变化——载荷形状仍是 1.0，消费方按 `violations[].evidence.kind` 处理即可；
 需要"这一代引擎是谁"的场景（审计、阶段证据、复现）已经有 `rule_set_hash` 与 `implementation_version`，
 比一个每阶段都要决策一次的常量精确得多。真正的协议变更点（Phase 7 的版本化 API）会让两个字段一起动。
+
+### 独立复核与修复（同一阶段内的第二轮）
+
+Phase 5 收尾时由**两个独立子会话**做了一次对抗复核（只看阶段计划书的上半部分，实施记录视为不可信；
+只跑代码、不改被跟踪文件）。完整记录见
+[Post-Phase-5 复核记录](../reviews/post-phase-5-review.md)。结论与处置：
+
+**复核确认成立的**：决策协议未被改动（四份快照与代码产出逐字节一致）、checker 词表三层一致、
+加载不变量全部成立、六类工具失败全部失败关闭（把注册表改成 `critical: false` 仍被二道防线拦住）、
+超时真的终止整棵进程树、证据逐字节可重放、只提供上下文的调用路径没有静默放行。
+
+**复核发现并已修复的**（每条都带回归用例，详见复核记录 `4）：
+
+| 级别 | 问题 | 修复 |
+| --- | --- | --- |
+| 重要 | `from shop import order_repository` 不产生依赖边 → ARCH-001 漏判（"Controller 直接依赖 Repository"最常见的写法之一） | from-import 的每个名字再探一次 `<module>.<name>`，仅在本项目内解析成功时补边 |
+| 重要 | `from importlib import import_module as im; im(name)` 绕过动态 import 门禁 | AST 事实新增 `bindings`（含别名），动态 import 按绑定识别；常量参数还能解析出真实模块边 |
+| 重要 | 工作区只要有一个测试文件，`suite` 升级就永远命中 → `TESTING-001` 等价死规则 | 把"跑什么"与"有没有对应测试"分开：升级不再冒充"带了测试" |
+| 重要 | 注册表声明 `max_evidence: 200` 却零消费者（500 条诊断全进证据） | 流水线按上限截断，并把截断条数写进验证器记录与报告 |
+| 重要 | 文档命令 `retrieval.cli context --decision decision.json` 引用的文件不存在，且读不到时裸 traceback + 退出码 1 | 读不到 / 非 JSON 一律 config error（退出码 2）；README 与 phase-3 文档改成真实可跑的示例 |
+| 次要 | `--language go` → 全部规则 scope 落空 → allow；未实现验证器 id 只在运行期报错；变更集越界到选择阶段才崩；非 UTF-8 目标分类不一致；node id 上限静默截断；工具输出的 `filename` 可伪造证据位置；失败原因为空；`{python}` 字面量进证据；`changed_only` 无读取点 | 逐条修复：语言无 rule pack 即配置错误、加载期拒绝幽灵验证器、进入流水线前校验变更集、分类统一、截断可见、位置只接受真实文件、原因带输出摘要、工具名解析、开关真正生效 |
+| 文档 | 用例数过期、`--layer` 推断未标明、Ruff 前提缺失、手册索引缺 Phase 5、"向量未跑赢"措辞 | 逐条修正 |
+
+复核同时把三条边界写清楚而不是"修成看起来有保护"：`--dependencies` 是显式旁路（历史契约，
+证据来源记成 `cli.explicit@1.0`）、只提供上下文的调用路径按既有契约判 ARCH-001、
+验证器临时目录跟随 `--config-root`。
 
 ### 本机门禁里的一条已知噪音
 

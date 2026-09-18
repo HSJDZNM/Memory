@@ -4,7 +4,9 @@
 
     python -m retrieval.cli index    [--corpus knowledge/corpus.yaml] [--db .tmp/retrieval/index.sqlite3]
     python -m retrieval.cli query    "代码评审需要检查哪些方面" [--dataset ...] [--json]
-    python -m retrieval.cli context  "..." [--decision decision.json] [--json]
+    python -m retrieval.cli context  "..." [--decision <决策载荷.json>] [--json]
+        # --decision 接的是真实存在的决策载荷：仓库快照（tests/fixtures/decisions/block.json）
+        # 或先用 python -m policy.check ... --json > .tmp/decision.json 生成一份
     python -m retrieval.cli verify   [--json]
     python -m retrieval.cli stats    [--json]
     python -m retrieval.cli rules    (--rule ARCH-001 [--version 1] | --chunk chunk_...)
@@ -273,12 +275,23 @@ def render_context_text(context: EngineeringContext) -> str:
 
 
 def _decision_facts(path: str) -> tuple[PolicyFact, ...]:
-    """从 Phase 1 决策载荷里取违规作为策略事实；协议不认识就拒绝（不降级）。"""
+    """从 Phase 1 决策载荷里取违规作为策略事实；协议不认识就拒绝（不降级）。
 
-    if path == "-":
-        payload = json.loads(sys.stdin.read())
-    else:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    读不到文件、不是 JSON、协议版本不认识都按**配置错误**处理（退出码 2）：
+    它是调用方给错参数，不该以裸 traceback 结束，也不是"没有策略事实"。
+    """
+
+    try:
+        if path == "-":
+            raw = sys.stdin.read()
+        else:
+            raw = Path(path).read_text(encoding="utf-8")
+    except OSError as error:
+        raise CorpusError(f"决策载荷读不到：{path}（{error}）") from error
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise CorpusError(f"决策载荷不是合法 JSON：{path}（{error}）") from error
     if isinstance(payload, dict) and "result" in payload and isinstance(payload["result"], dict):
         payload = payload["result"]
     decision = parse_decision(payload)  # 未知 schema_version / 字段错误 -> ProtocolError

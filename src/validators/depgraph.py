@@ -357,6 +357,23 @@ def build_dependencies(
         kind = DependencyKind.IMPORT if fact.kind == "import" else DependencyKind.FROM_IMPORT
         add(fact.module, kind=kind, line=fact.line, column=fact.column)
 
+        # from <pkg> import <submodule>：真正被导入的是子模块，边必须落在它身上。
+        # 只在本项目内解析成功时才补（from pkg import ClassName 不该变成"未解析依赖"，
+        # 也不该产出 blocker）——这正是"Controller 直接依赖 Repository"最常见的写法。
+        if fact.kind == "from_import" and fact.names and fact.level == 0 and fact.module:
+            for name in fact.names:
+                candidate = fact.module + "." + name
+                resolution, path, _reason = _resolve_module(
+                    candidate, index=index, stdlib=stdlib_names
+                )
+                if resolution is DependencyResolution.INTERNAL and path is not None:
+                    add(
+                        candidate,
+                        kind=DependencyKind.FROM_IMPORT,
+                        line=fact.line,
+                        column=fact.column,
+                    )
+
     bound = {item.bound_name for item in facts.imports if item.bound_name}
     for call in facts.calls:
         if call.root in bound:

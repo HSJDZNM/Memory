@@ -45,7 +45,8 @@ python tools/run_notebook_in_kernel.py docs/learning/phase-5/walkthrough.ipynb
 - 失败关闭：动态 import、语法错误、"只跑 py.source"三种场景都是 `block` 且带阻断点；
 - 外部工具：`ok / findings / empty / garbage / config_error / crash / slow / old`
   八种行为各自落在一个显式状态上（空输出在进程层是 `ok`，适配器映射阶段才判 `output_invalid`）；
-- 测试选择：同名测试落在 `related` 层级；没有任何测试文件的工作区得到 `missing` 证据；
+- 测试选择：同名测试落在 `related` 层级；**没有相关或同包测试**的生产文件会得到 `missing` 证据
+  （即使工作区里有别的测试文件也一样——suite 升级只决定"跑什么"，不冒充"带了测试"）；
 - CLI 退出码：`0 1 1 1 2` —— 注册表 / 反例 / 正例（限制成 `py.*` 后仍失败关闭）/ 只跑 `py.source` / 路径越界。
 
 ## 常见问题

@@ -18,11 +18,20 @@ __all__ = [
     "ImportFact",
     "ModuleFacts",
     "SyntaxIssue",
+    "dynamic_import_bindings",
     "parse_module",
 ]
 
-# 会被当作动态 import 的调用名（只按名字判断，不追踪别名绑定，保守即可）。
+# 会被当作动态 import 的调用名。仅靠"调用名长什么样"不够：
+#   from importlib import import_module as im; im(name)   ← 别名形式，名字上看不出来
+# 因此还要从 import 绑定里收集"本地动态 import 入口"，见 _dynamic_import_bindings。
 _DYNAMIC_IMPORT_NAMES = frozenset({"__import__", "importlib.import_module", "import_module"})
+
+# 这些模块里导出的动态 import 入口，一旦被 from-import 绑定（含别名）就要盯住。
+_DYNAMIC_IMPORT_SOURCES = {
+    "importlib": frozenset({"import_module"}),
+    "builtins": frozenset({"__import__"}),
+}
 
 
 @dataclass(frozen=True)
@@ -52,6 +61,9 @@ class ImportFact:
     constant: bool = True
     expression: Optional[str] = None
     names: Tuple[str, ...] = ()
+    # 这次 import 在模块里实际绑定的名字（from-import 的每个名字都展开，含 "as" 别名）。
+    # 动态 import 的别名形式（from importlib import import_module as im）靠它才看得出来。
+    bindings: Tuple[str, ...] = ()
 
     @property
     def bound_name(self) -> Optional[str]:
@@ -182,6 +194,7 @@ def parse_module(text: str) -> ModuleFacts:
     imports: list[ImportFact] = []
     calls: list[CallFact] = []
     definitions: list[DefinitionFact] = []
+    call_nodes: list[ast.Call] = []
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -195,6 +208,7 @@ def parse_module(text: str) -> ModuleFacts:
                         line=line,
                         column=column,
                         kind="import",
+                        bindings=(alias.asname or alias.name.split(".")[0],),
                     )
                 )
         elif isinstance(node, ast.ImportFrom):
@@ -208,6 +222,7 @@ def parse_module(text: str) -> ModuleFacts:
                     column=column,
                     kind="from_import",
                     names=tuple(alias.name for alias in node.names),
+                    bindings=tuple(alias.asname or alias.name for alias in node.names),
                 )
             )
         elif isinstance(node, ast.Call):
@@ -225,8 +240,7 @@ def parse_module(text: str) -> ModuleFacts:
                     column=column,
                 )
             )
-            if name in _DYNAMIC_IMPORT_NAMES or name.split(".")[-1] == "import_module":
-                imports.append(_dynamic_import(node, name, line, column))
+            call_nodes.append(node)
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             definitions.append(_definition(node, parent=None))
@@ -234,6 +248,18 @@ def parse_module(text: str) -> ModuleFacts:
             for child in node.body:
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     definitions.append(_definition(child, parent=node.name))
+
+    # 动态 import 的识别放在最后：先把 import 绑定收齐，别名形式才看得见
+    # （from importlib import import_module as im; im(name) 曾经整个漏判）。
+    bindings = set(dynamic_import_bindings(imports))
+    for node in call_nodes:
+        name = dotted_name(node.func)
+        if name is None:
+            continue
+        tail = name.rpartition(".")[2]
+        if name in _DYNAMIC_IMPORT_NAMES or tail == "import_module" or name in bindings:
+            line, column = _location(node)
+            imports.append(_dynamic_import(node, name, line, column))
 
     return ModuleFacts(
         module_docstring=_docstring_of(tree) is not None,
@@ -301,6 +327,30 @@ def _definition(
         docstring=_has_docstring(node),
         private=_is_private(name),
     )
+
+
+def dynamic_import_bindings(imports: Sequence[ImportFact]) -> Tuple[str, ...]:
+    """这批 import 里绑定到动态 import 入口的本地名字（含别名）。
+
+    from importlib import import_module as im  →  "im"
+    from builtins import __import__           →  "__import__"（名字本身已在白名单里，仍然列出）
+    import importlib as il                    →  不在这里：点分调用 il.import_module 由后缀判断覆盖。
+    """
+
+    bound: list[str] = []
+    for fact in imports:
+        if fact.level != 0 or fact.kind != "from_import":
+            continue
+        exported = _DYNAMIC_IMPORT_SOURCES.get(fact.module)
+        if not exported:
+            continue
+        pairs = tuple(zip(fact.names, fact.bindings)) if fact.bindings else tuple(
+            (name, name) for name in fact.names
+        )
+        for name, binding in pairs:
+            if name in exported:
+                bound.append(binding)
+    return tuple(sorted(set(bound)))
 
 
 def imported_names(facts: ModuleFacts) -> Tuple[str, ...]:

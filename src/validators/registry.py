@@ -160,6 +160,17 @@ def _check_registry(registry: Registry, *, path: Path, root: Path) -> None:
             "规则一旦用到它们就只能失败关闭，因此在加载阶段就报错"
         )
 
+    # 注册表是数据，但不是任意数据：声明了实现里没有的验证器 id 就是配置错误。
+    # 函数内导入避免与 pipeline 形成模块级环（pipeline 依赖本模块）。
+    from .pipeline import KNOWN_VALIDATOR_IDS
+
+    ghost = sorted({spec.id for spec in registry.validators} - set(KNOWN_VALIDATOR_IDS))
+    if ghost:
+        raise RegistryError(
+            f"{path}: 这些验证器在实现里不存在：{ghost}；"
+            f"当前实现支持 {sorted(KNOWN_VALIDATOR_IDS)}（见 AGENTS 核心约束 21）"
+        )
+
 
 def load_registry(
     path: Path | str | None = None, *, root: Path | str | None = None

@@ -319,11 +319,15 @@ def render_text(
     imports: Sequence[str] = (),
     *,
     report: Any | None = None,
+    layer_inferred: bool = False,
 ) -> str:
+    # 文档承诺"不提供 --layer 时按文件名推断并标明"：标明这件事必须在输出里看得见，
+    # 否则读者分不清 layer=controller 是声明的还是猜的。
+    layer_note = "  （由文件名推断，未显式声明）" if layer_inferred else ""
     lines = [] if report is None else [render_report(report), ""]
     lines.extend([
         f"file: {context.file}",
-        f"layer: {context.layer}",
+        f"layer: {context.layer}{layer_note}",
         f"language: {context.language or '<unknown>'}",
         f"operation: {'<none>' if context.operation is None else context.operation.value}",
         f"module: {context.module or '<not provided>'}",
@@ -478,9 +482,14 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
         imports = ()
         evidence = None
         if args.file and not args.check_rules:
-            imports = python_imports(
-                resolve_target_file(args, anchor).read_text(encoding="utf-8")
-            )
+            # 这里只是"报告用"的导入列表：读不了就不报，让流水线去判（它会按失败关闭
+            # 给出 py.source failed 的阻断点），不要因为一份报告把它变成配置错误。
+            try:
+                imports = python_imports(
+                    resolve_target_file(args, anchor).read_text(encoding="utf-8")
+                )
+            except (OSError, UnicodeDecodeError):
+                imports = ()
         if context is not None:
             report = collect_evidence(args, anchor=anchor, context=context, rules=rules)
             evidence = report.bundle
@@ -502,8 +511,18 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
             layer=UNKNOWN_LAYER,
         )
 
-    renderer = render_json if args.json else render_text
-    print(renderer(context, rules, result, imports, report=report))
+    if args.json:
+        rendered = render_json(context, rules, result, imports, report=report)
+    else:
+        rendered = render_text(
+            context,
+            rules,
+            result,
+            imports,
+            report=report,
+            layer_inferred=not args.layer and not args.check_rules,
+        )
+    print(rendered)
     return EXIT_ALLOWED if result is None else exit_code_for(result)
 
 

@@ -24,7 +24,7 @@ from conftest import (
 from policy.evidence import ValidatorStatus
 from policy.loader import load_rule_set
 from validators.pipeline import PipelineRequest, run_pipeline
-from validators.registry import load_config
+from validators.registry import RegistryError, load_config
 from validators.source import SourceError, read_source
 
 pytestmark = pytest.mark.security
@@ -169,11 +169,13 @@ def test_unimplemented_validator_is_rejected_fail_closed(tmp_root: Path) -> None
         if pack["id"] == "python-core":
             pack["validators"] = list(pack["validators"]) + ["py.ghost"]
     root = write_validation_config(tmp_root, registry=document)
-    config = load_config(root=REPO_ROOT, registry=root / "validation" / "validators.yaml")
 
-    report = run_for("src/shop/order_controller.py", config=config)
+    # 复核 F6 之后：注册表声明了实现里没有的验证器，**加载阶段**就拒绝
+    # （此前是运行期 config_error → block；两条都失败关闭，但加载期更早、更清楚）。
+    with pytest.raises(RegistryError) as error:
+        load_config(root=REPO_ROOT, registry=root / "validation" / "validators.yaml")
 
-    assert any(item.validator_id == "py.ghost" for item in report.blockers)
+    assert "py.ghost" in str(error.value)
 
 
 def test_temp_directories_are_isolated_per_validator() -> None:
@@ -209,17 +211,18 @@ def test_changed_set_cannot_point_outside_the_workspace(tmp_root: Path) -> None:
     workspace = copy_validator_project(tmp_root)
     context = make_context(file="src/shop/order_service.py", language="python", layer="service", operation="edit")
 
-    report = run_pipeline(
-        PipelineRequest(
-            target=context.file,
-            workspace=workspace,
-            context=context,
-            rules=RULES,
-            changed_files=("../../../etc/passwd", "src/shop/order_service.py"),
-        ),
-        config=CONFIG,
-    )
+    # 复核 F10 之后：非法变更集在**进入流水线之前**就被拒绝（配置错误，退出码 2），
+    # 而不是一路带到测试选择阶段再以 ValidationError → crashed 的形式失败关闭。
+    with pytest.raises(RegistryError) as error:
+        run_pipeline(
+            PipelineRequest(
+                target=context.file,
+                workspace=workspace,
+                context=context,
+                rules=RULES,
+                changed_files=("../../../etc/passwd", "src/shop/order_service.py"),
+            ),
+            config=CONFIG,
+        )
 
-    selection = report.selection
-    assert all(".." not in item for item in selection.get("nodeids", []))
-    assert all("passwd" not in item for item in selection.get("missing", []))
+    assert "变更集里的路径不合法" in str(error.value)
