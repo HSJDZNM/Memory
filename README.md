@@ -4,9 +4,10 @@
 把工程规范变成机器可执行的规则，对固定上下文稳定地给出 allow / allow_with_warnings / block，
 并留下"命中了哪些规则、跳过了哪些、为什么"的可重放审计证据。
 
-> 当前进度：**Phase 4 已完成**（受控执行：工具注册表 + 执行前授权 + 执行后验证 + 审计链）。
+> 当前进度：**Phase 5 已完成**（代码验证器：AST/依赖图证据 + 外部工具适配器 + 测试验证器 + 流水线聚合）。
 > Phase 0 的 YAML Rule → Loader → Engine → CLI 链路、Phase 1 的 Context/Scope/Decision、
-> Phase 2 的 dsh Adapter 与 pre-execute Hook、Phase 3 的离线检索仍然有效，并被后续阶段的测试继续覆盖。
+> Phase 2 的 dsh Adapter 与 pre-execute Hook、Phase 3 的离线检索、Phase 4 的受控执行仍然有效，
+> 并被后续阶段的测试继续覆盖。
 > 阶段计划见 [Engineering Policy Platform 文档集](docs/engineering-policy-platform/README.md)。
 
 ## 快速开始
@@ -36,14 +37,17 @@ python -m pip install -r requirements.lock
 ### 运行规则检查（CLI）
 
 ```powershell
-# 反例：Controller 直接依赖 Repository，退出码 1
-uv run python -m policy.check examples/bad_controller.py --dependencies repository
+# 反例：Controller 直接依赖 Repository。Phase 5 起依赖由 AST / 依赖图给出，退出码 1
+uv run python -m policy.check examples/bad_controller.py --layer controller
 
 # 正例：Controller 只依赖 Service，退出码 0
-uv run python -m policy.check examples/good_controller.py --dependencies service
+uv run python -m policy.check examples/good_controller.py --layer controller
 
 # 范围不匹配：layer=service 时 ARCH-001 不参与判断，输出会列出跳过原因，退出码 0
-uv run python -m policy.check examples/good_controller.py --layer service --dependencies repository
+uv run python -m policy.check examples/good_controller.py --layer service
+
+# 显式声明依赖（重放历史场景）：覆盖 AST 证据，输出里会标注来源
+uv run python -m policy.check examples/bad_controller.py --dependencies repository
 
 # 只校验规则集本身（配置损坏时退出码 2）
 uv run python -m policy.check --check-rules
@@ -192,14 +196,56 @@ textconv/filter），就仍可能被改写成执行外部命令；真正的隔�
 权限、上下文摘要与 request/action 标识。参数改一个字符，哈希就变，旧授权立即失效——
 这是数学，不是自觉。
 
+### 代码验证器（Phase 5）
+
+规则说"这件事不合规"，验证器负责给出**确定性证据**：代码 → AST → 依赖图 → Lint → 类型 → 测试 → 证据 → Policy。
+
+```powershell
+# 1) 验证器注册表是数据：谁能产生证据、在哪个阶段、用哪个工具、缺工具时算不算失败关闭
+uv run python -m validators.cli registry
+uv run python -m validators.cli registry --show tool.ruff
+
+# 2) 外部工具探针：可用性、版本区间、配置文件（缺失就是 unavailable，不降级）
+uv run python -m validators.cli probe
+
+# 3) 只产出证据（不做 allow/block），退出码 0/1/2
+uv run python -m validators.cli check examples/bad_controller.py --layer controller
+
+# 4) 证据 + 判定（与 policy.check 同一条链路）
+uv run python -m validators.cli pipeline examples/bad_controller.py --layer controller
+
+# 5) 测试验证器：按变更集选择最小相关测试（--operation edit 才会触发测试规则）
+uv run python -m policy.check tests/fixtures/validators/project/src/shop/order_service.py \
+    --layer service --workspace tests/fixtures/validators/project \
+    --operation edit --changed src/shop/order_service.py
+
+# 6) 验证器闭环（AST 证据 / 失败关闭 / 测试选择 / 可重放 / 工具可追溯）
+uv run python tools/validator_loop.py
+```
+
+**失败关闭**：关键验证器缺失、版本不符、超时、崩溃、配置错误、输出非法或"没有验证器为某个
+checker 提供证据"时，需要它的规则以 `critical` 违规阻断——同一批里的其他 PASS 抵消不了它。
+语法错误、动态 import 目标不是常量、项目内模块解析失败同样阻断：**解析不了的文件不能被判定为
+"没有依赖问题"**。
+
+**证据与判定分离**：验证器只产证据（`ValidationEvidence`），最终 allow / block 仍由 Policy Engine
+决定；证据里带验证器 ID/版本、规则 ID、文件与行列、工具退出码、配置文件哈希，可逐条追溯。
+证据不写进决策协议（协议仍是 `1.0`）：它在 `--json` 的 `evidence` 段与 `validators.cli` 里。
+
+**外部工具**：Ruff / mypy / pytest 都是"外部工具"而不是本项目的 Python 依赖——版本区间与配置文件
+在 `validation/validators.yaml`（数据）里声明，探针负责发现，缺失即失败关闭。
+仓库当前的规则只启用了 Ruff（`policies/coding/STYLE-*.yaml`）；类型检查端口与失败语义已经就位，
+但没有启用类型规则：本机与 CI 都没有装 mypy，启用它会让所有 Python 文件在缺工具时一次性判红——
+这是数据决定的事，不是代码决定的。
+
 ### 测试
 
 ```powershell
-uv run python -m pytest tests/unit -q            # 388 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计
-uv run python -m pytest tests/contract -q        # 82 用例：决策协议快照 + dsh 映射契约 + 检索端口契约 + 受控执行协议
-uv run python -m pytest tests/integration -q     # 147 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环
-uv run python -m pytest tests/security -q        # 20 用例：注入、越权、缓存失效、检索失败关闭、审批伪造、日志失效
-uv run python -m pytest -q                       # 全部 637 用例
+uv run python -m pytest tests/unit -q            # 482 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类
+uv run python -m pytest tests/contract -q        # 110 用例：决策协议快照 + dsh 映射契约 + 检索端口契约 + 受控执行协议 + 验证器证据协议
+uv run python -m pytest tests/integration -q     # 180 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环、验证器流水线
+uv run python -m pytest tests/security -q        # 34 用例：注入、越权、缓存失效、检索与验证器失败关闭、审批伪造、日志失效
+uv run python -m pytest -q                       # 全部 806 用例（本机 1 例跳过：Windows 不允许普通用户创建符号链接）
 ```
 
 ### 记录性能基线
@@ -247,7 +293,7 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 
 ```text
 .
-├── .github/workflows/phase-4.yml      # CI：单元 / 契约 / 集成 / 对抗测试、示例重放、检索基线、注册表审核、受控执行闭环、手册与证据
+├── .github/workflows/phase-5.yml      # CI：单元 / 契约 / 集成 / 对抗测试、AST 证据重放、验证器注册表与探针、验证器闭环、检索基线、注册表审核、受控执行闭环、手册与证据
 ├── docs/
 │   ├── dora-capabilities/             # DORA 软件交付能力指南离线镜像（37 篇）
 │   ├── dotnet-design-guidelines/      # .NET Framework 设计准则离线镜像（49 篇）
@@ -263,14 +309,17 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 ├── knowledge/
 │   ├── corpus.yaml                    # Phase 3 摄取清单：数据集、许可、tier、可见性、检索预算
 │   └── query_expansion.yaml           # 受控中英术语表（跨语言词法桥接，只登记术语）
-├── policies/architecture/ARCH-001.yaml # 目前唯一规则：Controller 不得直接依赖 Repository
+├── policies/                          # 规则是数据：architecture（ARCH-001）、coding（DOC/STYLE）、testing（TESTING）
 ├── registry/                          # Phase 4 Tool Registry：工具授权表 + 已审核哈希清单
-├── src/policy/                        # 核心库：models / context / scope / loader / engine / check
+├── validation/                        # Phase 5 验证器数据：注册表、项目档案（语言/组件）、测试布局、工具配置
+├── src/policy/                        # 核心库：models / evidence / checkers / context / scope / loader / engine / check
+├── src/validators/                    # Phase 5 验证器：python_ast / depgraph / docstrings / selection / pipeline / cli / adapters
 ├── src/enforcement/                   # Phase 4 受控执行：registry / action / approvals / audit / ledger / precheck / executor / drivers / postcheck / trace / cli
 ├── src/adapters/dsh/                  # dsh Adapter：adapter（纯映射）/ hooks（Hook 与审计）/ README
 ├── src/retrieval/                     # Phase 3 检索层：chunker / corpus / store / indexer / query / retriever / vector / context / cli
 ├── tests/
-│   ├── unit/                          # 模型、规范化、范围矩阵、决策聚合、分块、查询、Context
+│   ├── fixtures/validators/           # Phase 5 夹具项目 + 假工具（失效与边界行为）
+│   ├── unit/                          # 模型、规范化、范围矩阵、决策聚合、分块、查询、Context、AST/依赖图/适配器
 │   ├── contract/                      # 决策协议快照、dsh 映射契约、检索端口契约
 │   ├── integration/                   # 真实 CLI 子进程、性能基线、检索索引与增量
 │   ├── security/                      # 对抗测试：注入、越权、缓存失效、检索失败关闭
@@ -292,7 +341,8 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 | 受控执行 | 标准库 + pydantic（无第三方依赖） | Phase 4：Tool Registry 是数据（YAML），授权 / 幂等 / 审计链落在追加写 JSONL 上，执行驱动按注册表声明选择 |
 | 测试 | pytest 8+（本机验证 9.1.1） | 单元 + 契约 + 集成三层 |
 | 包管理 | uv（建虚拟环境与安装）；锁文件是 `requirements.lock` | 仓库未提交 `uv.lock`，依赖锁定以 `requirements.lock` 为准，CI 从它安装 |
-| CI | GitHub Actions | `.github/workflows/phase-4.yml`（Phase 0–3 重放、dsh 接线自检、检索基线、注册表审核、受控执行闭环、仓库一致性、凭据扫描） |
+| CI | GitHub Actions | `.github/workflows/phase-5.yml`（Phase 0–4 重放、AST 证据重放、验证器注册表/探针/闭环、检索基线、注册表审核、受控执行闭环、仓库一致性、凭据扫描） |
+| 代码验证器 | 标准库 ast + 外部工具（Ruff / mypy / pytest 均由探针发现，不是包依赖） | Phase 5：注册表与项目档案是数据（`validation/`），证据带版本与配置哈希，缺工具即失败关闭 |
 
 Phase 0–4 明确不引入：LangGraph、向量数据库、FastAPI、MCP、Agent SDK 与任何 LLM 调用。
 Phase 2 里 dsh 只作为**外部进程与线协议**存在：适配器不导入 dsh 的类型，核心层更不知道 dsh 的存在。

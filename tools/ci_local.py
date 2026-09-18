@@ -44,8 +44,15 @@ ALWAYS_STEPS = (
 CODE_STEPS = (
     "Unit, contract",
     "Rule set self-check",
+    "AST evidence replay",
     "Example replay",
     "Scope skip reason",
+    "Validator registry is loadable",
+    "Validator registry declares what is implemented",
+    "External tool probe",
+    "Validators fail closed",
+    "Syntax errors fail closed",
+    "Validator closed loop",
     "dsh adapter contract",
     "dsh hook wiring",
     "Tool registry must match",
@@ -62,7 +69,7 @@ RETRIEVAL_STEPS = (
     "Retrieval corpus integrity",
     "Retrieval evaluation baseline",
     "Tool registry must match",
-    "Phase 4 acceptance evidence",
+    "Phase 5 acceptance evidence",
 )
 
 # 改了这些前缀，就要跑对应的那一组。

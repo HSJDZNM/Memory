@@ -6,11 +6,12 @@
 | --- | --- | --- |
 | `check_text_conventions.py` | 检查 UTF-8 / LF / 行尾空白 / 结尾换行（默认跳过第三方文档镜像，`--all` 连镜像一起查） | `python tools/check_text_conventions.py` |
 | `cleanup.py` | 删除 `.tmp/`、`__pycache__/`、`.pytest_cache/`、`.uv-cache/` | `python tools/cleanup.py --dry-run` |
-| `phase_evidence.py` | 生成阶段验收证据（规则集哈希 + 协议版本 + Agent 适配器契约 + 沙箱闭环 + 检索语料/索引/评测基线 + 受控执行注册表与闭环结论 + 测试结果 + 性能基线） | `python tools/phase_evidence.py` |
+| `phase_evidence.py` | 生成阶段验收证据（规则集哈希 + 协议版本 + Agent 适配器契约 + 沙箱闭环 + 检索语料/索引/评测基线 + 受控执行注册表与闭环结论 + 验证器注册表/规则覆盖/闭环结论 + 测试结果 + 性能基线） | `python tools/phase_evidence.py` |
 | `policy_bench.py` | 固定种子生成 10/100/1000 条规则的匹配性能基线（测试与证据共用） | `python tools/policy_bench.py` |
 | `retrieval_eval.py` | Phase 3 固定评测集基线：FTS5（门槛决定退出码）与向量检索（对照记录）在同一数据集上的对比，结论写到 `.tmp/artifacts/phase-3-retrieval-baseline.json` | `python tools/retrieval_eval.py --method both` |
 | `dsh_sandbox_loop.py` | 在受控临时项目里重放 Phase 2 的真实 dsh 闭环（bad 编辑被阻断 / good 编辑放行），结论写给阶段证据；没有 dsh 的环境自动跳过 | `python tools/dsh_sandbox_loop.py` |
 | `enforcement_loop.py` | Phase 4 受控执行闭环：允许执行一次 / 重放阻断 / 事后验证失败回滚 / 高风险默认阻断 / trace 可重放，结论写给阶段证据 | `python tools/enforcement_loop.py` |
+| `validator_loop.py` | Phase 5 验证器闭环：ARCH-001 由 AST 证据判定 / 动态 import 与语法错误失败关闭 / 缺工具失败关闭 / 测试选择与失败 / 证据可重放 / 工具版本与配置可追溯 | `python tools/validator_loop.py` |
 | `build_learning_notebook.py` | 生成学习手册 notebook 与纯 Python 版，并逐单元执行校验 | `python tools/build_learning_notebook.py` |
 | `check_notebook.py` | 校验 `.ipynb` 结构与代码单元语法（不依赖 nbformat） | `python tools/check_notebook.py docs/learning/*.ipynb` |
 | `run_notebook_in_kernel.py` | 在**真实 Jupyter 内核**里跑一遍 notebook，逐单元报告耗时与错误 | `python tools/run_notebook_in_kernel.py docs/learning/phase-0/walkthrough.ipynb` |

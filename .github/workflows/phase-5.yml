@@ -1,4 +1,4 @@
-name: phase-4
+name: phase-5
 
 on:
   push:
@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  phase-4:
-    name: Phase 4 tests (python 3.13)
+  phase-5:
+    name: Phase 5 tests (python 3.13)
     runs-on: ubuntu-latest
     env:
       # 本项目不把 src/ 装进 site-packages：CI 与本地都用同一条路径找到包。
@@ -29,6 +29,12 @@ jobs:
           uv venv
           uv pip install -r requirements.lock
 
+      # Phase 5 的外部 Linter 是本项目的"外部工具"而不是 Python 依赖：
+      # 它由验证器探针发现（版本区间在 validation/validators.yaml），这里只负责装一份。
+      # 不装也能跑：需要它的规则会以 unavailable 失败关闭（这正是要证明的行为）。
+      - name: Install external linter (ruff)
+        run: uv pip install "ruff>=0.6,<1"
+
       # 依赖锁、workflow 引用、工具清单是否漂移（退出码 1 即阻断）
       - name: Repository consistency gate
         run: .venv/bin/python tools/check_repo_consistency.py
@@ -43,7 +49,21 @@ jobs:
       - name: Rule set self-check
         run: .venv/bin/python -m policy.check --check-rules
 
-      - name: Example replay (bad fixture must fail with exit code 1)
+      # Phase 5：默认路径由 AST / 依赖图给证据，示例不再需要 --dependencies
+      - name: AST evidence replay (bad fixture must block with a line number)
+        run: |
+          set +e
+          .venv/bin/python -m policy.check examples/bad_controller.py --layer controller > /tmp/ast-bad.txt
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then echo "expected exit code 1, got $code"; exit 1; fi
+          grep -q "py.depgraph@1.0" /tmp/ast-bad.txt
+          grep -q "repository <- examples.bad_repository" /tmp/ast-bad.txt
+
+      - name: AST evidence replay (good fixture must pass)
+        run: .venv/bin/python -m policy.check examples/good_controller.py --layer controller
+
+      - name: Example replay (explicit dependencies still supported)
         run: |
           set +e
           .venv/bin/python -m policy.check examples/bad_controller.py --dependencies repository
@@ -51,14 +71,58 @@ jobs:
           set -e
           if [ "$code" -ne 1 ]; then echo "expected exit code 1, got $code"; exit 1; fi
 
-      - name: Example replay (good fixture must pass)
-        run: .venv/bin/python -m policy.check examples/good_controller.py --dependencies service
-
       - name: Scope skip reason is reported
         run: |
           .venv/bin/python -m policy.check examples/good_controller.py --layer service \
             --dependencies repository | tee /tmp/skip.txt
           grep -q "layer service != controller" /tmp/skip.txt
+
+      # Phase 5：注册表必须能加载，且声明的验证器都有实现（数据与代码对齐）
+      - name: Validator registry is loadable
+        run: .venv/bin/python -m validators.cli registry --json > /tmp/validators.json
+
+      - name: Validator registry declares what is implemented
+        run: |
+          .venv/bin/python - <<'PY'
+          import json
+          payload = json.load(open("/tmp/validators.json", encoding="utf-8"))
+          from validators.pipeline import KNOWN_VALIDATOR_IDS
+          declared = {item["id"] for item in payload["validators"]}
+          assert declared == set(KNOWN_VALIDATOR_IDS), (declared, KNOWN_VALIDATOR_IDS)
+          assert payload["checkers"]["python"]["forbidden_dependency"] == ["py.depgraph"]
+          print("validators:", sorted(declared))
+          PY
+
+      # Phase 5：外部工具探针（版本区间、配置文件、可用性）
+      - name: External tool probe
+        run: .venv/bin/python -m validators.cli probe
+
+      # Phase 5：关键验证器缺失时失败关闭（只跑 py.source，禁止依赖与 docstring 的判定）
+      - name: Validators fail closed when a checker has no evidence
+        run: |
+          set +e
+          .venv/bin/python -m policy.check examples/bad_controller.py --layer controller \
+            --validators py.source > /tmp/fail-closed.txt
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then echo "expected exit code 1, got $code"; exit 1; fi
+          grep -q "关键验证器不可用" /tmp/fail-closed.txt
+
+      # Phase 5：语法错误的文件不能被判定为"没有依赖问题"
+      - name: Syntax errors fail closed
+        run: |
+          set +e
+          .venv/bin/python -m policy.check \
+            tests/fixtures/validators/project/src/shop/broken_syntax.py \
+            --layer controller --workspace tests/fixtures/validators/project > /tmp/syntax.txt
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then echo "expected exit code 1, got $code"; exit 1; fi
+          grep -q "语法错误" /tmp/syntax.txt
+
+      # Phase 5：验证器闭环（AST 证据 / 失败关闭 / 测试选择 / 可重放 / 工具可追溯）
+      - name: Validator closed loop
+        run: .venv/bin/python tools/validator_loop.py
 
       # Phase 2：Adapter 的映射契约与 Hook 行为（block 不执行 / allow 一次 / 超时 / 重放 / 脱敏）
       - name: dsh adapter contract and hook behaviour
@@ -158,10 +222,11 @@ jobs:
             docs/learning/phase-1/walkthrough.ipynb \
             docs/learning/phase-2/walkthrough.ipynb \
             docs/learning/phase-3/walkthrough.ipynb \
-            docs/learning/phase-4/walkthrough.ipynb
+            docs/learning/phase-4/walkthrough.ipynb \
+            docs/learning/phase-5/walkthrough.ipynb
 
       - name: Text conventions (UTF-8 / LF / trailing whitespace)
         run: .venv/bin/python tools/check_text_conventions.py
 
-      - name: Phase 4 acceptance evidence
+      - name: Phase 5 acceptance evidence
         run: .venv/bin/python tools/phase_evidence.py

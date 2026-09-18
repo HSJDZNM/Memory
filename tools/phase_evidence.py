@@ -29,13 +29,14 @@ for directory in (SRC_DIR, TOOLS_DIR):
     if str(directory) not in sys.path:
         sys.path.insert(0, str(directory))
 
-CURRENT_PHASE = 4
+CURRENT_PHASE = 5
 SUITES = ("tests/unit", "tests/contract", "tests/integration", "tests/security")
 POLICIES = ("policies",)
 ARTIFACT_DIR = REPO_ROOT / ".tmp" / "artifacts"
 SANDBOX_RESULT = ARTIFACT_DIR / "phase-2-sandbox-result.json"
 RETRIEVAL_BASELINE = ARTIFACT_DIR / "phase-3-retrieval-baseline.json"
 ENFORCEMENT_RESULT = ARTIFACT_DIR / "phase-4-enforcement-result.json"
+VALIDATOR_RESULT = ARTIFACT_DIR / "phase-5-validators-result.json"
 
 
 def _git(*args: str) -> str:
@@ -334,6 +335,97 @@ def enforcement() -> dict[str, object]:
     return payload
 
 
+def validators() -> dict[str, object]:
+    """Phase 5 代码验证器的可重放事实：注册表、项目档案、规则覆盖与闭环结论。
+
+    只记录元数据：验证器 ID / 版本 / 阶段 / 服务的 checker、外部工具的版本区间与配置，
+    以及"哪条规则由哪个验证器提供证据"。不记录任何被验证文件的内容。
+    """
+
+    from policy.evidence import EVIDENCE_SCHEMA_VERSION
+    from policy.loader import load_rule_set
+    from validators.pipeline import KNOWN_VALIDATOR_IDS, PIPELINE_SCHEMA_VERSION
+    from validators.registry import config_digest, load_config
+
+    config = load_config(root=REPO_ROOT)
+    registry = config.registry
+    rules = load_rule_set([REPO_ROOT / "policies"], repo_root=REPO_ROOT)
+    checkers = registry.checkers_for_language("python")
+
+    payload: dict[str, object] = {
+        "registry": config.registry_path.relative_to(REPO_ROOT).as_posix(),
+        "project": config.project_path.relative_to(REPO_ROOT).as_posix(),
+        "test_layout": config.layout_path.relative_to(REPO_ROOT).as_posix(),
+        "evidence_schema_version": EVIDENCE_SCHEMA_VERSION,
+        "pipeline_schema_version": PIPELINE_SCHEMA_VERSION,
+        "config_digests": {
+            "registry": config_digest(config.registry_path),
+            "project": config_digest(config.project_path),
+            "test_layout": config_digest(config.layout_path),
+        },
+        "stages": list(registry.stages),
+        "rule_packs": [
+            {"id": pack.id, "language": pack.language, "validators": list(pack.validators)}
+            for pack in registry.rule_packs
+        ],
+        "checker_owners": {key: list(value) for key, value in sorted(checkers.items())},
+        "implemented": sorted(KNOWN_VALIDATOR_IDS),
+        "validators": [
+            {
+                "id": spec.id,
+                "version": spec.version,
+                "kind": spec.kind.value,
+                "stage": spec.stage,
+                "checkers": list(spec.checkers),
+                "facts": list(spec.facts),
+                "requires": list(spec.requires),
+                "critical": spec.critical,
+                "tool": None
+                if spec.tool is None
+                else {
+                    "command": list(spec.tool.command[:1]),
+                    "version_requirement": spec.tool.version_requirement,
+                    "config": spec.tool.config,
+                    "argv_length": len(spec.tool.argv),
+                },
+            }
+            for spec in registry.validators
+        ],
+        "rules": [
+            {
+                "rule": rule.canonical_id,
+                "checker": rule.enforcement.checker,
+                "severity": rule.severity.value,
+                "validators": list(checkers.get(rule.enforcement.checker or "", ())),
+            }
+            for rule in rules.rules
+        ],
+        "components": [item.name for item in config.project.components],
+        "test_levels": [item.level for item in config.layout.escalation],
+    }
+
+    if VALIDATOR_RESULT.is_file():
+        conclusion = json.loads(VALIDATOR_RESULT.read_text(encoding="utf-8"))
+        payload["closed_loop"] = {
+            "result": conclusion.get("result"),
+            "workspace": conclusion.get("workspace"),
+            "scenarios": [
+                {
+                    "name": item.get("name"),
+                    "passed": item.get("passed"),
+                    "detail": item.get("detail"),
+                }
+                for item in conclusion.get("scenarios", [])
+            ],
+        }
+    else:
+        payload["closed_loop"] = {
+            "result": "not-run",
+            "hint": "python tools/validator_loop.py",
+        }
+    return payload
+
+
 def performance_baseline() -> dict[str, object]:
     """Phase 1 的匹配性能基线：固定种子、只记录不优化。"""
 
@@ -430,6 +522,7 @@ def main(argv: list[str] | None = None) -> int:
         "retrieval": retrieval(),
         "retrieval_eval": retrieval_eval_baseline(),
         "enforcement": enforcement(),
+        "validators": validators(),
         "test_suite": " + ".join(SUITES),
         "suites": suites,
         "result": "pass" if failures == 0 else "fail",
