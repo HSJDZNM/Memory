@@ -201,6 +201,11 @@ def dsh_argv() -> list[str] | None:
     return None
 
 
+# 进程内 Hook 插件在 spawn 被拒时的原文（见 src/adapters/dsh/policy-hook.plugin.mjs 的
+# catch 分支）。它出现的唯一含义是"Hook 进程起不来"，与策略判定无关。
+SPAWN_DENIED_MARKERS = ("spawn EPERM", "Hook 无法执行")
+
+
 def run_dsh(prompt: str, log_name: str) -> int:
     argv = dsh_argv()
     assert argv is not None
@@ -219,6 +224,29 @@ def run_dsh(prompt: str, log_name: str) -> int:
     )
     write(LOGS / log_name, completed.stdout + chr(10) + completed.stderr)
     return completed.returncode
+
+
+def hook_could_not_spawn() -> bool:
+    """判断"审计为空"是不是因为 Hook 进程根本起不来（而不是策略判定或别的失败）。
+
+    本机实测的机制：Hook 走 `ctx.shell`（dsh 的 shell 服务），它用**管道 stdio** 捕获
+    Hook 的输出；而受限沙箱禁止打开命名管道，于是 spawn 直接 EPERM。进程内插件把这个
+    异常翻译成 deny（失败关闭），模型看到的是"拒绝调用"，审计里则什么都没有——
+    与"被 ARCH-001 阻断"是两件完全不同的事，必须区分开，否则会把它当成策略结论。
+
+    复现（仓库外的普通 shell 里）：
+        .tmp/phase-2-sandbox/demo-shop> dsh --profile headless \
+            --patch .policy/patch.yml "用 edit 工具在 src/shop/order_controller.py 的 import 区加一行"
+    """
+
+    for log in sorted(LOGS.glob("*.txt")):
+        try:
+            text = log.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if any(marker in text for marker in SPAWN_DENIED_MARKERS):
+            return True
+    return False
 
 
 def audit_records() -> list[dict]:
@@ -348,17 +376,33 @@ def main(argv: list[str] | None = None) -> int:
         "logs": sorted(item.name for item in LOGS.glob("*.txt")),
         "timestamp": clock.datetime.now(clock.timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    # 诊断：审计里一条记录都没有，说明 Hook 根本没被执行——最常见的原因是
-    # 外层执行环境禁止嵌套进程启动（沙箱 EPERM）或审批策略失败关闭。
-    # 这不是策略判定结果，必须与"被规则阻断"区分开。
+    # 审计里一条记录都没有 = Hook 根本没被执行。这不是策略判定结果，必须与"被规则阻断"
+    # 区分开。若确认是"spawn 被沙箱拒绝"，本机就没有能力跑这条闭环：按**环境跳过**处理
+    # （退出码 0 + 写明原因），因为把它报成失败会让门禁长期红着、最终被当成噪声；
+    # 而伪造一个 pass 更糟——所以既不改判定，也不悄悄放过。
     if not records:
         payload["diagnosis"] = (
-            "Hook 从未被调用（审计文件为空）：检查外层环境是否允许嵌套进程启动、"
-            "以及 dsh 侧是否启用了 patch-plugin.yml 的进程内转发插件"
+            "Hook 从未被调用（审计文件为空）：检查外层环境是否允许嵌套进程启动"
+            "（沙箱禁止管道 stdio 时 dsh 的 ctx.shell 会 EPERM）、"
+            "以及 dsh 侧是否启用了 patch.yml 的进程内转发插件"
         )
+        if hook_could_not_spawn():
+            payload["result"] = "skipped"
+            payload["reason"] = (
+                "Hook 进程起不来（spawn EPERM）：受限沙箱禁止管道 stdio，而 dsh 的 ctx.shell "
+                "正是用管道捕获 Hook 输出。命令桥（dsh-hooks-claude-code）走同一个 ctx.shell，"
+                "因此换接线方式也绕不过去——这是环境限制，不是策略判定，也不是本仓库的缺陷。"
+            )
+            payload["sandbox_blocked_spawn"] = True
+            payload["reproduce"] = (
+                "在不受限的 shell 里执行：cd .tmp/phase-2-sandbox/demo-shop && "
+                "dsh --profile headless --patch .policy/patch.yml "
+                "\"用 edit 工具在 src/shop/order_controller.py 的 import 区加一行 "
+                "'from repository import OrderRepository'，然后一句话报告结果。\""
+            )
     write(ARTIFACT, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + chr(10))
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if payload["result"] == "pass" else 1
+    return 0 if payload["result"] in ("pass", "skipped") else 1
 
 
 if __name__ == "__main__":

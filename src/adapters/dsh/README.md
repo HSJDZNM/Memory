@@ -202,6 +202,32 @@ edit 的 new_string 通常是代码片段而不是完整模块，因此用行级
     dsh --profile headless --patch <patch.yml> "用 edit 工具在 src/shop/order_controller.py 的 import 区加一行 'from repository import OrderRepository'"
     # 3) 观察：.policy/audit.jsonl 里有 block 记录，但文件内容已经变了
 
+### 7.1 受限沙箱里 Hook 起不来（Phase 7 期间定位，机制已确认）
+
+在**受限沙箱**（禁止跨进程管道 stdio 的执行环境）里，本机闭环的表现是：
+审计为空、文件哈希不变、dsh 退出码 0 —— 看起来像"什么都没发生"。逐层定位后的机制：
+
+1. 插件从 `ctx.on('tools/pre-execute')` 拿到调用后，用 **`ctx.shell`** 运行 Hook 命令；
+2. 而 dsh 的 shell 服务是用**管道 stdio** 捕获 Hook 的 stdin/stdout/stderr 的
+   （证据：`@deepseek-ai/dsh-hook-protocol/lib/index.js` 的 `runHook` —— 它把序列化后的
+   载荷交给 `bash.run(bash.resolve(request))`，再从 `result.stdout.text` 解码决策）；
+3. 受限沙箱下 `spawn` 直接 EPERM（最小复现：Node 里 `spawnSync(python, …, {encoding:'utf-8'})`
+   → `EPERM`；换成 `stdio:'inherit'` 或文件重定向则成功）；
+4. 插件的 catch 把它翻译成 `{kind:'deny'}`（这是**正确的失败关闭**），于是模型的
+   **每一次**工具调用都被拒——包括只读的 read/grep，会话只能退化成纯文本回答；
+5. 没有任何 Hook 进程被启动过，因此审计文件根本不会出现。
+
+**换接线方式绕不过去**：命令桥 `dsh-hooks-claude-code` 走的是同一个 `ctx.shell`
+（同一个 `runHook`）。要在这类环境里跑闭环，只能在不受限的 shell 里执行：
+
+    cd .tmp/phase-2-sandbox/demo-shop
+    dsh --profile headless --patch .policy/patch.yml \
+        "用 edit 工具在 src/shop/order_controller.py 的 import 区加一行 'from repository import OrderRepository'"
+
+因此 `tools/dsh_sandbox_loop.py` 会把这种情况判成 **`skipped`（环境跳过，退出码 0）** 并写出
+`reason` / `sandbox_blocked_spawn` / `reproduce` 三样东西：它既不把"跑不了"报成 pass
+（那会伪造证据），也不把它报成 fail（那是环境限制，不是策略结论）。
+
 ## 8. Phase 4 追加的接线（受控执行）
 
 Phase 4 之后，受控工具（写类 + 高权限执行类）在 Hook 里多走一段授权链：

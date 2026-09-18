@@ -140,9 +140,12 @@ def sandbox_loop() -> dict[str, object]:
     payload = json.loads(SANDBOX_RESULT.read_text(encoding="utf-8"))
     return {
         "result": payload.get("result"),
-        # 失败不是"被规则阻断"：审计为空说明 Hook 根本没被执行（嵌套进程启动被外层环境拦住）
+        # 失败不是"被规则阻断"：审计为空说明 Hook 根本没被执行（嵌套进程启动被外层环境拦住）。
+        # result=skipped 表示本机确认了"spawn 被沙箱拒绝"，并给出了在不受限环境里的复现命令。
         "diagnosis": payload.get("diagnosis"),
         "reason": payload.get("reason"),
+        "sandbox_blocked_spawn": payload.get("sandbox_blocked_spawn"),
+        "reproduce": payload.get("reproduce"),
         "agent_version": payload.get("agent_version"),
         "block_passed": (payload.get("block_scenario") or {}).get("passed"),
         "allow_passed": (payload.get("allow_scenario") or {}).get("passed"),
