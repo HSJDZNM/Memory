@@ -9,8 +9,9 @@
 | Phase 2 dsh Adapter | [phase-2/](phase-2/) | dsh 事件映射、显式上下文、Hook 的 allow / block 与失败关闭 |
 | Phase 3 规范检索 | [phase-3/](phase-3/) | 分块、FTS5 检索、来源与哈希、Context 预算与"知识不可用" |
 | Phase 4 受控执行 | [phase-4/](phase-4/) | Tool Registry、Action Request 与 action_hash 绑定、pre-check、受控执行、事后验证与审计链 |
+| Phase 5 代码验证器 | [phase-5/](phase-5/) | AST 事实与依赖图、外部工具适配器与失效分类、测试选择、证据 → 判定与失败关闭 |
 
-后续阶段按同一约定新增：`phase-5/`、`phase-6/` …
+后续阶段按同一约定新增：`phase-6/`、`phase-7/` …
 
 ## 每个阶段目录的固定结构
 

@@ -2,15 +2,17 @@
 
 本目录将原先的单篇大型架构文档拆成可独立阅读、实施和验收的文档集。内容同时参考了共享对话“设计规范 RAG 架构”和仓库内已有的工程规范镜像。
 
-> 实施进度：**Phase 0、Phase 1、Phase 2、Phase 3 与 Phase 4 已完成**。Phase 0 选定 Python 技术栈并落地了依赖锁文件、
+> 实施进度：**Phase 0、Phase 1、Phase 2、Phase 3、Phase 4 与 Phase 5 已完成**。Phase 0 选定 Python 技术栈并落地了依赖锁文件、
 > 根 README 命令与 CI；Phase 1 落地了上下文规范化、Scope Matcher、严重级别决策与带版本的决策协议；
 > Phase 2 落地了 dsh Adapter 与 pre-execute Hook，并在受控沙箱里跑通了"bad 编辑被阻断、good 编辑放行一次"的真实闭环；
 > Phase 3 落地了摄取清单、章节分块器、SQLite FTS5 基线与 Context Builder，并用固定评测集给出了
 > "先不引入 Embedding"的可重放结论（hit@5 = 1.00、support@5 = 1.00、向量检索未跑赢基线）。
 > Phase 4 落地了数据化 Tool Registry、与 action_hash 绑定的短时效授权、受控执行器与事后验证，
 > 并把 dsh 的写类与高权限执行类工具接进同一条决策链（审计链可重放）。
+> Phase 5 落地了 AST / 依赖图证据、外部工具适配器（Ruff / mypy / pytest，探针发现 + 失败关闭）、
+> 测试验证器与流水线聚合：ARCH-001 不再需要调用方声明依赖，"解析失败"也不等于"没有依赖"。
 > 实施记录见对应阶段文档末尾的“实施记录”小节，实际命令以根 `README.md` 为准。
-> 尚未实施的阶段（Phase 5 起），其命令与目录仍是目标接口，不表示现在已经可执行。
+> 尚未实施的阶段（Phase 6 起），其命令与目录仍是目标接口，不表示现在已经可执行。
 
 ## 阅读顺序
 
@@ -31,7 +33,7 @@
 | [Phase 2](phases/phase-2-dsh-adapter.md) | dsh Adapter | dsh Event → Policy Context；pre-execute Hook 与审计 |
 | [Phase 3](phases/phase-3-retrieval.md) | 规范检索 | SQLite FTS5、可选向量检索、Context Builder |
 | [Phase 4](phases/phase-4-tool-enforcement.md) | Tool Enforcement | Tool Registry、Pre-check、受控执行、Post-check、审计链 |
-| [Phase 5](phases/phase-5-code-validators.md) | 代码验证器 | AST、依赖、Lint、类型与测试证据 |
+| [Phase 5](phases/phase-5-code-validators.md) | 代码验证器 | AST、依赖、Lint、类型与测试证据（**已完成**：证据协议 + 流水线 + 失败关闭） |
 | [Phase 6](phases/phase-6-multi-agent-adapters.md) | 多 Agent Adapter | 统一事件与适配器一致性套件 |
 | [Phase 7](phases/phase-7-policy-api.md) | Policy API | 版本化 API、鉴权、隔离、可观测性 |
 | [Phase 8](phases/phase-8-langgraph-orchestration.md) | LangGraph | 可恢复的上层编排消费者 |
