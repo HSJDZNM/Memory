@@ -54,6 +54,8 @@ __all__ = [
     "validators_config",
     "write_validation_config",
     "fixture_file_sha256",
+    "module_tmp_root",
+    "tmp_root_factory",
     "load_fixture_corpus",
     "write_fixture_corpus",
     "make_context",
@@ -233,6 +235,46 @@ def write_rule(path: Path, document: dict[str, Any], *, yaml_module: Any) -> Pat
         encoding="utf-8",
     )
     return path
+
+
+@pytest.fixture(scope="module")
+def module_tmp_root() -> Any:
+    """模块级临时目录（同样只用 mkdir，不依赖 mkdtemp/chmod）。
+
+    一致性套件这类"跑一次、多个用例共用结论"的夹具需要模块级作用域，
+    而 tmp_root 是函数级的；两者的实现必须一致，否则沙箱里会出现
+    "有的用例能跑、有的用例因为权限失败"这种与被测行为无关的差异。
+    """
+
+    directory = TMP_ROOT / uuid.uuid4().hex
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        yield directory
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+@pytest.fixture()
+def tmp_root_factory() -> Any:
+    """按需创建多个独立临时目录（模块级 fixture 需要它）。
+
+    与 tmp_root 同一套实现：只用 mkdir + 唯一名字，不依赖 mkdtemp/chmod——
+    受限沙箱里那两个调用会被拒绝，从而制造与被测行为无关的失败。
+    """
+
+    created: list[Path] = []
+
+    def make() -> Path:
+        directory = TMP_ROOT / uuid.uuid4().hex
+        directory.mkdir(parents=True, exist_ok=True)
+        created.append(directory)
+        return directory
+
+    try:
+        yield make
+    finally:
+        for directory in created:
+            shutil.rmtree(directory, ignore_errors=True)
 
 
 @pytest.fixture()
