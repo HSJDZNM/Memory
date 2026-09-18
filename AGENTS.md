@@ -93,6 +93,9 @@
 6. 上下文只接受显式字段：不得根据文件名、目录或用户消息推断主体、权限或审批状态；
 7. 决策协议带 `schema_version`，消费方看不懂必须拒绝；`tests/fixtures/decisions/` 的协议快照
    只能显式更新（`POLICY_UPDATE_SNAPSHOTS=1`），不能在断言里放宽；
+   `policy_version` 是协议**世代名**（§"决策载荷的两个版本字段"），只与 `schema_version` 同进同退，
+   **不跟随平台阶段**：载荷、快照与阶段证据都从 `policy.models.POLICY_VERSION` 取值，
+   谁都不许自己算一个（曾经因此出现过"证据说 phase-5、载荷说 phase-1"）；
 8. Adapter 只做协议转换：不导入 Agent SDK 类型、不猜 layer/language/principal，
    声明不出来就失败关闭；未知事件、未知工具、缺失路径一律拒绝；
    **只读工具降级的只是授权链路，不是范围校验**：注册表声明了 `path_scope: workspace`，

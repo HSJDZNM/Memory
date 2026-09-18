@@ -72,12 +72,19 @@ def rule_set_identity() -> tuple[str, list[str]]:
 
 
 def decision_protocol() -> dict[str, object]:
-    from policy.models import SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS
+    """决策协议的事实：只报载荷里真实存在的值，不从"当前阶段"推。
+
+    这里曾经写成 "phase-" + CURRENT_PHASE，于是证据说 phase-5、载荷说 phase-1。
+    policy_version 是协议世代名（与 schema_version 同进同退），平台阶段另有
+    payload["phase"] 与 implementation_version 承担。
+    """
+
+    from policy.models import POLICY_VERSION, SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS
 
     return {
         "schema_version": SCHEMA_VERSION,
         "supported": sorted(SUPPORTED_SCHEMA_VERSIONS),
-        "policy_version": "phase-" + str(CURRENT_PHASE),
+        "policy_version": POLICY_VERSION,
     }
 
 

@@ -96,6 +96,21 @@ principal:
 
 决策枚举固定为 `allow`、`allow_with_warnings`、`block`。任何未识别值都按协议错误处理，不能默认允许。
 
+### 决策载荷的两个版本字段
+
+| 字段 | 含义 | 什么时候变 |
+| --- | --- | --- |
+| `schema_version` | 协议形状：消费方能不能解析这份载荷 | 字段增删或语义变化时递增；消费方看不懂必须拒绝 |
+| `policy_version` | 协议世代名：给人读的"这是第几代协议" | **只与 `schema_version` 同进同退**，不跟随平台阶段 |
+
+平台走到哪个阶段**不写在载荷里**：看阶段验收证据的 `phase` 与 `implementation_version`
+（`python tools/phase_evidence.py`），以及审计记录里的规则集哈希。
+让 `policy_version` 跟着阶段走会引入第二条兼容轴，并把"显式更新快照"变成每阶段的例行公事——
+那样它既提示不了兼容性，也提示不了语义变化，只剩下一次性的噪声。
+
+`policy_version` 的取值来自 `src/policy/models.py` 里的 `POLICY_VERSION` 常量：载荷、快照与
+阶段证据都从这一处取值，`tests/contract/test_decision_protocol.py` 有守卫用例。
+
 ## 标准事件
 
 ```text

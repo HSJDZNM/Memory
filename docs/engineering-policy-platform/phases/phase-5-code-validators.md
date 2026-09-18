@@ -248,6 +248,38 @@ checker → 验证器归属、每个验证器的阶段 / critical / 工具版本
 每个套件的命令 / 用例数 / 失败数、性能基线、JUnit 报告路径与时间戳。
 证据里不含任何被验证文件的内容、工具输出原文或凭据。
 
+### 一处长期漂移：决策载荷里的 policy_version（已定义并修复）
+
+Phase 5 收尾核对阶段证据时发现：证据里的 `decision_protocol.policy_version` 写着 `phase-5`，
+而任何真实决策载荷里这个字段是 `phase-1`。复现：
+
+    git show a3b0e35:tools/phase_evidence.py | Select-String policy_version   # Phase 4 时写 phase-4
+    git show a3b0e35:src/policy/models.py     | Select-String policy_version  # 载荷一直是 phase-1
+
+也就是说，工具用"平台阶段"顶替了"协议字段值"，**从 Phase 4 起就是这样**（Phase 5 沿用了同一行）。
+两种修法都摆出来比较过：
+
+| 选项 | 改动面 | 结论 |
+| --- | --- | --- |
+| A：只让证据报真实值 | `tools/phase_evidence.py` 一处 + 守卫用例 | 必需：证据不许说假话 |
+| B：把载荷里的值升到 `phase-5` | 模型默认值 + 4 份快照（`POLICY_UPDATE_SNAPSHOTS=1`）+ 3 处断言 | **不采纳**：那会给消费方引入第二条兼容轴，并把"显式更新快照"降级成每阶段的例行公事 |
+
+最终做法是"A 加把 B 的问题定义清楚"：
+
+1. `src/policy/models.py` 新增 `POLICY_VERSION` 常量（值仍是 `phase-1`，**快照不变**）：
+   `schema_version` 是唯一兼容轴（字段增删或语义变化时递增），`POLICY_VERSION` 是协议**世代名**，
+   只与 `schema_version` 同进同退、不跟随平台阶段；平台阶段看阶段证据的 `phase` 与 `implementation_version`；
+2. 载荷、快照与阶段证据都从这一个常量取值，工具不再自己算（`tools/phase_evidence.py` 改为读模型）；
+3. 契约守卫：`test_policy_version_is_the_protocol_generation_not_the_platform_phase`（常量 = 模型默认值 = 四份快照）
+   与 `test_phase_evidence_reports_the_payload_value_verbatim`（证据报的值 = 载荷的值）；
+4. 文档：总体架构新增"决策载荷的两个版本字段"（含义与何时变），AGENTS 核心约束 7 记下这条规则，
+   学习手册里那句硬编码的 `当前阶段: phase-1` 改成读真实常量并解释两个字段的分工。
+
+为什么不让它跟着阶段走：Phase 5 确实改变了 violation 的来源集合（新增 `kind="validator"` 的 critical 阻断），
+但那是**值的集合**变化，不是协议形状变化——载荷形状仍是 1.0，消费方按 `violations[].evidence.kind` 处理即可；
+需要"这一代引擎是谁"的场景（审计、阶段证据、复现）已经有 `rule_set_hash` 与 `implementation_version`，
+比一个每阶段都要决策一次的常量精确得多。真正的协议变更点（Phase 7 的版本化 API）会让两个字段一起动。
+
 ### 本机门禁里的一条已知噪音
 
 在**被沙箱化的会话**里跑 `python tools/ci_local.py --full` 时，`Real dsh sandbox loop` 这一步会失败：

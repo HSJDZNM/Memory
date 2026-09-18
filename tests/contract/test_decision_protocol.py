@@ -18,6 +18,7 @@ import pytest
 
 from policy.engine import evaluate
 from policy.models import (
+    POLICY_VERSION,
     SCHEMA_VERSION,
     Decision,
     Evidence,
@@ -211,6 +212,35 @@ def test_protocol_version_is_reported_in_the_payload() -> None:
     assert payload["request_id"] == "req-snapshot"
     assert payload["trace_id"] == "trace-snapshot"
     assert payload["rule_set_hash"] == SNAPSHOT_RULES.identity
+
+
+def test_policy_version_is_the_protocol_generation_not_the_platform_phase() -> None:
+    """policy_version 只与 schema_version 同进同退，不跟随平台阶段。
+
+    这条不变量曾经失守：阶段证据用它顶替"当前阶段"，于是证据说 phase-5、
+    载荷说 phase-1。把它钉在这里，谁再改动都要同时改快照与文档。
+    """
+
+    assert POLICY_VERSION == "phase-1"  # 显式字面量：改动必须是有意的
+    assert ValidationResult.model_fields["policy_version"].default == POLICY_VERSION
+
+    generations = {
+        name: read_snapshot(name)["policy_version"]
+        for name in ("allow", "warning", "block", "approval")
+    }
+    assert set(generations.values()) == {POLICY_VERSION}
+
+
+def test_phase_evidence_reports_the_payload_value_verbatim() -> None:
+    """阶段证据必须报载荷里真实存在的值，不能自己算一个。"""
+
+    from tools.phase_evidence import decision_protocol
+
+    reported = decision_protocol()
+
+    assert reported["policy_version"] == POLICY_VERSION
+    assert reported["policy_version"] == read_snapshot("allow")["policy_version"]
+    assert reported["schema_version"] == SCHEMA_VERSION
 
 
 def test_evidence_payload_keeps_optional_fields_when_present() -> None:

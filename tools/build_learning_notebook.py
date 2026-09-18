@@ -896,12 +896,16 @@ rule_set = loader.load_rule_set([REPO_ROOT / "policies"], repo_root=REPO_ROOT)
 
 print("仓库根目录:", REPO_ROOT)
 print("规则集:", rule_set.ids, "| 规则集哈希:", rule_set.identity)
-print("决策协议版本:", models.SCHEMA_VERSION, "| 当前阶段: phase-1")
+# 两个版本字段都不是"当前阶段"：schema_version 是协议形状，POLICY_VERSION 是协议世代名
+# （只与 schema_version 同进同退）。平台走到哪一阶段看阶段证据里的 phase。
+print("协议:", models.SCHEMA_VERSION, "| 世代:", models.POLICY_VERSION)
 """
     ),
     markdown(
         """**小结**：核心库仍然是一个普通 Python 包，多出来的两个模块同样只依赖标准库与 pydantic。
-规则集哈希是规则内容的指纹：规则改一个字，哈希就变，用它可以把一份决定和一份规则集绑定起来。"""
+规则集哈希是规则内容的指纹：规则改一个字，哈希就变，用它可以把一份决定和一份规则集绑定起来。
+输出里的两个版本字段职责不同：§schema_version§ 说明"消费方能不能解析"，§POLICY_VERSION§ 只是协议世代名
+（与前者同进同退）；**平台当前阶段不在载荷里**，它在阶段证据的 §phase§ 与 §implementation_version§ 里。"""
     ),
     markdown(
         """## 1. 上下文先规范化，再进入引擎

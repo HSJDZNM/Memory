@@ -28,6 +28,7 @@ __all__ = [
     "BLOCKING_SEVERITIES",
     "KNOWN_CHECKERS",
     "KNOWN_SCOPE_DIMENSIONS",
+    "POLICY_VERSION",
     "RULE_BODY_CLASSES",
     "SCHEMA_VERSION",
     "SUPPORTED_SCHEMA_VERSIONS",
@@ -84,6 +85,15 @@ _RULE_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d+$")
 # 消费方（Phase 2 Adapter / Phase 7 API）只接受 SUPPORTED_SCHEMA_VERSIONS 中的版本。
 SCHEMA_VERSION = "1.0"
 SUPPORTED_SCHEMA_VERSIONS: FrozenSet[str] = frozenset({SCHEMA_VERSION})
+
+# 决策载荷里的第二个版本字段：**协议世代名**，只用来给人读"这套载荷是第几代协议"。
+#
+# 规则（写在这里是因为它曾经没有定义，导致阶段证据里出现了与载荷不一致的值）：
+#
+# - schema_version 是唯一兼容轴：字段增删或语义变化时递增，消费方看不懂必须拒绝；
+# - POLICY_VERSION 只与 schema_version 同进同退，**不跟随平台阶段**；
+# - "现在平台走到哪个阶段"看阶段证据的 phase 与 implementation_version，不要回到载荷里找。
+POLICY_VERSION = "phase-1"
 
 # scope 中表示"该维度不限制"的显式通配值。没有声明该维度同样表示不限制。
 WILDCARD = "*"
@@ -867,7 +877,8 @@ class ValidationResult(StrictModel):
     skipped_rules: Tuple[SkippedRule, ...] = ()
     violations: Tuple[Violation, ...] = ()
     required_action: Optional[RequiredAction] = None
-    policy_version: str = "phase-1"
+    # 协议世代名，与 SCHEMA_VERSION 同进同退（改这里就等于改协议，必须显式更新快照）
+    policy_version: str = POLICY_VERSION
 
     @field_validator("schema_version")
     @classmethod
