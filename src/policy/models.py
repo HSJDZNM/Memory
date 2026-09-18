@@ -19,23 +19,37 @@ from __future__ import annotations
 import re
 from enum import Enum
 from hashlib import sha256
-from typing import Any, FrozenSet, Mapping, Optional, Tuple, Union
+from typing import Any, ClassVar, FrozenSet, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 __all__ = [
     "ALLOWING_SEVERITIES",
     "BLOCKING_SEVERITIES",
+    "KNOWN_CHECKERS",
     "KNOWN_SCOPE_DIMENSIONS",
+    "RULE_BODY_CLASSES",
     "SCHEMA_VERSION",
     "SUPPORTED_SCHEMA_VERSIONS",
     "WILDCARD",
     "Decision",
+    "DocstringTarget",
     "Enforcement",
     "EnforcementType",
     "Evidence",
+    "FailingTestsRule",
+    "FailingTestsSpec",
     "ForbiddenDependencyRule",
     "LenientStrictModel",
+    "MissingDocstringRule",
+    "MissingDocstringSpec",
+    "MissingTestsRule",
+    "MissingTestsSpec",
+    "RuleBody",
+    "StyleLintRule",
+    "StyleLintSpec",
+    "TypeCheckRule",
+    "TypeCheckSpec",
     "Operation",
     "PolicyContext",
     "PolicyContextError",
@@ -371,7 +385,9 @@ class Enforcement(StrictModel):
 
 
 class ForbiddenDependencyRule(StrictModel):
-    """Phase 0 唯一的规则体：禁止某一层直接依赖某些模块。"""
+    """Phase 0 的规则体：禁止某一层直接依赖某些模块（Phase 5 起证据来自 AST / 依赖图）。"""
+
+    checker_name: ClassVar[str] = "forbidden_dependency"
 
     forbidden_dependency: Tuple[str, ...] = Field(min_length=1)
 
@@ -391,6 +407,184 @@ class ForbiddenDependencyRule(StrictModel):
         return tuple(normalized)
 
 
+class DocstringTarget(str, Enum):
+    """PEP 257 检查对象（受控枚举：写错目标名必须报错，不能悄悄少查一类）。"""
+
+    MODULE = "module"
+    CLASS = "class"
+    FUNCTION = "function"
+    METHOD = "method"
+
+
+def _normalize_targets(values: Tuple[Any, ...]) -> Tuple[DocstringTarget, ...]:
+    normalized: list[DocstringTarget] = []
+    for raw in values:
+        if isinstance(raw, DocstringTarget):
+            normalized.append(raw)
+            continue
+        token = canonical_identifier(str(raw))
+        try:
+            normalized.append(DocstringTarget(token))
+        except ValueError:
+            known = sorted(item.value for item in DocstringTarget)
+            raise ValueError(
+                f"missing_docstring.targets 只接受 {known}，得到 {raw!r}"
+            ) from None
+    if not normalized:
+        raise ValueError("missing_docstring.targets 不能为空")
+    return tuple(sorted(set(normalized), key=lambda item: item.value))
+
+
+class MissingDocstringSpec(StrictModel):
+    """缺失 docstring 的检查规格：查哪些对象由规则数据决定。
+
+    include_private 默认 False：PEP 257 只要求公开对象有 docstring，
+    私有实现细节（例如 __init__）不强制——这是策略决定，所以写在规则里。
+    """
+
+    targets: Tuple[DocstringTarget, ...] = Field(min_length=1)
+    include_private: bool = False
+
+    @field_validator("targets", mode="before")
+    @classmethod
+    def _check_targets(cls, value: Any) -> Any:
+        if isinstance(value, (str, DocstringTarget)):
+            value = (value,)
+        if not isinstance(value, (list, tuple, set, frozenset)):
+            raise ValueError("missing_docstring.targets 必须是列表")
+        return _normalize_targets(tuple(value))
+
+
+class MissingDocstringRule(StrictModel):
+    """PEP 257：模块 / 类 / 函数（可选方法）必须有 docstring。"""
+
+    checker_name: ClassVar[str] = "missing_docstring"
+
+    missing_docstring: MissingDocstringSpec
+
+
+class StyleLintSpec(StrictModel):
+    """外部风格工具的诊断码归属：这条规则拥有哪些工具码。"""
+
+    tool: str = Field(min_length=1)
+    codes: Tuple[str, ...] = ()
+
+    @field_validator("tool")
+    @classmethod
+    def _check_tool(cls, value: str) -> str:
+        normalized = canonical_identifier(value)
+        if not normalized:
+            raise ValueError("style_lint.tool 不能为空")
+        return normalized
+
+    @field_validator("codes", mode="before")
+    @classmethod
+    def _check_codes(cls, value: Any) -> Any:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            value = (value,)
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in value:
+            token = str(raw).strip().upper()
+            if not token:
+                raise ValueError("style_lint.codes 不能包含空值；全部码请省略该键")
+            if token in seen:
+                continue
+            seen.add(token)
+            normalized.append(token)
+        return tuple(sorted(normalized))
+
+
+class StyleLintRule(StrictModel):
+    """外部 Linter（Ruff）诊断；外部输出只作不可信数据，映射到本规则声明的码。"""
+
+    checker_name: ClassVar[str] = "style_lint"
+
+    style_lint: StyleLintSpec
+
+
+class TypeCheckSpec(StrictModel):
+    """类型检查工具的诊断归属；codes 为空表示"该工具的全部错误"。"""
+
+    tool: str = Field(min_length=1)
+    codes: Tuple[str, ...] = ()
+
+    @field_validator("tool")
+    @classmethod
+    def _check_tool(cls, value: str) -> str:
+        normalized = canonical_identifier(value)
+        if not normalized:
+            raise ValueError("type_check.tool 不能为空")
+        return normalized
+
+    @field_validator("codes", mode="before")
+    @classmethod
+    def _check_codes(cls, value: Any) -> Any:
+        return StyleLintSpec._check_codes(value)
+
+
+class TypeCheckRule(StrictModel):
+    """类型检查器证据（本仓库没有启用该规则：启用前环境里必须真的有工具）。"""
+
+    checker_name: ClassVar[str] = "type_check"
+
+    type_check: TypeCheckSpec
+
+
+class MissingTestsSpec(StrictModel):
+    """生产变更必须有对应测试的规格。"""
+
+    changed_only: bool = True
+
+
+class MissingTestsRule(StrictModel):
+    """缺失对应测试：只在"有变更集"时判定（没有变更集属于证据不足，失败关闭）。"""
+
+    checker_name: ClassVar[str] = "missing_tests"
+
+    missing_tests: MissingTestsSpec
+
+
+class FailingTestsSpec(StrictModel):
+    """相关测试必须通过。"""
+
+    tool: str = Field(min_length=1)
+
+    @field_validator("tool")
+    @classmethod
+    def _check_tool(cls, value: str) -> str:
+        normalized = canonical_identifier(value)
+        if not normalized:
+            raise ValueError("failing_tests.tool 不能为空")
+        return normalized
+
+
+class FailingTestsRule(StrictModel):
+    """相关测试失败：证据来自测试进程的退出码与失败用例列表。"""
+
+    checker_name: ClassVar[str] = "failing_tests"
+
+    failing_tests: FailingTestsSpec
+
+
+# 规则体的全部成员。注册顺序即 union 的判定顺序，也是"未知 checker"报错信息的来源。
+RULE_BODY_CLASSES: Tuple[type, ...] = (
+    ForbiddenDependencyRule,
+    MissingDocstringRule,
+    StyleLintRule,
+    TypeCheckRule,
+    MissingTestsRule,
+    FailingTestsRule,
+)
+
+RuleBody = Union[RULE_BODY_CLASSES]  # type: ignore[valid-type]
+
+# 有规则体实现的 checker 全集。引擎侧另有一份 SUPPORTED_CHECKERS（判定分派），
+# 两者必须一致——tests/contract 里有守这条不变量的用例。
+KNOWN_CHECKERS: FrozenSet[str] = frozenset(cls.checker_name for cls in RULE_BODY_CLASSES)
+
 class Rule(StrictModel):
     """一条机器可执行规则。id 与 version 共同决定审计身份。"""
 
@@ -401,9 +595,31 @@ class Rule(StrictModel):
     scope: RuleScope
     severity: Severity
     enforcement: Enforcement
-    rule: ForbiddenDependencyRule
+    rule: RuleBody
     message: str = Field(min_length=1)
     source: SourceRef
+
+    @model_validator(mode="after")
+    def _body_matches_checker(self) -> "Rule":
+        """未知 checker 与"规则体不匹配"都在这里拒绝。
+
+        写错组合（例如 checker=style_lint 却给了 forbidden_dependency）会让规则
+        "看起来在管这件事、实际什么都没查"；未知 checker 更会让判定悄悄缺席。
+        两者都在加载阶段报错，而不是留到运行时或静默忽略。
+        """
+
+        if self.enforcement.checker not in KNOWN_CHECKERS:
+            raise ValueError(
+                f"未知 checker {self.enforcement.checker!r}；"
+                f"有规则体实现的 checker 为 {sorted(KNOWN_CHECKERS)}"
+            )
+        expected = getattr(self.rule, "checker_name", None)
+        if expected != self.enforcement.checker:
+            raise ValueError(
+                f"规则体与 checker 不一致：enforcement.checker={self.enforcement.checker!r}，"
+                f"规则体是 {expected!r}；请让两者一致"
+            )
+        return self
 
     @field_validator("id")
     @classmethod
@@ -782,6 +998,19 @@ def parse_decision(payload: Mapping[str, Any]) -> ValidationResult:
         raise ProtocolError(str(failure)) from error
 
 
+# 规则体的 union 成员类名：错误位置里去掉它们，错误信息才与规则文件的写法一致。
+_UNION_MEMBER_NAMES = frozenset(
+    {
+        "ForbiddenDependencyRule",
+        "MissingDocstringRule",
+        "StyleLintRule",
+        "TypeCheckRule",
+        "MissingTestsRule",
+        "FailingTestsRule",
+    }
+)
+
+
 class RuleValidationError(ValueError):
     """把 pydantic 的校验失败包装成带字段位置的可读错误。"""
 
@@ -793,7 +1022,14 @@ class RuleValidationError(ValueError):
     def from_pydantic(cls, error: ValidationError, *, model_name: str) -> "RuleValidationError":
         details = []
         for item in error.errors():
-            location = ".".join(str(part) for part in item.get("loc", ()))
+            # union 成员的类名是实现细节（规则作者看到的是 rule.forbidden_dependency，
+            # 不是 rule.ForbiddenDependencyRule.forbidden_dependency），这里统一去掉。
+            parts = [
+                str(part)
+                for part in item.get("loc", ())
+                if str(part) not in _UNION_MEMBER_NAMES
+            ]
+            location = ".".join(parts)
             details.append(f"{location or '<root>'}: {item.get('msg')}")
         message = f"{model_name} 校验失败 -> " + "; ".join(details)
         return cls(message, errors=[dict(item) for item in error.errors()])

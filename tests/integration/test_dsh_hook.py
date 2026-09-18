@@ -138,8 +138,19 @@ def test_out_of_scope_write_is_allowed_and_reports_the_skipped_rule(dsh_config_p
     assert executor.count == 1
     assert outcome.decision is not None
     assert outcome.decision.matched_rules == ()
-    assert [item.rule_id for item in outcome.decision.skipped_rules] == ["ARCH-001@1"]
-    assert "layer" in " ".join(outcome.decision.skipped_rules[0].reasons)
+    skipped = {item.rule_id: item.reasons for item in outcome.decision.skipped_rules}
+    # Phase 5：证据类 checker（docstring / 风格 / 测试）在只有上下文的调用路径上
+    # 明确记为"没有验证器证据"，而不是当作通过；ARCH-001 仍按范围跳过并写明原因。
+    assert set(skipped) == {
+        "ARCH-001@1",
+        "DOC-001@1",
+        "STYLE-001@1",
+        "STYLE-002@1",
+        "TESTING-001@1",
+        "TESTING-002@1",
+    }
+    assert "layer" in " ".join(skipped["ARCH-001@1"])
+    assert all("验证器" in reason for reason in skipped["DOC-001@1"])
 
 
 def test_not_governed_read_only_tool_is_allowed_and_records_the_scope_note(

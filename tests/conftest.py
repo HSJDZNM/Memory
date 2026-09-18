@@ -15,6 +15,10 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
+
+# Phase 5 的夹具项目是**被验证的样本**，它的 tests/ 必须能被测试验证器真的收集到，
+# 因此只能在仓库自己的收集路径上屏蔽它（而不是在夹具项目里加 collect_ignore）。
+collect_ignore_glob = ["fixtures/validators/project/tests/*"]
 TOOLS_DIR = REPO_ROOT / "tools"
 TMP_ROOT = REPO_ROOT / ".tmp" / "tests"
 
@@ -32,6 +36,7 @@ __all__ = [
     "DSH_EVENT_FIXTURES",
     "DSH_LANGUAGES",
     "DSH_LAYERS",
+    "FAKE_TOOL",
     "FIXTURES_DIR",
     "POLICIES_DIR",
     "REPO_ROOT",
@@ -39,7 +44,15 @@ __all__ = [
     "RETRIEVAL_FIXTURES",
     "RETRIEVAL_POLICY",
     "RULE_DOCUMENT",
+    "VALIDATION_DIR",
+    "VALIDATOR_FIXTURES",
+    "VALIDATOR_PROJECT",
+    "copy_validator_project",
     "dsh_event",
+    "fake_tool_spec",
+    "make_checker_rule",
+    "validators_config",
+    "write_validation_config",
     "fixture_file_sha256",
     "load_fixture_corpus",
     "write_fixture_corpus",
@@ -406,3 +419,151 @@ def retrieval_store(tmp_root: Path) -> Any:
         yield store
     finally:
         store.close()
+
+
+# --------------------------------------------------------------------------- Phase 5
+
+VALIDATOR_FIXTURES = FIXTURES_DIR / "validators"
+VALIDATOR_PROJECT = VALIDATOR_FIXTURES / "project"
+FAKE_TOOL = VALIDATOR_FIXTURES / "tools" / "fake_tool.py"
+
+VALIDATION_DIR = REPO_ROOT / "validation"
+
+
+def validators_config(
+    *,
+    root: Path = REPO_ROOT,
+    registry: Path | None = None,
+    project: Path | None = None,
+    test_layout: Path | None = None,
+) -> Any:
+    """加载验证器配置；默认用仓库真实的三份数据文件。"""
+
+    from validators.registry import load_config
+
+    return load_config(root=root, registry=registry, project=project, test_layout=test_layout)
+
+
+def write_validation_config(
+    root: Path,
+    *,
+    registry: dict[str, Any] | None = None,
+    project: dict[str, Any] | None = None,
+    test_layout: dict[str, Any] | None = None,
+) -> Path:
+    """在临时目录写一份 validation/ 配置（默认复制仓库真实数据），返回配置根目录。
+
+    tool.config 之类的仓库内路径仍以仓库根为锚：测试里通过 registry 传相对路径，
+    由调用方决定用哪个 root 加载。
+    """
+
+    target = root / "validation"
+    target.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "validators.yaml",
+        "project.yaml",
+        "test-layout.yaml",
+        "ruff.toml",
+        "mypy.ini",
+        "pytest.ini",
+    ):
+        (target / name).write_text(
+            (VALIDATION_DIR / name).read_text(encoding="utf-8"), encoding="utf-8", newline=""
+        )
+    for name, document in (
+        ("validators.yaml", registry),
+        ("project.yaml", project),
+        ("test-layout.yaml", test_layout),
+    ):
+        if document is not None:
+            (target / name).write_text(
+                yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+                newline="",
+            )
+    return root
+
+
+def make_checker_rule(
+    rule_id: str = "DOC-001",
+    *,
+    checker: str = "missing_docstring",
+    body: dict[str, Any] | None = None,
+    scope: dict[str, Any] | None = None,
+    severity: str = "error",
+    version: int = 1,
+) -> Any:
+    """按 checker 构造一条规则（Phase 5 的规则体是 per-checker 的）。"""
+
+    bodies: dict[str, dict[str, Any]] = {
+        "forbidden_dependency": {"forbidden_dependency": ["repository"]},
+        "missing_docstring": {"missing_docstring": {"targets": ["module", "class", "function"]}},
+        "style_lint": {"style_lint": {"tool": "ruff", "codes": ["E501"]}},
+        "type_check": {"type_check": {"tool": "mypy", "codes": []}},
+        "missing_tests": {"missing_tests": {"changed_only": True}},
+        "failing_tests": {"failing_tests": {"tool": "pytest"}},
+    }
+    document = rule_document(
+        id=rule_id,
+        version=version,
+        scope={"language": "python"} if scope is None else scope,
+        severity=severity,
+        enforcement={"type": "deterministic", "checker": checker},
+        rule=bodies[checker] if body is None else body,
+    )
+    from policy.models import Rule
+
+    return Rule.model_validate(document)
+
+
+def fake_tool_spec(
+    tool: str = "ruff",
+    behaviour: str = "ok",
+    *,
+    validator_id: str | None = None,
+    checkers: tuple[str, ...] = ("style_lint",),
+    argv: tuple[str, ...] = ("check", "--output-format=json", "{paths}"),
+    version_requirement: str | None = None,
+    stage: str = "lint",
+    critical: bool = True,
+    timeout_ms: int | None = None,
+) -> Any:
+    """构造一个指向假工具的外部验证器声明（失效与边界测试用）。"""
+
+    from policy.evidence import ValidatorKind
+    from validators.models import ToolSpec, ValidatorSpec
+
+    requirements = {"ruff": ">=0.6,<1", "mypy": ">=1.8,<2", "pytest": ">=8"}
+    return ValidatorSpec(
+        id=validator_id or ("tool." + tool),
+        version="1.0",
+        kind=ValidatorKind.EXTERNAL,
+        stage=stage,
+        checkers=checkers,
+        critical=critical,
+        timeout_ms=timeout_ms,
+        tool=ToolSpec(
+            command=(sys.executable, str(FAKE_TOOL), tool, behaviour),
+            version_args=("--version",),
+            version_pattern=tool + r" (\d+\.\d+[0-9A-Za-z.\-+]*)",
+            version_requirement=(
+                requirements[tool] if version_requirement is None else version_requirement
+            ),
+            argv=argv,
+        ),
+    )
+
+
+def copy_validator_project(tmp_root: Path, *, name: str = "project") -> Path:
+    """把夹具项目复制到临时目录（需要改动工作区的用例用它）。"""
+
+    target = tmp_root / name
+    shutil.copytree(VALIDATOR_PROJECT, target)
+    return target
+
+
+@pytest.fixture()
+def validator_project() -> Path:
+    """夹具项目根目录（只读使用；需要改动时用 copy_validator_project）。"""
+
+    return VALIDATOR_PROJECT

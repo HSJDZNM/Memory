@@ -1,0 +1,21 @@
+# Phase 5 外部工具规则：Ruff 的行长诊断（E501）。
+# 证据来自 tool.ruff；诊断码归属哪个规则由本文件决定，工具不决定策略。
+id: STYLE-001
+version: 1
+name: line-too-long
+description: 单行不得超过 100 列。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [E501]
+message: 单行不得超过 100 列（Ruff E501）。
+source:
+  kind: project-policy
+  path: policies/coding/STYLE-001.yaml
+  note: 行宽与启用码在 validation/ruff.toml，改它等于改证据口径。

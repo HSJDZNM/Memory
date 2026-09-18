@@ -1,0 +1,35 @@
+# 生产文件 ↔ 测试文件的对应关系，以及测试进程的硬限制。
+#
+# 选择顺序（从窄到宽，相关性不足时升级）：
+#   related（同名测试）→ package（同包测试）→ suite（整个测试套件）
+# 占位符：{stem} = 生产文件名去掉扩展名；{package} = 生产文件在 python 根下的第一层目录名。
+version: 1
+schema_id: test-layout/1
+language: python
+
+production_patterns:
+  - "src/**/*.py"
+
+test_patterns:
+  - "tests/**/test_*.py"
+  - "tests/**/*_test.py"
+
+escalation:
+  - level: related
+    description: 与生产文件同名的测试文件
+    match:
+      - "tests/**/test_{stem}.py"
+      - "tests/**/{stem}_test.py"
+  - level: package
+    description: 生产文件所在包对应的测试目录
+    match:
+      - "tests/**/{package}/**/test_*.py"
+  - level: suite
+    description: 整个测试套件（相关性不足时的最后一级）
+    match:
+      - "tests/**/test_*.py"
+
+limits:
+  max_nodeids: 40
+  timeout_ms: 120000
+  max_output_bytes: 262144

@@ -1,0 +1,165 @@
+"""测试选择：从变更集找到最小相关测试，并识别"改了生产代码却没有对应测试"。
+
+选择顺序由 validation/test-layout.yaml 声明（related → package → suite）；
+本模块只做选择，不运行进程——运行在 adapters/pytest_runner.py。
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional, Sequence, Tuple
+
+from .globs import glob_match
+from .models import TestLayout
+from .registry import RegistryError
+
+__all__ = ["TestSelection", "select_tests"]
+
+_SKIP_DIRS = frozenset(
+    {"__pycache__", ".git", ".venv", "venv", ".tmp", ".mypy_cache", ".ruff_cache",
+     ".pytest_cache", "node_modules", "build", "dist", ".tox"}
+)
+
+
+class SelectionError(RegistryError):
+    """测试选择阶段的问题（配置、路径）。"""
+
+
+@dataclass(frozen=True)
+class TestSelection:
+    """一次测试选择的结果。"""
+
+    level: str
+    nodeids: Tuple[str, ...] = ()
+    missing: Tuple[str, ...] = ()
+    related: Tuple[str, ...] = ()
+    reason: str = ""
+
+    def to_payload(self) -> dict:
+        return {
+            "level": self.level,
+            "nodeids": list(self.nodeids),
+            "missing": list(self.missing),
+            "related": list(self.related),
+            "reason": self.reason,
+        }
+
+
+def list_test_files(workspace: Path | str, layout: TestLayout) -> Tuple[str, ...]:
+    """列出工作区里符合测试模式的文件（仓库相对路径，稳定排序）。"""
+
+    anchor = Path(workspace).resolve()
+    found: list[str] = []
+    for directory, dirnames, filenames in os.walk(anchor):
+        dirnames[:] = sorted(
+            name for name in dirnames if name not in _SKIP_DIRS and not name.startswith(".")
+        )
+        for filename in sorted(filenames):
+            if not filename.endswith(".py"):
+                continue
+            path = Path(directory) / filename
+            try:
+                relative = path.resolve().relative_to(anchor).as_posix()
+            except ValueError:
+                continue
+            if layout.is_test(relative):
+                found.append(relative)
+    return tuple(sorted(found))
+
+
+def _patterns_for(level: str, layout: TestLayout, *, stem: str, package: str) -> Tuple[str, ...]:
+    for item in layout.escalation:
+        if item.level == level:
+            return tuple(
+                pattern.replace("{stem}", stem).replace("{package}", package)
+                for pattern in item.match
+            )
+    return ()
+
+
+def _stem_of(path: str) -> str:
+    name = path.rsplit("/", 1)[-1]
+    return name[: -len(".py")] if name.endswith(".py") else name
+
+
+def _package_of(path: str, layout: TestLayout) -> str:
+    for pattern in layout.production_patterns:
+        prefix = pattern.split("**")[0].rstrip("/")
+        if prefix and path.startswith(prefix + "/"):
+            remainder = path[len(prefix) + 1 :]
+            parts = remainder.split("/")
+            return parts[0] if len(parts) > 1 else ""
+    parts = path.split("/")
+    return parts[0] if len(parts) > 1 else ""
+
+
+def select_tests(
+    *,
+    target_path: str,
+    changed_files: Sequence[str],
+    layout: TestLayout,
+    workspace: Path | str,
+    max_nodeids: int,
+) -> TestSelection:
+    """选出最小相关测试；找不到任何测试的生产变更记进 missing（由规则决定是否阻断）。"""
+
+    tests = list_test_files(workspace, layout)
+    production = sorted(
+        {
+            item
+            for item in (*changed_files, target_path)
+            if layout.is_production(item)
+        }
+    )
+    if not production:
+        return TestSelection(level="none", reason="变更集里没有生产文件，测试选择不适用")
+    if not tests:
+        # 工作区里一个测试文件都没有：生产变更全部算"缺少对应测试"，
+        # 而不是"没找到相关测试所以跳过"。
+        return TestSelection(
+            level="none",
+            missing=tuple(production),
+            reason="工作区里没有任何匹配测试模式的文件",
+        )
+
+    selected: list[str] = []
+    missing: list[str] = []
+    highest = "related"
+    for path in production:
+        stem = _stem_of(path)
+        package = _package_of(path, layout)
+        matched: list[str] = []
+        for level in ("related", "package", "suite"):
+            patterns = _patterns_for(level, layout, stem=stem, package=package)
+            for candidate in tests:
+                if any(glob_match(pattern, candidate) for pattern in patterns):
+                    matched.append(candidate)
+            if matched:
+                highest = _wider(highest, level)
+                break
+        if not matched:
+            missing.append(path)
+            continue
+        selected.extend(matched)
+
+    nodeids = tuple(sorted(set(selected))[:max_nodeids])
+    return TestSelection(
+        level=highest if nodeids else "none",
+        nodeids=nodeids,
+        missing=tuple(sorted(set(missing))),
+        related=tuple(sorted(set(selected))),
+        reason=(
+            "按层级 " + highest + " 选中 " + str(len(nodeids)) + " 个测试文件"
+            if nodeids
+            else "没有选中任何测试文件"
+        ),
+    )
+
+
+_ORDER = {"related": 0, "package": 1, "suite": 2, "none": -1}
+
+
+def _wider(current: str, candidate: str) -> str:
+    return candidate if _ORDER.get(candidate, 0) > _ORDER.get(current, 0) else current

@@ -1,0 +1,19 @@
+# Phase 5 外部工具规则：Ruff 的未使用导入（F401）。
+id: STYLE-002
+version: 1
+name: unused-import
+description: 不得留下未使用的导入。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [F401]
+message: 未使用的导入必须删除（Ruff F401）。
+source:
+  kind: project-policy
+  path: policies/coding/STYLE-002.yaml

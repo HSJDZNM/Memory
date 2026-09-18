@@ -1,0 +1,20 @@
+# Phase 5 测试规则：改了生产代码就必须带上对应的测试。
+# 只在"这次是一次变更"（operation=create/edit）时参与判断；没有变更集属于证据不足，失败关闭。
+id: TESTING-001
+version: 1
+name: production-change-needs-tests
+description: 生产文件的变更必须带上对应的测试文件。
+scope:
+  language: python
+  operation: [create, edit]
+severity: error
+enforcement:
+  type: deterministic
+  checker: missing_tests
+rule:
+  missing_tests:
+    changed_only: true
+message: 生产文件变更必须包含对应的测试（命名与目录见 validation/test-layout.yaml）。
+source:
+  kind: project-policy
+  path: policies/testing/TESTING-001.yaml

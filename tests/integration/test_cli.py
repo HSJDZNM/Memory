@@ -90,7 +90,8 @@ def test_good_fixture_exits_0() -> None:
     assert "PASS" in completed.stdout
     # 决策必须说清哪些规则参与了判断、哪些被跳过
     assert "matched: ARCH-001" + "@" + "1" in completed.stdout
-    assert "skipped: <none>" in completed.stdout
+    # Phase 5 起 TESTING-* 需要变更上下文：没有 --operation 时按范围跳过并写明原因
+    assert "TESTING-001" + "@" + "1: operation <missing> != [create, edit]" in completed.stdout
 
 
 def test_scope_mismatch_is_reported_as_skip_reason() -> None:
@@ -101,7 +102,10 @@ def test_scope_mismatch_is_reported_as_skip_reason() -> None:
     assert completed.returncode == EXIT_ALLOWED, completed.stderr
     assert "skipped (规则范围不匹配，未参与判断):" in completed.stdout
     assert "- ARCH-001" + "@" + "1: layer service != controller" in completed.stdout
-    assert "matched: <none>" in completed.stdout
+    matched_line = next(
+        line for line in completed.stdout.splitlines() if line.startswith("matched: ")
+    )
+    assert "ARCH-001" + "@" + "1" not in matched_line, matched_line
 
 
 def test_cli_is_reproducible() -> None:
@@ -136,6 +140,8 @@ def test_corrupted_rule_file_exits_2(tmp_root: Path) -> None:
 
 
 def test_unknown_checker_exits_2(tmp_root: Path) -> None:
+    """未知 checker 在**加载阶段**就被拒绝（Phase 5 起比引擎阶段更早失败）。"""
+
     root = tmp_root / "policies"
     document = rule_document()
     document["enforcement"]["checker"] = "llm_judgement"
@@ -144,8 +150,9 @@ def test_unknown_checker_exits_2(tmp_root: Path) -> None:
     completed = run_cli(GOOD_EXAMPLE, "--rules", workspace_path(root))
 
     assert completed.returncode == EXIT_ERROR
-    assert "engine error" in completed.stderr
+    assert "config error" in completed.stderr
     assert "llm_judgement" in completed.stderr
+    assert completed.stdout == ""
 
 
 def test_missing_file_exits_2() -> None:
@@ -169,7 +176,8 @@ def test_check_rules_mode_validates_without_file() -> None:
     completed = run_cli("--check-rules")
 
     assert completed.returncode == EXIT_ALLOWED, completed.stderr
-    assert "规则集校验通过，共 1 条规则" in completed.stdout
+    # Phase 0 的 1 条 -> Phase 5 的 6 条：ARCH-001 与各阶段的规则包都在同一份规则集里
+    assert "规则集校验通过，共 6 条规则" in completed.stdout
 
 
 def test_check_rules_mode_fails_on_corrupted_rules(tmp_root: Path) -> None:
@@ -191,11 +199,20 @@ def test_json_output_matches_policy_decision_contract() -> None:
 
     assert set(payload) == {
         "context",
+        "evidence",
         "exit_code",
         "reported_imports",
         "result",
         "rule_set",
     }
+    # Phase 5：--json 里带完整证据（依赖来自显式声明，因为本次传了 --dependencies）
+    assert payload["evidence"]["dependencies"][0]["name"] == "repository"
+    assert payload["evidence"]["dependencies"][0]["resolution"] == "declared"
+    assert payload["evidence"]["served_checkers"] == [
+        "forbidden_dependency",
+        "missing_docstring",
+        "style_lint",
+    ]
     assert payload["exit_code"] == EXIT_VIOLATION
     result = payload["result"]
     assert result["schema_version"] == SCHEMA_VERSION
@@ -203,8 +220,16 @@ def test_json_output_matches_policy_decision_contract() -> None:
     assert result["request_id"] == "req-json"
     assert result["trace_id"] is None
     assert result["required_action"] is None
-    assert result["matched_rules"] == ["ARCH-001" + "@" + "1"]
-    assert result["skipped_rules"] == []
+    assert result["matched_rules"] == [
+        "ARCH-001" + "@" + "1",
+        "DOC-001" + "@" + "1",
+        "STYLE-001" + "@" + "1",
+        "STYLE-002" + "@" + "1",
+    ]
+    assert [item["rule_id"] for item in result["skipped_rules"]] == [
+        "TESTING-001" + "@" + "1",
+        "TESTING-002" + "@" + "1",
+    ]
     assert result["policy_version"] == "phase-1"
     assert result["rule_set_hash"] == payload["rule_set"]["identity"]
     violation = result["violations"][0]
@@ -218,7 +243,14 @@ def test_json_output_matches_policy_decision_contract() -> None:
         "file": BAD_EXAMPLE,
         "detail": "layer=controller 直接依赖 repository",
     }
-    assert payload["rule_set"]["ids"] == ["ARCH-001" + "@" + "1"]
+    assert payload["rule_set"]["ids"] == [
+        "ARCH-001" + "@" + "1",
+        "DOC-001" + "@" + "1",
+        "STYLE-001" + "@" + "1",
+        "STYLE-002" + "@" + "1",
+        "TESTING-001" + "@" + "1",
+        "TESTING-002" + "@" + "1",
+    ]
     assert payload["rule_set"]["schema_version"] == SCHEMA_VERSION
     assert payload["rule_set"]["identity"].startswith("sha256:")
     assert payload["context"]["file"] == BAD_EXAMPLE
@@ -235,7 +267,7 @@ def test_json_result_is_a_consumable_protocol_payload() -> None:
     parsed_blocked = parse_decision(blocked["result"])
 
     assert parsed_allowed.decision is Decision.ALLOW
-    assert parsed_allowed.matched_rules == ("ARCH-001" + "@" + "1",)
+    assert "ARCH-001" + "@" + "1" in parsed_allowed.matched_rules
     assert parsed_blocked.decision is Decision.BLOCK
     assert parsed_blocked.to_decision_dict() == blocked["result"]
 
@@ -298,8 +330,15 @@ def test_default_rule_dirs_point_at_repository_policies() -> None:
 
     assert directories == (REPO_ROOT / "policies",)
     rules = load_rule_set(directories, repo_root=REPO_ROOT)
-    assert rules.ids == ("ARCH-001" + "@" + "1",)
-    assert rules.source_paths == ("policies/architecture/ARCH-001.yaml",)
+    assert "ARCH-001" + "@" + "1" in rules.ids
+    assert rules.source_paths == (
+        "policies/architecture/ARCH-001.yaml",
+        "policies/coding/DOC-001.yaml",
+        "policies/coding/STYLE-001.yaml",
+        "policies/coding/STYLE-002.yaml",
+        "policies/testing/TESTING-001.yaml",
+        "policies/testing/TESTING-002.yaml",
+    )
 
 
 def test_repository_example_dependencies_are_declared() -> None:

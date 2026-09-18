@@ -177,10 +177,29 @@ def test_empty_rule_set_allows_and_reports_nothing(arch_rules: RuleSet) -> None:
 
 
 def test_unsupported_enforcement_never_passes_silently() -> None:
-    rule = _rule("ARCH-004", forbidden=("repository",), checker="llm_judgement")
+    """模型层已经拒绝未知 checker；这里验证引擎的第二道防线（绕过模型构造的规则）。"""
+
+    base = _rule("ARCH-004", forbidden=("repository",))
+
+    # model_construct 刻意跳过校验，模拟"有规则绕过了模型层"的情形
+    forged = Rule.model_construct(
+        id=base.id,
+        version=base.version,
+        name=base.name,
+        description=base.description,
+        scope=base.scope,
+        severity=base.severity,
+        enforcement=Enforcement(type=EnforcementType.DETERMINISTIC, checker="llm_judgement"),
+        rule=base.rule,
+        message=base.message,
+        source=base.source,
+    )
+
+    # RuleSet 同样是严格模型：这里也要 model_construct 才能装进这条"伪造"规则
+    forged_set = RuleSet.model_construct(rules=(forged,), source_paths=("tests/unit/test_engine.py",))
 
     with pytest.raises(EngineError) as error:
-        evaluate(RuleSet(rules=(rule,)), make_context(layer="controller", dependencies=["repository"]))
+        evaluate(forged_set, make_context(layer="controller", dependencies=["repository"]))
 
     assert "llm_judgement" in str(error.value)
 

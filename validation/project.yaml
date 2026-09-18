@@ -1,0 +1,45 @@
+# 项目档案：语言识别、模块解析根、路径模式 → 架构组件（层）。
+#
+# 为什么都是数据：语言识别错了会让语言专项规则作用在错误的文件上；组件映射错了会让
+# 依赖规则判错对象。AGENTS.md 的核心约束是"上下文只接受显式字段"，这里把口径写成可评审的数据。
+version: 1
+schema_id: project-profile/1
+
+# 路径模式 → 语言。新增语言在这里加一行，并在 validators.yaml 里加一个 rule pack。
+languages:
+  - language: python
+    pattern:
+      - "**/*.py"
+      - "**/*.pyi"
+
+# 解析 import 时尝试的项目内根目录（相对工作区）："." 与 src 布局都覆盖。
+python_roots: [".", "src"]
+
+# 没有命中任何组件时用什么名字参与规则匹配：顶层包名（例如 examples、order）。
+unmatched: top_level_package
+
+components:
+  - name: repository
+    description: 数据访问层
+    match:
+      - "**/*_repository.py"
+      - "**/repository/**"
+      - "**/repositories/**"
+  - name: service
+    description: 业务用例层
+    match:
+      - "**/*_service.py"
+      - "**/service/**"
+      - "**/services/**"
+  - name: controller
+    description: 接口层
+    match:
+      - "**/*_controller.py"
+      - "**/controllers/**"
+      - "**/views/**"
+  - name: model
+    description: 领域模型
+    match:
+      - "**/models.py"
+      - "**/model/**"
+      - "**/entities/**"

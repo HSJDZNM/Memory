@@ -1,0 +1,19 @@
+# Phase 5 测试规则：选中的相关测试必须通过。
+id: TESTING-002
+version: 1
+name: related-tests-must-pass
+description: 本次变更相关的测试必须全部通过。
+scope:
+  language: python
+  operation: [create, edit]
+severity: error
+enforcement:
+  type: deterministic
+  checker: failing_tests
+rule:
+  failing_tests:
+    tool: pytest
+message: 相关测试失败：先修好再提交（测试选择见 validation/test-layout.yaml）。
+source:
+  kind: project-policy
+  path: policies/testing/TESTING-002.yaml

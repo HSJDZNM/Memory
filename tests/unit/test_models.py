@@ -24,6 +24,10 @@ from policy.models import (
 )
 
 from conftest import rule_document
+from policy.models import RULE_BODY_CLASSES
+
+# 规则体 union 的成员类名：错误位置里不带它们，测试与加载器的报错口径一致。
+UNION_MEMBER_NAMES = {cls.__name__ for cls in RULE_BODY_CLASSES}
 
 
 def test_valid_rule_is_constructed() -> None:
@@ -60,11 +64,45 @@ def test_invalid_rule_is_rejected(field: str, value: object, expected: str) -> N
     with pytest.raises(ValidationError) as error:
         Rule.model_validate(rule_document(**{field: value}))
 
-    locations = {".".join(str(part) for part in item["loc"]) for item in error.value.errors()}
+    locations = {
+        ".".join(
+            str(part) for part in item["loc"] if str(part) not in UNION_MEMBER_NAMES
+        )
+        for item in error.value.errors()
+    }
 
     # pydantic 对冻结模型的嵌套错误只报告最近的可识别位置（例如 enforcement 而不是
     # enforcement.checker），因此这里断言精确路径而不是前缀匹配。
+    # union 成员的类名是实现的细节，规则作者看到的位置是 rule.forbidden_dependency，
+    # 这里与 policy.models.RuleValidationError.from_pydantic 保持同一口径。
     assert expected in locations, locations
+
+
+@pytest.mark.parametrize(
+    ("document_overrides", "needle"),
+    [
+        (
+            {"enforcement": {"type": "deterministic", "checker": "llm_judgement"}},
+            "未知 checker",
+        ),
+        (
+            {
+                "enforcement": {"type": "deterministic", "checker": "style_lint"},
+                "rule": {"forbidden_dependency": ["repository"]},
+            },
+            "规则体与 checker 不一致",
+        ),
+    ],
+)
+def test_checker_must_be_known_and_match_the_body(
+    document_overrides: dict, needle: str
+) -> None:
+    """未知 checker 与"规则体对不上 checker"都在加载阶段拒绝，不能留到运行时。"""
+
+    with pytest.raises(ValidationError) as error:
+        Rule.model_validate(rule_document(**document_overrides))
+
+    assert any(needle in item["msg"] for item in error.value.errors()), error.value.errors()
 
 
 def test_unknown_top_level_field_is_rejected() -> None:

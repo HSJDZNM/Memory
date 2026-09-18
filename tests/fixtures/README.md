@@ -78,6 +78,18 @@ Phase 3 起引入：文档分块、索引幂等、查询安全与 Context 组装
 
 详见 [retrieval_corpus/README.md](retrieval_corpus/README.md)。
 
+## 验证器夹具（validators/）
+
+Phase 5 起引入：代码验证器需要**能被破坏的样本**与**能被扮演的坏工具**，否则"失败关闭"
+只能靠读代码相信。夹具全部是合成内容，不含真实凭据、用户数据或生产日志。
+
+| 目录 | 内容 | 说明 |
+| --- | --- | --- |
+| validators/project/ | 最小受控项目：正例 / 反例 Controller、动态 import、无法解析的依赖、语法错误、风格问题、缺 docstring、同名测试 | 依赖图、docstring、外部工具与测试验证器都用它；`tests/conftest.py` 只在**仓库自己的收集路径**上屏蔽它的 tests/，夹具项目内部仍可被测试验证器真的收集 |
+| validators/tools/fake_tool.py | 假工具：`ok / findings / empty / garbage / flood / config_error / crash / slow / old / injection` | 失效与边界分类的稳定复现；`slow` 会派生心跳子进程，用来证明超时终止的是整棵进程树 |
+
+详见 [validators/README.md](validators/README.md)。
+
 ## 性能基线夹具
 
 `tools/policy_bench.py` 用固定种子（默认 `20260101`）生成规则与上下文：

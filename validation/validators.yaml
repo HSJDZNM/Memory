@@ -1,0 +1,130 @@
+# Phase 5 验证器注册表：谁能产生证据、在哪个阶段、用哪个工具、缺工具时怎么算。
+#
+# 这是数据不是代码：新增语言 = 加一个 rule pack + 一个 Adapter；新增规则 = 在 policies/ 里
+# 写一条规则（它的 checker 必须已经有验证器声明，否则注册表加载就会失败）。
+#
+# 失败语义：validators[].critical=true 的验证器只要没跑成（缺失 / 版本不符 / 超时 / 崩溃 /
+# 配置错误 / 输出非法），需要它的规则就以 critical 违规阻断——同一批里的其他 PASS 抵消不了它。
+version: 1
+schema_id: validator-registry/1
+
+defaults:
+  timeout_ms: 10000
+  max_output_bytes: 262144
+  max_source_bytes: 1048576
+  max_message_chars: 500
+  max_evidence: 200
+  max_parallel: 2
+  probe_timeout_ms: 5000
+
+# 阶段顺序：Code → Source → AST → Dependency → Docstring → Lint → Type → Tests → Evidence → Policy
+stages:
+  - source
+  - ast
+  - dependency
+  - docstring
+  - lint
+  - type
+  - tests
+
+rule_packs:
+  - id: python-core
+    language: python
+    description: 标准库即可完成的确定性证据（源码哈希、语法、import/调用、依赖图、docstring）
+    validators: [py.source, py.ast, py.depgraph, py.docstring]
+  - id: python-tools
+    language: python
+    description: 外部工具证据（Ruff / 类型检查器 / pytest）；工具不在就叫 unavailable，不降级
+    validators: [tool.ruff, tool.mypy, tool.pytest]
+
+validators:
+  - id: py.source
+    version: "1.0"
+    kind: builtin
+    stage: source
+    facts: [source]
+    critical: true
+    description: 读取目标文件并计算内容哈希；读不到 / 超大 / 非 UTF-8 都是失败关闭
+
+  - id: py.ast
+    version: "1.0"
+    kind: builtin
+    stage: ast
+    facts: [syntax, imports, calls]
+    critical: true
+    requires: [py.source]
+    description: 标准库 ast 解析：import、from-import（别名 / 相对导入）、动态 import、调用链与语法错误
+
+  - id: py.depgraph
+    version: "1.0"
+    kind: builtin
+    stage: dependency
+    checkers: [forbidden_dependency]
+    facts: [dependencies]
+    critical: true
+    requires: [py.source, py.ast]
+    description: 依赖图：解析到项目内文件 / 标准库 / 外部包；无法解析的内部依赖与动态 import 失败关闭
+
+  - id: py.docstring
+    version: "1.0"
+    kind: builtin
+    stage: docstring
+    checkers: [missing_docstring]
+    critical: true
+    requires: [py.source, py.ast]
+    description: PEP 257：按规则声明的对象（模块 / 类 / 函数 / 方法）检查 docstring 缺失
+
+  - id: tool.ruff
+    version: "1.0"
+    kind: external
+    stage: lint
+    checkers: [style_lint]
+    critical: true
+    requires: [py.source]
+    timeout_ms: 30000
+    description: Ruff（外部 Linter）；诊断码归属哪个规则由规则数据决定，不由工具决定
+    tool:
+      command: [ruff]
+      version_args: [--version]
+      version_pattern: 'ruff ([0-9][0-9A-Za-z.\-+]*)'
+      version_requirement: ">=0.6,<1"
+      argv: ["check", "--output-format=json", "--no-cache", "--config", "{config}", "{paths}"]
+      config: validation/ruff.toml
+
+  - id: tool.mypy
+    version: "1.0"
+    kind: external
+    stage: type
+    checkers: [type_check]
+    critical: true
+    requires: [py.source]
+    timeout_ms: 60000
+    description: mypy（类型检查端口）；仓库当前没有启用类型检查规则，端口与失败语义已就位
+    tool:
+      command: [mypy]
+      version_args: [--version]
+      version_pattern: 'mypy ([0-9][0-9A-Za-z.\-+]*)'
+      version_requirement: ">=1.8,<2"
+      argv:
+        ["--no-incremental", "--no-error-summary", "--show-column-numbers",
+         "--no-color-output", "--config-file", "{config}", "{paths}"]
+      config: validation/mypy.ini
+
+  - id: tool.pytest
+    version: "1.0"
+    kind: external
+    stage: tests
+    checkers: [missing_tests, failing_tests]
+    critical: true
+    requires: [py.source]
+    timeout_ms: 120000
+    description: 按变更集选择最小相关测试并运行；隔离缓存、限时限量，失败用例逐条产出证据
+    tool:
+      command: ["{python}", "-m", "pytest"]
+      version_args: ["--version"]
+      version_pattern: 'pytest ([0-9][0-9A-Za-z.\-+]*)'
+      version_requirement: ">=8"
+      argv:
+        ["-c", "{config}", "-q", "-rf", "-p", "no:cacheprovider", "--no-header",
+         "-o", "addopts=", "--rootdir", "{workspace}", "{nodeids}"]
+      config: validation/pytest.ini

@@ -1,0 +1,23 @@
+# Phase 5 语言专项规则包：Python 的 PEP 257（docstring）。
+# 证据来自内置验证器 py.docstring（标准库 ast），不调用外部工具。
+id: DOC-001
+version: 1
+name: public-docstring-required
+description: 模块、类与顶层函数必须有 docstring（PEP 257）。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: missing_docstring
+rule:
+  missing_docstring:
+    # 方法级不在首版强制范围：仓库既有代码与示例会一次性全部判红，
+    # 这是策略决定，所以写在这里而不是藏在代码里。
+    targets: [module, class, function]
+    include_private: false
+message: 公开对象必须有 docstring，说明它的职责与副作用。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-257-docstrings/index.md
+  note: PEP 257 的检查对象集合由本文件的 targets 决定。
