@@ -45,18 +45,24 @@ from phase6_cells import PHASE_6_CELLS, check_phase_6_structure  # noqa: E402
 
 
 def _dedent_cells(cells):
-    """去掉三引号带来的整体缩进。
+    """去掉三引号带来的整体缩进与首行空行。
 
-    代码单元在 phase6_cells.py 里写成三引号字符串，字符串内容会带上缩进；
-    如果不处理，notebook 里的代码就会整体多一层空格（顶层语句缩进等于语法错误）。
-    这里按"非空行的公共缩进"裁剪，保留代码内部真实的分层缩进。
+    阶段手册的单元内容写在三引号字符串里，字符串内容会带上缩进、并且以换行开头。
+    如果不处理会出现两个后果（Phase 6 手册真的这么发布过一版）：
+
+    1. 代码单元的**顶层语句被缩进**，在 notebook 里直接是语法错误；
+    2. markdown 单元的标题变成 "        ## 1. …"，Jupyter 里看起来没有标题、内容平移一格。
+
+    因此这里对**两种**单元都做"去掉首行空行 + 按公共缩进裁剪"，
+    内部真实的分层缩进（函数体、markdown 代码块）仍然保留。
     """
 
     import textwrap
 
     cleaned = []
     for kind, text in cells:
-        cleaned.append((kind, textwrap.dedent(text) if kind == "code" else text))
+        body = text.lstrip(chr(10))
+        cleaned.append((kind, textwrap.dedent(body)))
     return tuple(cleaned)
 
 
