@@ -1,0 +1,183 @@
+# dsh（参考资料里的参考实现）能力声明。
+#
+# 这份文件是**数据**：平台据此算出 dsh 真实能做什么，而不是靠读 src/adapters/dsh 猜。
+# 任何改动都必须重新审核（adapters/approved.json 保存已审核哈希）：
+#     python -m adapters.cli approve --reviewer <name>
+#     python -m adapters.cli matrix          # 看支持矩阵与漂移
+#
+# agent_version 是**已实测**的产品版本：升级 dsh 后先重跑一致性套件与沙箱闭环，
+# 再改这里并重新审核（计划 §兼容性测试）。
+
+schema_version: "1.0"
+agent_id: dsh
+agent_version: 0.1.5-rc.1
+display_name: DeepSeek Harness (dsh)
+protocol: canonical-tool-table   # 复用 Phase 2 的代码工具表（受契约测试保护）
+protocol_version: dsh-hooks-claude-code@0.1.x
+
+pre_hook:
+  declared: true
+  kind: pre_hook
+  response_kind: exit_code
+post_hook:
+  declared: true
+  kind: post_hook
+  response_kind: exit_code
+
+approval: file            # 高风险动作的审批与 action_hash 绑定，落在文件里
+blocking: pre_execute     # exit 2 = 阻断，且发生在工具执行之前
+response_kind: exit_code
+
+event_types:
+  - tool.pre_execute
+  - tool.post_execute
+
+requested_enforcement: full
+
+hooks:
+  pre_execute: PreToolUse
+  post_execute: PostToolUse
+  session_field: session_id
+  tool_field: tool_name
+  input_field: tool_input
+  call_id_field: tool_use_id
+  cwd_field: cwd
+
+# dsh 的事件样本沿用 Phase 2 采集的那一份（tests/fixtures/agent_events/dsh/）：
+# 同一个产品版本只有一份事实来源，复制一份只会让两边慢慢漂移。
+fixtures:
+  - tests/fixtures/agent_events/dsh/pre-tool-use-edit-block.json
+  - tests/fixtures/agent_events/dsh/post-tool-use-edit.json
+
+notes: >-
+  dsh 的 Hook 是外部命令：exit 0 放行、exit 2 阻断；超时/崩溃/配置读不到在 dsh 侧
+  等于放行，因此失败关闭必须由 Hook 自己保证（内部预算 + 异常全部转 exit 2 + 接线自检）。
+  这份能力声明只描述"dsh 能做什么"，接线是否真的存在由运行期自检负责。
+
+tools:
+  # —— 受治理的写类工具 ——
+  - name: write
+    aliases: [write]
+    operation: create
+    direction: outbound
+    path_field: file_path
+    path_scope: workspace
+    proposed_fields: [content]
+    note: create-or-overwrite；契约测试守"工具表与代码 TOOL_TABLE 一致"
+  - name: edit
+    aliases: [edit]
+    operation: edit
+    direction: outbound
+    path_field: file_path
+    path_scope: workspace
+    proposed_fields: [new_string]
+  - name: str_replace_editor
+    aliases: [str_replace_editor]
+    operation: edit
+    direction: outbound
+    path_field: path
+    path_scope: workspace
+    proposed_fields: [file_text, new_str]
+  # —— 只读：登记但不做前置授权（显式降级） ——
+  - name: read
+    aliases: [read]
+    operation: read
+    direction: outbound
+    path_field: file_path
+    path_scope: workspace
+  - name: read_image
+    aliases: [read_image]
+    operation: read
+    direction: outbound
+    path_field: file_path
+    path_scope: workspace
+  - name: glob
+    aliases: [glob]
+    operation: read
+    direction: outbound
+    path_field: path
+    path_scope: workspace
+  - name: grep
+    aliases: [grep]
+    operation: read
+    direction: outbound
+    path_field: path
+    path_scope: workspace
+  # —— 执行类：交给 Phase 4 的受控链路（权限 / 命令白名单 / 审批 / 事后验证） ——
+  - name: pwsh
+    aliases: [pwsh]
+    operation: execute
+    direction: outbound
+  - name: bash
+    aliases: [bash]
+    operation: execute
+    direction: outbound
+  - name: run_code
+    aliases: [run_code]
+    operation: execute
+    direction: outbound
+  - name: workflow
+    aliases: [workflow]
+    operation: execute
+    direction: outbound
+  # —— 不触碰文件系统：登记为 inbound，避免"没见过的工具"被当成写工具 ——
+  - name: todo_write
+    aliases: [todo_write]
+    direction: inbound
+  - name: create_goal
+    aliases: [create_goal]
+    direction: inbound
+  - name: get_goal
+    aliases: [get_goal]
+    direction: inbound
+  - name: update_goal
+    aliases: [update_goal]
+    direction: inbound
+  - name: exit_plan_mode
+    aliases: [exit_plan_mode]
+    direction: inbound
+  - name: job_list
+    aliases: [job_list]
+    direction: inbound
+  - name: job_output
+    aliases: [job_output]
+    direction: inbound
+  - name: job_kill
+    aliases: [job_kill]
+    direction: inbound
+  - name: list_agents
+    aliases: [list_agents]
+    direction: inbound
+  - name: send_message
+    aliases: [send_message]
+    direction: inbound
+  - name: interrupt_agent
+    aliases: [interrupt_agent]
+    direction: inbound
+  - name: subagent
+    aliases: [subagent]
+    direction: inbound
+  - name: subagent_fork
+    aliases: [subagent_fork]
+    direction: inbound
+  - name: ralph
+    aliases: [ralph]
+    direction: inbound
+  - name: skill
+    aliases: [skill]
+    direction: inbound
+  - name: ask_user_question
+    aliases: [ask_user_question]
+    direction: inbound
+  - name: list_subagent_models
+    aliases: [list_subagent_models]
+    direction: inbound
+  - name: present
+    aliases: [present]
+    direction: inbound
+  - name: web_search
+    aliases: [web_search]
+    direction: inbound
+  - name: web_fetch
+    aliases: [web_fetch]
+    direction: inbound

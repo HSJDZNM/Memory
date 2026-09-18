@@ -1,4 +1,4 @@
-name: phase-5
+name: phase-6
 
 on:
   push:
@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  phase-5:
-    name: Phase 5 tests (python 3.13)
+  phase-6:
+    name: Phase 6 tests (python 3.13)
     runs-on: ubuntu-latest
     env:
       # 本项目不把 src/ 装进 site-packages：CI 与本地都用同一条路径找到包。
@@ -223,10 +223,27 @@ jobs:
             docs/learning/phase-2/walkthrough.ipynb \
             docs/learning/phase-3/walkthrough.ipynb \
             docs/learning/phase-4/walkthrough.ipynb \
-            docs/learning/phase-5/walkthrough.ipynb
+            docs/learning/phase-5/walkthrough.ipynb \
+            docs/learning/phase-6/walkthrough.ipynb
 
       - name: Text conventions (UTF-8 / LF / trailing whitespace)
         run: .venv/bin/python tools/check_text_conventions.py
 
-      - name: Phase 5 acceptance evidence
+      # Phase 6：一致性套件——每个协议消费者对同一组语义事件给出同一套结论
+      - name: Multi-agent conformance suite
+        run: .venv/bin/python -m adapters.cli check
+
+      # Phase 6：支持矩阵必须与已审核的能力声明一致（漂移即退出 1）
+      - name: Adapter support matrix is approved
+        run: .venv/bin/python -m adapters.cli matrix
+
+      # Phase 6：每个 Agent 的兼容性 fixture 必须存在（升级 Agent 前先重跑它们）
+      - name: Adapter event fixtures exist
+        run: .venv/bin/python -m adapters.cli events
+
+      # Phase 6：多 Agent 闭环（等价结论 / 执行一次 / 能力降级 / 隔离 / trace / 熔断）
+      - name: Multi-agent closed loop
+        run: .venv/bin/python tools/agent_loop.py
+
+      - name: Phase 6 acceptance evidence
         run: .venv/bin/python tools/phase_evidence.py

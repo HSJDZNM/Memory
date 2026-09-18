@@ -116,6 +116,7 @@ principal:
 ```text
 agent.start
 agent.request
+agent.message
 tool.pre_execute
 tool.post_execute
 agent.turn_end

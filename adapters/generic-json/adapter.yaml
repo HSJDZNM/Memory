@@ -1,0 +1,36 @@
+# Generic JSON Adapter（in-house）：与具体产品无关的协议示例。
+
+schema_version: "1.0"
+project_root: ../..
+rules:
+  - ../../policies
+project: memory
+timeout_ms: 5000
+
+layers:
+  - pattern: "**/*_controller.py"
+    layer: controller
+  - pattern: "**/*_service.py"
+    layer: service
+  - pattern: "**/*_repository.py"
+    layer: repository
+  - pattern: "**/*.py"
+    layer: module
+  - pattern: "**/*.md"
+    layer: docs
+default_layer: null
+
+languages:
+  - pattern: "**/*.py"
+    language: python
+default_language: text
+
+# 主体是**显式声明**的授权输入：事件里自称的主体只用于核对，不一致即拒绝。
+principal:
+  subject: local-user
+  roles: [developer]
+
+ledger_alias: generic-json
+max_events_per_window: 50
+window_seconds: 60
+audit_log: ../../.tmp/artifacts/phase-6-generic-audit.jsonl

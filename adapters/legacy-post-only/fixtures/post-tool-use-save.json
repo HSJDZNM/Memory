@@ -1,0 +1,19 @@
+{
+  "_fixture": {
+    "agent_id": "legacy-post-only",
+    "agent_version": "legacy-agent-2.4.7",
+    "product": "legacy-post-only",
+    "event": "PostToolUse",
+    "note": "This agent only provides PostToolUse: the capability declaration caps it at read_only."
+  },
+  "hook_event_name": "PostToolUse",
+  "session_id": "legacy-fixture-session",
+  "tool_name": "save_file",
+  "tool_use_id": "call-legacy-1",
+  "cwd": "<workspace>",
+  "tool_input": {
+    "file_path": "src/shop/order_controller.py",
+    "text": "from shop.order_repository import OrderRepository"
+  },
+  "tool_response": "saved"
+}

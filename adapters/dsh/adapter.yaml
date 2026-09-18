@@ -1,0 +1,42 @@
+# dsh Adapter 的运行期配置（Phase 2 的 examples/dsh/dsh-adapter.yaml 是同一套字段）。
+#
+# 这里声明的是**显式上下文来源**：dsh 的钩子载荷只提供 file / operation / agent，
+# layer、language、project、principal 全部由这份配置声明；声明不出来就失败关闭。
+
+schema_version: "1.0"
+project_root: ../..
+rules:
+  - ../../policies
+project: memory
+timeout_ms: 5000
+
+layers:
+  - pattern: "**/*_controller.py"
+    layer: controller
+  - pattern: "**/*_service.py"
+    layer: service
+  - pattern: "**/*_repository.py"
+    layer: repository
+  - pattern: "**/*.py"
+    layer: module
+  - pattern: "**/*.md"
+    layer: docs
+default_layer: null   # 显式写明"不提供默认值"：未声明的路径会被阻断并要求补声明
+
+languages:
+  - pattern: "**/*.py"
+    language: python
+default_language: text
+
+principal:
+  subject: local-user
+  roles: [developer]
+
+# 台账命名空间：同一个 dsh 二进制跑多份部署时改这里；默认等于 agent_id。
+ledger_alias: dsh
+max_events_per_window: 50
+window_seconds: 60
+
+audit_log: ../../.tmp/artifacts/phase-6-dsh-audit.jsonl
+registry: ../../registry/tool-registry.yaml
+registry_approved: ../../registry/tool-registry.approved.json

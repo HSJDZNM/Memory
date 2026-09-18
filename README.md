@@ -4,10 +4,13 @@
 把工程规范变成机器可执行的规则，对固定上下文稳定地给出 allow / allow_with_warnings / block，
 并留下"命中了哪些规则、跳过了哪些、为什么"的可重放审计证据。
 
-> 当前进度：**Phase 5 已完成**（代码验证器：AST/依赖图证据 + 外部工具适配器 + 测试验证器 + 流水线聚合）。
+> 当前进度：**Phase 6 的仓库实现已完成**（规范事件 Schema + 数据化能力声明 +
+> 一致性套件 + 多 Agent 运行时隔离/熔断/能力降级 + Phase 4/5 写链门禁）。
+> 当前只有 `dsh` 是真实产品接入；`generic-json` 与 `legacy-post-only` 是合成协议消费者，
+> 因此“第二个真实 Agent 产品验证”仍是进入下一阶段前的外部验收项。
 > Phase 0 的 YAML Rule → Loader → Engine → CLI 链路、Phase 1 的 Context/Scope/Decision、
-> Phase 2 的 dsh Adapter 与 pre-execute Hook、Phase 3 的离线检索、Phase 4 的受控执行仍然有效，
-> 并被后续阶段的测试继续覆盖。
+> Phase 2 的 dsh Adapter 与 pre-execute Hook、Phase 3 的离线检索、Phase 4 的受控执行、
+> Phase 5 的代码验证器仍然有效，并被后续阶段的测试继续覆盖。
 > 阶段计划见 [Engineering Policy Platform 文档集](docs/engineering-policy-platform/README.md)。
 
 ## 快速开始
@@ -245,14 +248,65 @@ checker 提供证据"时，需要它的规则以 `critical` 违规阻断——�
 但没有启用类型规则：本机与 CI 都没有装 mypy，启用它会让所有 Python 文件在缺工具时一次性判红——
 这是数据决定的事，不是代码决定的。
 
+### 多 Agent 适配（Phase 6）
+
+同一套规则与决策协议要服务多个 Agent Runtime。做法是把"某家 Agent 的报文"翻译成
+**规范事件**，判定只在核心层发生一次：
+
+```text
+Agent Runtime → Adapter.to_policy_event → AgentRuntime.handle → Policy Engine
+             → Adapter.to_agent_response → Agent Runtime
+```
+
+每家 Agent 的差异（事件名、字段名、工具名、阻断与审批能力）都必须写在
+`adapters/<agent_id>/manifest.yaml` 里，并且**必须经过审核**——
+哈希存在 `adapters/approved.json`，改声明就要重新审核：
+
+```powershell
+uv run python -m adapters.cli matrix                              # 支持矩阵（full / read_only / unsupported）
+uv run python -m adapters.cli approve --reviewer <name>           # 审核能力声明（改完 manifest 必须重新跑）
+uv run python -m adapters.cli check                               # 一致性套件：所有 Adapter 对同一组语义事件给同一套结论
+uv run python -m adapters.cli events                              # 每个 Agent 的兼容性 fixture 是否存在
+uv run python -m adapters.cli inspect --agent dsh --event e.json  # 看一条事件被翻译成了什么
+uv run python tools/agent_loop.py                                 # 多 Agent 闭环（等价结论 / 执行一次 / 隔离 / trace / 熔断）
+```
+
+现在的支持矩阵（数据来源是 manifest，不是这段文字）：
+
+| Agent | 上限 | 依据 |
+| --- | --- | --- |
+| `dsh` | **full 能力上限** | 有 PreToolUse（exit 2 阻断）与 PostToolUse；写动作还必须在运行时注入 Phase 5 evidence provider 与 Phase 4 enforcer |
+| `generic-json` | **只读** | 协议完整，但接入方主动声明 `read_only`：写类动作显式拒绝 |
+| `legacy-post-only` | **只读** | 只有 PostToolUse：副作用已经发生才能标错，不是阻断 |
+
+这里的 `full` 是 manifest 推导出的**能力上限**，不是“所有工具都已登记并自动接线”。
+目前 Phase 4 Tool Registry 未登记的 dsh 写类工具会得到 `enforcement_unavailable`，不会绕过治理。
+
+四条硬规则：
+
+1. **能力不足必须显式失败**：拦不住写类动作的 Agent 不会被标成完整 enforcement，
+   受治理动作得到 `capability_unavailable`，而不是"跳过治理"；
+2. **写链必须完整**：写类动作必须同时拿到 Phase 5 `EvidenceBundle`、Policy allow 与 Phase 4
+   pre-check 授权；缺任一端口都失败关闭，PostToolUse 只做事后验证，绝不再次调用工具；
+3. **跨 Agent 隔离**：审计与幂等键是 `<adapter.namespace>:<event_id>`，A 的判定不会替 B 放行，
+   主体只认 Adapter 的显式声明（载荷自称会被拒绝），伪造父 trace 一律拒绝；
+4. **循环可终止**：同一 Agent 在时间窗口内的受治理事件数到上限即熔断，
+   两个 Agent 互相触发不会把预算烧完。
+
+规范事件的外部 `payload` 只允许 `path` / `params` / `text` / `cwd`；依赖、结果存在性、
+请求视图和摘要都由平台内部生成，外部载荷不能覆盖。
+
+新增一个 Adapter 的完整流程（不需要改核心层）见
+[Phase 6 实施记录](docs/engineering-policy-platform/phases/phase-6-multi-agent-adapters.md#实施记录)。
+
 ### 测试
 
 ```powershell
-uv run python -m pytest tests/unit -q            # 494 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类
-uv run python -m pytest tests/contract -q        # 112 用例：决策协议快照 + dsh 映射契约 + 检索端口契约 + 受控执行协议 + 验证器证据协议
-uv run python -m pytest tests/integration -q     # 189 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环、验证器流水线
-uv run python -m pytest tests/security -q        # 34 用例：注入、越权、缓存失效、检索与验证器失败关闭、审批伪造、日志失效
-uv run python -m pytest -q                       # 全部 829 用例（本机 1 例跳过：Windows 不允许普通用户创建符号链接）
+uv run python -m pytest tests/unit -q            # 495 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类
+uv run python -m pytest tests/contract -q        # 152 用例：决策协议快照 + dsh/多 Agent 映射契约 + 检索端口契约 + 受控执行协议 + 验证器证据协议
+uv run python -m pytest tests/integration -q     # 225 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环、验证器流水线、多 Agent 运行时
+uv run python -m pytest tests/security -q        # 51 用例：注入、越权、缓存失效、检索与验证器失败关闭、审批伪造、日志失效、多 Agent 对抗
+uv run python -m pytest -q                       # 全部收集 923 用例；本机实跑 922 passed、1 skipped（Windows 不允许普通用户创建符号链接）
 ```
 
 ### 记录性能基线
@@ -275,13 +329,14 @@ uv run python tools/policy_bench.py --counts 10 100 1000
 | [Phase 3](docs/learning/phase-3/walkthrough.ipynb) | 分块、FTS5 检索、来源控制、Context 预算与"知识不可用" |
 | [Phase 4](docs/learning/phase-4/walkthrough.ipynb) | 工具注册表、参数绑定的授权、受控执行、事后验证与审计链重放 |
 | [Phase 5](docs/learning/phase-5/walkthrough.ipynb) | AST 事实与依赖图、外部工具适配器与失效分类、测试选择、证据 → 判定与失败关闭 |
+| [Phase 6](docs/learning/phase-6/walkthrough.ipynb) | 规范事件、能力声明与支持矩阵、一致性套件、跨 Agent 隔离与循环熔断 |
 
 不想开 Jupyter 就运行同内容的纯 Python 版本（`walkthrough.py`）。
 
 ### 生成阶段验收证据
 
 ```powershell
-uv run python tools/phase_evidence.py            # 默认写到 .tmp/artifacts/phase-4-evidence.json
+uv run python tools/phase_evidence.py            # 默认写到 .tmp/artifacts/phase-6-evidence.json
 ```
 
 证据包含实现版本、规则集哈希（`sha256:...`）、测试命令、用例数、失败数与 JUnit 报告路径，
@@ -301,14 +356,14 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 
 ```text
 .
-├── .github/workflows/phase-5.yml      # CI：单元 / 契约 / 集成 / 对抗测试、AST 证据重放、验证器注册表与探针、验证器闭环、检索基线、注册表审核、受控执行闭环、手册与证据
+├── .github/workflows/phase-6.yml      # CI：单元 / 契约 / 集成 / 对抗测试、AST 证据重放、验证器闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件与支持矩阵、手册与证据
 ├── docs/
 │   ├── dora-capabilities/             # DORA 软件交付能力指南离线镜像（37 篇）
 │   ├── dotnet-design-guidelines/      # .NET Framework 设计准则离线镜像（49 篇）
 │   ├── engineering-policy-platform/   # 本项目的分阶段架构、契约与测试路线
 │   ├── gitlab-code-review/            # GitLab 评审规范离线镜像（20 篇）
 │   ├── google-eng-practices/          # Google 工程实践指南离线镜像（14 篇）
-│   ├── learning/                      # 面向人的学习手册（按阶段：phase-0 … phase-5）
+│   ├── learning/                      # 面向人的学习手册（按阶段：phase-0 … phase-6）
 │   ├── owasp-cheatsheets/             # OWASP 代码安全指南离线归档（118 篇）
 │   └── python-pep-code-style/         # PEP 8 / PEP 257 文档镜像（11 篇）
 ├── examples/                          # 可重放的 CLI 示例（正例 / 反例）
@@ -318,21 +373,24 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 │   ├── corpus.yaml                    # Phase 3 摄取清单：数据集、许可、tier、可见性、检索预算
 │   └── query_expansion.yaml           # 受控中英术语表（跨语言词法桥接，只登记术语）
 ├── policies/                          # 规则是数据：architecture（ARCH-001）、coding（DOC/STYLE）、testing（TESTING）
+├── adapters/                          # Phase 6 能力声明（数据）：每个 Agent 的 manifest + adapter 配置 + 事件样本 + 已审核哈希
 ├── registry/                          # Phase 4 Tool Registry：工具授权表 + 已审核哈希清单
 ├── validation/                        # Phase 5 验证器数据：注册表、项目档案（语言/组件）、测试布局、工具配置
 ├── src/policy/                        # 核心库：models / evidence / checkers / context / scope / loader / engine / check
 ├── src/validators/                    # Phase 5 验证器：python_ast / depgraph / docstrings / selection / pipeline / cli / adapters
 ├── src/enforcement/                   # Phase 4 受控执行：registry / action / approvals / audit / ledger / precheck / executor / drivers / postcheck / trace / cli
-├── src/adapters/dsh/                  # dsh Adapter：adapter（纯映射）/ hooks（Hook 与审计）/ README
+├── src/adapters/                      # Phase 6 适配层：models（规范事件）/ base（协议与注册表）/ runtime（多 Agent 隔离与熔断）/ conformance（一致性套件）/ cli
+├── src/adapters/dsh/                  # Phase 2 dsh Adapter：adapter（纯映射）/ hooks（Hook 与审计）/ README
 ├── src/retrieval/                     # Phase 3 检索层：chunker / corpus / store / indexer / query / retriever / vector / context / cli
 ├── tests/
 │   ├── fixtures/validators/           # Phase 5 夹具项目 + 假工具（失效与边界行为）
+│   ├── fixtures/agent_events/         # Phase 2/6 事件样本与一致性套件的探针工作区
 │   ├── unit/                          # 模型、规范化、范围矩阵、决策聚合、分块、查询、Context、AST/依赖图/适配器
-│   ├── contract/                      # 决策协议快照、dsh 映射契约、检索端口契约
-│   ├── integration/                   # 真实 CLI 子进程、性能基线、检索索引与增量
-│   ├── security/                      # 对抗测试：注入、越权、缓存失效、检索失败关闭
+│   ├── contract/                      # 决策协议快照、dsh 映射契约、多 Agent 能力声明与规范事件契约、检索端口契约
+│   ├── integration/                   # 真实 CLI 子进程、性能基线、检索索引与增量、多 Agent 一致性套件与隔离
+│   ├── security/                      # 对抗测试：注入、越权、缓存失效、检索失败关闭、伪造 trace 与跨 Agent 越权
 │   └── fixtures/                      # 决策快照、dsh 事件、检索语料与固定评测集
-├── tools/                             # 仓库脚本：阶段证据、性能基线、检索评测、dsh 沙箱闭环、notebook 生成、清理
+├── tools/                             # 仓库脚本：阶段证据、性能基线、检索评测、dsh 沙箱闭环、多 Agent 闭环、notebook 生成、清理
 ├── pyproject.toml                     # 依赖清单、包配置、pytest 配置
 ├── requirements.in / requirements.lock # 直接依赖与锁定版本
 ├── README.md
@@ -349,7 +407,7 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 | 受控执行 | 标准库 + pydantic（无第三方依赖） | Phase 4：Tool Registry 是数据（YAML），授权 / 幂等 / 审计链落在追加写 JSONL 上，执行驱动按注册表声明选择 |
 | 测试 | pytest 8+（本机验证 9.1.1） | 单元 + 契约 + 集成三层 |
 | 包管理 | uv（建虚拟环境与安装）；锁文件是 `requirements.lock` | 仓库未提交 `uv.lock`，依赖锁定以 `requirements.lock` 为准，CI 从它安装 |
-| CI | GitHub Actions | `.github/workflows/phase-5.yml`（Phase 0–4 重放、AST 证据重放、验证器注册表/探针/闭环、检索基线、注册表审核、受控执行闭环、仓库一致性、凭据扫描） |
+| CI | GitHub Actions | `.github/workflows/phase-6.yml`（Phase 0–4 重放、AST 证据重放、验证器注册表/探针/闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件/支持矩阵/闭环、仓库一致性、凭据扫描） |
 | 代码验证器 | 标准库 ast + 外部工具（Ruff / mypy / pytest 均由探针发现，不是包依赖） | Phase 5：注册表与项目档案是数据（`validation/`），证据带版本与配置哈希，缺工具即失败关闭 |
 
 Phase 0–4 明确不引入：LangGraph、向量数据库、FastAPI、MCP、Agent SDK 与任何 LLM 调用。

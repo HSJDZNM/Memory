@@ -1,0 +1,20 @@
+{
+  "_fixture": {
+    "agent_id": "dsh",
+    "agent_version": "0.1.5-rc.1",
+    "product": "dsh",
+    "event": "PreToolUse",
+    "note": "Redacted sample collected from a real dsh session (cwd replaced by a placeholder); same origin as tests/fixtures/agent_events/dsh/pre-tool-use-edit-block.json."
+  },
+  "hook_event_name": "PreToolUse",
+  "session_id": "dsh-fixture-session",
+  "tool_name": "edit",
+  "tool_use_id": "call-dsh-1",
+  "cwd": "<workspace>",
+  "tool_input": {
+    "file_path": "src/shop/order_controller.py",
+    "old_string": "from shop.order_service import OrderService",
+    "new_string": "from shop.order_repository import OrderRepository",
+    "replace_all": false
+  }
+}

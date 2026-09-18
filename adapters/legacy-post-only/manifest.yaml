@@ -1,0 +1,56 @@
+# Legacy post-hook-only agent：**故意**只声明事后钩子的协议消费者。
+#
+# 它存在的意义是把"能力不足必须显式失败"变成一条可执行的测试：
+# 平台必须在接入时就算出它的上限（read_only），并且在写类动作上**拒绝**，
+# 而不是因为"没有 pre-hook"就跳过治理。
+#
+# 它证明 read_only 降级可执行；模型也定义 unsupported，但当前活动清单没有 unsupported 条目。
+
+schema_version: "1.0"
+agent_id: legacy-post-only
+agent_version: legacy-agent-2.4.7
+display_name: Legacy agent (post-execute only)
+protocol: hook-command
+protocol_version: legacy-hooks@2.4
+
+pre_hook:
+  declared: false
+  kind: request_gate
+  response_kind: exit_code
+post_hook:
+  declared: true
+  kind: post_hook
+  response_kind: exit_code
+
+approval: none
+blocking: post_only    # 只能在动作发生之后把结果标成失败——对写类动作不算阻断
+response_kind: exit_code
+
+event_types:
+  - tool.post_execute
+
+hooks:
+  pre_execute: PreToolUse
+  post_execute: PostToolUse
+  session_field: session_id
+  tool_field: tool_name
+  input_field: tool_input
+  call_id_field: tool_use_id
+  cwd_field: cwd
+
+tools:
+  - name: save_file
+    aliases: [save_file]
+    operation: edit
+    direction: outbound
+    path_field: file_path
+    path_scope: workspace
+    proposed_fields: [text]
+
+fixtures:
+  - adapters/legacy-post-only/fixtures/post-tool-use-save.json
+
+notes: >-
+  这个 Agent 只提供 PostToolUse：它能在事后把工具结果标成错误，但副作用已经产生。
+  因此平台把它限制为 read_only，并在受治理动作上给出 capability_unavailable。
+  这是"能力不足应在接入时显式失败或降级为只读"的可执行版本。

@@ -4,14 +4,16 @@
 
 ## 仓库现状
 
-仓库已绑定 Python 技术栈（见下文），并完成 Engineering Policy Platform 的 **Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5**：
+仓库已绑定 Python 技术栈（见下文），完成 Engineering Policy Platform 的 **Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5**，并完成 Phase 6 的仓库实现；Phase 6 的第二真实 Agent 产品验证仍待外部环境：
 
 - 可运行：根 `README.md` 中的安装、测试、CLI、Hook 自检、沙箱闭环、性能基线、检索索引与评测命令均已实际验证；
 - 有规则目录 `policies/`、核心源码 `src/policy/`（models / context / scope / engine / loader / check）、
   dsh 适配器 `src/adapters/dsh/`（adapter / hooks / 进程内转发插件）、
+  多 Agent 适配层 `src/adapters/`（models / base / runtime / conformance / loader / cli / json_adapter / event_adapter / dsh_adapter）、
+  能力声明是数据 `adapters/`（每个 Agent 一份 manifest + adapter 配置 + 事件样本 + `approved.json` 已审核哈希）、
   检索层 `src/retrieval/`、语料清单 `knowledge/corpus.yaml`、
   受控执行层 `src/enforcement/`、工具注册表 `registry/`、
-  测试 `tests/{unit,contract,integration,security}` 与 CI `.github/workflows/phase-5.yml`；
+  测试 `tests/{unit,contract,integration,security}` 与 CI `.github/workflows/phase-6.yml`；
 - Phase 1 的决策协议为 `SCHEMA_VERSION = "1.0"`，快照在 `tests/fixtures/decisions/`；
 - Phase 2 的 Hook 契约、脱敏事件 fixture 与失败关闭设计分别在 `src/adapters/dsh/README.md`、
   `tests/fixtures/agent_events/dsh/` 与 `docs/engineering-policy-platform/phases/phase-2-dsh-adapter.md` 的实施记录里；
@@ -30,7 +32,14 @@
   语言专项规则包 `policies/coding/` 与 `policies/testing/`、夹具项目与假工具
   `tests/fixtures/validators/`、验证器闭环 `tools/validator_loop.py`；
   实施记录见 `docs/engineering-policy-platform/phases/phase-5-code-validators.md`；
-- 下一阶段计划见 `docs/engineering-policy-platform/phases/`（下一步是 Phase 6 Multi-Agent Adapters）。
+- Phase 6 的规范事件 Schema 与能力声明模型 `src/adapters/models.py`、
+  适配器协议与支持矩阵 `src/adapters/base.py`、
+  多 Agent 运行时 `src/adapters/runtime.py`（命名空间隔离 / trace 来源校验 / 窗口熔断）、
+  一致性套件 `src/adapters/conformance.py`、CLI `src/adapters/cli.py`、
+  探针夹具 `tests/fixtures/agent_events/workspace/`、多 Agent 闭环 `tools/agent_loop.py`；
+  当前只有 dsh 是真实产品接入，`generic-json` / `legacy-post-only` 是合成协议消费者；
+  实施记录见 `docs/engineering-policy-platform/phases/phase-6-multi-agent-adapters.md`；
+- 下一阶段计划见 `docs/engineering-policy-platform/phases/`（下一步是 Phase 7 Policy API）。
 
 **改动前先读 `README.md` 与实际的 `git ls-files`，不要假设未登记的目录或框架存在。**
 
@@ -44,6 +53,8 @@
    `git push` 会自己跑 `--hook` 并在失败时阻断。**GitHub 侧故意不启用规则集/分支保护**：
    单人仓库里它的边际价值低于"把检查前移到本机"，而一旦启用就会禁止直接推 main。
    这条决定与理由记在这里，不留成"看起来有保护"的中间态。
+   若仓库 `.venv` 存在但在当前受限环境不可加载，可用
+   `python tools/ci_local.py --full --python <已验证解释器>` 显式覆盖；不得为让门禁变绿而删除用户的 `.venv`。
 
 ## 文本文件规范
 
@@ -73,10 +84,10 @@
 | 依赖锁定 | `requirements.in`（声明）+ `requirements.lock`（固定直接依赖版本，CI 从它安装）；仓库不提交 `uv.lock` | 仓库根目录 |
 | 测试 | pytest：`tests/unit`、`tests/contract`、`tests/integration`、`tests/security` | `pytest.ini`、`tests/conftest.py` |
 | 检索 | SQLite FTS5（标准库 sqlite3；向量检索是可替换端口，本阶段未采纳） | `src/retrieval/`、`knowledge/corpus.yaml` |
-| CI | GitHub Actions | `.github/workflows/phase-5.yml`（含 Phase 0–4 的重放用例、dsh 接线自检、检索基线、注册表审核、受控执行闭环、AST 证据重放、验证器注册表/探针/闭环） |
+| CI | GitHub Actions | `.github/workflows/phase-6.yml`（含 Phase 0–4 的重放用例、dsh 接线自检、检索基线、注册表审核、受控执行闭环、AST 证据重放、验证器注册表/探针/闭环、多 Agent 一致性套件/支持矩阵/闭环） |
 | 受控执行 | 标准库 + pydantic；注册表是 YAML 数据，台账与审计链是追加写 JSONL | `src/enforcement/`、`registry/` |
 | 代码验证器 | 标准库 `ast` + 外部工具探针（Ruff / mypy / pytest 不进核心依赖） | `src/validators/`、`validation/` |
-| 脚本 | 锁文件生成、阶段证据、性能基线、检索评测、dsh 沙箱闭环、受控执行闭环、notebook 生成与校验、临时文件清理 | `tools/*.py`（见 `tools/README.md`） |
+| 脚本 | 锁文件生成、阶段证据、性能基线、检索评测、dsh 沙箱闭环、受控执行闭环、多 Agent 闭环、notebook 生成与校验、临时文件清理 | `tools/*.py`（见 `tools/README.md`） |
 
 安装、测试、运行命令以根 `README.md` 为准，且必须保持可执行。
 
@@ -155,7 +166,42 @@
 23. 验证器的临时目录只写在 `.tmp/validators/<run>/<validator>` 下（各验证器互不覆盖），用完即删；
     真实 Agent 链路与验证器共用的判定入口是 `policy.engine.evaluate(..., evidence=...)`，
     只提供上下文的调用路径（Phase 2 的 Hook）会把证据类 checker 的规则记进 `skipped_rules`
-    并写明"需要验证器证据"——绝不静默放行。
+    并写明"需要验证器证据"；Phase 6 Runtime 的写类动作更严格：没有 Phase 5 evidence provider
+    直接 `evidence_unavailable` 阻断——绝不把 skipped 当成通过。
+24. 多 Agent 适配层只做协议转换，且**能力上限由声明推出**：事件名、字段名、工具名、
+    阻断与审批能力都写在 `adapters/<agent_id>/manifest.yaml` 里，
+    并与 `adapters/approved.json` 的已审核哈希比对——改声明必须重新审核
+    （`python -m adapters.cli approve --reviewer <name>`），
+    未审核或哈希漂移一律拒绝接入。**拦不住写类动作的 Agent 不得被标成完整 enforcement**：
+    只有事后钩子（`blocking=post_only`）或未声明 pre-hook 的协议消费者，
+    上限是 `read_only`，受治理动作得到 `capability_unavailable`，
+    绝不"跳过治理"；
+25. 规范事件（`AgentEvent`，`src/adapters/models.py`）是唯一交换协议：
+    未知版本、未知字段、未知事件类型、未知操作一律拒绝；`agent_id` 由装配处钉死，
+    载荷自称无效；`payload` 只承载受控字段（`path` / `params` / `text` / `cwd`），其余原始输入只留摘要；
+    路径解析的基准是**本次判定的工作区**（钩子类 Agent 用会话 cwd），
+    绝对路径越界、含 `..` 的相对路径、空路径一律拒绝——
+    `to_policy_event(..., workspace=...)` 的 `workspace` 参数不得被忽略；
+26. 多 Agent 运行时（`src/adapters/runtime.py`）的四条隔离硬规则：
+    审计与幂等键是 `<adapter.namespace>:<event_id>`，namespace 默认 agent id；同一部署跑多份同型号
+    Agent 时必须用 `ledger_alias` 区分且运行时必须真正采用该 alias；主体只认 Adapter 的显式声明，
+    载荷自称即拒绝；trace 登记表按 `owner_agent` 校验来源，同一 trace 的所有权与父链不可覆盖，
+    伪造父 trace 一律 `trace_forged`；
+    同一 Agent 在 `window_seconds` 窗口内的受治理事件数到上限即熔断
+    （按 request_id 计数的旧口径数不到互相触发的循环，别再改回去）；
+27. 一致性套件（`src/adapters/conformance.py`）的场景是**语义**描述，
+    Adapter 用自己的事件名与工具名渲染（`render_event`）：
+    新增一个 Agent 只增加渲染分支，不得让核心测试期望长出 Agent 专用分支；
+    Adapter 不支持某个事件时必须显式失败（`AdapterEventError`），
+    不允许静默跳过——"这个场景没测到"本身就是一个必须被写下来的结论；
+28. Adapter 能力声明与代码工具表必须一致：`dsh` 的 manifest 与 Phase 2 的
+    `TOOL_TABLE` 由契约测试逐项比对（名字、操作、路径字段、变更文本字段），
+    改一处必须改另一处；升级 Agent 后先重跑 `python -m adapters.cli events` 与
+    `python tools/agent_loop.py`，再更新支持矩阵与已审核哈希。
+29. manifest 的 `full` 是能力上限，不是运行时自动接线：写类动作必须同时有 Phase 5
+    `EvidenceBundle`、Policy allow 与 Phase 4 enforcer/pre-check，缺任一项都失败关闭；callback 只能在
+    原子 claim + policy + pre-check 之后调用一次，callback 异常必须 block；PostToolUse 只做 post-check，
+    绝不能再次调用 callback；runtime / trace / enforcement 台账损坏、未知版本或不可读写都不得忽略。
 
 ## 临时文件与产物
 

@@ -1,0 +1,91 @@
+# Third-party JSON agent：与具体产品无关的协议消费者。
+#
+# 它证明"第三方只要生成标准事件就能接入"（计划 §3）：不需要装 SDK，
+# 也不需要改核心层——事件形状的规范就是 src/adapters/models.py 里的 AgentEvent。
+#
+# 改动同样需要重新审核：python -m adapters.cli approve --reviewer <name>
+
+schema_version: "1.0"
+agent_id: generic-json
+agent_version: third-party-0.9.0
+display_name: Generic JSON agent (in-house)
+protocol: canonical-json
+protocol_version: canonical-event@1.0
+
+pre_hook:
+  declared: true
+  kind: request_gate   # 请求门禁：在工具调用**之前**拿到的请求，可以拒绝
+  response_kind: json
+post_hook:
+  declared: false
+  kind: request_gate   # 不声明 post_hook：该 Agent 没有事后钩子
+  response_kind: json
+
+approval: file
+blocking: pre_execute
+response_kind: json
+
+event_types:
+  - agent.start
+  - agent.request
+  - agent.message
+  - tool.pre_execute
+  - agent.turn_end
+
+# 主动收紧到 read_only：这家 Agent 只能改仓库内文件，且不接入 Phase 4 的授权链路，
+# 因此平台**只允许只读动作**通过判定；写类动作在这里显式拒绝（不是悄悄放行）。
+requested_enforcement: read_only
+
+tools:
+  - name: edit
+    aliases: [edit, Edit]
+    operation: edit
+    direction: outbound
+    path_field: path
+    path_scope: workspace
+    proposed_fields: [new_string]
+  - name: write
+    aliases: [write, Write]
+    operation: create
+    direction: outbound
+    path_field: path
+    path_scope: workspace
+    proposed_fields: [content]
+  - name: read
+    aliases: [read, Read]
+    operation: read
+    direction: outbound
+    path_field: path
+    path_scope: workspace
+  - name: list_dir
+    aliases: [list_dir, Glob]
+    operation: read
+    direction: outbound
+    path_field: path
+    path_scope: workspace
+  - name: shell
+    aliases: [shell, Bash]
+    operation: execute
+    direction: outbound
+  - name: search
+    aliases: [search, Grep]
+    operation: read
+    direction: outbound
+    path_field: path
+    path_scope: workspace
+
+fixtures:
+  - adapters/generic-json/fixtures/pre-tool-use-edit.json
+
+notes: >-
+  这家 Agent 的事件形状与 dsh 完全不同（payload.path / payload.params 直接就是规范
+  事件的字段），但它走的是同一条判定入口。它刻意声明 read_only：能拦住动作、
+  但没有接入受控执行链路，因此写类动作必须被显式拒绝。
+
+capabilities:
+  - capability: incremental-retrieval
+    declared: false
+    detail: 未接入检索层；平台不得假设每个 Agent 都能查规范库
+  - capability: approval-interactive
+    declared: false
+    detail: 审批走文件（与 Phase 4 一致），没有交互式审批通道

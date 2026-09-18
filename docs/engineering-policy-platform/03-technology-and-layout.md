@@ -14,7 +14,7 @@
 | Phase 3 可选 | Embedding；之后才考虑 Qdrant | 固定评测证明 FTS5 不足且向量检索有稳定收益 |
 | Phase 5 | Python `ast`、Ruff、pytest、mypy/pyright | 产生 Python 确定性代码证据 |
 | Phase 5 可选 | tree-sitter | 出现多语言或标准库 AST 无法覆盖的需求 |
-| Phase 6 | Agent Hooks、SDK 或 MCP Adapter | 第二个真实 Agent 接入且通过一致性套件 |
+| Phase 6 | Agent Hooks、SDK 或 MCP Adapter | 仓库内协议/运行时已完成；第二个真实 Agent 接入且通过一致性套件后，产品验收才完整 |
 | Phase 7 | FastAPI 或等价薄 HTTP 层 | 核心协议稳定且确需进程外共享 |
 | Phase 8 | LangGraph | 已需要状态、循环、checkpoint 和人工节点 |
 

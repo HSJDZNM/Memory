@@ -1,0 +1,30 @@
+{
+  "_fixture": {
+    "agent_id": "generic-json",
+    "agent_version": "third-party-0.9.0",
+    "product": "generic-json",
+    "event": "tool.pre_execute",
+    "note": "A third-party agent only needs to produce a canonical event to be governed; this file is the minimal real shape of an AgentEvent."
+  },
+  "schema_version": "1.0",
+  "event_id": "req-fixture-1:call-1",
+  "event_type": "tool.pre_execute",
+  "request_id": "req-fixture-1",
+  "agent_version": "third-party-0.9.0",
+  "occurred_at": "2026-09-20T10:00:00Z",
+  "principal": {
+    "subject": "local-user",
+    "roles": [
+      "developer"
+    ]
+  },
+  "tool": "edit",
+  "operation": "edit",
+  "payload": {
+    "path": "src/shop/order_controller.py",
+    "params": {
+      "old_string": "from shop.order_service import OrderService",
+      "new_string": "from shop.order_repository import OrderRepository"
+    }
+  }
+}
