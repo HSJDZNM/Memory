@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from conftest import (
+    FAKE_TOOL,
     REPO_ROOT,
     VALIDATOR_PROJECT,
     fake_tool_spec,
@@ -92,7 +93,11 @@ def test_aliased_dynamic_import_with_a_constant_resolves_the_module() -> None:
         + "im('shop.order_repository')" + chr(10)
     )
 
-    resolved = [(item.name, item.resolution.value) for item in result.dependencies if item.name == "repository"]
+    resolved = [
+        (item.name, item.resolution.value)
+        for item in result.dependencies
+        if item.name == "repository"
+    ]
     assert resolved == [("repository", "internal")]
     assert result.unresolved == ()
 
@@ -204,3 +209,28 @@ def test_tool_label_replaces_the_python_placeholder() -> None:
     # 真实注册表里的 ruff / mypy 声明的是可执行文件名，原样使用
     assert tool_label(CONFIG.registry.spec("tool.ruff").tool) == "ruff"
     assert tool_label(CONFIG.registry.spec("tool.mypy").tool) == "mypy"
+
+
+def test_tool_label_never_returns_a_path() -> None:
+    """证据里的工具名只留名字：声明里写路径（假工具就是这种形态）也不能带进证据。
+
+    CI-F1：这里曾把夹具工具的绝对路径原样写进载荷的 tool 字段。安全用例
+    （test_decisions_do_not_leak_absolute_paths）在 Linux 上抓住了它，而 Windows
+    上因为反斜杠 + JSON 转义两重差异一直是绿的——两处都已修。
+    """
+
+    spec = fake_tool_spec("ruff", "ok")
+    spec = spec.model_copy(
+        update={
+            "tool": spec.tool.model_copy(
+                update={"command": ("{python}", str(FAKE_TOOL), "ruff", "ok")}
+            )
+        }
+    )
+
+    label = tool_label(spec.tool)
+
+    assert label == FAKE_TOOL.name
+    assert "/" not in label and chr(92) not in label
+    # 直接声明可执行文件路径（注册表允许这种写法）同样只留文件名
+    assert tool_label(spec.tool.model_copy(update={"command": (str(FAKE_TOOL),)})) == FAKE_TOOL.name

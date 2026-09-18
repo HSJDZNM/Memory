@@ -248,11 +248,11 @@ checker 提供证据"时，需要它的规则以 `critical` 违规阻断——�
 ### 测试
 
 ```powershell
-uv run python -m pytest tests/unit -q            # 493 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类
+uv run python -m pytest tests/unit -q            # 494 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类
 uv run python -m pytest tests/contract -q        # 112 用例：决策协议快照 + dsh 映射契约 + 检索端口契约 + 受控执行协议 + 验证器证据协议
 uv run python -m pytest tests/integration -q     # 189 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环、验证器流水线
 uv run python -m pytest tests/security -q        # 34 用例：注入、越权、缓存失效、检索与验证器失败关闭、审批伪造、日志失效
-uv run python -m pytest -q                       # 全部 828 用例（本机 1 例跳过：Windows 不允许普通用户创建符号链接）
+uv run python -m pytest -q                       # 全部 829 用例（本机 1 例跳过：Windows 不允许普通用户创建符号链接）
 ```
 
 ### 记录性能基线

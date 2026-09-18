@@ -151,7 +151,7 @@ Code → AST → Dependency → Lint → Type → Tests → Evidence → Policy
 | `tests/contract/test_validator_protocol.py` | 新增：20 个用例（证据协议版本、checker 词表跨层一致、注册表 ↔ 实现对齐、核心层不导入 Adapter、载荷无绝对路径与耗时、两次运行逐字节一致） |
 | `tests/integration/test_validator_{pipeline,cli}.py` | 新增：22 + 11 个用例（真实夹具项目、真实 Ruff、失败关闭、测试选择与失败、CLI 退出码与 JSON 契约） |
 | `tests/security/test_validator_adversarial.py` | 新增：12 个对抗用例（路径逃逸与符号链接、选项注入、超大源码、工具输出注入与凭据、未实现验证器、临时目录隔离） |
-| `tests/unit/test_validator_hardening.py`、`tests/integration/test_validator_hardening_cli.py` | 新增（复核第二轮）：20 条回归用例，钉住复核发现的每一个缺陷 |
+| `tests/unit/test_validator_hardening.py`、`tests/integration/test_validator_hardening_cli.py` | 新增（复核第二轮 + CI 第二轮）：21 条回归用例，钉住复核与 CI 发现的每一个缺陷 |
 | `tools/validator_loop.py` | 新增：验证器闭环（10 个场景，结论写给阶段证据） |
 | `tools/phase_evidence.py` | 变化：`CURRENT_PHASE=5`，新增 `validators` 段（注册表 / 项目档案 / 配置摘要 / checker 归属 / 规则覆盖 / 闭环结论） |
 | `.github/workflows/phase-5.yml` | 替换 `phase-4.yml`：保留 Phase 0–4 的重放，追加 Ruff 安装、AST 证据重放、注册表与实现对齐、工具探针、失败关闭重放、验证器闭环 |
@@ -233,7 +233,7 @@ job object（`ctypes` + `TerminateJobObject`）实现。`tests/unit/test_validat
     python -m policy.check examples/good_controller.py --layer controller
     python -m policy.check <file> --operation edit --changed <file> --workspace <project>  # 测试验证器
     python tools/validator_loop.py                          # 验证器闭环（结论进阶段证据）
-    python -m pytest tests/unit -q                          # 493 用例
+    python -m pytest tests/unit -q                          # 494 用例
     python -m pytest tests/contract -q                      # 112 用例
     python -m pytest tests/integration -q                   # 189 用例
     python -m pytest tests/security -q                      # 34 用例
@@ -291,7 +291,7 @@ Phase 5 收尾时由**两个独立子会话**做了一次对抗复核（只看�
 加载不变量全部成立、六类工具失败全部失败关闭（把注册表改成 `critical: false` 仍被二道防线拦住）、
 超时真的终止整棵进程树、证据逐字节可重放、只提供上下文的调用路径没有静默放行。
 
-**复核发现并已修复的**（每条都带回归用例，详见复核记录 `4）：
+**复核发现并已修复的**（每条都带回归用例，详见复核记录 §4）：
 
 | 级别 | 问题 | 修复 |
 | --- | --- | --- |
@@ -306,6 +306,26 @@ Phase 5 收尾时由**两个独立子会话**做了一次对抗复核（只看�
 复核同时把三条边界写清楚而不是"修成看起来有保护"：`--dependencies` 是显式旁路（历史契约，
 证据来源记成 `cli.explicit@1.0`）、只提供上下文的调用路径按既有契约判 ARCH-001、
 验证器临时目录跟随 `--config-root`。
+
+### CI 第二轮：只有 Linux 能看见的漏判（CI-F1）
+
+推送复核修复后 CI 的测试步变红，失败用例是
+`tests/security/test_validator_adversarial.py::test_decisions_do_not_leak_absolute_paths`：
+新增的 `tool_label` 把夹具工具声明的**绝对路径**原样写进了证据的 `tool` 字段
+（`["{python}", "<绝对路径>/fake_tool.py", ...]` 这种声明形态），违反 AGENTS 19。
+
+它同时暴露了**门禁自身的漏洞**：那条断言写的是
+`str(REPO_ROOT).replace(chr(92), "/") not in payload`，而 Windows 上载荷里的路径是
+`C:\\Users\\...` 形态——被 JSON 转义（`\\`）与分隔符两重差异挡住，断言**恒真**，
+所以本机与两轮复核都是绿的。修复顺序刻意做成"先让本机红、再让本机绿"：
+
+1. 断言改为同时比"JSON 转义后的形态"与"正斜杠形态" → 本机立刻复现 CI 的红；
+2. `tool_label` 只保留最后一段并归一两种分隔符 → 本机转绿，并补
+   `test_tool_label_never_returns_a_path` 钉住"证据里的工具名不带目录"。
+
+Ruff 0.16.8（CI 上装的是最新版，本机是 0.14.13）无法在本机复现，已单独用 0.16 的 JSON
+字段形态（`filename` / `location` / `fix.edits[].location` 为 `null`）验证适配器：
+正常映射或回退到目标文件，不产生绝对路径。
 
 ### 本机门禁里的一条已知噪音
 

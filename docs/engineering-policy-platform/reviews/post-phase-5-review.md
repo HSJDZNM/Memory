@@ -55,15 +55,16 @@ Phase 5 的产出有个特点：它的正确性主张（"ARCH-001 完全由 AST 
 | A-F11 | 次要 | 非 UTF-8 目标在 CLI 的报告阶段被当成配置错误（退出码 2），与 NUL/超大的 `block` 分类不一致 | 已修：报告用的导入列表读失败不再中断运行，交给流水线按失败关闭给出 `py.source failed` |
 | A-F15 | 次要 | 测试选择被 node id 上限**静默截断**（46 → 40，无说明） | 已修：`TestSelection.truncated` + 原因文本，截断可见 |
 | B-F2 | 重要 | 文档命令 `retrieval.cli context ... --decision decision.json` 引用的文件全仓库不存在；且 `_decision_facts` 未捕获 OSError → 裸 traceback + 退出码 1（CLI 契约是 2） | 已修：读不到 / 非 JSON 一律 `config error`（退出码 2）；README 与 phase-3 文档改成"真实存在的载荷"，并给出 generate-then-consume 的完整链路 |
-| B-F1 | 次要 | README 与 phase-5 文档的用例数过期（110 / 806） | 已修：改为当前实测值（492 / 112 / 189 / 34，合计 827） |
+| B-F1 | 次要 | README 与 phase-5 文档的用例数过期（110 / 806） | 已修：改为当前实测值（494 / 112 / 189 / 34，合计 829） |
 | B-F3 | 次要 | 文档承诺"不传 `--layer` 时按文件名推断并**标明**"，输出里没有任何标明 | 已修：文本输出标注"（由文件名推断，未显式声明）" |
 | B-F4 | 次要 | README 的 Phase 5 一节没写"需要 PATH 上有 Ruff"的前提，干净机器上正例必然变红 | 已修：写明前提与自查命令 |
 | B-F5 | 次要 | 根 README 的手册索引只到 Phase 4 | 已修：补 Phase 5 行与目录说明 |
 | B-F7 | 次要 | `missing_tests.changed_only` 无读取点（改成 `false` 行为不变） | 已修：真正执行——`false` 表示"不依赖变更集，也要对目标文件判有没有对应测试" |
 | B-F8 | 次要 | `validators.cli` docstring 称"退出码 1 = 关键验证器不可用"，实际 `probe` 恒返回 0 | 已修：注释写明 probe 只报告、判定时才失败关闭 |
 | B-F9 | 设计边界 | "向量检索没有跑赢 FTS5" 只在 precision 轴成立（recall 反而更高） | 已修：措辞改成给出两项指标与门槛关系 |
+| CI-F1 | 重要 | `tool_label` 把夹具工具的**绝对路径**写进证据的 `tool` 字段；Windows 上被"反斜杠 + JSON 转义"两重差异掩盖，本机与复核都全绿，Linux 上被安全用例抓住 | 已修：工具名只留最后一段、两种分隔符归一；安全用例改为同时比"JSON 转义形态"，Windows 上不再空转；新增 `test_tool_label_never_returns_a_path` |
 
-每条修复都带回归用例：`tests/unit/test_validator_hardening.py`（11 条）与
+每条修复都带回归用例：`tests/unit/test_validator_hardening.py`（12 条）与
 `tests/integration/test_validator_hardening_cli.py`（9 条），另有两条既有对抗用例按新语义更新
 （未实现验证器改为加载期拒绝、非法变更集改为进入流水线前拒绝）。
 
@@ -82,9 +83,23 @@ Phase 5 的产出有个特点：它的正确性主张（"ARCH-001 完全由 AST 
 
 ## 6. 验证证据
 
-- **用例**：828（复核前 808；新增 20 条复核回归，另按新语义更新 3 条既有用例）；
+- **用例**：829（复核前 808；新增 21 条复核回归，另按新语义更新 3 条既有用例）；
 - **本机门禁**：`tools/ci_local.py --full` 除"Real dsh sandbox loop"外全部退出 0；
   该步在**被沙箱化的会话**里失败（嵌套 dsh 会话在到达 Hook 前被拒、审计为空 → `diagnosis: Hook 从未被调用`），
   这是 Phase 2/4 已记名的环境边界，不是本阶段回归，也不在 pre-push 钩子的步骤组里；
 - **验证器闭环**：`tools/validator_loop.py` 10/10 场景通过；
 - **阶段证据**：`tools/phase_evidence.py` → `phase 5 / result pass / failures 0`。
+
+## 7. CI 第二轮（Linux + Ruff 0.16.8）
+
+推送 `fix(validators)` 后 CI 的测试步变红，失败用例是
+`tests/security/test_validator_adversarial.py::test_decisions_do_not_leak_absolute_paths`——
+即本表 CI-F1。它同时是一次**门禁本身的教训**：
+
+- 断言写的是 `str(REPO_ROOT).replace(chr(92), "/") not in payload`：Windows 上载荷里若是
+  `C:\Users\...` 形态，既被 JSON 转义（`\\`）挡住、又被分隔符差异挡住，**恒真**；
+- 修法与顺序：先把断言改成同时比"JSON 转义后的形态"（本机立刻复现出红），再改 `tool_label`
+  只留文件名（本机转绿）。这样"这条用例在 Windows 上不再空转"本身有证据。
+
+CI 上无法复现的部分（Ruff 0.16.8 的 JSON 形状）已用 0.16 的字段形态（`filename` / `location` /
+`fix.edits[].location` 为 `null`）单独验证：适配器正常映射或回退到目标文件，不产生绝对路径。

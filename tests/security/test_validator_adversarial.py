@@ -195,8 +195,12 @@ def test_decisions_do_not_leak_absolute_paths(tmp_root: Path) -> None:
     report = run_for("src/shop/order_controller.py", config=config)
     payload = json.dumps(report.to_payload(), ensure_ascii=False)
 
-    assert str(REPO_ROOT).replace(chr(92), "/") not in payload
-    assert str(REPO_ROOT) not in payload
+    # 载荷是 JSON：Windows 的绝对路径在这里是 C:\\Users\\... 这种形态，只比原生字符串
+    # 会被"转义 + 分隔符"两重差异骗过（CI-F1：tool_label 曾把假工具的绝对路径写进证据，
+    # Linux 上红、Windows 上绿）。这里同时比"JSON 转义后的形态"和"正斜杠形态"。
+    root = str(REPO_ROOT)
+    assert json.dumps(root, ensure_ascii=False)[1:-1] not in payload
+    assert root.replace(chr(92), "/") not in payload
 
 
 def test_garbage_output_is_output_invalid_not_success(tmp_root: Path) -> None:

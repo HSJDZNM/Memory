@@ -406,17 +406,24 @@ def run_tool(
 
 
 def tool_label(spec: ToolSpec, *, python: str = sys.executable) -> str:
-    """证据里显示的工具名。
+    """证据里显示的工具名：只保留名字，绝不带目录。
 
     注册表可以用 ["{python}", "-m", "pytest"] 声明工具，此时字面量 "{python}"
-    不该直接进证据（读者会以为这工具叫这个名字）；用紧随其后的模块名兜底。
+    不该直接进证据（读者会以为这工具叫这个名字）；也可以直接声明一段路径
+    （测试里的假工具就是 ["{python}", "<绝对路径>/fake_tool.py", ...]）。
+    证据里不得出现绝对路径（AGENTS 19），所以两种形态都只取最后一段：
+    "/x/fake_tool.py" → "fake_tool.py"；两种平台的分隔符都归一。
     """
 
     parts = list(spec.command)
-    if parts and parts[0] == "{python}":
+    if not parts:
+        return "<tool>"
+    if parts[0] == "{python}":
         module = next((item for item in parts[1:] if not item.startswith("-")), None)
-        return module or Path(python).name
-    return parts[0] if parts else "<tool>"
+        token = module or Path(python).name
+    else:
+        token = parts[0]
+    return token.replace("\\", "/").rsplit("/", 1)[-1] or "<tool>"
 
 
 def _classify_failure(completed: ToolRun) -> ValidatorStatus:
