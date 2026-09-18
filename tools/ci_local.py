@@ -10,6 +10,7 @@
     python tools/ci_local.py --full       # 跑全部能在本机跑的步骤
     python tools/ci_local.py --list       # 只列出会跑哪些步骤，不执行
     python tools/ci_local.py --hook       # pre-push 钩子用：更简短、失败即退出码 1
+    python tools/ci_local.py --full --python C:\\path\\to\\python.exe
 
 只用标准库 + PyYAML（已在锁定依赖里）。bash-only 的步骤（heredoc、set +e、grep -q、
 cat > /tmp）在 Windows 上无法直接执行，脚本会**显式跳过并打印原因**，不假装跑过。
@@ -17,6 +18,7 @@ cat > /tmp）在 Windows 上无法直接执行，脚本会**显式跳过并打�
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -59,6 +61,10 @@ CODE_STEPS = (
     "Enforcement self-check",
     "Controlled execution closed loop",
     "Audit chain verification",
+    "Multi-agent conformance suite",
+    "Adapter support matrix is approved",
+    "Adapter event fixtures exist",
+    "Multi-agent closed loop",
     "Performance baseline",
 )
 HANDBOOK_STEPS = (
@@ -69,11 +75,20 @@ RETRIEVAL_STEPS = (
     "Retrieval corpus integrity",
     "Retrieval evaluation baseline",
     "Tool registry must match",
-    "Phase 5 acceptance evidence",
+    "Phase 6 acceptance evidence",
 )
 
 # 改了这些前缀，就要跑对应的那一组。
-CODE_PREFIXES = ("src/", "tests/", "tools/", "examples/", "policies/", "registry/", ".github/")
+CODE_PREFIXES = (
+    "src/",
+    "tests/",
+    "tools/",
+    "examples/",
+    "policies/",
+    "registry/",
+    "adapters/",
+    ".github/",
+)
 RETRIEVAL_PREFIXES = ("knowledge/", "src/retrieval/", "docs/", "tools/retrieval_eval.py")
 HANDBOOK_PREFIXES = ("src/", "tools/build_learning_notebook.py", "docs/learning/")
 
@@ -162,12 +177,31 @@ def _looks_unsafe(lines: list[str]) -> bool:
     return any(not line.startswith(PYTHON) for line in lines)
 
 
+def _step_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(ROOT / "src")
+    return environment
+
+
 def main(argv: list[str] | None = None) -> int:
+    global PYTHON
+
     parser = argparse.ArgumentParser(description="在本机按 CI 的顺序跑同一批检查")
     parser.add_argument("--full", action="store_true", help="跑全部能在本机跑的步骤")
     parser.add_argument("--list", action="store_true", help="只列出会跑哪些步骤")
     parser.add_argument("--hook", action="store_true", help="pre-push 钩子模式：更简短")
+    parser.add_argument(
+        "--python",
+        dest="python_executable",
+        help="覆盖步骤使用的 Python；用于仓库 .venv 存在但当前环境不可加载时",
+    )
     args = parser.parse_args(argv)
+
+    if args.python_executable:
+        candidate = Path(args.python_executable).resolve()
+        if not candidate.is_file():
+            parser.error(f"--python 指向的文件不存在: {candidate}")
+        PYTHON = str(candidate)
 
     wanted = _selected_names(args.full)
     changed = _changed_paths()
@@ -200,11 +234,17 @@ def main(argv: list[str] | None = None) -> int:
         print("改动文件 %d 个；执行 %d 步（本机跳过 %d 步）" % (len(changed), len(plan), len(skipped)))
 
     failures: list[str] = []
+    step_environment = _step_environment()
     for name, lines in plan:
         for line in lines:
             if not args.hook:
                 print("\n=== %s ===\n$ %s" % (name, line), flush=True)
-            completed = subprocess.run(line, cwd=str(ROOT), shell=True)
+            completed = subprocess.run(
+                line,
+                cwd=str(ROOT),
+                env=step_environment,
+                shell=True,
+            )
             if completed.returncode != 0:
                 failures.append("%s -> 退出码 %s" % (name, completed.returncode))
                 if args.hook:

@@ -48,6 +48,10 @@ def records(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def enforcement_ledger_for(audit: Path) -> Path:
+    return audit.with_name(f"{audit.stem}.enforcement-ledger{audit.suffix}")
+
+
 def write_source(project_root: Path, relative: str, content: str) -> Path:
     target = project_root / relative
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -301,7 +305,11 @@ def test_bridge_state_records_do_not_store_file_content(dsh_config_path, dsh_pro
 
     text = audit.read_text(encoding="utf-8")
     assert "SECRET_MARKER" not in text
-    ledger = [item for item in records(audit) if item.get("kind") == "pre_state"]
+    ledger = [
+        item
+        for item in records(enforcement_ledger_for(audit))
+        if item.get("kind") == "pre_state"
+    ]
     assert ledger, "执行前基线必须写进台账，否则事后无法比对"
     assert ledger[0]["baselines"][0]["sha256"].startswith("sha256:")
 
@@ -313,3 +321,4 @@ def test_bridge_can_be_built_directly_from_a_config(dsh_config_path, dsh_project
     assert isinstance(bridge, EnforcementBridge)
     assert bridge.spec_for("edit").id == "fs.edit"
     assert bridge.spec_for("nope") is None
+    assert bridge.sink.path != bridge.ledger.path

@@ -316,13 +316,19 @@ def test_rate_limit_windows_count_only_recent_records(tmp_root):
     )
 
 
-def test_ledger_records_are_versioned_and_ignore_foreign_lines(tmp_root):
+def test_ledger_records_reject_malformed_or_foreign_lines(tmp_root):
     path = tmp_root / "ledger.jsonl"
     path.write_text("not json\n" + json.dumps({"kind": "other"}) + "\n", encoding="utf-8")
     ledger = EnforcementLedger(path)
-    assert ledger.records() == ()
-    ledger.append({"kind": "self_check"})
-    assert len(ledger.records()) == 1
+    with pytest.raises(LedgerError):
+        ledger.records()
+
+
+def test_ledger_records_are_versioned(tmp_root):
+    path = tmp_root / "ledger.jsonl"
+    path.write_text(json.dumps({"kind": "other"}) + "\n", encoding="utf-8")
+    with pytest.raises(LedgerError):
+        EnforcementLedger(path).records()
 
 
 def test_broken_ledger_path_fails_closed(tmp_root):

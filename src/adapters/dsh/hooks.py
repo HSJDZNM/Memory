@@ -890,11 +890,15 @@ def run_hook(
             bridge = None
 
     if bridge is not None and audit_path is not None:
-        # --audit 是"本次会话的审计文件"：Phase 2 的记录与 Phase 4 的链必须落在同一份证据里，
-        # 否则一次工具调用会被拆成两条互补的 trace。
+        # --audit 是"本次会话的审计文件"：Phase 2 的记录与 Phase 4 的链落在同一份证据里。
+        # 幂等/授权状态使用独立台账；两种 JSONL 协议不能混写，否则严格读取无法区分
+        # "合法的外来审计行"与"丢失 schema 的损坏台账行"。
         audit_file = Path(audit_path)
+        state_file = audit_file.with_name(
+            f"{audit_file.stem}.enforcement-ledger{audit_file.suffix}"
+        )
         bridge.sink = FileAuditSink(audit_file, workspace=config.project_root)
-        bridge.ledger = EnforcementLedger(audit_file)
+        bridge.ledger = EnforcementLedger(state_file)
 
     kwargs: dict[str, Any] = {
         "config": config,

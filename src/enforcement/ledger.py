@@ -68,11 +68,16 @@ class EnforcementLedger:
                 continue
             try:
                 item = json.loads(line)
-            except json.JSONDecodeError:
-                # 最后一行可能因为进程被杀而截断；其余损坏会在下面按"不可信"处理。
-                continue
-            if isinstance(item, Mapping) and item.get("ledger_schema_version") == LEDGER_SCHEMA_VERSION:
-                rows.append(item)
+            except json.JSONDecodeError as error:
+                raise LedgerError("台账包含损坏的 JSON 记录，无法证明幂等状态") from error
+            if not isinstance(item, Mapping):
+                raise LedgerError("台账记录必须是 JSON 对象")
+            version = item.get("ledger_schema_version")
+            if version != LEDGER_SCHEMA_VERSION:
+                raise LedgerError(
+                    f"台账协议版本 {version!r} 不受支持；不能忽略未知记录继续执行"
+                )
+            rows.append(item)
         return tuple(rows)
 
     def of_kind(self, kind: str) -> tuple[Mapping[str, Any], ...]:

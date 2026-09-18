@@ -168,6 +168,7 @@ class EnforcementBridge:
         policy_error: Optional[ReasonCode] = None,
         policy_detail: str = "",
         policy_skipped_reason: str = "",
+        dry_run: bool = False,
     ) -> PrecheckOutcome:
         outcome = pre_execute(
             request,
@@ -179,9 +180,14 @@ class EnforcementBridge:
             policy_error=policy_error,
             policy_detail=policy_detail,
             policy_skipped_reason=policy_skipped_reason,
+            dry_run=dry_run,
         )
         spec = self.registry.tool(request.tool_id)
-        if outcome.decision.decision is not Decision.BLOCK and spec is not None:
+        if (
+            not dry_run
+            and outcome.decision.decision is not Decision.BLOCK
+            and spec is not None
+        ):
             self._record_state(request, spec)
         return outcome
 
@@ -402,11 +408,12 @@ def bridge_from_config(config: AdapterConfig) -> EnforcementBridge:
     ledger_path = (
         config.enforcement_ledger
         if config.enforcement_ledger is not None
-        else (config.audit_log or (config.project_root / ".policy" / "audit.jsonl"))
+        else (config.project_root / ".policy" / "enforcement-ledger.jsonl")
     )
+    audit_path = config.audit_log or (config.project_root / ".policy" / "audit.jsonl")
     return EnforcementBridge(
         registry=loaded.registry,
-        sink=FileAuditSink(config.audit_log or ledger_path, workspace=config.project_root),
+        sink=FileAuditSink(audit_path, workspace=config.project_root),
         ledger=EnforcementLedger(ledger_path),
         workspace=config.project_root,
         agent_version=config.agent_version,
