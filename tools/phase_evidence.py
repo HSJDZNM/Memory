@@ -29,7 +29,7 @@ for directory in (SRC_DIR, TOOLS_DIR):
     if str(directory) not in sys.path:
         sys.path.insert(0, str(directory))
 
-CURRENT_PHASE = 5
+CURRENT_PHASE = 6
 SUITES = ("tests/unit", "tests/contract", "tests/integration", "tests/security")
 POLICIES = ("policies",)
 ARTIFACT_DIR = REPO_ROOT / ".tmp" / "artifacts"
@@ -37,6 +37,7 @@ SANDBOX_RESULT = ARTIFACT_DIR / "phase-2-sandbox-result.json"
 RETRIEVAL_BASELINE = ARTIFACT_DIR / "phase-3-retrieval-baseline.json"
 ENFORCEMENT_RESULT = ARTIFACT_DIR / "phase-4-enforcement-result.json"
 VALIDATOR_RESULT = ARTIFACT_DIR / "phase-5-validators-result.json"
+AGENT_RESULT = ARTIFACT_DIR / "phase-6-agents-result.json"
 
 
 def _git(*args: str) -> str:
@@ -433,6 +434,83 @@ def validators() -> dict[str, object]:
     return payload
 
 
+def agent_adapters() -> dict[str, object]:
+    """Phase 6 多 Agent 适配层的可重放事实：支持矩阵、协议版本与闭环结论。
+
+    只记录元数据：agent id、产品版本、协议版本、能力上限、工具数量与 fixture 名字，
+    不记录任何一次具体事件、参数或源码内容。
+    """
+
+    from adapters.base import EnforcementLevel
+    from adapters.loader import load_registry_from_repo
+
+    registry = load_registry_from_repo(REPO_ROOT)
+    listing = registry.as_list()
+    payload: dict[str, object] = {
+        "approved": None if listing.approved_path is None else listing.approved_path,
+        "reviewed_by": listing.reviewed_by,
+        "approved_at": listing.approved_at,
+        "counts": {
+            "full": sum(
+                1
+                for item in listing.descriptors
+                if item.enforcement is EnforcementLevel.FULL
+            ),
+            "read_only": sum(
+                1
+                for item in listing.descriptors
+                if item.enforcement is EnforcementLevel.READ_ONLY
+            ),
+            "unsupported": sum(
+                1
+                for item in listing.descriptors
+                if item.enforcement is EnforcementLevel.UNSUPPORTED
+            ),
+        },
+        "adapters": [
+            {
+                "agent_id": item.agent_id,
+                "agent_version": item.agent_version,
+                "protocol": item.protocol,
+                "protocol_version": item.protocol_version,
+                "enforcement": item.enforcement.value,
+                "requested_enforcement": (
+                    None
+                    if item.requested_enforcement is None
+                    else item.requested_enforcement.value
+                ),
+                "downgraded": item.downgraded,
+                "blocking": item.blocking.value,
+                "approval": item.approval.value,
+                "event_types": list(item.event_types),
+                "tools": len(item.tools),
+                "fixtures": list(item.fixtures),
+                "approved": item.approved,
+                "manifest_digest": item.manifest_digest,
+                "ceiling_reasons": list(item.ceiling_reasons),
+            }
+            for item in listing.descriptors
+        ],
+    }
+    if AGENT_RESULT.is_file():
+        loop = json.loads(AGENT_RESULT.read_text(encoding="utf-8"))
+        payload["closed_loop"] = {
+            "result": loop.get("result"),
+            "workspace": loop.get("workspace"),
+            "conformance": loop.get("conformance"),
+            "scenarios": [
+                {"name": item.get("name"), "passed": item.get("passed")}
+                for item in loop.get("scenarios", [])
+            ],
+        }
+    else:
+        payload["closed_loop"] = {
+            "result": "not-run",
+            "hint": "python tools/agent_loop.py",
+        }
+    return payload
+
+
 def performance_baseline() -> dict[str, object]:
     """Phase 1 的匹配性能基线：固定种子、只记录不优化。"""
 
@@ -530,6 +608,7 @@ def main(argv: list[str] | None = None) -> int:
         "retrieval_eval": retrieval_eval_baseline(),
         "enforcement": enforcement(),
         "validators": validators(),
+        "agent_adapters": agent_adapters(),
         "test_suite": " + ".join(SUITES),
         "suites": suites,
         "result": "pass" if failures == 0 else "fail",

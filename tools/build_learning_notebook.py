@@ -37,6 +37,31 @@ PHASE_2_DIR = LEARNING_DIR / "phase-2"
 SRC_DIR = REPO_ROOT / "src"
 TOOLS_DIR = REPO_ROOT / "tools"
 
+# Phase 6 的单元内容单独放：这个文件已经很长，把某一阶段的讲解再塞进来会让
+# "生成器"和"内容"混在一起。改动手册内容请编辑 tools/phase6_cells.py。
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+from phase6_cells import PHASE_6_CELLS, check_phase_6_structure  # noqa: E402
+
+
+def _dedent_cells(cells):
+    """去掉三引号带来的整体缩进。
+
+    代码单元在 phase6_cells.py 里写成三引号字符串，字符串内容会带上缩进；
+    如果不处理，notebook 里的代码就会整体多一层空格（顶层语句缩进等于语法错误）。
+    这里按"非空行的公共缩进"裁剪，保留代码内部真实的分层缩进。
+    """
+
+    import textwrap
+
+    cleaned = []
+    for kind, text in cells:
+        cleaned.append((kind, textwrap.dedent(text) if kind == "code" else text))
+    return tuple(cleaned)
+
+
+PHASE_6_CELLS = _dedent_cells(PHASE_6_CELLS)
+
 KERNELSPEC = {
     "display_name": "Python 3",
     "language": "python",
@@ -6431,6 +6456,12 @@ PHASES: Mapping[str, PhaseNotebook] = {
             ("def run_validator_cli", (0, 1, 1, 1, 2)),
         ),
         structure_check=check_phase_5_structure,
+    ),
+    "phase-6": PhaseNotebook(
+        slug="phase-6",
+        title="多 Agent Adapter",
+        cells=tuple(PHASE_6_CELLS),
+        structure_check=check_phase_6_structure,
     ),
 }
 

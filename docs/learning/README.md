@@ -10,8 +10,9 @@
 | Phase 3 规范检索 | [phase-3/](phase-3/) | 分块、FTS5 检索、来源与哈希、Context 预算与"知识不可用" |
 | Phase 4 受控执行 | [phase-4/](phase-4/) | Tool Registry、Action Request 与 action_hash 绑定、pre-check、受控执行、事后验证与审计链 |
 | Phase 5 代码验证器 | [phase-5/](phase-5/) | AST 事实与依赖图、外部工具适配器与失效分类、测试选择、证据 → 判定与失败关闭 |
+| Phase 6 多 Agent Adapter | [phase-6/](phase-6/) | 规范事件 Schema、能力声明与支持矩阵、一致性套件、跨 Agent 隔离与循环熔断 |
 
-后续阶段按同一约定新增：`phase-6/`、`phase-7/` …
+后续阶段按同一约定新增：`phase-7/`、`phase-8/` …
 
 ## 每个阶段目录的固定结构
 
