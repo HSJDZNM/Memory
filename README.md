@@ -4,10 +4,13 @@
 把工程规范变成机器可执行的规则，对固定上下文稳定地给出 allow / allow_with_warnings / block，
 并留下"命中了哪些规则、跳过了哪些、为什么"的可重放审计证据。
 
-> 当前进度：**Phase 6 的仓库实现已完成**（规范事件 Schema + 数据化能力声明 +
-> 一致性套件 + 多 Agent 运行时隔离/熔断/能力降级 + Phase 4/5 写链门禁）。
-> 当前只有 `dsh` 是真实产品接入；`generic-json` 与 `legacy-post-only` 是合成协议消费者，
-> 因此“第二个真实 Agent 产品验证”仍是进入下一阶段前的外部验收项。
+> 当前进度：**Phase 6 与 Phase 7 的仓库实现已完成**。Phase 6 交付了规范事件 Schema、
+> 数据化能力声明、一致性套件与多 Agent 运行时的隔离/熔断/能力降级；Phase 7 把核心能力
+> 服务化：版本化 DTO 与 OpenAPI 快照、Bearer 认证、租户/项目隔离、墙钟预算与幂等、
+> 请求级观测与可对外锚定的摘要链——API 只增加部署与信任边界，判定仍只有
+> `policy.engine.evaluate` 一条路径。
+> 当前只有 `dsh` 是真实产品接入；`generic-json`、`legacy-post-only` 与 Phase 7 的
+> `http-api` 都是合成协议消费者，因此“第二个真实 Agent 产品验证”仍是外部验收项。
 > Phase 0 的 YAML Rule → Loader → Engine → CLI 链路、Phase 1 的 Context/Scope/Decision、
 > Phase 2 的 dsh Adapter 与 pre-execute Hook、Phase 3 的离线检索、Phase 4 的受控执行、
 > Phase 5 的代码验证器仍然有效，并被后续阶段的测试继续覆盖。
@@ -299,14 +302,60 @@ uv run python tools/agent_loop.py                                 # 多 Agent �
 新增一个 Adapter 的完整流程（不需要改核心层）见
 [Phase 6 实施记录](docs/engineering-policy-platform/phases/phase-6-multi-agent-adapters.md#实施记录)。
 
+### Policy API（Phase 7）
+
+核心能力可以经 HTTP 服务化，但**判定仍然只有一条路径**：`policy.engine.evaluate`。
+API 只增加部署与信任边界（认证、租户隔离、预算、幂等、观测），不复制一份业务逻辑——
+本地 SDK 与经 API 的决定逐字节一致，这条由闭环工具证明而不是由文档声明。
+
+```powershell
+$env:PYTHONPATH = "src"
+
+# 1) 装配 / readiness / 传输契约自检（配置、租户、规则集、索引、验证器、观测日志）
+uv run python -m policy_api.cli self-check
+
+# 2) OpenAPI 契约快照：漂移即退出 1，改契约必须显式评审后 --write
+uv run python -m policy_api.cli openapi --check
+
+# 3) 进程内最小链路（不开端口）：live → ready → evaluate → retrieve
+uv run python -m policy_api.cli smoke --token local-dev-token
+
+# 4) 起服务（默认 http://127.0.0.1:8088；readiness 未过则拒绝启动）
+uv run python -m policy_api.cli serve
+
+# 5) 观测日志的对外锚定：封出链末值 / 校验日志是否被删尾或改写
+uv run python -m policy_api.cli seal --out .tmp/artifacts/api-anchor.json
+uv run python -m policy_api.cli seal --verify .tmp/artifacts/api-anchor.json
+
+# 6) API 闭环（真端口 uvicorn）：八个场景，见下
+uv run python tools/api_loop.py
+```
+
+闭环证明八件事：本地引擎与 HTTP API 的决策载荷**逐字节一致**；两个协议消费者
+（`generic-json` 进程内 / `http-api` 经 HTTP）对同一组语义场景走到同一套结论；
+超时返回 504 而不是 allow；策略服务不可达时 Adapter 得到 `policy_unavailable` 的阻断；
+幂等键重放返回原响应且换请求体得到 409；跨租户引用别人的 `decision_ref` 得到 403；
+规则集不可用时 readiness 失败且 evaluate 得到 `rule_set_unavailable`；
+观测日志的摘要链能对外锚定且删尾会被发现。
+
+**部署数据在 [`api/`](api/README.md)**：租户边界、客户端令牌（只存 sha256）、
+预算与限额、观测落点都在 [`api/policy-api.yaml`](api/policy-api.yaml) 里；
+传输契约快照是 [`api/openapi.json`](api/openapi.json)。本仓库里的令牌是演示值
+（`local-dev-token` / `dsh-agent-token` / `ops-monitor-token`），不是真实凭据。
+
+**失败语义**：未认证 401、项目越权 403、限流 429、超大请求 413、幂等冲突 409、
+预算耗尽 504（`*_timeout`）、依赖不可用 503（`rule_set_unavailable` /
+`knowledge_unavailable` / `validator_unavailable` / `audit_unavailable`）。
+**没有任何一条路径默认 allow**：超时、不可达、规则集读不出来都只会更严。
+
 ### 测试
 
 ```powershell
-uv run python -m pytest tests/unit -q            # 495 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类
-uv run python -m pytest tests/contract -q        # 152 用例：决策协议快照 + dsh/多 Agent 映射契约 + 检索端口契约 + 受控执行协议 + 验证器证据协议
-uv run python -m pytest tests/integration -q     # 225 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环、验证器流水线、多 Agent 运行时
-uv run python -m pytest tests/security -q        # 51 用例：注入、越权、缓存失效、检索与验证器失败关闭、审批伪造、日志失效、多 Agent 对抗
-uv run python -m pytest -q                       # 全部收集 923 用例；本机实跑 922 passed、1 skipped（Windows 不允许普通用户创建符号链接）
+uv run python -m pytest tests/unit -q            # 527 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类、API DTO/配置/预算/幂等/指标
+uv run python -m pytest tests/contract -q        # 164 用例：决策协议快照 + dsh/多 Agent 映射契约 + 检索端口契约 + 受控执行协议 + 验证器证据协议 + API 传输契约（OpenAPI 快照 / 版本钉死 / 核心层不依赖框架）
+uv run python -m pytest tests/integration -q     # 245 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环、验证器流水线、多 Agent 运行时、HTTP API（ASGI 进程内）
+uv run python -m pytest tests/security -q        # 67 用例：注入、越权、缓存失效、检索与验证器失败关闭、审批伪造、日志失效、多 Agent 对抗、API 未认证/跨租户/不可达（不返回 allow）
+uv run python -m pytest -q                       # 全部收集 1004 用例；本机实跑 1003 passed、1 skipped（Windows 不允许普通用户创建符号链接）
 ```
 
 ### 记录性能基线
@@ -356,14 +405,14 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 
 ```text
 .
-├── .github/workflows/phase-6.yml      # CI：单元 / 契约 / 集成 / 对抗测试、AST 证据重放、验证器闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件与支持矩阵、手册与证据
+├── .github/workflows/phase-7.yml      # CI：单元 / 契约 / 集成 / 对抗测试、AST 证据重放、验证器闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件与支持矩阵、API 自检 / OpenAPI 快照 / API 闭环、手册与证据
 ├── docs/
 │   ├── dora-capabilities/             # DORA 软件交付能力指南离线镜像（37 篇）
 │   ├── dotnet-design-guidelines/      # .NET Framework 设计准则离线镜像（49 篇）
 │   ├── engineering-policy-platform/   # 本项目的分阶段架构、契约与测试路线
 │   ├── gitlab-code-review/            # GitLab 评审规范离线镜像（20 篇）
 │   ├── google-eng-practices/          # Google 工程实践指南离线镜像（14 篇）
-│   ├── learning/                      # 面向人的学习手册（按阶段：phase-0 … phase-6）
+│   ├── learning/                      # 面向人的学习手册（按阶段：phase-0 … phase-7）
 │   ├── owasp-cheatsheets/             # OWASP 代码安全指南离线归档（118 篇）
 │   └── python-pep-code-style/         # PEP 8 / PEP 257 文档镜像（11 篇）
 ├── examples/                          # 可重放的 CLI 示例（正例 / 反例）
@@ -376,21 +425,24 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 ├── adapters/                          # Phase 6 能力声明（数据）：每个 Agent 的 manifest + adapter 配置 + 事件样本 + 已审核哈希
 ├── registry/                          # Phase 4 Tool Registry：工具授权表 + 已审核哈希清单
 ├── validation/                        # Phase 5 验证器数据：注册表、项目档案（语言/组件）、测试布局、工具配置
+├── api/                               # Phase 7 部署数据：policy-api.yaml（租户/客户端/预算）+ openapi.json（传输契约快照）
 ├── src/policy/                        # 核心库：models / evidence / checkers / context / scope / loader / engine / check
 ├── src/validators/                    # Phase 5 验证器：python_ast / depgraph / docstrings / selection / pipeline / cli / adapters
 ├── src/enforcement/                   # Phase 4 受控执行：registry / action / approvals / audit / ledger / precheck / executor / drivers / postcheck / trace / cli
 ├── src/adapters/                      # Phase 6 适配层：models（规范事件）/ base（协议与注册表）/ runtime（多 Agent 隔离与熔断）/ conformance（一致性套件）/ cli
 ├── src/adapters/dsh/                  # Phase 2 dsh Adapter：adapter（纯映射）/ hooks（Hook 与审计）/ README
 ├── src/retrieval/                     # Phase 3 检索层：chunker / corpus / store / indexer / query / retriever / vector / context / cli
+├── src/policy_api/                    # Phase 7 服务化层：models（DTO/版本）/ errors / config / auth / services / runtime / timeout / idempotency / observability / ops / app（FastAPI）/ contract / cli / testing / probe（HTTP Adapter）
 ├── tests/
 │   ├── fixtures/validators/           # Phase 5 夹具项目 + 假工具（失效与边界行为）
 │   ├── fixtures/agent_events/         # Phase 2/6 事件样本与一致性套件的探针工作区
-│   ├── unit/                          # 模型、规范化、范围矩阵、决策聚合、分块、查询、Context、AST/依赖图/适配器
-│   ├── contract/                      # 决策协议快照、dsh 映射契约、多 Agent 能力声明与规范事件契约、检索端口契约
-│   ├── integration/                   # 真实 CLI 子进程、性能基线、检索索引与增量、多 Agent 一致性套件与隔离
-│   ├── security/                      # 对抗测试：注入、越权、缓存失效、检索失败关闭、伪造 trace 与跨 Agent 越权
+│   ├── fixtures/api/                  # Phase 7 API 夹具（租户规则 + 演示令牌说明）
+│   ├── unit/                          # 模型、规范化、范围矩阵、决策聚合、分块、查询、Context、AST/依赖图/适配器、API DTO/配置/预算/幂等
+│   ├── contract/                      # 决策协议快照、dsh 映射契约、多 Agent 能力声明与规范事件契约、检索端口契约、API 传输契约与 OpenAPI 快照
+│   ├── integration/                   # 真实 CLI 子进程、性能基线、检索索引与增量、多 Agent 一致性套件与隔离、HTTP API（ASGI 进程内）
+│   ├── security/                      # 对抗测试：注入、越权、缓存失效、检索失败关闭、伪造 trace、跨 Agent 越权、API 未认证/跨租户/不可达
 │   └── fixtures/                      # 决策快照、dsh 事件、检索语料与固定评测集
-├── tools/                             # 仓库脚本：阶段证据、性能基线、检索评测、dsh 沙箱闭环、多 Agent 闭环、notebook 生成、清理
+├── tools/                             # 仓库脚本：阶段证据、性能基线、检索评测、dsh 沙箱闭环、多 Agent 闭环、API 闭环、notebook 生成、清理
 ├── pyproject.toml                     # 依赖清单、包配置、pytest 配置
 ├── requirements.in / requirements.lock # 直接依赖与锁定版本
 ├── README.md
@@ -402,12 +454,12 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 | 项 | 选择 | 说明 |
 | --- | --- | --- |
 | 语言 | Python ≥ 3.11（本机验证 3.13.11） | 文档选型 Phase 0–1 指定 |
-| 依赖 | pydantic 2、PyYAML 6 | 类型化规则与 YAML 解析 |
+| 依赖 | pydantic 2、PyYAML 6；FastAPI + uvicorn（Phase 7 传输层） | 类型化规则与 YAML 解析；**核心层不依赖 Web 框架**，只有 `src/policy_api/app.py` 需要它 |
 | 检索 | SQLite FTS5（标准库 sqlite3，无第三方依赖） | Phase 3 的可解释检索基线；向量检索是可替换端口，本阶段**未采纳**（评测见阶段记录） |
 | 受控执行 | 标准库 + pydantic（无第三方依赖） | Phase 4：Tool Registry 是数据（YAML），授权 / 幂等 / 审计链落在追加写 JSONL 上，执行驱动按注册表声明选择 |
-| 测试 | pytest 8+（本机验证 9.1.1） | 单元 + 契约 + 集成三层 |
+| 测试 | pytest 8+（本机验证 9.1.1） | 单元 + 契约 + 集成 + 对抗四层；API 用进程内 ASGI 客户端（httpx），不需要端口 |
 | 包管理 | uv（建虚拟环境与安装）；锁文件是 `requirements.lock` | 仓库未提交 `uv.lock`，依赖锁定以 `requirements.lock` 为准，CI 从它安装 |
-| CI | GitHub Actions | `.github/workflows/phase-6.yml`（Phase 0–4 重放、AST 证据重放、验证器注册表/探针/闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件/支持矩阵/闭环、仓库一致性、凭据扫描） |
+| CI | GitHub Actions | `.github/workflows/phase-7.yml`（Phase 0–4 重放、AST 证据重放、验证器注册表/探针/闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件/支持矩阵/闭环、API 自检/OpenAPI 快照/API 闭环、仓库一致性、凭据扫描） |
 | 代码验证器 | 标准库 ast + 外部工具（Ruff / mypy / pytest 均由探针发现，不是包依赖） | Phase 5：注册表与项目档案是数据（`validation/`），证据带版本与配置哈希，缺工具即失败关闭 |
 
 Phase 0–4 明确不引入：LangGraph、向量数据库、FastAPI、MCP、Agent SDK 与任何 LLM 调用。

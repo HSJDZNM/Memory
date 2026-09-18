@@ -91,10 +91,13 @@ def conformance_evidence(_event: AgentEvent, context: Any) -> EvidenceBundle:
 
 
 def conformance_enforcer(adapter: Adapter, *, workspace: Path, state_root: Path) -> Any:
-    """为已接线的完整 Adapter 构造真实 Phase 4 pre-check；缺配置即返回 None。"""
+    """为**已接线的完整 Adapter** 构造真实 Phase 4 pre-check；缺配置即返回 None。
 
-    if adapter.agent_id != "dsh":
-        return None
+    判据是"能力与配置"而不是"它是不是 dsh"：任何 Adapter 只要声明了工具注册表与已审核哈希，
+    就该走**同一条**受控执行链路。写成"只有 dsh 才有 Phase 4"会让第二个接入的 Agent
+    要么永久拿不到治理，要么被迫复制一份桥接代码——两者都会制造第二套语义。
+    """
+
     if adapter.registry_path is None or adapter.registry_approved_path is None:
         return None
     from adapters.dsh.enforcement import EnforcementBridge

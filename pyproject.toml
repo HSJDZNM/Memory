@@ -13,6 +13,10 @@ authors = [{ name = "Memory repository maintainers" }]
 dependencies = [
   "pydantic>=2.9,<3",
   "PyYAML>=6.0,<7",
+  # Phase 7 的传输层依赖：核心（policy / retrieval / validators / enforcement /
+  # adapters）刻意不依赖它们，只有 policy_api 的 HTTP 应用需要。
+  "fastapi>=0.110,<1",
+  "uvicorn>=0.27,<1",
 ]
 
 [project.optional-dependencies]

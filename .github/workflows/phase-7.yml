@@ -1,4 +1,4 @@
-name: phase-6
+name: phase-7
 
 on:
   push:
@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  phase-6:
-    name: Phase 6 tests (python 3.13)
+  phase-7:
+    name: Phase 7 tests (python 3.13)
     runs-on: ubuntu-latest
     env:
       # 本项目不把 src/ 装进 site-packages：CI 与本地都用同一条路径找到包。
@@ -245,5 +245,59 @@ jobs:
       - name: Multi-agent closed loop
         run: .venv/bin/python tools/agent_loop.py
 
-      - name: Phase 6 acceptance evidence
+      # Phase 7：装配 / readiness / 传输契约自检（配置、租户、规则集、索引、验证器、观测日志）
+      - name: Policy API self-check
+        run: .venv/bin/python -m policy_api.cli self-check
+
+      # Phase 7：传输契约快照必须与实现一致（漂移即退出 1；改契约要显式 --write 并评审）
+      - name: Policy API contract snapshot
+        run: .venv/bin/python -m policy_api.cli openapi --check
+
+      # Phase 7：请求体必须拒绝未发布字段；未认证与未知版本必须被拒；readiness 必须为 ready
+      - name: Policy API ASGI contract
+        run: |
+          .venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from policy_api.testing import build_runtime, make_client
+
+          root = Path.cwd()
+          runtime = build_runtime(root / "api" / "policy-api.yaml", root=root)  # 仓库公开的演示令牌
+          client = make_client(runtime)
+          # local-dev-token 是仓库里公开的演示令牌（sha256 见 tests/fixtures/api/README.md），
+          # 不是真实凭据，也不指向任何真实系统。
+          heads = {"Authorization": "Bearer local-dev-token"}  # secret-scan: allow（演示令牌）
+          body = {
+              "api_version": "1.0",
+              "request_id": "ci:api-1",
+              "tenant": "local-dev",
+              "principal": {"subject": "ci", "roles": ["developer"]},
+              "context": {"file": "examples/bad_controller.py", "layer": "controller"},
+          }
+          ok = client.post("/v1/policy/evaluate", json=body, headers=heads)
+          assert ok.status_code == 200, ok.text
+          assert ok.json()["decision"]["schema_version"] == "1.0", ok.text
+          unknown = client.post(
+              "/v1/policy/evaluate", json={**body, "surprise": 1}, headers=heads
+          )
+          assert unknown.status_code == 400, unknown.text
+          assert unknown.json()["error"]["code"] == "body_invalid", unknown.text
+          version = client.post(
+              "/v1/policy/evaluate", json={**body, "api_version": "9.9"}, headers=heads
+          )
+          assert version.status_code == 400, version.text
+          anon = client.post("/v1/policy/evaluate", json=body)
+          assert anon.status_code == 401, anon.text
+          ready = client.get("/v1/health/ready")
+          assert ready.status_code == 200 and ready.json()["state"] == "ready", ready.text
+          print("api contract ok:", json.dumps(ok.json()["summary"], ensure_ascii=False))
+          PY
+
+      # Phase 7：API 闭环（真端口）：本地与 API 决定一致 / 超时与不可达都不 allow /
+      # 幂等 / 跨租户隔离 / readiness 反映真实依赖 / 观测日志可锚定
+      - name: Policy API closed loop
+        run: .venv/bin/python tools/api_loop.py
+
+      - name: Phase 7 acceptance evidence
         run: .venv/bin/python tools/phase_evidence.py

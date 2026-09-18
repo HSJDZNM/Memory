@@ -2,7 +2,8 @@
 
 本目录将原先的单篇大型架构文档拆成可独立阅读、实施和验收的文档集。内容同时参考了共享对话“设计规范 RAG 架构”和仓库内已有的工程规范镜像。
 
-> 实施进度：**Phase 0 至 Phase 5 已完成；Phase 6 的仓库实现已完成、产品验收未完全结束**。
+> 实施进度：**Phase 0 至 Phase 5 已完成；Phase 6 与 Phase 7 的仓库实现已完成，
+> 其中 Phase 6 的产品验收（第二真实 Agent）仍待外部环境**。
 > Phase 0 选定 Python 技术栈并落地了依赖锁文件、
 > 根 README 命令与 CI；Phase 1 落地了上下文规范化、Scope Matcher、严重级别决策与带版本的决策协议；
 > Phase 2 落地了 dsh Adapter 与 pre-execute Hook，并在受控沙箱里跑通了"bad 编辑被阻断、good 编辑放行一次"的真实闭环；
@@ -14,8 +15,11 @@
 > 测试验证器与流水线聚合：ARCH-001 不再需要调用方声明依赖，"解析失败"也不等于"没有依赖"。
 > Phase 6 已落地规范事件、能力声明、运行时隔离、Phase 4/5 写链门禁与一致性套件；当前真实产品
 > 只有 dsh，另外两个消费者是合成协议夹具，第二真实 Agent 接入仍待有相应环境时验证。
+> Phase 7 已把核心能力服务化：版本化 DTO 与 OpenAPI 快照、Bearer 认证与租户/项目隔离、
+> 墙钟预算与幂等台账、请求级观测与**可对外锚定的摘要链**；API 只增加部署与信任边界，
+> 判定仍然只有 `policy.engine.evaluate` 一条路径（本地与经 API 的决定逐字节一致，由闭环证明）。
 > 实施记录见对应阶段文档末尾的“实施记录”小节，实际命令以根 `README.md` 为准。
-> 尚未实施的阶段（Phase 7 起），其命令与目录仍是目标接口，不表示现在已经可执行。
+> 尚未实施的阶段（Phase 8），其命令与目录仍是目标接口，不表示现在已经可执行。
 
 ## 阅读顺序
 
@@ -39,7 +43,7 @@
 | [Phase 4](phases/phase-4-tool-enforcement.md) | Tool Enforcement | Tool Registry、Pre-check、受控执行、Post-check、审计链 |
 | [Phase 5](phases/phase-5-code-validators.md) | 代码验证器 | AST、依赖、Lint、类型与测试证据（**已完成**：证据协议 + 流水线 + 失败关闭） |
 | [Phase 6](phases/phase-6-multi-agent-adapters.md) | 多 Agent Adapter | 仓库实现完成：规范事件、能力声明、写链门禁与一致性套件；第二真实 Agent 产品验证待完成 |
-| [Phase 7](phases/phase-7-policy-api.md) | Policy API | 版本化 API、鉴权、隔离、可观测性 |
+| [Phase 7](phases/phase-7-policy-api.md) | Policy API | **已完成**：版本化 DTO 与 OpenAPI 快照、Bearer 认证、租户/项目隔离、预算与幂等、观测与锚定；核心库仍可独立运行 |
 | [Phase 8](phases/phase-8-langgraph-orchestration.md) | LangGraph | 可恢复的上层编排消费者 |
 
 原文把路线称为“八个阶段”，但实际编号为 Phase 0 至 Phase 8。本次统一为**九个阶段**，不再混用口径。

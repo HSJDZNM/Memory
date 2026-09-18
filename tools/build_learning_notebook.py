@@ -42,6 +42,7 @@ TOOLS_DIR = REPO_ROOT / "tools"
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 from phase6_cells import PHASE_6_CELLS, check_phase_6_structure  # noqa: E402
+from phase7_cells import PHASE_7_CELLS, check_phase_7_structure  # noqa: E402
 
 
 def _dedent_cells(cells):
@@ -67,6 +68,7 @@ def _dedent_cells(cells):
 
 
 PHASE_6_CELLS = _dedent_cells(PHASE_6_CELLS)
+PHASE_7_CELLS = _dedent_cells(PHASE_7_CELLS)
 
 KERNELSPEC = {
     "display_name": "Python 3",
@@ -6468,6 +6470,12 @@ PHASES: Mapping[str, PhaseNotebook] = {
         title="多 Agent Adapter",
         cells=tuple(PHASE_6_CELLS),
         structure_check=check_phase_6_structure,
+    ),
+    "phase-7": PhaseNotebook(
+        slug="phase-7",
+        title="Policy API",
+        cells=tuple(PHASE_7_CELLS),
+        structure_check=check_phase_7_structure,
     ),
 }
 

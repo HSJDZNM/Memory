@@ -1,0 +1,101 @@
+# Engineering Policy Platform · Policy API 部署配置（数据，不是代码）
+#
+# 每条边界都在这里显式声明：
+#   - 租户：规则目录 + 项目根 + （可选）检索索引与验证器配置；
+#   - 客户端：令牌的 sha256 + 允许的租户/项目/角色；
+#   - 预算：每条路由的墙钟上限，超时返回明确错误，绝不伪造 allow。
+#
+# 令牌**只以 sha256 形式**出现。生成方式：
+#   echo <token> | python -m policy_api.cli clients --hash
+# 这份配置里的三个令牌（local-dev-token / dsh-agent-token / ops-monitor-token）是**演示值**，
+# 同时写在 tests/fixtures/api/README.md 里；它们不是真实凭据，也不指向任何真实系统。
+# tools/secret_scan.py 会看着这条线：配置里出现明文一律被 ConfigError 拒绝。
+schema_version: "1.0"
+service_name: engineering-policy-platform
+deployment: local
+base_url: http://127.0.0.1:8088
+
+limits:
+  max_request_bytes: 65536
+  max_response_bytes: 262144
+  max_context_bytes: 32768
+  max_prompt_chars: 8000
+  # 慢客户端不能把工作线程占满：超过上限直接 503 policy_busy，而不是无限排队。
+  max_concurrency: 8
+
+budgets:
+  evaluate_ms: 2000
+  retrieve_ms: 2000
+  validate_ms: 10000
+
+rate_limit:
+  capacity: 60
+  refill_per_second: 10.0
+
+# 幂等台账保留时长（秒）：0 表示永不过期（不推荐）。
+idempotency_ttl_seconds: 900
+
+audit:
+  enabled: true
+  # 观测日志：追加写 JSONL，密钥 / 绝对路径 / 控制字符在写入前脱敏。
+  path: .tmp/phase-7-api/audit.jsonl
+
+# 允许读取 /v1/ops/metrics 的客户端（也可以用 roles: [ops]）。
+metrics_clients:
+  - ops-monitor
+
+tenants:
+  # 本地开发租户：直接对仓库自身的规则与示例文件判定。
+  - tenant_id: local-dev
+    display_name: 本地开发（仓库自身）
+    project: demo-shop
+    project_root: .
+    rules_root: .
+    rules:
+      - policies
+    validation_root: .
+    audit_log: .tmp/phase-7-api/tenants/local-dev/audit.jsonl
+    # 检索需要离线建好的索引（python -m retrieval.cli index）；未配置即"该租户未启用检索"，
+    # 不是"检索降级为猜"。
+    # retrieval:
+    #   enabled: true
+    #   corpus: knowledge/corpus.yaml
+    #   database: .tmp/retrieval/index.sqlite3
+    #   expansion: knowledge/query_expansion.yaml
+
+  # Phase 5 夹具项目的租户：验证器闭环与 API 契约测试在这里跑。
+  # 所有相对路径都以仓库根为锚（不写 \"./\" 也按仓库根解析；绝对路径按原样使用）。
+  - tenant_id: fixture-shop
+    display_name: 验证器夹具项目
+    project: fixture-shop
+    project_root: tests/fixtures/validators/project
+    rules_root: .
+    rules:
+      - policies
+      - tests/fixtures/api/rules
+    validation_root: .
+    validators: validation/validators.yaml
+    audit_log: .tmp/phase-7-api/tenants/fixture-shop/audit.jsonl
+
+clients:
+  - client_id: local-dev
+    display_name: 本地开发客户端
+    # sha256("local-dev-token")
+    token_sha256: 0cd48eed49739dfdd99efaef37d251aae5a80866e5954763c6597943fff5ce9b
+    tenants: [local-dev, fixture-shop]
+    roles: [developer]
+    projects: [demo-shop, fixture-shop]
+
+  - client_id: dsh-agent
+    display_name: dsh Agent（经 API 判定）
+    token_sha256: 8f063aaf39450bf14d4de6b09d0817e586e05d1d5f56beafcd544176afd510f2
+    tenants: [fixture-shop]
+    roles: [developer]
+    projects: [fixture-shop]
+
+  - client_id: ops-monitor
+    display_name: 运维观测
+    token_sha256: e88293319d3821a760e1b29824c9dd51e8e5256c4737c3e079177fc9988c8a6f
+    tenants: [local-dev, fixture-shop]
+    roles: [ops]
+    projects: []

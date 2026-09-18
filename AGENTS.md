@@ -4,7 +4,7 @@
 
 ## 仓库现状
 
-仓库已绑定 Python 技术栈（见下文），完成 Engineering Policy Platform 的 **Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5**，并完成 Phase 6 的仓库实现；Phase 6 的第二真实 Agent 产品验证仍待外部环境：
+仓库已绑定 Python 技术栈（见下文），完成 Engineering Policy Platform 的 **Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5**，并完成 Phase 6 / Phase 7 的仓库实现；Phase 6 的第二真实 Agent 产品验证仍待外部环境：
 
 - 可运行：根 `README.md` 中的安装、测试、CLI、Hook 自检、沙箱闭环、性能基线、检索索引与评测命令均已实际验证；
 - 有规则目录 `policies/`、核心源码 `src/policy/`（models / context / scope / engine / loader / check）、
@@ -13,7 +13,7 @@
   能力声明是数据 `adapters/`（每个 Agent 一份 manifest + adapter 配置 + 事件样本 + `approved.json` 已审核哈希）、
   检索层 `src/retrieval/`、语料清单 `knowledge/corpus.yaml`、
   受控执行层 `src/enforcement/`、工具注册表 `registry/`、
-  测试 `tests/{unit,contract,integration,security}` 与 CI `.github/workflows/phase-6.yml`；
+  测试 `tests/{unit,contract,integration,security}` 与 CI `.github/workflows/phase-7.yml`；
 - Phase 1 的决策协议为 `SCHEMA_VERSION = "1.0"`，快照在 `tests/fixtures/decisions/`；
 - Phase 2 的 Hook 契约、脱敏事件 fixture 与失败关闭设计分别在 `src/adapters/dsh/README.md`、
   `tests/fixtures/agent_events/dsh/` 与 `docs/engineering-policy-platform/phases/phase-2-dsh-adapter.md` 的实施记录里；
@@ -39,7 +39,13 @@
   探针夹具 `tests/fixtures/agent_events/workspace/`、多 Agent 闭环 `tools/agent_loop.py`；
   当前只有 dsh 是真实产品接入，`generic-json` / `legacy-post-only` 是合成协议消费者；
   实施记录见 `docs/engineering-policy-platform/phases/phase-6-multi-agent-adapters.md`；
-- 下一阶段计划见 `docs/engineering-policy-platform/phases/`（下一步是 Phase 7 Policy API）。
+- Phase 7 的服务化层 `src/policy_api/`（models / errors / config / auth / services / runtime /
+  timeout / idempotency / observability / ops / app / contract / cli / testing / probe）、
+  部署数据与契约快照 `api/`（policy-api.yaml + openapi.json，说明见 `api/README.md`）、
+  API 闭环 `tools/api_loop.py`、测试夹具 `tests/fixtures/api/`；
+  **核心层不依赖 Web 框架**，只有 `policy_api` 的 HTTP 应用依赖 fastapi/uvicorn；
+  实施记录见 `docs/engineering-policy-platform/phases/phase-7-policy-api.md`；
+- 下一阶段计划见 `docs/engineering-policy-platform/phases/`（下一步是 Phase 8 LangGraph 编排）。
 
 **改动前先读 `README.md` 与实际的 `git ls-files`，不要假设未登记的目录或框架存在。**
 
@@ -80,14 +86,14 @@
 | 项 | 选择 | 位置 |
 | --- | --- | --- |
 | 语言 | Python ≥ 3.11 | `src/policy/`（src 布局） |
-| 依赖清单 | pydantic 2、PyYAML 6；dev: pytest 8+ | `pyproject.toml` |
+| 依赖清单 | pydantic 2、PyYAML 6、FastAPI 0.1x + uvicorn（Phase 7 传输层）；dev: pytest 8+ | `pyproject.toml` |
 | 依赖锁定 | `requirements.in`（声明）+ `requirements.lock`（固定直接依赖版本，CI 从它安装）；仓库不提交 `uv.lock` | 仓库根目录 |
 | 测试 | pytest：`tests/unit`、`tests/contract`、`tests/integration`、`tests/security` | `pytest.ini`、`tests/conftest.py` |
 | 检索 | SQLite FTS5（标准库 sqlite3；向量检索是可替换端口，本阶段未采纳） | `src/retrieval/`、`knowledge/corpus.yaml` |
-| CI | GitHub Actions | `.github/workflows/phase-6.yml`（含 Phase 0–4 的重放用例、dsh 接线自检、检索基线、注册表审核、受控执行闭环、AST 证据重放、验证器注册表/探针/闭环、多 Agent 一致性套件/支持矩阵/闭环） |
+| CI | GitHub Actions | `.github/workflows/phase-7.yml`（含 Phase 0–4 的重放用例、dsh 接线自检、检索基线、注册表审核、受控执行闭环、AST 证据重放、验证器注册表/探针/闭环、多 Agent 一致性套件/支持矩阵/闭环、Policy API 自检/OpenAPI 快照/ASGI 契约测试/API 闭环） |
 | 受控执行 | 标准库 + pydantic；注册表是 YAML 数据，台账与审计链是追加写 JSONL | `src/enforcement/`、`registry/` |
 | 代码验证器 | 标准库 `ast` + 外部工具探针（Ruff / mypy / pytest 不进核心依赖） | `src/validators/`、`validation/` |
-| 脚本 | 锁文件生成、阶段证据、性能基线、检索评测、dsh 沙箱闭环、受控执行闭环、多 Agent 闭环、notebook 生成与校验、临时文件清理 | `tools/*.py`（见 `tools/README.md`） |
+| 脚本 | 锁文件生成、阶段证据、性能基线、检索评测、dsh 沙箱闭环、受控执行闭环、多 Agent 闭环、API 闭环、notebook 生成与校验、临时文件清理 | `tools/*.py`（见 `tools/README.md`） |
 
 安装、测试、运行命令以根 `README.md` 为准，且必须保持可执行。
 
@@ -202,6 +208,27 @@
     `EvidenceBundle`、Policy allow 与 Phase 4 enforcer/pre-check，缺任一项都失败关闭；callback 只能在
     原子 claim + policy + pre-check 之后调用一次，callback 异常必须 block；PostToolUse 只做 post-check，
     绝不能再次调用 callback；runtime / trace / enforcement 台账损坏、未知版本或不可读写都不得忽略。
+30. **API 是传输边界，不是第二份业务逻辑**：`src/policy_api/` 只做"协议 → 领域模型 → 协议"，
+    判定仍只有 `policy.engine.evaluate` 一条路径（本地与经 API 的决定必须逐字节一致，
+    `tools/api_loop.py` 会比对）；`src/policy/` 与其余核心层**禁止导入 Web 框架**
+    （`python -m policy_api.cli self-check` 与契约测试都会查）。
+31. API 的 DTO 与领域模型分开，且两套版本各自演进：`API_SCHEMA_VERSION`（传输协议）与
+    `policy.models.SCHEMA_VERSION` / `POLICY_VERSION`（决策协议与世代）**无关**；
+    后者只能从核心取值，`policy_api` 不许自己算一个；删字段或改语义 = 新 API 版本，
+    改完必须 `python -m policy_api.cli openapi --write` 显式更新契约快照（`--check` 是 CI 门禁）。
+32. API 的三条信任规则：**租户只来自令牌**（请求体里的 tenant 只是提示，越权即拒绝）、
+    **客户端不能自带证据或决策**（证据只由服务端验证器流水线产出，检索的 `decision_ref`
+    只能指向本服务算过的 `request_id`）、**服务身份不替用户扩权**（认证成功 ≠ 允许某个工具，
+    业务动作仍由 Policy Engine 判定）。
+33. API 失败关闭没有例外：未知 `api_version`、未知字段、未知操作枚举、未认证、跨租户、
+    超预算、限流、依赖不可用（规则集 / 索引 / 验证器）、观测日志不可写，全部返回结构化错误码；
+    **超时与"服务不可达"绝不等于 allow**（504 / 503，错误码由 `errors.STATUS_BY_CODE` 推导，
+    调用方不能自定义 HTTP 状态）；错误响应不得泄露某个资源是否存在。
+34. API 的观测与锚定：请求级 JSONL 只记摘要（request_id / trace / 主体 / 租户 / 规则集哈希 /
+    索引版本 / Decision / 耗时 / 错误分类），密钥、绝对路径与控制字符在写入前脱敏，
+    单条超限即失败关闭；指标端点只对运维角色或 `metrics_clients` 开放。
+    `python -m policy_api.cli seal --out <锚>` 把摘要链末值发布到日志之外，
+    `--verify` 能发现删尾或改写——**锚必须与日志分离存放**，它仍然不是防篡改日志。
 
 ## 临时文件与产物
 

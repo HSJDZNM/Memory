@@ -2,4 +2,8 @@
 # 与 pyproject.toml 的 [project] dependencies / [project.optional-dependencies] dev 保持一致。
 pydantic>=2.9,<3
 PyYAML>=6.0,<7
+# Phase 7：Policy API 的传输层。契约（DTO / 错误码 / 预算 / 幂等）不依赖框架，
+# 框架只负责把它接到线上；因此这里是**唯一**被 Web 框架污染的一层。
+fastapi>=0.110,<1
+uvicorn>=0.27,<1
 pytest>=8.3,<10

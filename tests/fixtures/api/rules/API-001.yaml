@@ -1,0 +1,18 @@
+id: API-001
+version: 1
+name: api-service-docstring
+description: API 租户示例规则：service 层的 Python 文件必须有模块文档字符串。
+scope:
+  language: python
+  layer: service
+severity: error
+enforcement:
+  type: deterministic
+  checker: missing_docstring
+rule:
+  missing_docstring:
+    targets: [module]
+message: service 层的模块缺少文档字符串；API 是一次传输边界，规则语义与本地 CLI 完全一致。
+source:
+  kind: project-policy
+  path: tests/fixtures/api/rules/API-001.yaml

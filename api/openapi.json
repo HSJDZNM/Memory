@@ -1,0 +1,1290 @@
+{
+  "components": {
+    "schemas": {
+      "ContextDTO": {
+        "description": "上下文维度（OpenAPI 组件；运行时仍由 ContextDTO 校验）。",
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Agent"
+          },
+          "dependencies": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dependencies"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "File"
+          },
+          "file_operation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "File Operation"
+          },
+          "git_diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Git Diff"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Language"
+          },
+          "layer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Layer"
+          },
+          "module": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Module"
+          },
+          "operation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Operation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Task"
+          }
+        },
+        "title": "ContextEnvelope",
+        "type": "object"
+      },
+      "Credentials": {
+        "additionalProperties": false,
+        "description": "认证凭据。**绝不**写进日志：观测层只记 sha256 前 12 位。",
+        "properties": {
+          "scheme": {
+            "default": "bearer",
+            "title": "Scheme",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 512,
+            "minLength": 8,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "Credentials",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "audit_unavailable",
+                  "body_invalid",
+                  "body_too_large",
+                  "context_invalid",
+                  "evaluate_timeout",
+                  "evidence_unavailable",
+                  "forbidden",
+                  "idempotency_key_conflict",
+                  "idempotency_key_missing",
+                  "idempotency_unavailable",
+                  "internal_error",
+                  "knowledge_unavailable",
+                  "method_not_allowed",
+                  "metrics_forbidden",
+                  "not_found",
+                  "policy_busy",
+                  "policy_unavailable",
+                  "project_not_allowed",
+                  "query_invalid",
+                  "rate_limited",
+                  "request_budget_exceeded",
+                  "retrieve_timeout",
+                  "rule_set_unavailable",
+                  "schema_version_missing",
+                  "schema_version_unknown",
+                  "target_invalid",
+                  "tenant_not_found",
+                  "token_expired",
+                  "token_scope_mismatch",
+                  "unauthenticated",
+                  "unsupported_media_type",
+                  "validate_timeout",
+                  "validator_unavailable"
+                ],
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "retryable": {
+                "type": "boolean"
+              },
+              "trace_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "retryable"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
+      "EvaluateRequest": {
+        "description": "POST /v1/policy/evaluate 的请求体（结构见 policy_api.models.EvaluateRequest）。",
+        "properties": {
+          "api_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Api Version"
+          },
+          "budget_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Budget Ms"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextDTO"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "credentials": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Credentials"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Idempotency Key"
+          },
+          "include_evidence": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Include Evidence"
+          },
+          "principal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalDTO"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
+          },
+          "tenant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tenant"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trace Id"
+          }
+        },
+        "title": "EvaluateRequest",
+        "type": "object"
+      },
+      "Operation": {
+        "description": "被治理的操作类型（受控枚举：未知操作必须报错，不得降级为\"无操作\"）。",
+        "enum": [
+          "read",
+          "create",
+          "edit",
+          "delete",
+          "execute"
+        ],
+        "title": "Operation",
+        "type": "string"
+      },
+      "PrincipalDTO": {
+        "description": "主体声明（OpenAPI 组件）。",
+        "properties": {
+          "roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Roles"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subject"
+          }
+        },
+        "title": "PrincipalEnvelope",
+        "type": "object"
+      },
+      "RetrieveRequest": {
+        "description": "POST /v1/knowledge/retrieve 的请求体。",
+        "properties": {
+          "api_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Api Version"
+          },
+          "budget_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Budget Ms"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextDTO"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "credentials": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Credentials"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "decision_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Decision Ref"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Idempotency Key"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "principal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalDTO"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Query"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
+          },
+          "tenant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tenant"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trace Id"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace"
+          }
+        },
+        "title": "RetrieveRequest",
+        "type": "object"
+      },
+      "ValidationRequest": {
+        "description": "POST /v1/validation/evaluate 的请求体。",
+        "properties": {
+          "api_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Api Version"
+          },
+          "budget_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Budget Ms"
+          },
+          "changed": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Changed"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextDTO"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "credentials": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Credentials"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Idempotency Key"
+          },
+          "include_decision": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Include Decision"
+          },
+          "only": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Only"
+          },
+          "principal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrincipalDTO"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Target"
+          },
+          "tenant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tenant"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trace Id"
+          }
+        },
+        "title": "ValidationRequest",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "summary": "把规则、检索与验证能力服务化；判定仍由核心 Policy Engine 做。",
+    "title": "Engineering Policy Platform API",
+    "version": "1.0",
+    "x-api-schema-version": "1.0",
+    "x-decision-schema-version": "1.0",
+    "x-policy-generation": "phase-1",
+    "x-service-version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/health/live": {
+      "get": {
+        "description": "进程活着：不加载规则、不碰索引、不读日志——那些是 readiness 的事。",
+        "operationId": "healthLive",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Live",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/health/ready": {
+      "get": {
+        "description": "能安全提供策略服务：规则 / 索引 / 验证器 / 观测日志逐项检查。",
+        "operationId": "healthReady",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "readiness 报告（state 是权威字段）"
+          },
+          "503": {
+            "description": "readiness 报告（state 是权威字段）"
+          }
+        },
+        "summary": "Ready",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/knowledge/retrieve": {
+      "post": {
+        "description": "检索离线规范并组装带来源的 Engineering Context。",
+        "operationId": "knowledgeRetrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "_route",
+            "required": false,
+            "schema": {
+              "default": "retrieve",
+              "title": " Route",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetrieveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "决策 / 检索结果 / 验证证据（载荷是受控 JSON）"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "400：结构化错误（见 ErrorResponse）"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "401：结构化错误（见 ErrorResponse）"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "403：结构化错误（见 ErrorResponse）"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "404：结构化错误（见 ErrorResponse）"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "409：结构化错误（见 ErrorResponse）"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "413：结构化错误（见 ErrorResponse）"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "415：结构化错误（见 ErrorResponse）"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "429：结构化错误（见 ErrorResponse）"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "500：结构化错误（见 ErrorResponse）"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "503：结构化错误（见 ErrorResponse）"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "504：结构化错误（见 ErrorResponse）"
+          }
+        },
+        "summary": "Retrieve",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/v1/ops/metrics": {
+      "get": {
+        "operationId": "opsMetrics",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "200：结构化错误（见 ErrorResponse）"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "403：结构化错误（见 ErrorResponse）"
+          }
+        },
+        "summary": "Metrics",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/policy/evaluate": {
+      "post": {
+        "description": "对固定上下文给出 allow / allow_with_warnings / block。",
+        "operationId": "policyEvaluate",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "_route",
+            "required": false,
+            "schema": {
+              "default": "evaluate",
+              "title": " Route",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "决策 / 检索结果 / 验证证据（载荷是受控 JSON）"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "400：结构化错误（见 ErrorResponse）"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "401：结构化错误（见 ErrorResponse）"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "403：结构化错误（见 ErrorResponse）"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "404：结构化错误（见 ErrorResponse）"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "409：结构化错误（见 ErrorResponse）"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "413：结构化错误（见 ErrorResponse）"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "415：结构化错误（见 ErrorResponse）"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "429：结构化错误（见 ErrorResponse）"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "500：结构化错误（见 ErrorResponse）"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "503：结构化错误（见 ErrorResponse）"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "504：结构化错误（见 ErrorResponse）"
+          }
+        },
+        "summary": "Evaluate",
+        "tags": [
+          "policy"
+        ]
+      }
+    },
+    "/v1/validation/evaluate": {
+      "post": {
+        "description": "产出验证器证据（可选顺带判定）。",
+        "operationId": "validationEvaluate",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "_route",
+            "required": false,
+            "schema": {
+              "default": "validate",
+              "title": " Route",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "决策 / 检索结果 / 验证证据（载荷是受控 JSON）"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "400：结构化错误（见 ErrorResponse）"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "401：结构化错误（见 ErrorResponse）"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "403：结构化错误（见 ErrorResponse）"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "404：结构化错误（见 ErrorResponse）"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "409：结构化错误（见 ErrorResponse）"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "413：结构化错误（见 ErrorResponse）"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "415：结构化错误（见 ErrorResponse）"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "429：结构化错误（见 ErrorResponse）"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "500：结构化错误（见 ErrorResponse）"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "503：结构化错误（见 ErrorResponse）"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "504：结构化错误（见 ErrorResponse）"
+          }
+        },
+        "summary": "Validate",
+        "tags": [
+          "validation"
+        ]
+      }
+    }
+  }
+}

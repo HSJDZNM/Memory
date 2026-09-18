@@ -29,7 +29,7 @@ for directory in (SRC_DIR, TOOLS_DIR):
     if str(directory) not in sys.path:
         sys.path.insert(0, str(directory))
 
-CURRENT_PHASE = 6
+CURRENT_PHASE = 7
 SUITES = ("tests/unit", "tests/contract", "tests/integration", "tests/security")
 POLICIES = ("policies",)
 ARTIFACT_DIR = REPO_ROOT / ".tmp" / "artifacts"
@@ -38,6 +38,7 @@ RETRIEVAL_BASELINE = ARTIFACT_DIR / "phase-3-retrieval-baseline.json"
 ENFORCEMENT_RESULT = ARTIFACT_DIR / "phase-4-enforcement-result.json"
 VALIDATOR_RESULT = ARTIFACT_DIR / "phase-5-validators-result.json"
 AGENT_RESULT = ARTIFACT_DIR / "phase-6-agents-result.json"
+API_RESULT = ARTIFACT_DIR / "phase-7-api-result.json"
 
 
 def _git(*args: str) -> str:
@@ -511,6 +512,108 @@ def agent_adapters() -> dict[str, object]:
     return payload
 
 
+def policy_api() -> dict[str, object]:
+    """Phase 7 服务化层的可重放事实：契约版本、租户与客户端、自检与闭环结论。
+
+    只记录元数据：版本、租户/客户端**数量**、契约哈希、自检结论与闭环场景名，
+    不记录任何一次请求的载荷、令牌或决策内容。
+    """
+
+    from policy.models import POLICY_VERSION, SCHEMA_VERSION
+    from policy_api import API_SCHEMA_VERSION
+    from policy_api.cli import default_config_path
+    from policy_api.config import load_api_config
+    from policy_api.contract import self_check
+
+    config_path = default_config_path(REPO_ROOT)
+    payload: dict[str, object] = {"config": config_path.name}
+    if not config_path.is_file():
+        payload["status"] = "config-missing"
+        return payload
+    try:
+        config = load_api_config(config_path, root=REPO_ROOT)
+    except Exception as error:  # noqa: BLE001 - 配置不合法本身就是证据的一部分
+        payload["status"] = "config-invalid"
+        payload["detail"] = type(error).__name__
+        return payload
+
+    snapshot = REPO_ROOT / "api" / "openapi.json"
+    payload.update(
+        {
+            "status": "ok",
+            "api_schema_version": API_SCHEMA_VERSION,
+            "decision_schema_version": SCHEMA_VERSION,
+            "policy_generation": POLICY_VERSION,
+            "service_name": config.service_name,
+            "deployment": config.deployment,
+            "budgets": {
+                "evaluate_ms": config.budgets.evaluate_ms,
+                "retrieve_ms": config.budgets.retrieve_ms,
+                "validate_ms": config.budgets.validate_ms,
+            },
+            "limits": {
+                "max_request_bytes": config.limits.max_request_bytes,
+                "max_response_bytes": config.limits.max_response_bytes,
+                "max_concurrency": config.limits.max_concurrency,
+            },
+            "rate_limit": None
+            if config.rate_limit is None
+            else {
+                "capacity": config.rate_limit.capacity,
+                "refill_per_second": config.rate_limit.refill_per_second,
+            },
+            "tenants": [
+                {
+                    "tenant_id": item.tenant_id,
+                    "rules": list(item.rules),
+                    "retrieval": item.retrieval is not None and item.retrieval.enabled,
+                    "validators": item.validators is not None,
+                }
+                for item in config.tenants
+            ],
+            "clients": len(config.clients),
+            "openapi_snapshot": {
+                "path": snapshot.relative_to(REPO_ROOT).as_posix(),
+                "sha256": (
+                    "sha256:" + hashlib.sha256(snapshot.read_bytes()).hexdigest()
+                    if snapshot.is_file()
+                    else None
+                ),
+            },
+        }
+    )
+    try:
+        from policy_api.runtime import ApiRuntime
+        from policy_api.testing import runtime_from_config
+
+        runtime: ApiRuntime = runtime_from_config(config, root=REPO_ROOT)
+        report = self_check(runtime)
+        payload["self_check"] = {
+            "ok": report["ok"],
+            "checks": [
+                {"check": item["check"], "ok": item["ok"]} for item in report["checks"]
+            ],
+            "readiness": report["readiness"].get("state"),
+        }
+    except Exception as error:  # noqa: BLE001 - 装配失败也必须被记下来
+        payload["self_check"] = {"ok": False, "detail": type(error).__name__}
+
+    if API_RESULT.is_file():
+        loop = json.loads(API_RESULT.read_text(encoding="utf-8"))
+        payload["closed_loop"] = {
+            "result": loop.get("result"),
+            "workspace": loop.get("workspace"),
+            "readiness": loop.get("readiness"),
+            "scenarios": [
+                {"name": item.get("name"), "passed": item.get("passed")}
+                for item in loop.get("scenarios", [])
+            ],
+        }
+    else:
+        payload["closed_loop"] = {"result": "not-run", "hint": "python tools/api_loop.py"}
+    return payload
+
+
 def performance_baseline() -> dict[str, object]:
     """Phase 1 的匹配性能基线：固定种子、只记录不优化。"""
 
@@ -609,6 +712,7 @@ def main(argv: list[str] | None = None) -> int:
         "enforcement": enforcement(),
         "validators": validators(),
         "agent_adapters": agent_adapters(),
+        "policy_api": policy_api(),
         "test_suite": " + ".join(SUITES),
         "suites": suites,
         "result": "pass" if failures == 0 else "fail",

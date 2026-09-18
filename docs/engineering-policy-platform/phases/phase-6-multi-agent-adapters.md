@@ -117,7 +117,7 @@ Adapter 能力声明至少包含：支持的事件、工具、pre/post hook、�
 | `src/adapters/runtime.py` | 新增：`AgentRuntime`（原子 claim、Phase 5 evidence gate、Policy 判定、Phase 4 pre/post、callback 至多一次、幂等台账、窗口熔断）、`TraceRegistry`（严格读取的 trace 来源表）、`sanitize_message`、受控原因码 `REASON_CODES` |
 | `src/adapters/textfacts.py` | 新增：与协议无关的"变更文本 → 直接依赖"提取（Phase 2 的实现搬到这里，两个 Adapter 共用一份） |
 | `src/adapters/json_adapter.py`、`event_adapter.py`、`dsh_adapter.py` | 新增：三个协议实现；`event_adapter` 是钩子类 Agent 的公共实现（事件名与字段名来自 manifest） |
-| `src/adapters/conformance.py` | 新增：12 个语义场景 + 场景渲染器 + 逐项检查；当前覆盖 dsh 40 项、generic-json 35 项、legacy-post-only 12 项显式不适用，共 87 项 |
+| `src/adapters/conformance.py` | 新增：12 个语义场景 + 场景渲染器 + 逐项检查；当前覆盖 dsh 40 项、generic-json 35 项、legacy-post-only 12 项显式不适用，共 87 项。**Phase 7 变化**：`conformance_enforcer` 的判据从"它是不是 dsh"改成"它有没有声明工具注册表与已审核哈希"——任何接入 Phase 4 的 Adapter 都走同一条链路，第二个接线的 Agent 不必复制一份桥接层 |
 | `src/adapters/loader.py`、`cli.py`、`__main__.py` | 新增：装配（协议 → 实现类）、五条子命令 |
 | `adapters/` | 新增：`dsh` / `generic-json` / `legacy-post-only` 三份 manifest + adapter 配置 + 事件样本 + `approved.json` 已审核清单；fixture 路径一律是**仓库相对路径**（"样本在哪"写在声明里，不允许读取方按 Agent id 去猜） |
 | `tests/fixtures/agent_events/workspace/` | 新增：一致性套件的**探针工作区**（layer 映射与"越界"的真实边界都靠它） |

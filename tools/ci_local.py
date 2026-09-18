@@ -65,6 +65,10 @@ CODE_STEPS = (
     "Adapter support matrix is approved",
     "Adapter event fixtures exist",
     "Multi-agent closed loop",
+    "Policy API self-check",
+    "Policy API contract snapshot",
+    "Policy API ASGI contract",
+    "Policy API closed loop",
     "Performance baseline",
 )
 HANDBOOK_STEPS = (
@@ -75,7 +79,7 @@ RETRIEVAL_STEPS = (
     "Retrieval corpus integrity",
     "Retrieval evaluation baseline",
     "Tool registry must match",
-    "Phase 6 acceptance evidence",
+    "Phase 7 acceptance evidence",
 )
 
 # 改了这些前缀，就要跑对应的那一组。
