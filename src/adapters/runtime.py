@@ -454,8 +454,14 @@ def _resolve_thresholds(
             raise RegistryError(
                 f"Adapter {agent_id!r} 缺少能力声明配置（config）：无法解析熔断阈值"
             )
-        limits[agent_id] = config.max_events_per_window
-        windows[agent_id] = config.window_seconds
+        limits[agent_id] = (
+            DEFAULT_BREAKER_LIMIT
+            if config.max_events_per_window is None
+            else config.max_events_per_window
+        )
+        windows[agent_id] = (
+            DEFAULT_WINDOW_SECONDS if config.window_seconds is None else config.window_seconds
+        )
 
     if breaker_limit is None:
         breaker_limit = _agreed_value(limits, "max_events_per_window")

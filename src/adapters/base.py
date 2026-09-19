@@ -157,8 +157,9 @@ class AdapterConfig(BaseModel):
     # 熔断：同一个 Agent 在一个时间窗口内的受治理事件数上限。
     # 用窗口内的量而不是某个 request_id 的量：Agent 互相触发的循环里
     # request_id 每次都可能不同，按请求计数永远数不到上限。
-    max_events_per_window: int = Field(default=50, gt=0)
-    window_seconds: int = Field(default=60, gt=0)
+    # None 表示配置未声明，由 AgentRuntime 使用公开的模块常数；避免两处复制默认值后漂移。
+    max_events_per_window: Optional[int] = Field(default=None, gt=0)
+    window_seconds: Optional[int] = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _check_rows(self) -> "AdapterConfig":

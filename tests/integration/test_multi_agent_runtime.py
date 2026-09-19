@@ -22,12 +22,18 @@ from pathlib import Path
 
 import pytest
 
-from adapters.base import EnforcementLevel, RegistryError
+from adapters.base import AdapterConfig, EnforcementLevel, RegistryError
 from adapters.conformance import SCENARIOS, run_conformance
 from adapters.dsh.enforcement import EnforcementBridge
 from adapters.loader import load_adapter, load_adapters, load_registry_from_repo
 from adapters.models import EventType
-from adapters.runtime import AgentRuntime, RuntimeLedgerError, TraceRegistry
+from adapters.runtime import (
+    DEFAULT_BREAKER_LIMIT,
+    DEFAULT_WINDOW_SECONDS,
+    AgentRuntime,
+    RuntimeLedgerError,
+    TraceRegistry,
+)
 from enforcement.audit import FileAuditSink
 from enforcement.ledger import EnforcementLedger
 from enforcement.registry import load_registry as load_tool_registry
@@ -484,6 +490,22 @@ def _adapter_config_with(tmp_root: Path, agent_id: str, **updates: int) -> Path:
     return path
 
 
+def _adapter_config_without(tmp_root: Path, agent_id: str, *fields: str) -> Path:
+    """复制真实 adapter.yaml 并删除字段，用来验证运行时的模块默认值。"""
+
+    import yaml
+
+    source = ADAPTERS_ROOT / agent_id / "adapter.yaml"
+    data = yaml.safe_load(source.read_text(encoding="utf-8"))
+    for field in fields:
+        data.pop(field)
+    path = tmp_root / f"{agent_id}-defaults.yaml"
+    path.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8", newline="\n"
+    )
+    return path
+
+
 def test_breaker_thresholds_come_from_the_adapter_declaration(
     rules, registry, tmp_root: Path
 ) -> None:
@@ -549,6 +571,33 @@ def test_explicit_thresholds_win_over_the_declaration(rules, registry, tmp_root:
         breaker_limit=5,
     )
     assert runtime.breaker_limit == 5
+
+
+def test_module_defaults_apply_when_thresholds_are_not_declared(
+    rules, registry, tmp_root: Path
+) -> None:
+    """未声明阈值时才走模块常数，配置模型不能偷偷复制一份同值默认。"""
+
+    adapters = load_adapters(
+        ["generic-json"],
+        root=REPO_ROOT,
+        registry=registry,
+        configs={
+            "generic-json": _adapter_config_without(
+                tmp_root,
+                "generic-json",
+                "max_events_per_window",
+                "window_seconds",
+            )
+        },
+    )
+    config: AdapterConfig = adapters["generic-json"].config
+    assert config.max_events_per_window is None
+    assert config.window_seconds is None
+
+    runtime = AgentRuntime(adapters=adapters, rules=rules, workspace=WORKSPACE)
+    assert runtime.breaker_limit == DEFAULT_BREAKER_LIMIT
+    assert runtime.window_seconds == DEFAULT_WINDOW_SECONDS
 
 
 def test_conflicting_declarations_are_refused(rules, registry, tmp_root: Path) -> None:
