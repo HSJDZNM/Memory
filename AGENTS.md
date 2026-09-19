@@ -218,8 +218,9 @@
     原子 claim + policy + pre-check 之后调用一次，callback 异常必须 block；PostToolUse 只做 post-check，
     绝不能再次调用 callback；runtime / trace / enforcement 台账损坏、未知版本或不可读写都不得忽略。
 30. **API 是传输边界，不是第二份业务逻辑**：`src/policy_api/` 只做"协议 → 领域模型 → 协议"，
-    判定仍只有 `policy.engine.evaluate` 一条路径（本地与经 API 的决定必须逐字节一致，
-    `tools/api_loop.py` 会比对）；`src/policy/` 与其余核心层**禁止导入 Web 框架**
+    判定仍只有 `policy.engine.evaluate` 一条路径（本地与经 API 的决定必须整份相等——
+    决策载荷 JSON 值相等，字段顺序不属于契约）；`tools/api_loop.py` 会比对；
+    `src/policy/` 与其余核心层**禁止导入 Web 框架**
     （`python -m policy_api.cli self-check` 与契约测试都会查）。
 31. API 的 DTO 与领域模型分开，且两套版本各自演进：`API_SCHEMA_VERSION`（传输协议）与
     `policy.models.SCHEMA_VERSION` / `POLICY_VERSION`（决策协议与世代）**无关**；

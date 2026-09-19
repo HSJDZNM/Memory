@@ -310,7 +310,8 @@ uv run python tools/agent_loop.py                                 # 多 Agent �
 
 核心能力可以经 HTTP 服务化，但**判定仍然只有一条路径**：`policy.engine.evaluate`。
 API 只增加部署与信任边界（认证、租户隔离、预算、幂等、观测），不复制一份业务逻辑——
-本地 SDK 与经 API 的决定逐字节一致，这条由闭环工具证明而不是由文档声明。
+本地 SDK 与经 API 的决定整份相等（决策载荷 JSON 值相等；字段顺序不属于契约），
+这条由闭环工具证明而不是由文档声明。
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -335,7 +336,8 @@ uv run python -m policy_api.cli seal --verify .tmp/artifacts/api-anchor.json
 uv run python tools/api_loop.py
 ```
 
-闭环证明八件事：本地引擎与 HTTP API 的决策载荷**逐字节一致**；两个协议消费者
+闭环证明八件事：本地引擎与 HTTP API 的决策载荷**整份相等**（JSON 值相等，字段顺序不属于契约）；
+两个协议消费者
 （`generic-json` 进程内 / `http-api` 经 HTTP）对同一组语义场景走到同一套结论；
 超时返回 504 而不是 allow；策略服务不可达时 Adapter 得到 `policy_unavailable` 的阻断；
 幂等键重放返回原响应且换请求体得到 409；跨租户引用别人的 `decision_ref` 得到 403；
@@ -428,7 +430,7 @@ uv run python tools/policy_bench.py --counts 10 100 1000
 | [Phase 4](docs/learning/phase-4/walkthrough.ipynb) | 工具注册表、参数绑定的授权、受控执行、事后验证与审计链重放 |
 | [Phase 5](docs/learning/phase-5/walkthrough.ipynb) | AST 事实与依赖图、外部工具适配器与失效分类、测试选择、证据 → 判定与失败关闭 |
 | [Phase 6](docs/learning/phase-6/walkthrough.ipynb) | 规范事件、能力声明与支持矩阵、一致性套件、跨 Agent 隔离与循环熔断 |
-| [Phase 7](docs/learning/phase-7/walkthrough.ipynb) | DTO 与领域模型分离、错误码 → 状态码、租户与令牌边界、预算与超时、幂等台账、本地与经 API 的决策逐字节一致 |
+| [Phase 7](docs/learning/phase-7/walkthrough.ipynb) | DTO 与领域模型分离、错误码 → 状态码、租户与令牌边界、预算与超时、幂等台账、本地与经 API 的决策整份相等 |
 | [Phase 8](docs/learning/phase-8/walkthrough.ipynb) | 最小图状态、循环上限、两个引擎跑同一份 spec、checkpoint 与恢复、人工审批、失败关闭表 |
 
 不想开 Jupyter 就运行同内容的纯 Python 版本（`walkthrough.py`）。

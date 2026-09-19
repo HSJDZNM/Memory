@@ -47,7 +47,7 @@ PHASE_7_CELLS: list[tuple[str, str]] = [
       -> 决策载荷原样透出 + 脱敏观测（JSONL / 指标 / 摘要链锚定）
 
 一句话：**API 是传输边界，不是第二份业务逻辑**——同一个上下文经本地 SDK 与经 API
-必须得到逐字节相同的决策载荷（第 7 节会当场断言这一条）。
+必须得到整份相等的决策载荷——JSON 值相等，字段顺序不属于契约（第 7 节会当场断言这一条）。
 
 ## 阅读路线
 
@@ -60,7 +60,7 @@ PHASE_7_CELLS: list[tuple[str, str]] = [
 | 4 | 认证与隔离：令牌 -> 租户/项目边界，失败一律 401 / 403 |
 | 5 | 预算与超时：为什么"超时"不等于 allow |
 | 6 | 幂等台账：同键同摘要返回原响应，同键换请求体 409 |
-| 7 | 进程内走完整链路：本地引擎与 API 的决定逐字节一致 |
+| 7 | 进程内走完整链路：本地引擎与 API 的决定整份相等 |
 | 8 | readiness 与观测：记了什么、没记什么、锚定怎么校验 |
 | 9 | 哪些地方会失败关闭（一张表） |
 
@@ -510,13 +510,14 @@ print('小结：同一个 key 只有一个结论——重放返回原响应，�
       '不是"再算一次"；台账按租户分文件，A 的 key 永远不会命中 B 的台账。')
 """),
     _markdown("""
-## 7. 进程内走完整链路：本地引擎与 API 的决定逐字节一致
+## 7. 进程内走完整链路：本地引擎与 API 的决定整份相等
 
 policy_api.testing.build_runtime + call 在**进程内**调用 ApiRuntime.handle——和 HTTP
 层调的是同一个函数，只是没有 socket。本节要证明三件事：
 
 1. policy.engine.evaluate 算出的决策载荷，与 API 返回的 body["decision"]
-   **逐字节相同**（整份字典相等）——API 只做"协议 -> 领域模型 -> 协议"，不改写核心协议；
+   **整份相等**（整份字典相等）——API 只做"协议 -> 领域模型 -> 协议"，不改写核心协议；
+   这里比的是 **JSON 值**：两侧的序列化入口不同，字段顺序不属于契约；
 2. 失败关闭在真实链路上生效：未知字段 400、未认证 401、伪造 decision_ref 403；
 3. **授权先于可用性**：retrieve 先回答"这次请求有没有资格用那份决策"，再去问
    "语料 / 索引在不在"。所以伪造引用得到 403 forbidden，而合法引用在没有配置索引的
@@ -584,7 +585,7 @@ decision_equal = local_decision == remote_decision
 remote_decision_code = remote_decision['decision']
 violation_rule_ids = [item['rule_id'] for item in remote_decision['violations']]
 print('本地引擎 decision:', local_decision['decision'], '| API decision:', remote_decision['decision'])
-print('整份决策载荷逐字节相同:', decision_equal)
+print('整份决策载荷相等:', decision_equal)
 print()
 
 # 失败关闭：未知字段 / 未认证 / 伪造 decision_ref / 授权通过但依赖不可用
@@ -605,7 +606,7 @@ print('伪造 decision_ref:', forged.status, forged.body['error']['code'])
 print('合法 decision_ref（该租户没配索引）:', served.status, served.body['error']['code'])
 retrieve_codes = {'forged': forged.body['error']['code'], 'served': served.body['error']['code']}
 print()
-print('小结：判定仍然只有 policy.engine.evaluate 一条路径；API 与本地得到逐字节相同的'
+print('小结：判定仍然只有 policy.engine.evaluate 一条路径；API 与本地得到整份相等的'
       '决策载荷，而授权结论先于可用性结论。')
 """),
     _markdown("""
@@ -907,7 +908,7 @@ def check_phase_7_structure(namespace: dict[str, Any]) -> list[str]:
         problems.append('幂等台账的两种结果与文档不一致: ' + repr(namespace.get('ledger_codes')))
 
     if namespace.get('decision_equal') is not True:
-        problems.append('本地引擎与 API 的决策载荷不是逐字节相同')
+        problems.append('本地引擎与 API 的决策载荷不是整份相等')
     if namespace.get('remote_decision_code') != 'block':
         problems.append('示例上下文应当得到 block，实际 ' + repr(namespace.get('remote_decision_code')))
     if 'ARCH-001' not in (namespace.get('violation_rule_ids') or []):

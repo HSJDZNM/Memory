@@ -6,7 +6,8 @@
 它证明七件事（对应 Phase 7 的退出条件）：
 
 1. **同一份规则、两条路径、同一个结论**：本地 `policy.engine.evaluate` 与经 HTTP 的
-   `/v1/policy/evaluate` 对等价上下文给出**逐字节相同**的决策载荷；
+   `/v1/policy/evaluate` 对等价上下文给出**整份相等**的决策载荷（JSON 值相等，字段顺序
+   不属于契约——比的是决定，不是两侧序列化出来的字节）；
 2. **两个协议消费者等价**：Phase 6 的一致性套件同时跑 `generic-json`（进程内）与
    `http-api`（经 API 判定），两者的 outcome 与决定必须一致；
 3. **服务异常不返回默认 allow**：超时得到 504（不是 allow）、策略服务不可达时
@@ -216,7 +217,7 @@ def start_server(runtime: Any, port: int) -> Any:
 
 
 def scenario_local_and_api_agree(runtime: Any) -> Scenario:
-    """同一上下文：本地引擎与 HTTP API 的决策载荷逐字节一致。"""
+    """同一上下文：本地引擎与 HTTP API 的决策载荷整份相等（比 JSON 值，不比字节）。"""
 
     from policy.context import build_context
     from policy.engine import evaluate
@@ -248,7 +249,7 @@ def scenario_local_and_api_agree(runtime: Any) -> Scenario:
     remote = body.get("decision") if status == 200 else None
     same = status == 200 and remote == local
     return Scenario(
-        "本地引擎与 HTTP API 的决策载荷逐字节一致",
+        "本地引擎与 HTTP API 的决策载荷整份相等",
         same,
         "一致" if same else f"HTTP {status} / {json.dumps(body, ensure_ascii=False)[:200]}",
         {
@@ -352,7 +353,7 @@ def scenario_consumers_agree(runtime: Any) -> Scenario:
     # 这里只认两件事：没有**除它以外**的失败，且逐场景决定零分歧。
     unexpected = [item.name for item in failures if item.name != "at_least_one_full_adapter"]
     return Scenario(
-        "两个协议消费者（进程内 / 经 HTTP）走到同一套结论，且逐场景决定逐字节一致",
+        "两个协议消费者（进程内 / 经 HTTP）走到同一套结论，且逐场景决定整份相等",
         not unexpected and not equal and compared >= 4,
         f"{len(report.checks)} 项检查（read_only 上限 1 项预期内），决定比对 {compared} 例",
         {**facts, "unexpected_failures": unexpected},

@@ -25,7 +25,7 @@ python tools/run_notebook_in_kernel.py docs/learning/phase-7/walkthrough.ipynb
 | 4 | 认证与隔离：四条失败路径与 `token_ref` |
 | 5 | 预算与超时：调用方只能要更小的预算，超时是 `(None, timed_out=True)` |
 | 6 | 幂等台账：同键同摘要返回原响应，同键换请求体 409 |
-| 7 | 进程内完整链路：本地引擎与 API 的决定**逐字节相同** |
+| 7 | 进程内完整链路：本地引擎与 API 的决定**整份相等** |
 | 8 | readiness 与观测：逐项检查、记录字段、摘要链锚定 |
 | 9 | 失败关闭对照表（14 条路径，每一行都是本次运行真实发生的调用） |
 

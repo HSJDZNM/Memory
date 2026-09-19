@@ -125,7 +125,7 @@ GET  /v1/health/ready
 | `api/policy-api.yaml`、`api/openapi.json` | 新增：部署配置（数据）与 OpenAPI 快照（改契约必须显式 `--write`） |
 | `tests/fixtures/api/` | 新增：Phase 7 夹具（租户规则 `API-001.yaml`，说明见该目录 README） |
 | `src/adapters/conformance.py` | 变化：`conformance_enforcer` 的判据从"它是不是 dsh"改成"它有没有声明工具注册表与已审核哈希"——任何接入 Phase 4 的 Adapter 都走同一条链路 |
-| `tools/api_loop.py` | 新增：Phase 7 闭环（真端口 uvicorn；本地与 API 决定逐字节一致 / 两个协议消费者等价 / 超时 504 / 不可达阻断 / 幂等 / 跨租户 / readiness / 锚定） |
+| `tools/api_loop.py` | 新增：Phase 7 闭环（真端口 uvicorn；本地与 API 决定整份相等 / 两个协议消费者等价 / 超时 504 / 不可达阻断 / 幂等 / 跨租户 / readiness / 锚定） |
 | `tools/phase_evidence.py` | 变化：`CURRENT_PHASE=7`，新增 `policy_api` 段（OpenAPI 版本、租户与客户端数量、自检结论、闭环结论） |
 | `.github/workflows/phase-7.yml` | 替换 `phase-6.yml`：追加 API 自检、OpenAPI 快照、ASGI 契约测试与 API 闭环四步 |
 
@@ -207,7 +207,7 @@ GET  /v1/health/ready
 ### 独立交叉验证（Phase 7 收尾时做的，结论写在这里）
 
 除了本仓库自己的测试，Phase 7 交付后做了一次**独立验证**：验证者只读仓库、自己写探针，
-逐条试图证伪 14 个不变量（路由是否真的分开、两条路径的决定是否逐字节一致、
+逐条试图证伪 14 个不变量（路由是否真的分开、两条路径的决定是否整份相等、
 失败路径是否会给 allow、租户是否只来自令牌、客户端能否自带证据/决策、
 请求体上限是否真的生效、令牌是否只以摘要存在、幂等语义、readiness 是否反映真实依赖、
 契约快照是否真的是门禁、核心层是否不依赖框架、cwd 无关性、CLI 是否真的能跑、锚定能否发现删尾）。
@@ -218,6 +218,15 @@ GET  /v1/health/ready
 | --- | --- | --- |
 | 令牌明文可能落进观测日志 | 客户端把令牌回显进 `request_id` / `principal.subject` 时，脱敏只认"凭据长什么样"（`token=` / `Bearer ` / `sk-`），回显的原文被原样写入 JSONL | 认证处把令牌原文登记给观测层（`RequestLog.register_secret`），写日志前按**值**精确替换成 `<redacted-token>`；凭据只在内存里传递 |
 | 幂等重放不是逐字节相同 | 台账写入时按 `sort_keys` 规范化，回读后键序变了，重放响应与首次响应"解析后相等、字节不同" | 带幂等键的响应统一按规范化键序返回（台账存同一份），"这次响应和上次一样吗"现在可以用字节回答 |
+
+上表第二行（幂等重放）说的是**响应对响应**，与"本地引擎 vs 经 API"不是同一种主张：前者
+两侧是同一份规范化序列化（`runtime._canonical_body`，`sort_keys=True` 只作用于带
+`idempotency_key` 的请求），"字节相同"可达、也确实该用 `replayed.content == first.content`
+断言；后者一侧是本地领域对象（`to_decision_dict()`）、另一侧是 HTTP 响应载荷里的
+`decision`，两侧序列化入口不同、键序自然不同，能要求的只有**整份 JSON 值相等**——字段顺序
+不属于契约（`api/README.md` 与 `api/openapi.json` 都没把它写成契约，`_canonical_body`
+的注释也这么说），拿字节去比这两者只会得到一条永远失败的断言。`tools/api_loop.py`
+比的就是整份相等。
 
 同一轮验证还发现并修掉了三条实现缺口：
 
