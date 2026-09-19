@@ -210,11 +210,47 @@ def ensure_index() -> tuple[bool, str]:
     return False, f"检索索引不可用（python -m retrieval.cli index 失败：{reason[:200]}）"
 
 
+def remove_tree(path: Path) -> None:
+    """删掉一棵目录树：Windows 上偶发"文件被占用 / 只读"时重试，仍失败就**如实报错**。
+
+    `shutil.rmtree(ignore_errors=True)` 会把失败吞掉，紧接着 `copytree` 撞上
+    `FileExistsError`——那是**另一个**错误，真正的占用原因被盖住了。
+    闭环在本机就因此连续失败过（.tmp 下的工作区删不掉）。
+    """
+
+    import stat as stat_module
+
+    def clear_readonly(function, name, _exc):  # pragma: no cover - 依赖宿主环境
+        try:
+            os.chmod(name, stat_module.S_IWRITE)
+            function(name)
+        except OSError:
+            pass
+
+    last_error: Optional[BaseException] = None
+    for attempt in range(5):
+        if not path.exists():
+            return
+        try:
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(path, onexc=clear_readonly)
+            else:  # pragma: no cover - Python 3.11
+                shutil.rmtree(path, onerror=clear_readonly)
+        except OSError as error:
+            last_error = error
+        if not path.exists():
+            return
+        time.sleep(0.1 * (attempt + 1))
+    raise RuntimeError(
+        f"无法清理 {relative(path)}：仍有文件被占用（{type(last_error).__name__}）；"
+        "先关掉占用它的进程再重跑"
+    )
+
+
 def reset_workspace() -> Path:
     """受控工作区 = 夹具项目副本 + policies/ 副本 + controller 的相关测试。"""
 
-    if WORKSPACE.exists():
-        shutil.rmtree(WORKSPACE, ignore_errors=True)
+    remove_tree(WORKSPACE)
     shutil.copytree(FIXTURE_PROJECT, WORKSPACE)
     copy_policies()
     test_path = WORKSPACE / CONTROLLER_TEST
@@ -1464,10 +1500,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     # readiness 必须反映**当前**的规则集与索引：恢复时的兼容性判定读的就是它，
     # 默认 1s 的缓存会让"刚改完规则就恢复"看到旧哈希（也就看不到"规则集变了"）。
     runtime = build_runtime(config_path, root=REPO_ROOT, readiness_ttl_seconds=0.0)
+    # 起服务前先强制算一次 readiness：装配坏了要在**这里**失败，而不是等第一个场景超时。
     readiness = runtime.readiness(force=True)
+    if not readiness.get("ready"):
+        raise RuntimeError(f"Policy API 未就绪：{json.dumps(readiness, ensure_ascii=False)[:300]}")
     server = start_server(runtime, port)
-    api = Api(base_url=f"http://{HOST}:{port}", port=port, runtime=runtime, server=server,
-              index_reason=index_reason)
+    api = Api(
+        base_url=f"http://{HOST}:{port}",
+        port=port,
+        runtime=runtime,
+        server=server,
+        index_reason=index_reason,
+    )
 
     scenarios: list[Scenario] = []
     try:
