@@ -97,9 +97,11 @@ source:
 ```
 
 模型全部 `extra="forbid"` 且 `frozen=True`：未知字段报错，实例创建后不可修改。
-`scope` 是唯一例外：未知 scope 键按 `extra_policy` 处理（默认记录并忽略），
-这样既支持未来维度（module、operation）平滑加入，也不会因为拼错 `langauge` 而静默失效
-——`language` 拼错会让规则范围变宽，因此默认策略只忽略未知键，不做模糊匹配。
+`scope` 是唯一例外：未知 scope 键按 `extra_policy` 处理。
+**Phase 1 起默认是 `reject`**（`src/policy/models.py:325`、`:356`）：`language` 拼错会让规则范围变宽，
+所以拼错维度名必须让加载直接失败；确需忽略时在规则里**显式**写 `scope.extra_policy=skip`，
+被忽略的键会记进 `ignored_dimensions`（范围矩阵见 [phase-1](phase-1-policy-engine.md)）。
+（Phase 0 当时的默认是"记录并忽略"，Phase 1 收紧后本段未同步，此处回填。）
 
 ### 标识符规范化策略
 

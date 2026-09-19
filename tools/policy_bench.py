@@ -1,7 +1,8 @@
 """规则匹配性能基线：固定随机种子生成规则，记录匹配耗时与内存。
 
 只建立基线，不做优化，也不引入缓存。证据由 tools/phase_evidence.py 写入
-`.tmp/artifacts/phase-1-evidence.json` 的 performance 段，测试则用同一份生成器
+`.tmp/artifacts/phase-<当前阶段>-evidence.json`（文件名跟随该脚本的 CURRENT_PHASE）
+的 performance 段，测试则用同一份生成器
 断言"相同种子 → 相同规则集 → 相同决定"。
 
 用法：
