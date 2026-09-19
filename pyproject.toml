@@ -17,6 +17,10 @@ dependencies = [
   # adapters）刻意不依赖它们，只有 policy_api 的 HTTP 应用需要。
   "fastapi>=0.110,<1",
   "uvicorn>=0.27,<1",
+  # Phase 8 的编排依赖：与 Phase 7 同一条纪律——只有 src/orchestration 需要它，
+  # 而且只有 langgraph_engine.py 导入它（延迟导入 + 版本校验，不可用即失败关闭）。
+  # 核心层从不导入本框架：删掉 orchestration 包，平台照样独立运行。
+  "langgraph>=1.2,<2",
 ]
 
 [project.optional-dependencies]

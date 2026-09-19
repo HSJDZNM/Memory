@@ -79,7 +79,11 @@ RETRIEVAL_STEPS = (
     "Retrieval corpus integrity",
     "Retrieval evaluation baseline",
     "Tool registry must match",
-    "Phase 7 acceptance evidence",
+    "Phase 8 acceptance evidence",
+)
+ORCHESTRATION_STEPS = (
+    "Orchestration self-check",
+    "Orchestration closed loop",
 )
 
 # 改了这些前缀，就要跑对应的那一组。
@@ -95,6 +99,11 @@ CODE_PREFIXES = (
 )
 RETRIEVAL_PREFIXES = ("knowledge/", "src/retrieval/", "docs/", "tools/retrieval_eval.py")
 HANDBOOK_PREFIXES = ("src/", "tools/build_learning_notebook.py", "docs/learning/")
+ORCHESTRATION_PREFIXES = (
+    "src/orchestration/",
+    "tools/orchestration_loop.py",
+    "tests/orchestration_support.py",
+)
 
 
 def _workflow_path() -> Path:
@@ -153,6 +162,8 @@ def _selected_names(full: bool) -> list[str]:
         wanted += list(RETRIEVAL_STEPS)
     if _touched(changed, HANDBOOK_PREFIXES):
         wanted += list(HANDBOOK_STEPS)
+    if _touched(changed, ORCHESTRATION_PREFIXES):
+        wanted += list(ORCHESTRATION_STEPS)
     return wanted
 
 

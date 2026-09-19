@@ -1,4 +1,4 @@
-name: phase-7
+name: phase-8
 
 on:
   push:
@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  phase-7:
-    name: Phase 7 tests (python 3.13)
+  phase-8:
+    name: Phase 8 tests (python 3.13)
     runs-on: ubuntu-latest
     env:
       # 本项目不把 src/ 装进 site-packages：CI 与本地都用同一条路径找到包。
@@ -224,7 +224,9 @@ jobs:
             docs/learning/phase-3/walkthrough.ipynb \
             docs/learning/phase-4/walkthrough.ipynb \
             docs/learning/phase-5/walkthrough.ipynb \
-            docs/learning/phase-6/walkthrough.ipynb
+            docs/learning/phase-6/walkthrough.ipynb \
+            docs/learning/phase-7/walkthrough.ipynb \
+            docs/learning/phase-8/walkthrough.ipynb
 
       - name: Text conventions (UTF-8 / LF / trailing whitespace)
         run: .venv/bin/python tools/check_text_conventions.py
@@ -299,5 +301,13 @@ jobs:
       - name: Policy API closed loop
         run: .venv/bin/python tools/api_loop.py
 
-      - name: Phase 7 acceptance evidence
+      # Phase 8：编排层自检（协议版本 / 图定义 / 引擎可用性 / checkpoint 兼容性），不可用即失败关闭
+      - name: Orchestration self-check
+        run: .venv/bin/python -m orchestration.cli self-check
+
+      # Phase 8：编排闭环（受控工作区里的端到端场景，结论写给阶段证据）
+      - name: Orchestration closed loop
+        run: .venv/bin/python tools/orchestration_loop.py
+
+      - name: Phase 8 acceptance evidence
         run: .venv/bin/python tools/phase_evidence.py

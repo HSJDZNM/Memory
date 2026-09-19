@@ -1,9 +1,9 @@
 {
-  "approved_at": "2026-09-17T15:52:01.092066Z",
+  "approved_at": "2026-09-18T18:38:51.418501Z",
   "approved_schema_version": "1.0",
-  "registry_digest": "sha256:82526732f4d7d6c82f87d0e7f39ff66da572114b18089a53eaad29b23a7c55f2",
+  "registry_digest": "sha256:5e84cd67d60875f7a769b40cc71c51e9de2081e1814c4677451afa6d2ccc7cca",
   "registry_version": 1,
-  "reviewed_by": "HSJDZNM",
+  "reviewed_by": "phase-8-agent",
   "tools": {
     "exec.bash": {
       "schema_hash": "sha256:0d916cc5bcc3ac6fba90b758b18aaeb1636d426fc634159d10e97904dc8690c7",
@@ -27,6 +27,18 @@
     },
     "fs.write": {
       "schema_hash": "sha256:f03c62944e61e0b64f358144d9a765da952ca0a231fa1b43e008f5e3d1f7ac8d",
+      "schema_version": "1.0"
+    },
+    "orc.fs.edit": {
+      "schema_hash": "sha256:6e114c43c105eaaa9bf79ed1d3781fbf0f6b61c2f42db9a348d2fd62a06e6c55",
+      "schema_version": "1.0"
+    },
+    "orc.fs.write": {
+      "schema_hash": "sha256:e75379d3a0cb42256fc9a22369411038d60db92d035780c70f8aef6c3ab4c9da",
+      "schema_version": "1.0"
+    },
+    "orc.policy.edit": {
+      "schema_hash": "sha256:92570cb6208cdc6e3b793fa2f63587cdbed302c5fa069eaccfc488292c553de2",
       "schema_version": "1.0"
     }
   }

@@ -16,9 +16,11 @@ from pydantic import ValidationError
 
 from enforcement.models import (
     ActionRequest,
+    ApprovalMode,
     AuditRecord,
     AuditStage,
     Decision,
+    DriverKind,
     EnforcementError,
     ExecutionRecord,
     ExecutionStatus,
@@ -308,13 +310,17 @@ def test_real_registry_declares_the_fragments_that_make_a_command_dangerous(enfo
 
 
 def test_registry_tools_exist_in_the_dsh_tool_table():
-    """注册表与 Adapter 工具表不能漂移：两边都认识同一个工具才可能治理它。"""
+    """注册表与 Adapter 工具表不能漂移：两边都认识同一个工具才可能治理它。
+
+    注册表从 Phase 8 起**按 Agent 分段**（编排层有自己的 `orchestrator` 工具），
+    因此这条契约只比对 `agent == "dsh"` 的那一段；编排层那一段由
+    `test_orchestrator_tools_match_the_orchestration_layer` 单独比对。
+    """
 
     from adapters.dsh.adapter import TOOL_TABLE
 
     registry = load_registry(ENFORCEMENT_REGISTRY, approved_path=ENFORCEMENT_APPROVED).registry
-    for spec in registry.tools:
-        assert spec.agent == "dsh"
+    for spec in [item for item in registry.tools if item.agent == "dsh"]:
         table_entry = TOOL_TABLE.get(spec.tool_name)
         assert table_entry is not None, f"{spec.tool_name} 不在 dsh TOOL_TABLE 里"
         expected = {"reversible_write": "write", "read_only": "read_only", "privileged_execution": "execute"}
@@ -328,7 +334,7 @@ def test_every_governed_dsh_tool_is_registered():
     from adapters.dsh.adapter import TOOL_TABLE, ToolKind
 
     registry = load_registry(ENFORCEMENT_REGISTRY, approved_path=ENFORCEMENT_APPROVED).registry
-    registered = {spec.tool_name for spec in registry.tools}
+    registered = {spec.tool_name for spec in registry.tools if spec.agent == "dsh"}
     # Phase 4 明确记在案的未登记工具：线协议参数尚未核实，因此默认阻断（见实施记录）。
     documented_unregistered = {"str_replace_editor", "workflow"}
 
@@ -337,11 +343,39 @@ def test_every_governed_dsh_tool_is_registered():
             assert name in registered or name in documented_unregistered, name
 
 
+def test_orchestrator_tools_match_the_orchestration_layer():
+    """Phase 8：编排层声明的受控工具必须与代码里的工具 ID 逐项一致，且都已审核。
+
+    改注册表必须重新审核（`python -m enforcement.cli registry --approve`）；
+    代码里写死的工具 ID 与注册表漂移时，受控执行链会以 `tool_not_registered` 阻断——
+    这条测试让漂移在门禁里就暴露，而不是等到运行时。
+    """
+
+    from orchestration.nodes import EDIT_TOOL, PROTECTED_EDIT_TOOL, WRITE_TOOL
+
+    registry = load_registry(ENFORCEMENT_REGISTRY, approved_path=ENFORCEMENT_APPROVED).registry
+    owned = [spec for spec in registry.tools if spec.agent == "orchestrator"]
+    assert {spec.id for spec in owned} == {EDIT_TOOL, WRITE_TOOL, PROTECTED_EDIT_TOOL}
+    for spec in owned:
+        assert registry.is_approved(spec), f"{spec.id} 未被审核：受控执行链会拒绝执行"
+        # 写入类工具必须声明路径范围，否则无法判断目标是否逃出受控工作区。
+        paths = [item for item in spec.parameters if item.type.value == "path"]
+        assert paths and all(item.path_scope == "workspace" for item in paths), spec.id
+    # 改"判定依据本身"的动作必须走人工审批，且驱动可用（平台侧真的能执行）。
+    protected = registry.tool(PROTECTED_EDIT_TOOL)
+    assert protected is not None and protected.approval is ApprovalMode.REQUIRED
+    assert protected.driver is DriverKind.FILE_EDIT
+
+
 def test_read_only_tools_are_explicitly_not_governed_in_phase_4():
     from adapters.dsh.adapter import TOOL_TABLE, ToolKind
 
     registry = load_registry(ENFORCEMENT_REGISTRY, approved_path=ENFORCEMENT_APPROVED).registry
-    read_only = [spec for spec in registry.tools if spec.risk is RiskLevel.READ_ONLY]
+    read_only = [
+        spec
+        for spec in registry.tools
+        if spec.risk is RiskLevel.READ_ONLY and spec.agent == "dsh"
+    ]
     assert read_only, "只读动作必须被显式登记（允许降级，但仍记录）"
     for spec in read_only:
         assert TOOL_TABLE[spec.tool_name].kind in (ToolKind.READ_ONLY, ToolKind.NO_FILE)

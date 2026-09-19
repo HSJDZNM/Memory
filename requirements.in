@@ -6,4 +6,7 @@ PyYAML>=6.0,<7
 # 框架只负责把它接到线上；因此这里是**唯一**被 Web 框架污染的一层。
 fastapi>=0.110,<1
 uvicorn>=0.27,<1
+# Phase 8：编排层的图引擎。核心层与 policy_api 都不导入它；
+# 只有 src/orchestration/langgraph_engine.py 在构造引擎时导入，并校验主版本。
+langgraph>=1.2,<2
 pytest>=8.3,<10

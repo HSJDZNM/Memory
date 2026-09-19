@@ -29,7 +29,7 @@ for directory in (SRC_DIR, TOOLS_DIR):
     if str(directory) not in sys.path:
         sys.path.insert(0, str(directory))
 
-CURRENT_PHASE = 7
+CURRENT_PHASE = 8
 SUITES = ("tests/unit", "tests/contract", "tests/integration", "tests/security")
 POLICIES = ("policies",)
 ARTIFACT_DIR = REPO_ROOT / ".tmp" / "artifacts"
@@ -39,6 +39,7 @@ ENFORCEMENT_RESULT = ARTIFACT_DIR / "phase-4-enforcement-result.json"
 VALIDATOR_RESULT = ARTIFACT_DIR / "phase-5-validators-result.json"
 AGENT_RESULT = ARTIFACT_DIR / "phase-6-agents-result.json"
 API_RESULT = ARTIFACT_DIR / "phase-7-api-result.json"
+ORCHESTRATION_RESULT = ARTIFACT_DIR / "phase-8-orchestration-result.json"
 
 
 def _git(*args: str) -> str:
@@ -617,6 +618,75 @@ def policy_api() -> dict[str, object]:
     return payload
 
 
+def orchestration() -> dict[str, object]:
+    """Phase 8 编排层的可重放事实：协议版本、引擎与图结构、闭环结论。
+
+    只记录元数据：协议版本、引擎名、LangGraph 版本、节点/边/分支名与闭环场景名，
+    不记录任何一次运行的载荷、提示词、工具参数、令牌或绝对路径
+    （闭环里的工作区按仓库相对路径记录）。包不可导入时只报 available=False，
+    证据步骤必须照常产出，不替它编造结论。
+    """
+
+    try:
+        from orchestration.checkpoint import (
+            CHECKPOINT_SCHEMA_VERSION,
+            SUPPORTED_CHECKPOINT_SCHEMA_VERSIONS,
+        )
+        from orchestration.engines import ReferenceEngine
+        from orchestration.graph import DEFAULT_SPEC
+        from orchestration.langgraph_engine import (
+            MIN_LANGGRAPH_VERSION,
+            LangGraphEngine,
+            langgraph_version,
+        )
+        from orchestration.models import (
+            STATE_SCHEMA_VERSION,
+            SUPPORTED_STATE_SCHEMA_VERSIONS,
+            NodeId,
+        )
+    except ImportError:
+        return {"available": False}
+
+    version = langgraph_version()
+    payload: dict[str, object] = {
+        "available": True,
+        "state_schema_version": STATE_SCHEMA_VERSION,
+        "supported_state_schema_versions": sorted(SUPPORTED_STATE_SCHEMA_VERSIONS),
+        "checkpoint_schema_version": CHECKPOINT_SCHEMA_VERSION,
+        "supported_checkpoint_schema_versions": sorted(SUPPORTED_CHECKPOINT_SCHEMA_VERSIONS),
+        # 引擎名取自实现本身（class 属性），不在这里另写一份清单。
+        "engines": sorted({ReferenceEngine.name, LangGraphEngine.name}),
+        "langgraph": {
+            "installed": version is not None,
+            "version": version,
+            "min_version": MIN_LANGGRAPH_VERSION,
+        },
+        # 图结构以 data 为准：节点来自 NodeId，入口/边/分支来自 DEFAULT_SPEC。
+        "graph": {
+            "entry": DEFAULT_SPEC.entry,
+            "nodes": [node.value for node in NodeId],
+            "edges": [f"{edge.source}->{edge.target}" for edge in DEFAULT_SPEC.edges],
+            "routers": sorted(router.name for router in DEFAULT_SPEC.routers),
+        },
+    }
+    if ORCHESTRATION_RESULT.is_file():
+        loop = json.loads(ORCHESTRATION_RESULT.read_text(encoding="utf-8"))
+        payload["closed_loop"] = {
+            "result": loop.get("result"),
+            "workspace": loop.get("workspace"),
+            "scenarios": [
+                {"name": item.get("name"), "passed": item.get("passed")}
+                for item in loop.get("scenarios", [])
+            ],
+        }
+    else:
+        payload["closed_loop"] = {
+            "result": "not-run",
+            "hint": "python tools/orchestration_loop.py",
+        }
+    return payload
+
+
 def performance_baseline() -> dict[str, object]:
     """Phase 1 的匹配性能基线：固定种子、只记录不优化。"""
 
@@ -716,6 +786,7 @@ def main(argv: list[str] | None = None) -> int:
         "validators": validators(),
         "agent_adapters": agent_adapters(),
         "policy_api": policy_api(),
+        "orchestration": orchestration(),
         "test_suite": " + ".join(SUITES),
         "suites": suites,
         "result": "pass" if failures == 0 else "fail",

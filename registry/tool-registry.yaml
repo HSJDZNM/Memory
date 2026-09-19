@@ -10,6 +10,10 @@
 #
 # 工具名来自 dsh 0.1.5-rc.1 的真实装配（证据见 src/adapters/dsh/README.md）。
 # 升级 Agent 后：先核对工具参数表，再改这里，再重新审核，最后补契约测试。
+#
+# Phase 8 起这张表**按 Agent 分段**：`agent: dsh` 是 Agent 产品那一段，
+# `agent: orchestrator` 是编排层那一段（改规则文件需要人工审批）。
+# 两段各自审核：改任一段都要重新生成 registry/tool-registry.approved.json。
 
 registry_schema_version: "1.0"
 version: 1
@@ -251,3 +255,91 @@ tools:
         required: true
         max_chars: 400
     notes: 平台侧 driver=none：只有 Agent 运行时能执行它，平台绝不假装执行过（driver_unavailable）
+
+  # —— Phase 8：编排层（`orchestrator`）的工具表 ——
+  # 编排层自己不做授权判断：它只提出动作，判定与执行由图谱之外的受控执行链完成。
+  # 目标路径仍受 path_scope: workspace 约束；改这些声明必须重新审核。
+  - id: orc.fs.edit
+    title: 编排层的字面量替换（在受控工作区内）
+    agent: orchestrator
+    tool_name: edit_file
+    schema_version: "1.0"
+    risk: reversible_write
+    effect: file_write
+    driver: file_edit
+    required_permissions: [repo.write]
+    approval: none
+    rollback: file_snapshot
+    post_checks: [content_matches, file_changed, file_syntax, diff_recorded]
+    rate_limit: {max_calls: 50, window_seconds: 60, max_failures: 3, breaker_seconds: 120}
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+        description: 目标文件（工作区相对路径；逃出工作区一律拒绝）
+      - name: old_string
+        type: string
+        required: true
+        max_chars: 20000
+      - name: new_string
+        type: string
+        required: true
+        max_chars: 20000
+      - name: replace_all
+        type: boolean
+    notes: 编排层的修复节点只能基于结构化 violation 提出改动，具体写什么由这里授权
+
+  - id: orc.fs.write
+    title: 编排层的整文件写入（受控工作区）
+    agent: orchestrator
+    tool_name: write_file
+    schema_version: "1.0"
+    risk: reversible_write
+    effect: file_write
+    driver: file_write
+    required_permissions: [repo.write]
+    approval: none
+    rollback: file_snapshot
+    post_checks: [content_matches, target_exists, file_syntax, diff_recorded]
+    rate_limit: {max_calls: 50, window_seconds: 60, max_failures: 3, breaker_seconds: 120}
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+      - name: content
+        type: string
+        required: true
+        max_chars: 200000
+    notes: 与 dsh 的 fs.write 同形，但主体与审计命名空间是编排层自己：两个 Agent 不共用授权
+
+  - id: orc.policy.edit
+    title: 编排层修改规则文件（高风险：必须人工审批）
+    agent: orchestrator
+    tool_name: edit_policy
+    schema_version: "1.0"
+    risk: reversible_write
+    effect: file_write
+    driver: file_edit
+    required_permissions: [repo.write]
+    approval: required
+    rollback: file_snapshot
+    post_checks: [content_matches, file_changed, file_syntax, diff_recorded]
+    rate_limit: {max_calls: 10, window_seconds: 60, max_failures: 2, breaker_seconds: 300}
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+        pattern: ^policies/[A-Za-z0-9._/-]+$
+        description: 只允许改工作区内 policies/ 下的规则文件
+      - name: old_string
+        type: string
+        required: true
+        max_chars: 20000
+      - name: new_string
+        type: string
+        required: true
+        max_chars: 20000
+    notes: 改规则等于改"判定依据"本身，因此审批门禁与执行权分离；审批必须与 action_hash 绑定
