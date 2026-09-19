@@ -32,8 +32,9 @@
 4. [技术选型与目标目录](03-technology-and-layout.md)
 5. 按顺序完成 `phases/` 中 Phase 0 至 Phase 8
 6. 全程使用 [测试策略](testing/test-strategy.md)，并用 [阶段验收矩阵](testing/acceptance-matrix.md) 决定是否进入下一阶段
-7. 已交付部分的独立复核与加固记录见 [reviews/](reviews/post-phase-4-hardening.md)（Post-Phase-4 复核）与
-   [reviews/post-phase-5-review.md](reviews/post-phase-5-review.md)（Post-Phase-5 复核）
+7. 已交付部分的独立复核与加固记录见 [reviews/](reviews/post-phase-4-hardening.md)（Post-Phase-4 复核）、
+   [reviews/post-phase-5-review.md](reviews/post-phase-5-review.md)（Post-Phase-5 复核）与
+   [reviews/post-phase-8-review.md](reviews/post-phase-8-review.md)（Post-Phase-8 验收与修复）
 
 ## 九个阶段
 
