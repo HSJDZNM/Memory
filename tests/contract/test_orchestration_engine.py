@@ -363,6 +363,34 @@ def test_orchestration_does_not_import_policy_internals() -> None:
     assert any(_matches(module, "policy.models") for module in _imports(models_path))
 
 
+def test_auto_falls_back_to_reference_and_never_mislabels_it(tmp_root, monkeypatch) -> None:
+    """LangGraph 不可用时 `auto` 必须回落参考引擎，且报告里如实写 reference。
+
+    AGENTS 第 35 条的落地：不可用即回落，但**不许把参考引擎报成 LangGraph**；
+    显式 `engine="langgraph"` 相反——不可用就 EngineUnavailableError，不静默回落。
+    受支持的环境里 `auto` 永远选 langgraph，所以这条回落分支只能靠注入不可用来覆盖：
+    删掉 `select_engine` 里的 except，本用例必须变红。
+    """
+
+    from orchestration.engines import ReferenceEngine
+    from orchestration.errors import EngineUnavailableError
+    from orchestration.langgraph_engine import LangGraphEngine
+    from orchestration.runtime import select_engine
+
+    def unavailable(self, *args, **kwargs):
+        raise EngineUnavailableError("langgraph 不可用（用例注入）")
+
+    monkeypatch.setattr(LangGraphEngine, "__init__", unavailable)
+    executor = step_executor(tmp_root, name="fallback")
+
+    engine, name = select_engine("auto", executor=executor)
+    assert name == "reference"
+    assert isinstance(engine, ReferenceEngine)
+
+    with pytest.raises(EngineUnavailableError):
+        select_engine("langgraph", executor=executor)
+
+
 def test_orchestration_protocol_versions_are_its_own() -> None:
     """编排状态协议 / 传输协议各有自己的版本，而且绝不从阶段号推导。"""
 

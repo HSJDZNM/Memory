@@ -536,6 +536,39 @@ def test_plan_resume_generation_change_refuses(changed_dimension: str) -> None:
     assert isinstance(excinfo.value, CheckpointError)
 
 
+# --------------------------------------------------------------------------- 状态里不放正文
+
+
+def test_state_text_rejects_bodies_and_credentials() -> None:
+    """"状态里不放正文"是**拒绝**，不是约定。
+
+    `requirements` / `notes` 走 `_safe_text`（src/orchestration/models.py:102）：超过
+    `_MAX_NOTE`(200) 字符、或含确定形态的凭据，一律 ValidationError——既不落盘，也不
+    "先收下再说"。独立验证探针当年正是靠"把需求原文塞进验收条目"证伪了这条纪律，
+    所以它必须有回归：把 `_safe_text` 换成 `_short_text` 之外的放行实现，这里必须变红。
+    """
+
+    # 先钉住"合法短结论能过"：否则下面几条可能因为"什么都拒绝"而恒真。
+    accepted = empty_state("task-1", requirements=("Controller 不得直连 Repository",))
+    assert accepted.requirements == ("Controller 不得直连 Repository",)
+
+    # 两条拒绝理由不同，分别钉住：超长走 _short_text，凭据形态走 contains_secret_value。
+    # 只断言"抛了 ValidationError"是不够的——别的字段约束也会抛 ValidationError。
+    with pytest.raises(ValidationError) as too_long_error:
+        empty_state("task-1", requirements=("正文" * 101,))  # 202 字符 > _MAX_NOTE(200)
+    assert "文本超过" in str(too_long_error.value)
+
+    credentials = (
+        # 合成值：只用于验证"凭据形态必须被拒绝"，不是真实密钥。
+        "key = sk-live-0123456789abcdef",  # secret-scan: allow（合成值，用于验证凭据形态被拒绝）
+        "-----BEGIN RSA PRIVATE KEY-----",  # secret-scan: allow（合成私钥块，用于验证私钥块被拒绝）
+    )
+    for credential in credentials:
+        with pytest.raises(ValidationError) as credential_error:
+            empty_state("task-1", requirements=(credential,))
+        assert "凭据" in str(credential_error.value)
+
+
 # --------------------------------------------------------------------------- 审批
 
 
