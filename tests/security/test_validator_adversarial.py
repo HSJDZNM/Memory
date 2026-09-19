@@ -126,7 +126,18 @@ def test_tool_output_cannot_inject_instructions_or_secrets(tmp_root: Path) -> No
     report = run_for("src/shop/order_controller.py", config=config)
     payload = json.dumps(report.to_payload(), ensure_ascii=False)
 
-    assert "ignore previous instructions" not in payload.replace("ignore previous instructions", "", 0) or True
+    # 注入文本按设计仍然作为"数据"进证据（可审计，见下方注释），所以先证明它真的到了：
+    # 否则下面几条会因为"工具没跑/没有输出"而恒真。
+    messages = [item.message for item in report.evidence]
+    injected = [message for message in messages if "ignore previous instructions" in message]
+    assert injected, "注入载荷没有进入证据：本用例会退化成恒真"
+    # 中和：换行/回车/ANSI 都不进证据文本——"一条记录一行"是 JSONL 与日志的前提
+    assert all(
+        chr(10) not in message and chr(13) not in message and chr(27) not in message
+        for message in injected
+    )
+    # 脱敏确实发生过：绝对路径与凭据被替换成占位标记（而不是"看不见就等于没有"）
+    assert all("<abs>" in message and "<redacted-secret>" in message for message in injected)
     assert "eyJhbGciOiJIUzI1NiJ9" not in payload
     assert "C:/Users/secret" not in payload
     assert chr(27) not in payload

@@ -44,6 +44,7 @@ def run_pipeline_for(
     explicit: tuple[str, ...] | None = None,
     only: tuple[str, ...] = (),
     operation: str | None = None,
+    keep_temp: bool = False,
 ) -> object:
     context = make_context(
         file=target, language="python", layer="controller", operation=operation
@@ -59,6 +60,7 @@ def run_pipeline_for(
             only=only,
         ),
         config=config,
+        keep_temp=keep_temp,
     )
 
 
@@ -171,11 +173,34 @@ def test_pipeline_is_deterministic_for_the_same_target() -> None:
 
 
 def test_temp_directories_are_cleaned_up() -> None:
-    report = run_pipeline_for("src/shop/order_controller_bad.py")
+    """用完即删：默认运行不得在 .tmp/validators 下留下新的目录。
 
-    leftovers = list((REPO_ROOT / ".tmp" / "validators").glob("*")) if (REPO_ROOT / ".tmp" / "validators").is_dir() else []
-    assert all(item.is_dir() is False or True for item in leftovers)
-    assert report.target is not None
+    先用 keep_temp=True 证明"这次运行确实建了临时目录、且目录按验证器分开"，
+    再用默认参数跑一次比对前后集合——否则"没有残留"可能只是"从来没建过"：
+    把 pipeline 里的 finally 去掉，这条用例照样是绿的。
+    """
+
+    runs_root = CONFIG.root / ".tmp" / "validators"
+
+    def entries() -> set[str]:
+        return {item.name for item in runs_root.iterdir()} if runs_root.is_dir() else set()
+
+    before = entries()
+    kept = run_pipeline_for("src/shop/order_controller_bad.py", keep_temp=True)
+    created = entries() - before
+
+    assert len(created) == 1, "keep_temp=True 必须留下恰好一个本次运行的临时目录"
+    run_root = runs_root / next(iter(created))
+    assert {item.name for item in run_root.iterdir() if item.is_dir()} >= {"py.ast", "py.source"}
+    assert kept.target is not None
+
+    try:
+        report = run_pipeline_for("src/shop/order_controller_bad.py")
+        leftovers = entries() - (before | created)
+        assert leftovers == set(), "默认运行结束后不得留下新的临时目录：" + ", ".join(sorted(leftovers))
+        assert report.target is not None
+    finally:
+        shutil.rmtree(run_root, ignore_errors=True)
 
 
 # ------------------------------------------------------------------ 外部工具（真实 Ruff）
