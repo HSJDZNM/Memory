@@ -23,7 +23,7 @@ from policy.context import build_context
 from policy.engine import evaluate
 from policy import models as policy_models
 from policy.loader import load_rule_set
-from policy_api.config import RateLimitConfig, load_api_config
+from policy_api.config import LoadConfig, RateLimitConfig, load_api_config
 from policy_api.runtime import ApiRuntime
 from policy_api.testing import make_client
 from retrieval.corpus import load_corpus
@@ -51,7 +51,11 @@ BAD_CONTEXT: dict[str, Any] = {**GOOD_CONTEXT, "dependencies": ["repository"]}
 
 
 def build_api(
-    tmp_root: Path, *, relaxed_rate_limit: bool = True, **kwargs: Any
+    tmp_root: Path,
+    *,
+    relaxed_rate_limit: bool = True,
+    limit_overrides: Mapping[str, Any] | None = None,
+    **kwargs: Any,
 ) -> tuple[ApiRuntime, Any, Path]:
     """装配一套隔离的 API，返回 `(runtime, ASGI 客户端, 配置文件)`。
 
@@ -61,6 +65,11 @@ def build_api(
     `relaxed_rate_limit=True`：模板里的桶是 5 个请求（限流本身由
     `test_rate_limit_exhausts_bucket` 单独验证）。本文件多数用例要发十几个请求来区分
     错误码，被 429 掩盖的 400 会让断言说谎——那是"测试环境没摆对"，不是被测行为。
+
+    `limit_overrides`：逐字段覆盖模板里的 `limits`（例如把 `max_concurrency` 压到 1）。
+    覆盖值用 `LoadConfig(...)` **重新构造**而不是 `model_copy`：配置即边界，越界的覆盖值
+    （如 0 / 257）必须在装配处就被 pydantic 拒绝，否则用例会拿着一份"看起来生效、
+    其实非法"的配置去断言。默认 None = 一个字段都不动。
     """
 
     config_path, anchor = isolated_api(tmp_root, **kwargs)
@@ -69,6 +78,10 @@ def build_api(
         config = config.model_copy(
             update={"rate_limit": RateLimitConfig(capacity=1000, refill_per_second=1000.0)}
         )
+    if limit_overrides:
+        # 逐字段覆盖 + 重新校验（见 docstring）：LoadConfig 的 ge/le 在构造时就生效。
+        limits = LoadConfig(**{**config.limits.model_dump(), **limit_overrides})
+        config = config.model_copy(update={"limits": limits})
     runtime = ApiRuntime(config, root=anchor, readiness_ttl_seconds=0.0)
     return runtime, make_client(runtime), config_path
 
@@ -115,8 +128,12 @@ def index_fixture(tmp_root: Path) -> tuple[Path, Path]:
 # --------------------------------------------------------------------------- 判定
 
 
-def test_evaluate_decision_is_byte_identical_to_the_core_engine(tmp_root: Path) -> None:
-    """**同一个上下文 + 同一份规则**：经 API 的决策载荷与本地 `policy.engine.evaluate` 逐字节一致。
+def test_evaluate_decision_payload_equals_the_core_engine_result(tmp_root: Path) -> None:
+    """**同一个上下文 + 同一份规则**：经 API 的决策载荷与本地 `policy.engine.evaluate` **整份相等**。
+
+    比的是 JSON **值**，不是两侧各自序列化出来的字节：本地是领域对象 `to_decision_dict()`、
+    线上是响应载荷，两者的序列化入口不同，字段顺序不属于契约（带 idempotency_key 的请求
+    还会被 `_canonical_body` 规范化成字母序）。
 
     这是"API 是传输边界，不是第二份业务逻辑"（AGENTS 核心约束 30）唯一的硬证据：
     如果 API 层自己拼了一份决策、或漏传/改写了上下文字段，这里就会出现差异。
@@ -175,7 +192,7 @@ def test_evaluate_decision_is_byte_identical_to_the_core_engine(tmp_root: Path) 
     local = evaluate(local_rules, local_context)
     assert local_rules.identity == body["rule_set"]["hash"]
     assert local.to_decision_dict() == decision
-    # 逐字节：序列化后的字符串也必须相同（键顺序在这条路径上没有自由度）。
+    # 再比一次两侧**规范化序列化**后的字符串：它与上面的 == 等价，额外钉住"载荷必须可 JSON 序列化"。
     assert json.dumps(local.to_decision_dict(), sort_keys=True) == json.dumps(decision, sort_keys=True)
 
 
@@ -406,6 +423,8 @@ def test_rate_limit_exhausts_bucket_and_returns_429(tmp_root: Path) -> None:
     assert statuses == [200, 200, 200, 200, 200, 429]
     assert error_code(response) == "rate_limited"
     assert response.json()["error"]["retryable"] is True
+    # 与 503 同一路径：限流也是在 _authenticate 内部抛的，错误响应同样必须带 request_id。
+    assert response.json()["error"]["request_id"] == "it-rate-5"
     assert runtime.metrics.to_payload()["rate_limited"] == 1
 
 
@@ -667,3 +686,62 @@ def test_validate_fails_closed_for_a_tenant_without_validators(tmp_root: Path) -
     assert response.status_code == 503
     assert error_code(response) == "validator_unavailable"
     assert "beta" in response.json()["error"]["detail"]
+
+
+# --------------------------------------------------------------------------- 并发闸门
+
+
+def test_concurrency_gate_returns_503_policy_busy(tmp_root: Path) -> None:
+    """并发闸门被占满时，后到的请求拿到 **503 policy_busy**，而不是排队、更不是放行。
+
+    为什么必须这样：`max_concurrency`（`config.LoadConfig`）约束的是"同时在处理中的请求数"。
+    慢调用方把许可占满时服务必须失败关闭——排队会让所有调用方一起变慢，把墙钟预算变成
+    空头承诺；而"照样处理"更糟：调用方会把失败读成一次结论（AGENTS 核心约束 33）。
+    因此 `policy_busy` + `retryable=True` 是协议的一部分，状态码由 `STATUS_BY_CODE` 推导
+    （503），调用方据此知道"这次没有结论、可以重试"。
+
+    先发一次**正常**请求（200）再占满闸门：否则这个 503 可能来自"规则集没装好 / 令牌不对 /
+    审计不可写"这类与闸门无关的原因，断言就会说谎。占住唯一一个许可（而不是"并发发两个
+    请求"）是因为后者要靠时序去撞闸门，机器快慢会让用例随机变绿；持有一个许可则让
+    "闸门已满"成为一个确定的前置状态。
+    """
+
+    runtime, client, _ = build_api(tmp_root, limit_overrides={"max_concurrency": 1})
+    assert runtime.config.limits.max_concurrency == 1, "闸门大小必须真的来自配置"
+
+    healthy = client.post(
+        "/v1/policy/evaluate",
+        headers=auth(),
+        json=envelope("it-busy-ok", context=BAD_CONTEXT),
+    )
+    assert healthy.status_code == 200, "装配必须先证明是好的：否则 503 说明不了任何事"
+    assert healthy.json()["decision"]["decision"] == "block"
+
+    # 占住闸门（`ApiRuntime._semaphore` 就是那个闸门；它的大小来自上面那行配置）。
+    held = runtime._semaphore.acquire(timeout=0.0)
+    assert held, "夹具没能占住唯一一个许可：后面的 503 就证明不了闸门"
+    try:
+        busy = client.post(
+            "/v1/policy/evaluate",
+            headers=auth(),
+            json=envelope("it-busy-blocked", context=BAD_CONTEXT),
+        )
+    finally:
+        runtime._semaphore.release()
+
+    assert busy.status_code == 503
+    assert error_code(busy) == "policy_busy"
+    assert busy.json()["error"]["retryable"] is True
+    # 失败响应里绝不能出现决策：503 必须读起来像"没有结论"，而不是"结论是允许"。
+    assert "decision" not in busy.json()
+    # 闸门是在 _authenticate **内部**抛的：request_id 必须在进去之前就解析好，
+    # 否则这条路径的错误响应没有关联标识，"请求级可观测"对它就是空头承诺。
+    assert busy.json()["error"]["request_id"] == "it-busy-blocked"
+
+    # 释放之后闸门必须恢复可用：一次占满不能把服务永久打死。
+    recovered = client.post(
+        "/v1/policy/evaluate",
+        headers=auth(),
+        json=envelope("it-busy-recovered", context=BAD_CONTEXT),
+    )
+    assert recovered.status_code == 200

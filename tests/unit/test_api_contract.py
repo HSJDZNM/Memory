@@ -15,6 +15,7 @@ import json
 import os
 import time
 from pathlib import Path
+from typing import Any, Mapping, Sequence
 
 import pytest
 
@@ -28,7 +29,14 @@ from policy_api.config import (
 )
 from policy_api.errors import ApiError, ErrorCode, STATUS_BY_CODE, error_payload, redact_detail
 from policy_api.idempotency import IdempotencyLedger
-from policy_api.observability import Latency, Metrics, RequestLog, RequestLogEntry
+from policy_api.observability import (
+    Latency,
+    Metrics,
+    RequestLog,
+    RequestLogEntry,
+    seal_audit,
+    verify_seal,
+)
 from policy_api.runtime import ApiRuntime, RateLimiter, budget_for
 from policy_api.services import signature_of
 from policy_api.timeout import Budget, BudgetExceeded, run_with_budget
@@ -627,3 +635,157 @@ def test_request_log_appends_redacted_records(tmp_root: Path) -> None:
     assert rows[0]["subject"].startswith("<workspace>")
     assert rows[0]["subject"].replace("\\", "/").endswith("src/policy")
     assert rows[0]["error"] == "<abs>"
+
+
+# --------------------------------------------------------------------------- 外部锚定
+
+
+def _tamper_log(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    """把篡改后的记录按 `RequestLog.append` 的写法写回日志，并断言字节真的变了。
+
+    "篡改没生效"是这类用例最常见的隐形恒真：检测逻辑看着对，其实一个字节都没改过。
+    断言放在这里，后面两个篡改场景都受它保护。
+    """
+
+    payload = "".join(
+        json.dumps(dict(row), ensure_ascii=False, sort_keys=True) + "\n" for row in rows
+    )
+    assert payload != path.read_text(encoding="utf-8"), "篡改没有改变任何字节：用例什么都没证明"
+    path.write_text(payload, encoding="utf-8", newline="\n")
+
+
+def test_seal_audit_and_verify_seal_agree_on_an_untouched_log(tmp_root: Path) -> None:
+    """没被动过的日志必须校验为**一致**，且锚里只留日志文件名。
+
+    为什么必须这样（本组用例的反真空基线）：`verify_seal` 用"返回了哪些问题"表达结论，
+    空 = 一致。如果连没动过的日志都报问题，后面三条"发现了篡改"的断言就会**恒真**——
+    它们证明的只是"这个函数总会报点什么"，而不是"它真的检验出了对应的改动"。
+
+    锚里不留绝对路径是同一件事的另一面：锚的用途恰恰是发布到日志写不到的地方
+    （对象存储、工单、另一台主机），它比日志本身更容易被更多人读到，
+    一条以 C:/Users/ 开头的路径就把部署环境泄露了出去。
+    """
+
+    path = tmp_root / "audit" / "service.jsonl"
+    log = RequestLog(path, workspace=REPO_ROOT)
+    log.append(make_entry(request_id="req-seal-1"))
+    log.append(make_entry(request_id="req-seal-2"))
+
+    seal = seal_audit(log)
+    assert seal["seal_schema_version"] == "1.0"
+    assert seal["records"] == 2
+    assert seal["first_request_id"] == "req-seal-1"
+    assert seal["last_request_id"] == "req-seal-2"
+    assert seal["chain_digest"] == log.chain_digest()
+    # 反真空：未改动 = 空（一个问题都没有）。
+    assert verify_seal(log, seal) == ()
+
+    # `log_path` 只能是**文件名**：`Path(x).name == x` 同时排除了绝对路径与相对目录。
+    assert seal["log_path"] == path.name
+    assert Path(seal["log_path"]).name == seal["log_path"]
+    # 泄露绝对路径的不只是 log_path：逐个字符串字段扫一遍，任何一个都不许带。
+    for key, value in seal.items():
+        if isinstance(value, str):
+            assert str(tmp_root) not in value, f"锚字段 {key} 泄露了绝对路径"
+            assert str(REPO_ROOT) not in value, f"锚字段 {key} 泄露了仓库绝对路径"
+    # 完全不落盘的日志（--dry-run / 内存日志）在锚里是 null，而不是空串或半个路径。
+    assert seal_audit(RequestLog(None))["log_path"] is None
+
+
+def test_verify_seal_reports_record_count_mismatch_after_append(tmp_root: Path) -> None:
+    """日志尾部被**追加**一条记录后必须报"记录数不一致"。
+
+    为什么必须这样：摘要链只覆盖"已经写下的那些行"，于是"锚本来就只有两条"与
+    "第三条被人删掉了"在链末值上无法区分——能回答这个问题的只有条数（锚的 `records`）。
+    删除与追加是同一件事的两个方向，这里验证更隐蔽的那个：追加不会让任何**已发布**的
+    值变小，只看链末值很容易被放过。
+
+    报文里必须带上两侧的数字：调用方要能回答"差了几条"，而不是只知道"不一致"。
+    """
+
+    path = tmp_root / "audit" / "append.jsonl"
+    log = RequestLog(path, workspace=REPO_ROOT)
+    log.append(make_entry(request_id="req-1"))
+    seal = seal_audit(log)
+    assert seal["records"] == 1
+    # 反真空：追加**之前**同一个锚是一致的，否则下面的报错可能来自别的原因。
+    assert verify_seal(log, seal) == ()
+
+    log.append(make_entry(request_id="req-2"))
+    issues = verify_seal(log, seal)
+    assert issues, "追加了一条记录却不报问题 = 锚形同虚设"
+    assert any(issue.startswith("记录数不一致") for issue in issues), issues
+    assert "锚 1 / 当前 2" in "\n".join(issues), issues
+
+
+def test_verify_seal_reports_chain_mismatch_when_content_is_rewritten(tmp_root: Path) -> None:
+    """条数不变、内容变了时必须报"链末值不一致"——这正是摘要链存在的唯一理由。
+
+    为什么必须这样：作恶者不会留下"多了一条 / 少了一条"这种明显痕迹。改一个字段的值、
+    把两行调换顺序，条数都一样；只有把**每一行的内容与位置**都卷进摘要才能发现。
+    用例刻意让条数保持不变，从而隔离出这一条分支：把链检查删掉，这里会从
+    "报一条链末值不一致"退化成"什么问题都没有"，而不是被记录数检查掩盖。
+
+    这也说明了锚为什么必须发布**到日志之外**：链末值只有在日志写不到的地方才可信。
+    """
+
+    path = tmp_root / "audit" / "tampered.jsonl"
+    log = RequestLog(path, workspace=REPO_ROOT)
+    log.append(make_entry(request_id="req-1", decision="allow"))
+    log.append(make_entry(request_id="req-2", decision="deny"))
+    seal = seal_audit(log)
+    assert verify_seal(log, seal) == ()  # 反真空
+
+    rows = [dict(row) for row in log.read_back()]
+    rows[-1]["decision"] = "allow"  # 把一条 deny 改成 allow：条数不变，只有内容变了
+    _tamper_log(path, rows)
+    assert len(log.read_back()) == 2, "篡改必须保持条数，否则这条用例证明不了链检查"
+    issues = verify_seal(log, seal)
+    assert len(issues) == 1, f"条数没变，应且只应报链末值不一致：{issues}"
+    assert issues[0].startswith("链末值与锚不一致"), issues
+
+    # 换一行日志：条数与内容都没变，只有**位置**变了，链仍然必须发现。
+    reordered = tmp_root / "audit" / "reordered.jsonl"
+    other = RequestLog(reordered, workspace=REPO_ROOT)
+    other.append(make_entry(request_id="req-1"))
+    other.append(make_entry(request_id="req-2"))
+    other_seal = seal_audit(other)
+    assert verify_seal(other, other_seal) == ()
+    _tamper_log(reordered, list(reversed(other.read_back())))
+    issues = verify_seal(other, other_seal)
+    assert len(issues) == 1, f"只调换了顺序，应且只应报链末值不一致：{issues}"
+    assert issues[0].startswith("链末值与锚不一致"), issues
+
+
+def test_verify_seal_refuses_unknown_anchor_protocol_version(tmp_root: Path) -> None:
+    """锚声明的协议版本不认识时必须报错，绝不因为其他字段碰巧一样就判"一致"。
+
+    为什么必须这样：`records` / `chain_digest` 的比较是机械的，它们能不能解释得通取决于
+    锚自己声明的版本。把 "1.0" 换成 "9.9"（未来版本或伪造版本）后若返回空，就等于让一个
+    语义未知的锚通过了校验——"未知协议版本一律拒绝"（AGENTS 核心约束 3）在观测层的落点
+    就是这里，而且它必须**失败关闭**：拒绝的代价是一次人工核对，放行的代价是
+    "日志被动过"这个结论被永久掩盖。
+
+    下面用同一个（未被改动的）日志做反向对照：唯一的变量是版本号，因此报错只可能来自
+    版本检查；并且第一条原因就是"拒绝按不确定的语义校验"，而不是"记录数 / 链末值"
+    这类要按版本解释才能下的结论。
+    """
+
+    path = tmp_root / "audit" / "version.jsonl"
+    log = RequestLog(path, workspace=REPO_ROOT)
+    log.append(make_entry(request_id="req-1"))
+    seal = seal_audit(log)
+    # 反真空 + 反向对照：原样一致；显式写回 "1.0" 仍然一致（唯一变量是版本号）。
+    assert verify_seal(log, seal) == ()
+    assert verify_seal(log, {**seal, "seal_schema_version": "1.0"}) == ()
+
+    unknown = {**seal, "seal_schema_version": "9.9"}
+    issues = verify_seal(log, unknown)
+    assert issues, "未知协议版本的锚被当成了一致——这是失败开放"
+    assert issues[0].startswith("锚的协议版本未知"), issues
+
+    # 日志确实被动过时，第一条原因仍然是"协议版本未知"：版本问题先于机械比对被报出，
+    # 不会因为"别的检查也报了问题"而被掩盖。
+    log.append(make_entry(request_id="req-2"))
+    after = verify_seal(log, unknown)
+    assert after[0].startswith("锚的协议版本未知"), after
