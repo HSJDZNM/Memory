@@ -293,8 +293,10 @@ walkthrough.py     # 同一份内容的纯 Python 版本（由脚本生成）
 README.md          # 怎么用、怎么维护、常见问题（手写）
 ```
 
-- 改 notebook 内容 = 改 `tools/build_learning_notebook.py`（新增 `PHASE_N_CELLS` 并在 `PHASES` 注册），
-  然后运行 `python tools/build_learning_notebook.py` 重新生成；
+- 改 notebook 内容 = 改它的**内容源**，然后运行 `python tools/build_learning_notebook.py` 重新生成。
+  内容源分两处，别改错：Phase 0–5 的单元格内联在 `tools/build_learning_notebook.py`（`PHASE_N_CELLS`，
+  并在 `PHASES` 注册）；**Phase 6–8 已拆到 `tools/phase6_cells.py` / `tools/phase7_cells.py` /
+  `tools/phase8_cells.py`**，由生成器在文件头导入——生成器里没有它们的副本；
 - 生成器会从两个工作目录各跑一遍全部代码单元，并断言示例退出码与文档里写过的 JSON 键名，
   任何不一致都会让生成失败，因此手册里的代码始终可运行、说明始终与输出一致；
 - 新增阶段时同步更新索引 `docs/learning/README.md`；
