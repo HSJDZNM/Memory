@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -691,8 +693,10 @@ def test_validate_fails_closed_for_a_tenant_without_validators(tmp_root: Path) -
 # --------------------------------------------------------------------------- 并发闸门
 
 
-def test_concurrency_gate_returns_503_policy_busy(tmp_root: Path) -> None:
-    """并发闸门被占满时，后到的请求拿到 **503 policy_busy**，而不是排队、更不是放行。
+def test_concurrency_gate_limits_in_flight_requests(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """一个真实请求仍在处理时，后到请求拿到 **503 policy_busy**。
 
     为什么必须这样：`max_concurrency`（`config.LoadConfig`）约束的是"同时在处理中的请求数"。
     慢调用方把许可占满时服务必须失败关闭——排队会让所有调用方一起变慢，把墙钟预算变成
@@ -700,43 +704,53 @@ def test_concurrency_gate_returns_503_policy_busy(tmp_root: Path) -> None:
     因此 `policy_busy` + `retryable=True` 是协议的一部分，状态码由 `STATUS_BY_CODE` 推导
     （503），调用方据此知道"这次没有结论、可以重试"。
 
-    先发一次**正常**请求（200）再占满闸门：否则这个 503 可能来自"规则集没装好 / 令牌不对 /
-    审计不可写"这类与闸门无关的原因，断言就会说谎。占住唯一一个许可（而不是"并发发两个
-    请求"）是因为后者要靠时序去撞闸门，机器快慢会让用例随机变绿；持有一个许可则让
-    "闸门已满"成为一个确定的前置状态。
+    首个请求进入真实策略评估后由事件闸门暂停；第二个请求从同一个 ASGI 入口进入，必须在
+    首个请求完成前被并发上限拒绝。事件只控制策略调用的完成时机，不接触运行时内部信号量，
+    因而这条用例验证的是调用方可观察的行为，而不是实现细节。
     """
 
     runtime, client, _ = build_api(tmp_root, limit_overrides={"max_concurrency": 1})
     assert runtime.config.limits.max_concurrency == 1, "闸门大小必须真的来自配置"
 
-    healthy = client.post(
-        "/v1/policy/evaluate",
-        headers=auth(),
-        json=envelope("it-busy-ok", context=BAD_CONTEXT),
-    )
-    assert healthy.status_code == 200, "装配必须先证明是好的：否则 503 说明不了任何事"
-    assert healthy.json()["decision"]["decision"] == "block"
+    evaluation_started = threading.Event()
+    release_evaluation = threading.Event()
 
-    # 占住闸门（`ApiRuntime._semaphore` 就是那个闸门；它的大小来自上面那行配置）。
-    held = runtime._semaphore.acquire(timeout=0.0)
-    assert held, "夹具没能占住唯一一个许可：后面的 503 就证明不了闸门"
-    try:
-        busy = client.post(
+    def blocking_evaluate(rules, context):
+        evaluation_started.set()
+        if not release_evaluation.wait(timeout=5):
+            raise AssertionError("首个请求等待释放超时")
+        return evaluate(rules, context)
+
+    monkeypatch.setattr("policy_api.runtime.evaluate", blocking_evaluate)
+    second_client = make_client(runtime)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first_future = pool.submit(
+            client.post,
             "/v1/policy/evaluate",
             headers=auth(),
-            json=envelope("it-busy-blocked", context=BAD_CONTEXT),
+            json=envelope("it-busy-first", context=BAD_CONTEXT),
         )
-    finally:
-        runtime._semaphore.release()
+        try:
+            assert evaluation_started.wait(timeout=2), "首个请求没有进入策略评估"
+            busy = second_client.post(
+                "/v1/policy/evaluate",
+                headers=auth(),
+                json=envelope("it-busy-blocked", context=BAD_CONTEXT),
+            )
+        finally:
+            release_evaluation.set()
+        first = first_future.result(timeout=5)
 
     assert busy.status_code == 503
     assert error_code(busy) == "policy_busy"
     assert busy.json()["error"]["retryable"] is True
     # 失败响应里绝不能出现决策：503 必须读起来像"没有结论"，而不是"结论是允许"。
     assert "decision" not in busy.json()
-    # 闸门是在 _authenticate **内部**抛的：request_id 必须在进去之前就解析好，
-    # 否则这条路径的错误响应没有关联标识，"请求级可观测"对它就是空头承诺。
+    # request_id 必须在认证与并发闸门之前解析好，否则 503 没有关联标识，
+    # "请求级可观测"对这条路径就是空头承诺。
     assert busy.json()["error"]["request_id"] == "it-busy-blocked"
+    assert first.status_code == 200
+    assert first.json()["decision"]["decision"] == "block"
 
     # 释放之后闸门必须恢复可用：一次占满不能把服务永久打死。
     recovered = client.post(

@@ -119,7 +119,7 @@ GET  /v1/health/ready
 | `src/policy_api/models.py` | 新增：传输协议版本 `API_SCHEMA_VERSION = "1.0"`、`ContextDTO`（与 `PolicyContext` 一一对应但独立演进）、三个请求体、`ReadinessReport`；`DECISION_PAYLOAD_SCHEMA_VERSION` / `POLICY_GENERATION` 直接取自核心，**本包不许自己算一个版本** |
 | `src/policy_api/config.py` | 新增：`ApiConfig`（服务身份 / 预算 / 限额 / 限流 / 租户 / 客户端 / 观测）；明文令牌一律拒绝加载 |
 | `src/policy_api/services.py` | 新增：`TenantStore`（原子装配，单租户失败只记错误）、`LoadedTenant`（规则集按文件指纹热替换，永不出现半套规则）、`corpus_root`（语料清单的锚点独立解析） |
-| `src/policy_api/runtime.py` | 新增：`ApiRuntime.handle`——认证 → 幂等 → 并发闸门 → 预算 → 分派 → 观测；所有失败路径收敛为结构化错误，没有任何"默认 allow"分支 |
+| `src/policy_api/runtime.py` | 新增：`ApiRuntime.handle`——认证 → 并发闸门 → 幂等 → 预算 → 分派 → 观测；闸门覆盖认证后的完整请求处理，所有失败路径收敛为结构化错误，没有任何"默认 allow"分支 |
 | `src/policy_api/ops.py` | 新增：readiness 的逐租户检查（规则集 / 索引 / 验证器 / 观测日志）与指标鉴权（角色或 `metrics_clients`） |
 | `src/policy_api/app.py` | 新增：FastAPI 应用；请求体校验只有一处（运行时的 DTO），路由上的"握手模型"只用于生成 OpenAPI |
 | `api/policy-api.yaml`、`api/openapi.json` | 新增：部署配置（数据）与 OpenAPI 快照（改契约必须显式 `--write`） |

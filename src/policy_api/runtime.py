@@ -4,8 +4,8 @@
 HTTP 层（FastAPI：只解析 DTO 与 Authorization）
   → ApiRuntime.handle(route, payload, authorization, headers)
       → 认证（令牌 → 客户端 → 租户/项目边界）
-      → 幂等（key + 请求摘要 → 原响应）
-      → 并发闸门 + 预算（超时 → 显式错误，不伪造 allow）
+      → 并发闸门（覆盖认证后的完整请求处理）
+      → 幂等（key + 请求摘要 → 原响应）+ 预算（超时 → 显式错误，不伪造 allow）
       → 操作：policy.engine.evaluate / retrieval / validators.pipeline
       → 观测（脱敏 JSONL + 指标）
 ```
@@ -24,9 +24,10 @@ from __future__ import annotations
 import json
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Iterator, Mapping, Optional, Sequence, Tuple
 
 from policy.check import infer_layer
 from policy.context import build_context
@@ -304,73 +305,78 @@ class ApiRuntime:
         try:
             auth, project = self._authenticate(route, payload, authorization, request_id)
             tenant_id = auth.tenant
-            key = self._idempotency_key(payload)
-            digest = ""
-            if key is not None:
-                digest = request_digest(
-                    {
-                        "payload": self._payload_for(payload),
-                        "subject": auth.subject,
-                        "route": route,
-                    }
-                )
-                replay = self.ledger_for(tenant_id).lookup(
-                    client_id=auth.client_id,
-                    api_version=API_SCHEMA_VERSION,
-                    route=route,
-                    key=key,
-                    digest=digest,
-                )
-                if replay is not None:
-                    self.metrics.count_replay()
-                    replayed = True
-                    status = replay.status
-                    body = dict(replay.body)
-                    headers["Idempotency-Replayed"] = "true"
-                    decision_value = str(body.get("decision") or body.get("summary", {}).get("decision") or "")
-                    outcome = "replayed"
-                    elapsed = int((self.clock() - started) * 1000)
-                    self._record(
+            with self._concurrency_slot():
+                key = self._idempotency_key(payload)
+                digest = ""
+                if key is not None:
+                    digest = request_digest(
+                        {
+                            "payload": self._payload_for(payload),
+                            "subject": auth.subject,
+                            "route": route,
+                        }
+                    )
+                    replay = self.ledger_for(tenant_id).lookup(
+                        client_id=auth.client_id,
+                        api_version=API_SCHEMA_VERSION,
                         route=route,
-                        outcome=outcome,
+                        key=key,
+                        digest=digest,
+                    )
+                    if replay is not None:
+                        self.metrics.count_replay()
+                        replayed = True
+                        status = replay.status
+                        body = dict(replay.body)
+                        headers["Idempotency-Replayed"] = "true"
+                        decision_value = str(
+                            body.get("decision") or body.get("summary", {}).get("decision") or ""
+                        )
+                        outcome = "replayed"
+                        elapsed = int((self.clock() - started) * 1000)
+                        self._record(
+                            route=route,
+                            outcome=outcome,
+                            status=status,
+                            started=started,
+                            auth=auth,
+                            request_id=request_id,
+                            trace_id=trace_id,
+                            project=project,
+                            decision=decision_value,
+                            error="",
+                            replayed=True,
+                            rule_set_hash=None,
+                            index_version=None,
+                            violations=0,
+                        )
+                        return RuntimeResponse(
+                            status=status,
+                            body=body,
+                            headers={**headers, "X-Elapsed-Ms": str(elapsed)},
+                        )
+                status, body, facts = self._dispatch(route, payload, auth)
+                decision_value = facts.get("decision") or ""
+                rule_set_hash = facts.get("rule_set_hash")
+                index_version = facts.get("index_version")
+                violations = int(facts.get("violations") or 0)
+                outcome = "ok" if status < 400 else str(facts.get("error") or "error")
+                if key is not None and digest and _recordable(status, facts):
+                    # 台账里存的是**键序规范化后的那一份**，并把同一份作为本次响应返回：
+                    # 于是"重放"是逐字节相同，而不是"解析后相等"。代价是响应字段按字母序排列
+                    # （JSON 对象本来就无序，契约里也没有"字段顺序"这一条）。
+                    canonical = _canonical_body(body)
+                    self.ledger_for(tenant_id).record(
+                        client_id=auth.client_id,
+                        api_version=API_SCHEMA_VERSION,
+                        route=route,
+                        key=key,
+                        digest=digest,
                         status=status,
-                        started=started,
-                        auth=auth,
-                        request_id=request_id,
-                        trace_id=trace_id,
-                        project=project,
-                        decision=decision_value,
-                        error="",
-                        replayed=True,
-                        rule_set_hash=None,
-                        index_version=None,
-                        violations=0,
+                        body=body,
+                        canonical_body=canonical,
                     )
-                    return RuntimeResponse(
-                        status=status, body=body, headers={**headers, "X-Elapsed-Ms": str(elapsed)}
-                    )
-            status, body, facts = self._dispatch(route, payload, auth)
-            decision_value = facts.get("decision") or ""
-            rule_set_hash = facts.get("rule_set_hash")
-            index_version = facts.get("index_version")
-            violations = int(facts.get("violations") or 0)
-            outcome = "ok" if status < 400 else str(facts.get("error") or "error")
-            if key is not None and digest and _recordable(status, facts):
-                # 台账里存的是**键序规范化后的那一份**，并把同一份作为本次响应返回：
-                # 于是"重放"是逐字节相同，而不是"解析后相等"。代价是响应字段按字母序排列
-                # （JSON 对象本来就无序，契约里也没有"字段顺序"这一条）。
-                canonical = _canonical_body(body)
-                self.ledger_for(tenant_id).record(
-                    client_id=auth.client_id,
-                    api_version=API_SCHEMA_VERSION,
-                    route=route,
-                    key=key,
-                    digest=digest,
-                    status=status,
-                    body=body,
-                    canonical_body=canonical,
-                )
-                body = canonical
+                    body = canonical
         except ApiError as error:
             status = error.status
             body = error_payload(
@@ -440,10 +446,10 @@ class ApiRuntime:
         authorization: Optional[str],
         request_id: str,
     ) -> Tuple[AuthContext, str]:
-        """认证 + 限流 + 并发闸门。
+        """认证 + 限流。
 
-        `request_id` 由调用方解析后传入（见 `handle`）：本函数在闸门与限流上**会抛错**，
-        而这些错误响应必须带上 request_id 才能追溯，所以它不能等到返回时才被赋值。
+        `request_id` 由调用方解析后传入（见 `handle`）：本函数在限流时会抛错，
+        随后的并发闸门同样会抛错；这些响应必须带 request_id 才能追溯。
         """
 
         if not request_id:
@@ -471,15 +477,22 @@ class ApiRuntime:
             route=route,
         )
         self.rate_limiter.check(f"{auth.client_id}:{auth.tenant}")
-        # 并发闸门：慢客户端不能把工作线程占满（超过上限直接 503，而不是无限排队）。
+        return auth, str(project or "")
+
+    @contextmanager
+    def _concurrency_slot(self) -> Iterator[None]:
+        """限制完整的认证后请求处理，而不是只探测信号量是否可取。"""
+
         if not self._semaphore.acquire(timeout=0.5):
             raise ApiError(
                 ErrorCode.POLICY_BUSY,
                 "服务当前并发已满；请稍后重试",
                 retryable=True,
             )
-        self._semaphore.release()
-        return auth, str(project or "")
+        try:
+            yield
+        finally:
+            self._semaphore.release()
 
     def _tenant_hint(self, payload: Mapping[str, Any]) -> Optional[str]:
         """租户只能由**令牌**决定：载荷里的 tenant 字段只作为"客户端想用哪个"的提示，
