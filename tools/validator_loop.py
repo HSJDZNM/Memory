@@ -45,6 +45,10 @@ class Scenario:
     passed: bool
     detail: str = ""
     facts: dict[str, Any] = field(default_factory=dict)
+    # "通过"与"真的跑过"是两件事：工具不可用时场景仍然算 passed（否则闭环会在
+    # 没装 Ruff 的机器上变红），但 verified=False 把"这条没验证到"如实写下来——
+    # 以前这里写的是 passed=True + "skipped: ..."，等于把环境跳过记成通过。
+    verified: bool = True
 
 
 def prepare(name: str) -> Path:
@@ -303,6 +307,7 @@ def scenario_tool_facts_are_traceable() -> Scenario:
             True,
             "skipped: 本机没有可用的 Ruff（CI 会装一份再跑）",
             {"tool.ruff": "unavailable"},
+            verified=False,
         )
     facts = {
         "version": record.tool.version,
@@ -352,7 +357,13 @@ def main(argv: list[str] | None = None) -> int:
         "workspace": DEMO_ROOT.relative_to(REPO_ROOT).as_posix(),
         "result": "pass" if all(item.passed for item in scenarios) else "fail",
         "scenarios": [
-            {"name": item.name, "passed": item.passed, "detail": item.detail, "facts": item.facts}
+            {
+                "name": item.name,
+                "passed": item.passed,
+                "verified": item.verified,
+                "detail": item.detail,
+                "facts": item.facts,
+            }
             for item in scenarios
         ],
     }
@@ -367,7 +378,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
         for item in scenarios:
-            mark = "PASS" if item.passed else "FAIL"
+            # 没验证到的场景不能显示成 PASS：人读的就是这一行。
+            mark = "SKIP" if not item.verified else ("PASS" if item.passed else "FAIL")
             print("[" + mark + "] " + item.name + ": " + item.detail)
         print("result: " + payload["result"] + "  (证据: " + RESULT.relative_to(REPO_ROOT).as_posix() + ")")
         if payload["result"] != "pass":

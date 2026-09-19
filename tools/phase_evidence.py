@@ -2,7 +2,8 @@
 
 用法：
 
-    python tools/phase_evidence.py                       # 写到 .tmp/artifacts/phase-1-evidence.json
+    python tools/phase_evidence.py                       # 写到 .tmp/artifacts/phase-<当前阶段>-evidence.json
+                                                         # （文件名跟随 CURRENT_PHASE，不要在这里写死某个阶段）
     python tools/phase_evidence.py --out .tmp/artifacts/custom.json
 
 本脚本只记录可重放的元数据：版本、规则集哈希、测试命令与结果、性能基线，
@@ -133,6 +134,29 @@ def agent_adapter() -> dict[str, object]:
     }
 
 
+def _hashes_compared(payload: dict[str, object], scenario_name: str, *, same: bool) -> bool | None:
+    """两个哈希**都拿到**才给判定；缺任意一个就返回 None。
+
+    "dsh 不可用"那条跳过路径只写 `{"phase":2,"result":"skipped"}`，没有场景对象，
+    两个哈希都是 None——而 `None == None` 是 True。直接比较会让产物写出
+    `block_file_unchanged: true`：读它的机器据此认为"阻止场景的文件确实没被改动 =
+    拦截生效"，可实际上一个 Hook 都没跑过。**"没验证"和"验证通过"不能共用一个值。**
+    """
+
+    # spawn 被沙箱拒绝时，两个哈希**都存在且相等**——"文件没被改动"是真的，
+    # 但原因是"一个 Hook 都没跑过"，不是"拦截生效"。这种"因为什么都没发生所以看起来正确"
+    # 的字段是最危险的假安慰，必须报"未验证"。
+    if isinstance(payload, dict) and payload.get("sandbox_blocked_spawn") is True:
+        return None
+
+    scenario = (payload.get(scenario_name) or {}) if isinstance(payload, dict) else {}
+    before = scenario.get("file_sha256_before")
+    after = scenario.get("file_sha256_after")
+    if before is None or after is None:
+        return None
+    return (before == after) if same else (before != after)
+
+
 def sandbox_loop() -> dict[str, object]:
     """真实 dsh 沙箱闭环的结论（由 tools/dsh_sandbox_loop.py 生成）。"""
 
@@ -146,18 +170,15 @@ def sandbox_loop() -> dict[str, object]:
         "diagnosis": payload.get("diagnosis"),
         "reason": payload.get("reason"),
         "sandbox_blocked_spawn": payload.get("sandbox_blocked_spawn"),
+        # "环境跳过"必须能被消费者判定：顶层 result 仍是 skipped（取值集合不变），
+        # 这个字段才是"没跑过"与"跑过但通过"的分界。
+        "environment_skipped": payload.get("environment_skipped"),
         "reproduce": payload.get("reproduce"),
         "agent_version": payload.get("agent_version"),
         "block_passed": (payload.get("block_scenario") or {}).get("passed"),
         "allow_passed": (payload.get("allow_scenario") or {}).get("passed"),
-        "block_file_unchanged": (
-            (payload.get("block_scenario") or {}).get("file_sha256_before")
-            == (payload.get("block_scenario") or {}).get("file_sha256_after")
-        ),
-        "allow_changed_once": (
-            (payload.get("allow_scenario") or {}).get("file_sha256_before")
-            != (payload.get("allow_scenario") or {}).get("file_sha256_after")
-        ),
+        "block_file_unchanged": _hashes_compared(payload, "block_scenario", same=True),
+        "allow_changed_once": _hashes_compared(payload, "allow_scenario", same=False),
         "block_matched_rules": ((payload.get("block_scenario") or {}).get("audit") or {}).get(
             "matched_rules"
         ),
@@ -426,6 +447,9 @@ def validators() -> dict[str, object]:
                 {
                     "name": item.get("name"),
                     "passed": item.get("passed"),
+                    # 工具不可用时场景仍算 passed（闭环不该在没装 Ruff 的机器上变红），
+                    # 但 verified=False 把它标成"这条没验证到"，不是"验证通过"。
+                    "verified": item.get("verified"),
                     "detail": item.get("detail"),
                 }
                 for item in conclusion.get("scenarios", [])

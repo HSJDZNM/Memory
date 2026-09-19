@@ -5,13 +5,17 @@
     1) bad 编辑：controller 直接依赖 repository → 必须被 ARCH-001 阻断，文件哈希不变；
     2) good 编辑：新增一个方法 → 必须放行，且只发生一次预期变更。
 
-断言失败即退出码 1；dsh 不可用时（例如 CI 的 ubuntu runner）默认跳过并退出码 0，
-因为这条闭环验证的是"本机真实 Agent Runtime 的行为"，不是可移植的单元测试。
+断言失败即退出码 1；dsh 不可用、**或 Hook 进程根本起不来**（CI 的 ubuntu runner、
+或沙箱禁止管道 stdio）时按**环境跳过**处理并退出码 0，因为这条闭环验证的是
+"本机真实 Agent Runtime 的行为"，不是可移植的单元测试。
+
+但"跳过"必须**可判定**、不能被读成"已验证"：两条跳过路径都在产物里写
+`environment_skipped: true`，正常路径写 `false`；`--require-dsh` 让**任何**环境跳过都失败。
 
 用法：
 
     python tools/dsh_sandbox_loop.py                 # 构建并跑完整闭环
-    python tools/dsh_sandbox_loop.py --require-dsh   # dsh 缺失时视为失败
+    python tools/dsh_sandbox_loop.py --require-dsh   # 任何环境跳过都视为失败
     python tools/dsh_sandbox_loop.py --keep          # 保留上一轮的审计与采集，不重建项目
 
 产物写在 .tmp/ 下（可随时删除并由本脚本重建）：
@@ -299,7 +303,11 @@ def describe(record: dict | None) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="重放 Phase 2 的真实 dsh 沙箱闭环")
-    parser.add_argument("--require-dsh", action="store_true", help="dsh 不可用时视为失败")
+    parser.add_argument(
+        "--require-dsh",
+        action="store_true",
+        help="任何环境跳过（dsh 不可用，或 Hook 进程起不来）都视为失败",
+    )
     parser.add_argument("--keep", action="store_true", help="保留上一轮审计与采集")
     args = parser.parse_args(argv)
 
@@ -309,7 +317,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.require_dsh:
             return 1
         write(ARTIFACT, json.dumps(
-            {"phase": 2, "result": "skipped", "reason": message}, ensure_ascii=False, indent=2
+            {
+                "phase": 2,
+                "result": "skipped",
+                "environment_skipped": True,
+                "reason": message,
+            },
+            ensure_ascii=False,
+            indent=2,
         ) + chr(10))
         return 0
 
@@ -354,6 +369,9 @@ def main(argv: list[str] | None = None) -> int:
         "agent": "dsh",
         "agent_version": AGENT_VERSION,
         "result": "pass" if (block_ok and allow_ok) else "fail",
+        # 环境跳过 ≠ 通过：这个字段是消费者区分"已验证 / 没跑过"的唯一依据
+        # （result 的取值集合保持不变，免得动到已验证过的退出码契约）。
+        "environment_skipped": False,
         "block_scenario": {
             "passed": block_ok,
             "dsh_exit_code": block_exit,
@@ -388,6 +406,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if hook_could_not_spawn():
             payload["result"] = "skipped"
+            payload["environment_skipped"] = True
             payload["reason"] = (
                 "Hook 进程起不来（spawn EPERM）：受限沙箱禁止管道 stdio，而 dsh 的 ctx.shell "
                 "正是用管道捕获 Hook 输出。命令桥（dsh-hooks-claude-code）走同一个 ctx.shell，"
@@ -402,7 +421,14 @@ def main(argv: list[str] | None = None) -> int:
             )
     write(ARTIFACT, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + chr(10))
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if payload["result"] in ("pass", "skipped") else 1
+    if payload["result"] == "pass":
+        return 0
+    # 环境跳过默认不红（否则门禁在没 dsh / 沙箱禁止管道 stdio 的机器上长期红着，
+    # 最终被当成噪声——这个教训已经记过一次）；但 --require-dsh 必须能把它判成失败：
+    # 这个开关问的是"这条闭环真的在本机跑过吗"，两条跳过路径都得被它覆盖。
+    if payload.get("environment_skipped") is True:
+        return 1 if args.require_dsh else 0
+    return 1
 
 
 if __name__ == "__main__":
