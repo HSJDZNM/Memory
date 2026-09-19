@@ -284,6 +284,13 @@ class ApiRuntime:
         tenant_id = ""
         project = ""
         trace_id = str(payload.get("trace_id") or "") or None
+        # request_id 必须在**认证之前**解析好：限流与并发闸门是 _authenticate 内部抛的，
+        # 若等它返回再赋值，503/429 的错误响应里 request_id 就是 null——客户端拿不到
+        # 能用来对日志的关联标识，观测契约（请求级可追溯）在这两条路径上落空。
+        request_id = str(payload.get("request_id") or "").strip()
+        if not request_id and route == "metrics":
+            # 运维路由没有请求体：request_id 由服务端生成（日志里仍可串联）。
+            request_id = f"{route}:{int(self.clock() * 1000)}"
         auth: Optional[AuthContext] = None
         decision_value: Optional[str] = None
         rule_set_hash: Optional[str] = None
@@ -295,7 +302,7 @@ class ApiRuntime:
         body: Mapping[str, Any] = {}
         headers: dict[str, str] = {}
         try:
-            auth, request_id, project = self._authenticate(route, payload, authorization)
+            auth, project = self._authenticate(route, payload, authorization, request_id)
             tenant_id = auth.tenant
             key = self._idempotency_key(payload)
             digest = ""
@@ -427,15 +434,20 @@ class ApiRuntime:
     # ------------------------------------------------------------------ 认证
 
     def _authenticate(
-        self, route: str, payload: Mapping[str, Any], authorization: Optional[str]
-    ) -> Tuple[AuthContext, str, str]:
-        request_id = str(payload.get("request_id") or "").strip()
+        self,
+        route: str,
+        payload: Mapping[str, Any],
+        authorization: Optional[str],
+        request_id: str,
+    ) -> Tuple[AuthContext, str]:
+        """认证 + 限流 + 并发闸门。
+
+        `request_id` 由调用方解析后传入（见 `handle`）：本函数在闸门与限流上**会抛错**，
+        而这些错误响应必须带上 request_id 才能追溯，所以它不能等到返回时才被赋值。
+        """
+
         if not request_id:
-            if route == "metrics":
-                # 运维路由没有请求体：request_id 由服务端生成（日志里仍可串联）。
-                request_id = f"{route}:{int(self.clock() * 1000)}"
-            else:
-                raise ApiError(ErrorCode.BODY_INVALID, "缺少 request_id")
+            raise ApiError(ErrorCode.BODY_INVALID, "缺少 request_id")
         # 凭据来源：优先请求头（HTTP 的常规形态）；进程内调用可以直接放进信封。
         # 顺序很重要——先解析请求头会在"只有信封凭据"时直接 401，把一种合法调用方式变成失败。
         credentials = payload.get("credentials")
@@ -467,7 +479,7 @@ class ApiRuntime:
                 retryable=True,
             )
         self._semaphore.release()
-        return auth, request_id, str(project or "")
+        return auth, str(project or "")
 
     def _tenant_hint(self, payload: Mapping[str, Any]) -> Optional[str]:
         """租户只能由**令牌**决定：载荷里的 tenant 字段只作为"客户端想用哪个"的提示，
