@@ -18,8 +18,11 @@
 > Phase 7 已把核心能力服务化：版本化 DTO 与 OpenAPI 快照、Bearer 认证与租户/项目隔离、
 > 墙钟预算与幂等台账、请求级观测与**可对外锚定的摘要链**；API 只增加部署与信任边界，
 > 判定仍然只有 `policy.engine.evaluate` 一条路径（本地与经 API 的决定逐字节一致，由闭环证明）。
+> Phase 8 已落地上层编排：`src/orchestration/` 用 LangGraph 驱动"需求 → 检索 → 规划 → 实施 →
+> 验证 ⇄ 修复 → 测试 → 收尾"的可恢复工作流，**只当消费者**——判定仍只有平台一条路径，
+> 每个受治理的写入仍然走 Phase 4 的受控执行链；循环、checkpoint 兼容性、人工审批与平台故障
+> 全部有自动化测试与闭环证据。该层是仓库里**唯一**导入工作流框架的地方，删掉它不影响平台独立运行。
 > 实施记录见对应阶段文档末尾的“实施记录”小节，实际命令以根 `README.md` 为准。
-> 尚未实施的阶段（Phase 8），其命令与目录仍是目标接口，不表示现在已经可执行。
 
 ## 阅读顺序
 
@@ -44,7 +47,7 @@
 | [Phase 5](phases/phase-5-code-validators.md) | 代码验证器 | AST、依赖、Lint、类型与测试证据（**已完成**：证据协议 + 流水线 + 失败关闭） |
 | [Phase 6](phases/phase-6-multi-agent-adapters.md) | 多 Agent Adapter | 仓库实现完成：规范事件、能力声明、写链门禁与一致性套件；第二真实 Agent 产品验证待完成 |
 | [Phase 7](phases/phase-7-policy-api.md) | Policy API | **已完成**：版本化 DTO 与 OpenAPI 快照、Bearer 认证、租户/项目隔离、预算与幂等、观测与锚定；核心库仍可独立运行 |
-| [Phase 8](phases/phase-8-langgraph-orchestration.md) | LangGraph | 可恢复的上层编排消费者 |
+| [Phase 8](phases/phase-8-langgraph-orchestration.md) | LangGraph | **已完成**：可恢复的上层编排消费者（最小状态、循环上限、checkpoint 与恢复、人工审批、平台故障失败关闭）；框架可替换且平台仍独立运行 |
 
 原文把路线称为“八个阶段”，但实际编号为 Phase 0 至 Phase 8。本次统一为**九个阶段**，不再混用口径。
 

@@ -4,7 +4,7 @@
 
 ## 仓库现状
 
-仓库已绑定 Python 技术栈（见下文），完成 Engineering Policy Platform 的 **Phase 0 / Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 5**，并完成 Phase 6 / Phase 7 的仓库实现；Phase 6 的第二真实 Agent 产品验证仍待外部环境：
+仓库已绑定 Python 技术栈（见下文），完成 Engineering Policy Platform 的 **Phase 0 至 Phase 8**；Phase 6 的第二真实 Agent 产品验证仍待外部环境，Phase 8 的真实模型作者（`ChangeAuthor` 端口的模型实现）同样未接入：
 
 - 可运行：根 `README.md` 中的安装、测试、CLI、Hook 自检、沙箱闭环、性能基线、检索索引与评测命令均已实际验证；
 - 有规则目录 `policies/`、核心源码 `src/policy/`（models / context / scope / engine / loader / check）、
@@ -13,7 +13,7 @@
   能力声明是数据 `adapters/`（每个 Agent 一份 manifest + adapter 配置 + 事件样本 + `approved.json` 已审核哈希）、
   检索层 `src/retrieval/`、语料清单 `knowledge/corpus.yaml`、
   受控执行层 `src/enforcement/`、工具注册表 `registry/`、
-  测试 `tests/{unit,contract,integration,security}` 与 CI `.github/workflows/phase-7.yml`；
+  测试 `tests/{unit,contract,integration,security}` 与 CI `.github/workflows/phase-8.yml`；
 - Phase 1 的决策协议为 `SCHEMA_VERSION = "1.0"`，快照在 `tests/fixtures/decisions/`；
 - Phase 2 的 Hook 契约、脱敏事件 fixture 与失败关闭设计分别在 `src/adapters/dsh/README.md`、
   `tests/fixtures/agent_events/dsh/` 与 `docs/engineering-policy-platform/phases/phase-2-dsh-adapter.md` 的实施记录里；
@@ -47,7 +47,12 @@
   API 闭环 `tools/api_loop.py`、测试夹具 `tests/fixtures/api/`；
   **核心层不依赖 Web 框架**，只有 `policy_api` 的 HTTP 应用依赖 fastapi/uvicorn；
   实施记录见 `docs/engineering-policy-platform/phases/phase-7-policy-api.md`；
-- 下一阶段计划见 `docs/engineering-policy-platform/phases/`（下一步是 Phase 8 LangGraph 编排）。
+- Phase 8 的编排层 `src/orchestration/`（models / errors / limits / checkpoint / approvals / client /
+  tools / nodes / graph / engines / langgraph_engine / runtime / cli）、编排闭环
+  `tools/orchestration_loop.py`、工具注册表新增的 `orchestrator` 段（含"改规则需人工审批"的
+  `orc.policy.edit`）、学习手册 `docs/learning/phase-8/`；
+  **它是仓库里唯一导入工作流框架的地方**（只有 `langgraph_engine.py`，且构造引擎时才导入），
+  核心层从不导入它；实施记录见 `docs/engineering-policy-platform/phases/phase-8-langgraph-orchestration.md`。
 
 **改动前先读 `README.md` 与实际的 `git ls-files`，不要假设未登记的目录或框架存在。**
 
@@ -88,14 +93,14 @@
 | 项 | 选择 | 位置 |
 | --- | --- | --- |
 | 语言 | Python ≥ 3.11 | `src/policy/`（src 布局） |
-| 依赖清单 | pydantic 2、PyYAML 6、FastAPI 0.1x + uvicorn（Phase 7 传输层）；dev: pytest 8+ | `pyproject.toml` |
+| 依赖清单 | pydantic 2、PyYAML 6、FastAPI 0.1x + uvicorn（Phase 7 传输层）、langgraph 1.2（Phase 8 编排层，仅 `langgraph_engine.py` 导入）；dev: pytest 8+ | `pyproject.toml` |
 | 依赖锁定 | `requirements.in`（声明）+ `requirements.lock`（固定直接依赖版本，CI 从它安装）；仓库不提交 `uv.lock` | 仓库根目录 |
 | 测试 | pytest：`tests/unit`、`tests/contract`、`tests/integration`、`tests/security` | `pytest.ini`、`tests/conftest.py` |
 | 检索 | SQLite FTS5（标准库 sqlite3；向量检索是可替换端口，本阶段未采纳） | `src/retrieval/`、`knowledge/corpus.yaml` |
-| CI | GitHub Actions | `.github/workflows/phase-7.yml`（含 Phase 0–4 的重放用例、dsh 接线自检、检索基线、注册表审核、受控执行闭环、AST 证据重放、验证器注册表/探针/闭环、多 Agent 一致性套件/支持矩阵/闭环、Policy API 自检/OpenAPI 快照/ASGI 契约测试/API 闭环） |
+| CI | GitHub Actions | `.github/workflows/phase-8.yml`（含 Phase 0–4 的重放用例、dsh 接线自检、检索基线、注册表审核、受控执行闭环、AST 证据重放、验证器注册表/探针/闭环、多 Agent 一致性套件/支持矩阵/闭环、Policy API 自检/OpenAPI 快照/ASGI 契约测试/API 闭环、编排自检/编排闭环/阶段证据） |
 | 受控执行 | 标准库 + pydantic；注册表是 YAML 数据，台账与审计链是追加写 JSONL | `src/enforcement/`、`registry/` |
 | 代码验证器 | 标准库 `ast` + 外部工具探针（Ruff / mypy / pytest 不进核心依赖） | `src/validators/`、`validation/` |
-| 脚本 | 锁文件生成、阶段证据、性能基线、检索评测、dsh 沙箱闭环、受控执行闭环、多 Agent 闭环、API 闭环、notebook 生成与校验、临时文件清理 | `tools/*.py`（见 `tools/README.md`） |
+| 脚本 | 锁文件生成、阶段证据、性能基线、检索评测、dsh 沙箱闭环、受控执行闭环、多 Agent 闭环、API 闭环、编排闭环、notebook 生成与校验、临时文件清理 | `tools/*.py`（见 `tools/README.md`） |
 
 安装、测试、运行命令以根 `README.md` 为准，且必须保持可执行。
 
@@ -231,6 +236,31 @@
     单条超限即失败关闭；指标端点只对运维角色或 `metrics_clients` 开放。
     `python -m policy_api.cli seal --out <锚>` 把摘要链末值发布到日志之外，
     `--verify` 能发现删尾或改写——**锚必须与日志分离存放**，它仍然不是防篡改日志。
+35. **编排层是消费者，不是平台的一部分**：`src/orchestration/` 只回答"下一步做什么"，
+    判定仍然只有平台一条路径；它是仓库里**唯一**导入工作流框架的地方
+    （只有 `langgraph_engine.py`，构造引擎时才延迟导入 + 主版本校验，不可用即
+    `EngineUnavailableError`，不静默回落），核心层从不导入它——删掉整个包，平台照常独立运行
+    （`tests/contract/test_orchestration_engine.py` 检查两个方向）。`engine="auto"` 的回落
+    必须如实写进 `RunReport.engine`，不许把参考引擎报成 LangGraph。
+36. **图状态里不放正文**：需求原文、文件内容、工具输出与凭据都只以摘要/引用存在；
+    checkpoint 是"单文件 + 原子替换"，带自己的版本（`STATE_SCHEMA_VERSION`，
+    **不跟随平台阶段**）与状态摘要；相同输入必须得到逐字节相同的状态（状态里没有墙钟字段）。
+    恢复时与**当前平台**的凭据（`rule_set_hash` / `index_version` / `tool_schema_hash` /
+    协议世代）比对：规则集或索引变了就清掉旧 trace 与旧验证结果、回到检索节点重评
+    （**不沿用旧 allow**）；工具 schema 变了旧审批作废；协议世代变了直接拒绝恢复；
+    拿不到凭据按"变了"处理。恢复还会清掉上一轮的失败码与终态——失败不是工作流的进度。
+37. **分支只由结构化 Decision 决定，终态只由失败码决定**（`errors.STATUS_BY_CODE`：
+    平台不可用 / trace 断裂 / 证据缺失 → `blocked`；上限击穿 / 审批不合法 /
+    副作用状态未知 → `needs_human`；编排自身损坏 → `failed`）。节点与引擎都不许自己发明状态，
+    也没有任何一条"默认放行"的路径；未知路由标签、未知节点、非 `NodeOutcome` 的返回值一律失败关闭。
+38. **人工审批绑的是平台口径的 `action_hash`**（`ToolRunner.binding()` 算出，覆盖工具 schema、
+    规范化参数、主体、权限、上下文摘要**与 trace**），不是编排层自己的幂等键；找到的审批**文件**
+    原样交给 Phase 4 的 pre-check 复验。"图到达了审批节点"永远不等于用户批准；
+    恢复会重新校验审批，参数一变旧审批自动作废。
+39. **编排层的写入仍然走 Phase 4 的受控执行链**（API 没有 enforce 路由）：工具表按 Agent 分段
+    （`orchestrator` 段），改注册表必须重新审核；副作用之前先写"意图"并**立刻刷盘**
+    （`NodeContext.commit`），恢复时发现"开工未结算"即 `side_effect_unknown` 交给人，
+    既不重放也不假装成功；同一个幂等键重试不得产生第二次副作用（幂等跳过 + 平台台账两道闸）。
 
 ## 临时文件与产物
 
@@ -243,6 +273,8 @@
   它们是构建产物，不提交；重建命令见根 `README.md`；
 - Phase 5 的验证器闭环在 `.tmp/phase-5-demo/` 下运行（每个场景一个从夹具项目复制的工作区），
   验证器的运行期临时目录在 `.tmp/validators/` 下，二者都不触碰仓库真实文件；
+- Phase 8 的编排闭环在 `.tmp/phase-8-orchestration/` 下运行（受控工作区、checkpoint、审计与台账），
+  学习手册的产物在 `.tmp/learning-phase-8/` 下：它只动这些目录，不得指向仓库真实文件；
 - `.tmp/` 用完即删：`python tools/cleanup.py --dry-run` 预览，`python tools/cleanup.py` 执行；
 - 该脚本只删白名单路径：`.tmp/`、`.pytest_cache/`、`.uv-cache/`、`__pycache__/`、`*.pyc`；
 - 不要提交 `.tmp/` 内容；阶段证据可由 `python tools/phase_evidence.py` 随时重建。

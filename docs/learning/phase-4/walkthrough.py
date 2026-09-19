@@ -217,16 +217,22 @@ print("默认预算: 单次执行", registry.default_timeout_ms, "ms | 授权有
 print("全部工具都已审核:", all(registry.is_approved(spec) for spec in registry.tools))
 print("高风险工具（缺少明确授权时必须 block）:",
       sorted(spec.id for spec in registry.tools if spec.is_high_risk))
+dsh_tools = [spec for spec in registry.tools if spec.agent == "dsh"]
 registry_summary = {
     "tools": len(registry.tools),
     "approved": sum(1 for spec in registry.tools if registry.is_approved(spec)),
     "high_risk": sorted(spec.id for spec in registry.tools if spec.is_high_risk),
+    # Phase 8 起注册表按 Agent 分段：本阶段手册讲的是 dsh 那一段，编排层另有自己的写入工具。
+    "dsh_tools": len(dsh_tools),
+    "dsh_approved": sum(1 for spec in dsh_tools if registry.is_approved(spec)),
+    "dsh_high_risk": sorted(spec.id for spec in dsh_tools if spec.is_high_risk),
     "identity_matches_approved": registry.approved_metadata.get("registry_digest") == registry.identity,
     "grant_ttl_seconds": registry.grant_ttl_seconds,
 }
 
 # ----------------------------------------------------------------------------
-# **小结**：六条工具、三种角色、一份独立的审核清单——这就是 Phase 4 的全部“授权数据”。
+# **小结**：六条 dsh 工具（Phase 8 起注册表按 Agent 分段，编排层另有自己的三条写入工具）、
+# 三种角色、一份独立的审核清单——这就是 Phase 4 的全部“授权数据”。
 #
 # - **分类由数据决定**：`fs.edit` / `fs.write` 是 `reversible_write`（有 pre-check、有 post-check、
 #   声明了 `file_snapshot` 回滚）；`exec.*` 是 `privileged_execution`（高风险、`approval=required`，

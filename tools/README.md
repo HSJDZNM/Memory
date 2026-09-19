@@ -13,10 +13,12 @@
 | `enforcement_loop.py` | Phase 4 受控执行闭环：允许执行一次 / 重放阻断 / 事后验证失败回滚 / 高风险默认阻断 / trace 可重放，结论写给阶段证据 | `python tools/enforcement_loop.py` |
 | `agent_loop.py` | Phase 6 多 Agent 闭环：同语义事件在每个 Adapter 上得到同一结论 / 允许恰好执行一次 / 能力不足失败关闭 / 跨 Agent 命名空间隔离 / trace 来源可验证 / 循环熔断，结论写给阶段证据 | `python tools/agent_loop.py` |
 | `api_loop.py` | Phase 7 Policy API 闭环：本地引擎与 HTTP API 决定逐字节一致 / 两个协议消费者等价 / 超时与不可达都不返回 allow / 幂等重放与冲突 / 跨租户隔离 / readiness 反映真实依赖 / 观测日志可对外锚定 | `python tools/api_loop.py` |
+| `orchestration_loop.py` | Phase 8 编排闭环：在受控工作区里跑通编排工作流并重放失败 / 恢复路径，结论写到 `.tmp/artifacts/phase-8-orchestration-result.json` | `python tools/orchestration_loop.py` |
 | `validator_loop.py` | Phase 5 验证器闭环：ARCH-001 由 AST 证据判定 / 动态 import 与语法错误失败关闭 / 缺工具失败关闭 / 测试选择与失败 / 证据可重放 / 工具版本与配置可追溯 | `python tools/validator_loop.py` |
 | `build_learning_notebook.py` | 生成学习手册 notebook 与纯 Python 版，并逐单元执行校验 | `python tools/build_learning_notebook.py` |
 | `phase6_cells.py` | Phase 6 学习手册的单元内容（被 `build_learning_notebook.py` 引用）；改手册内容改这里，然后运行 `python tools/build_learning_notebook.py --phase phase-6` | `python tools/build_learning_notebook.py --phase phase-6` |
 | `phase7_cells.py` | Phase 7 学习手册的单元内容（被 `build_learning_notebook.py` 引用）；改手册内容改这里，然后运行 `python tools/build_learning_notebook.py --phase phase-7` | `python tools/build_learning_notebook.py --phase phase-7` |
+| `phase8_cells.py` | Phase 8 学习手册的 notebook 单元内容（被 `build_learning_notebook.py` 引用）；改手册内容改这里，然后运行 `python tools/build_learning_notebook.py --phase phase-8` | `python tools/build_learning_notebook.py --phase phase-8` |
 | `check_notebook.py` | 校验 `.ipynb` 结构与代码单元语法（不依赖 nbformat） | `python tools/check_notebook.py docs/learning/*.ipynb` |
 | `run_notebook_in_kernel.py` | 在**真实 Jupyter 内核**里跑一遍 notebook，逐单元报告耗时与错误 | `python tools/run_notebook_in_kernel.py docs/learning/phase-0/walkthrough.ipynb` |
 | `lock_requirements.py` | 从 pip 报告生成 `requirements.lock` | 见脚本模块说明 |

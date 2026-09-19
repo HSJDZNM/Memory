@@ -12,8 +12,9 @@
 | Phase 5 代码验证器 | [phase-5/](phase-5/) | AST 事实与依赖图、外部工具适配器与失效分类、测试选择、证据 → 判定与失败关闭 |
 | Phase 6 多 Agent Adapter | [phase-6/](phase-6/) | 规范事件 Schema、能力声明与支持矩阵、一致性套件、跨 Agent 隔离与循环熔断 |
 | Phase 7 Policy API | [phase-7/](phase-7/) | DTO 与领域模型分离、错误码 → 状态码、租户与令牌边界、预算与超时、幂等台账、本地与经 API 的决策逐字节一致、readiness 与观测锚定 |
+| Phase 8 LangGraph 编排 | [phase-8/](phase-8/) | 最小图状态与"正文不进状态"、循环硬上限与失败码 → 终态、图即数据与未知标签的拒绝、fake Policy Client 跑完整工作流、checkpoint 存"下一步"与中断恢复、两个引擎（参考实现 / LangGraph）报告逐字段一致、参数绑定的审批门禁 |
 
-后续阶段按同一约定新增：`phase-8/` …
+后续阶段按同一约定新增：`phase-9/` …
 
 ## 每个阶段目录的固定结构
 

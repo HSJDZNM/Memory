@@ -43,6 +43,7 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 from phase6_cells import PHASE_6_CELLS, check_phase_6_structure  # noqa: E402
 from phase7_cells import PHASE_7_CELLS, check_phase_7_structure  # noqa: E402
+from phase8_cells import PHASE_8_CELLS, check_phase_8_structure  # noqa: E402
 
 
 def _dedent_cells(cells):
@@ -69,6 +70,7 @@ def _dedent_cells(cells):
 
 PHASE_6_CELLS = _dedent_cells(PHASE_6_CELLS)
 PHASE_7_CELLS = _dedent_cells(PHASE_7_CELLS)
+PHASE_8_CELLS = _dedent_cells(PHASE_8_CELLS)
 
 KERNELSPEC = {
     "display_name": "Python 3",
@@ -3635,16 +3637,22 @@ print("默认预算: 单次执行", registry.default_timeout_ms, "ms | 授权有
 print("全部工具都已审核:", all(registry.is_approved(spec) for spec in registry.tools))
 print("高风险工具（缺少明确授权时必须 block）:",
       sorted(spec.id for spec in registry.tools if spec.is_high_risk))
+dsh_tools = [spec for spec in registry.tools if spec.agent == "dsh"]
 registry_summary = {
     "tools": len(registry.tools),
     "approved": sum(1 for spec in registry.tools if registry.is_approved(spec)),
     "high_risk": sorted(spec.id for spec in registry.tools if spec.is_high_risk),
+    # Phase 8 起注册表按 Agent 分段：本阶段手册讲的是 dsh 那一段，编排层另有自己的写入工具。
+    "dsh_tools": len(dsh_tools),
+    "dsh_approved": sum(1 for spec in dsh_tools if registry.is_approved(spec)),
+    "dsh_high_risk": sorted(spec.id for spec in dsh_tools if spec.is_high_risk),
     "identity_matches_approved": registry.approved_metadata.get("registry_digest") == registry.identity,
     "grant_ttl_seconds": registry.grant_ttl_seconds,
 }"""
     ),
     markdown(
-        """**小结**：六条工具、三种角色、一份独立的审核清单——这就是 Phase 4 的全部“授权数据”。
+        """**小结**：六条 dsh 工具（Phase 8 起注册表按 Agent 分段，编排层另有自己的三条写入工具）、
+三种角色、一份独立的审核清单——这就是 Phase 4 的全部“授权数据”。
 
 - **分类由数据决定**：`fs.edit` / `fs.write` 是 `reversible_write`（有 pre-check、有 post-check、
   声明了 `file_snapshot` 回滚）；`exec.*` 是 `privileged_execution`（高风险、`approval=required`，
@@ -5544,10 +5552,13 @@ def check_phase_4_structure(namespace: dict) -> list[str]:
     problems: list[str] = []
 
     summary = namespace.get("registry_summary") or {}
-    if summary.get("tools") != 6 or summary.get("approved") != 6:
-        problems.append(f"注册表摘要与文档不一致：{summary}")
-    if summary.get("high_risk") != ["exec.bash", "exec.pwsh", "exec.run_code"]:
-        problems.append(f"高风险工具清单与文档不一致：{summary.get('high_risk')}")
+    # 本阶段手册讲的是 **dsh 那一段**（Phase 8 起注册表按 Agent 分段，编排层另有 3 条写入工具）。
+    if summary.get("dsh_tools") != 6 or summary.get("dsh_approved") != 6:
+        problems.append(f"dsh 工具段与文档不一致：{summary}")
+    if summary.get("dsh_high_risk") != ["exec.bash", "exec.pwsh", "exec.run_code"]:
+        problems.append(f"dsh 的高风险工具清单与文档不一致：{summary.get('dsh_high_risk')}")
+    if (summary.get("tools") or 0) < (summary.get("dsh_tools") or 0):
+        problems.append(f"dsh 工具数多于注册表总数：摘要自相矛盾：{summary}")
     if not summary.get("identity_matches_approved"):
         problems.append("仓库注册表与已审核清单的摘要不一致：手册里的“全部已审核”不成立")
     if summary.get("grant_ttl_seconds") != 60:
@@ -6476,6 +6487,12 @@ PHASES: Mapping[str, PhaseNotebook] = {
         title="Policy API",
         cells=tuple(PHASE_7_CELLS),
         structure_check=check_phase_7_structure,
+    ),
+    "phase-8": PhaseNotebook(
+        slug="phase-8",
+        title="LangGraph 编排",
+        cells=tuple(PHASE_8_CELLS),
+        structure_check=check_phase_8_structure,
     ),
 }
 

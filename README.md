@@ -4,13 +4,17 @@
 把工程规范变成机器可执行的规则，对固定上下文稳定地给出 allow / allow_with_warnings / block，
 并留下"命中了哪些规则、跳过了哪些、为什么"的可重放审计证据。
 
-> 当前进度：**Phase 6 与 Phase 7 的仓库实现已完成**。Phase 6 交付了规范事件 Schema、
+> 当前进度：**Phase 0 至 Phase 8 的仓库实现已完成**。Phase 6 交付了规范事件 Schema、
 > 数据化能力声明、一致性套件与多 Agent 运行时的隔离/熔断/能力降级；Phase 7 把核心能力
 > 服务化：版本化 DTO 与 OpenAPI 快照、Bearer 认证、租户/项目隔离、墙钟预算与幂等、
 > 请求级观测与可对外锚定的摘要链——API 只增加部署与信任边界，判定仍只有
-> `policy.engine.evaluate` 一条路径。
+> `policy.engine.evaluate` 一条路径；Phase 8 在其上加了一层**可恢复的上层编排**
+> （`src/orchestration/`）：LangGraph 驱动"需求 → 检索 → 规划 → 实施 → 验证 ⇄ 修复 →
+> 测试 → 收尾"，但**只当消费者**——每次动手仍然回到平台要一个结构化 Decision，
+> 循环有硬上限、checkpoint 带兼容性凭据、人工审批与参数绑定、平台不可用即停下。
 > 当前只有 `dsh` 是真实产品接入；`generic-json`、`legacy-post-only` 与 Phase 7 的
-> `http-api` 都是合成协议消费者，因此“第二个真实 Agent 产品验证”仍是外部验收项。
+> `http-api` 都是合成协议消费者，因此“第二个真实 Agent 产品验证”仍是外部验收项；
+> Phase 8 的候选改动同样来自可替换端口（`ChangeAuthor`），真实模型作者尚未接入。
 > Phase 0 的 YAML Rule → Loader → Engine → CLI 链路、Phase 1 的 Context/Scope/Decision、
 > Phase 2 的 dsh Adapter 与 pre-execute Hook、Phase 3 的离线检索、Phase 4 的受控执行、
 > Phase 5 的代码验证器仍然有效，并被后续阶段的测试继续覆盖。
@@ -348,14 +352,59 @@ uv run python tools/api_loop.py
 `knowledge_unavailable` / `validator_unavailable` / `audit_unavailable`）。
 **没有任何一条路径默认 allow**：超时、不可达、规则集读不出来都只会更严。
 
+### LangGraph 编排（Phase 8）
+
+`src/orchestration/` 是**上层编排消费者**：它回答"下一步做什么"，平台回答"允不允许"。
+图状态只存引用（任务、阶段、artifact 哈希、Policy trace、验证摘要、计数与审批引用），
+**不存正文**；每个节点单一职责，写类动作先问平台（evaluate）再交给 Phase 4 的受控执行链；
+PASS/FAIL 只由结构化 Decision 决定，终态只由失败码决定（`blocked` / `needs_human` / `failed`）。
+
+```powershell
+$env:PYTHONPATH = "src"
+
+# 1) 装配自检：图定义 / 引擎可用性（auto → langgraph 或参考引擎）/ 注册表审核 / checkpoint / 状态协议
+uv run python -m orchestration.cli self-check
+
+# 2) 图定义：节点、静态边与条件分支（分支名就是路由标签）
+uv run python -m orchestration.cli graph
+
+# 3) 跑一个任务（任务文件是数据：目标、验收条目与候选改动都在里面；需要可用的 Policy API）
+uv run python -m orchestration.cli run --task .tmp/phase-8/task.json --engine auto
+
+# 4) 读 checkpoint 摘要：阶段、revision、判定与失败码（恢复前先看这个）
+uv run python -m orchestration.cli status --task-id demo-1
+
+# 5) 编排闭环（真端口 uvicorn + 真受控执行 + 真 checkpoint 与恢复）
+uv run python tools/orchestration_loop.py
+```
+
+**编排层只当消费者**：只有 `langgraph_engine.py` 导入工作流框架（构造引擎时延迟导入 +
+主版本校验，不可用即 `EngineUnavailableError`）；核心层从不导入本包——删掉
+`src/orchestration/`，规则、检索、验证器、受控执行与 API 照常独立运行。
+`engine="auto"` 在没有 LangGraph 时回落到参考引擎，并在报告里**如实写明**用的是哪一个。
+
+**恢复语义**（最容易被误解的一段）：`StepExecutor` 先执行、再路由、再把"下一步"落盘，
+所以"checkpoint 之后崩溃"不会重跑刚完成的节点；checkpoint 带一轮的兼容性凭据
+（`rule_set_hash` / `index_version` / `tool_schema_hash` / 协议世代），恢复时与**当前平台**
+比对——规则集或索引变了就清掉旧 trace 与旧验证结果回到检索节点重评（**不沿用旧 allow**），
+工具 schema 变了旧审批作废，协议世代变了直接拒绝恢复，拿不到凭据按"变了"处理。
+副作用之前先写一笔"意图"并立刻刷盘：恢复时发现"开工未结算"就交给人
+（`side_effect_unknown`），既不重放也不假装成功。
+
+**失败语义**：平台不可用 / trace 断裂 / 证据缺失 → `blocked`；上限击穿（repair 轮次、
+工具调用、节点执行、token、费用、墙钟）、审批不合法、副作用状态未知 → `needs_human`；
+编排自身损坏（未知节点、未知路由标签、checkpoint 版本不可读）→ `failed`。
+**没有任何一条路径是"默认放行"**：正反例见 `tests/security/test_orchestration_adversarial.py`
+与 `tools/orchestration_loop.py`。
+
 ### 测试
 
 ```powershell
-uv run python -m pytest tests/unit -q            # 527 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类、API DTO/配置/预算/幂等/指标
-uv run python -m pytest tests/contract -q        # 164 用例：决策协议快照 + dsh/多 Agent 映射契约 + 检索端口契约 + 受控执行协议 + 验证器证据协议 + API 传输契约（OpenAPI 快照 / 版本钉死 / 核心层不依赖框架）
-uv run python -m pytest tests/integration -q     # 245 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环、验证器流水线、多 Agent 运行时、HTTP API（ASGI 进程内）
-uv run python -m pytest tests/security -q        # 67 用例：注入、越权、缓存失效、检索与验证器失败关闭、审批伪造、日志失效、多 Agent 对抗、API 未认证/跨租户/不可达（不返回 allow）
-uv run python -m pytest -q                       # 全部收集 1004 用例；本机实跑 1003 passed、1 skipped（Windows 不允许普通用户创建符号链接）
+uv run python -m pytest tests/unit -q            # 575 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类、API DTO/配置/预算/幂等/指标、编排状态/上限/失败码/checkpoint/审批语义
+uv run python -m pytest tests/contract -q        # 182 用例：决策协议快照 + dsh/多 Agent 映射契约 + 检索端口契约 + 受控执行协议 + 验证器证据协议 + API 传输契约（OpenAPI 快照 / 版本钉死 / 核心层不依赖框架）+ 编排引擎等价（两个引擎逐字段一致）与依赖方向
+uv run python -m pytest tests/integration -q     # 258 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环、验证器流水线、多 Agent 运行时、HTTP API（ASGI 进程内）、编排恢复/幂等/平台故障与真注册表端到端
+uv run python -m pytest tests/security -q        # 84 用例：注入、越权、缓存失效、检索与验证器失败关闭、审批伪造、日志失效、多 Agent 对抗、API 未认证/跨租户/不可达（不返回 allow）、编排的伪造审批与恢复绕过
+uv run python -m pytest -q                       # 全部收集 1099 用例；本机实跑 1098 passed、1 skipped（Windows 不允许普通用户创建符号链接）
 ```
 
 ### 记录性能基线
@@ -379,13 +428,15 @@ uv run python tools/policy_bench.py --counts 10 100 1000
 | [Phase 4](docs/learning/phase-4/walkthrough.ipynb) | 工具注册表、参数绑定的授权、受控执行、事后验证与审计链重放 |
 | [Phase 5](docs/learning/phase-5/walkthrough.ipynb) | AST 事实与依赖图、外部工具适配器与失效分类、测试选择、证据 → 判定与失败关闭 |
 | [Phase 6](docs/learning/phase-6/walkthrough.ipynb) | 规范事件、能力声明与支持矩阵、一致性套件、跨 Agent 隔离与循环熔断 |
+| [Phase 7](docs/learning/phase-7/walkthrough.ipynb) | DTO 与领域模型分离、错误码 → 状态码、租户与令牌边界、预算与超时、幂等台账、本地与经 API 的决策逐字节一致 |
+| [Phase 8](docs/learning/phase-8/walkthrough.ipynb) | 最小图状态、循环上限、两个引擎跑同一份 spec、checkpoint 与恢复、人工审批、失败关闭表 |
 
 不想开 Jupyter 就运行同内容的纯 Python 版本（`walkthrough.py`）。
 
 ### 生成阶段验收证据
 
 ```powershell
-uv run python tools/phase_evidence.py            # 默认写到 .tmp/artifacts/phase-6-evidence.json
+uv run python tools/phase_evidence.py            # 默认写到 .tmp/artifacts/phase-8-evidence.json
 ```
 
 证据包含实现版本、规则集哈希（`sha256:...`）、测试命令、用例数、失败数与 JUnit 报告路径，
@@ -405,14 +456,14 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 
 ```text
 .
-├── .github/workflows/phase-7.yml      # CI：单元 / 契约 / 集成 / 对抗测试、AST 证据重放、验证器闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件与支持矩阵、API 自检 / OpenAPI 快照 / API 闭环、手册与证据
+├── .github/workflows/phase-8.yml      # CI：单元 / 契约 / 集成 / 对抗测试、AST 证据重放、验证器闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件与支持矩阵、API 自检 / OpenAPI 快照 / API 闭环、手册与证据
 ├── docs/
 │   ├── dora-capabilities/             # DORA 软件交付能力指南离线镜像（37 篇）
 │   ├── dotnet-design-guidelines/      # .NET Framework 设计准则离线镜像（49 篇）
 │   ├── engineering-policy-platform/   # 本项目的分阶段架构、契约与测试路线
 │   ├── gitlab-code-review/            # GitLab 评审规范离线镜像（20 篇）
 │   ├── google-eng-practices/          # Google 工程实践指南离线镜像（14 篇）
-│   ├── learning/                      # 面向人的学习手册（按阶段：phase-0 … phase-7）
+│   ├── learning/                      # 面向人的学习手册（按阶段：phase-0 … phase-8）
 │   ├── owasp-cheatsheets/             # OWASP 代码安全指南离线归档（118 篇）
 │   └── python-pep-code-style/         # PEP 8 / PEP 257 文档镜像（11 篇）
 ├── examples/                          # 可重放的 CLI 示例（正例 / 反例）
@@ -433,6 +484,7 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 ├── src/adapters/dsh/                  # Phase 2 dsh Adapter：adapter（纯映射）/ hooks（Hook 与审计）/ README
 ├── src/retrieval/                     # Phase 3 检索层：chunker / corpus / store / indexer / query / retriever / vector / context / cli
 ├── src/policy_api/                    # Phase 7 服务化层：models（DTO/版本）/ errors / config / auth / services / runtime / timeout / idempotency / observability / ops / app（FastAPI）/ contract / cli / testing / probe（HTTP Adapter）
+├── src/orchestration/                 # Phase 8 编排层（平台消费者）：models / errors / limits / checkpoint / approvals / client / tools / nodes / graph / engines / langgraph_engine / runtime / cli / README
 ├── tests/
 │   ├── fixtures/validators/           # Phase 5 夹具项目 + 假工具（失效与边界行为）
 │   ├── fixtures/agent_events/         # Phase 2/6 事件样本与一致性套件的探针工作区
@@ -440,9 +492,10 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 │   ├── unit/                          # 模型、规范化、范围矩阵、决策聚合、分块、查询、Context、AST/依赖图/适配器、API DTO/配置/预算/幂等
 │   ├── contract/                      # 决策协议快照、dsh 映射契约、多 Agent 能力声明与规范事件契约、检索端口契约、API 传输契约与 OpenAPI 快照
 │   ├── integration/                   # 真实 CLI 子进程、性能基线、检索索引与增量、多 Agent 一致性套件与隔离、HTTP API（ASGI 进程内）
-│   ├── security/                      # 对抗测试：注入、越权、缓存失效、检索失败关闭、伪造 trace、跨 Agent 越权、API 未认证/跨租户/不可达
+│   ├── security/                      # 对抗测试：注入、越权、缓存失效、检索失败关闭、伪造 trace、跨 Agent 越权、API 未认证/跨租户/不可达、编排的伪造审批与平台故障
+│   ├── orchestration_support.py       # Phase 8 测试助手（脚本化客户端、受控工作区、装配与运行）
 │   └── fixtures/                      # 决策快照、dsh 事件、检索语料与固定评测集
-├── tools/                             # 仓库脚本：阶段证据、性能基线、检索评测、dsh 沙箱闭环、多 Agent 闭环、API 闭环、notebook 生成、清理
+├── tools/                             # 仓库脚本：阶段证据、性能基线、检索评测、dsh 沙箱闭环、多 Agent 闭环、API 闭环、编排闭环、notebook 生成、清理
 ├── pyproject.toml                     # 依赖清单、包配置、pytest 配置
 ├── requirements.in / requirements.lock # 直接依赖与锁定版本
 ├── README.md
@@ -454,15 +507,17 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 | 项 | 选择 | 说明 |
 | --- | --- | --- |
 | 语言 | Python ≥ 3.11（本机验证 3.13.11） | 文档选型 Phase 0–1 指定 |
-| 依赖 | pydantic 2、PyYAML 6；FastAPI + uvicorn（Phase 7 传输层） | 类型化规则与 YAML 解析；**核心层不依赖 Web 框架**，只有 `src/policy_api/app.py` 需要它 |
+| 依赖 | pydantic 2、PyYAML 6；FastAPI + uvicorn（Phase 7 传输层）；langgraph 1.2（Phase 8 编排层） | 类型化规则与 YAML 解析；**核心层不依赖 Web 框架，也不依赖工作流框架**——只有 `src/policy_api/app.py` 需要前者，只有 `src/orchestration/langgraph_engine.py` 需要后者（构造引擎时延迟导入 + 版本校验，不可用即失败关闭） |
 | 检索 | SQLite FTS5（标准库 sqlite3，无第三方依赖） | Phase 3 的可解释检索基线；向量检索是可替换端口，本阶段**未采纳**（评测见阶段记录） |
 | 受控执行 | 标准库 + pydantic（无第三方依赖） | Phase 4：Tool Registry 是数据（YAML），授权 / 幂等 / 审计链落在追加写 JSONL 上，执行驱动按注册表声明选择 |
 | 测试 | pytest 8+（本机验证 9.1.1） | 单元 + 契约 + 集成 + 对抗四层；API 用进程内 ASGI 客户端（httpx），不需要端口 |
 | 包管理 | uv（建虚拟环境与安装）；锁文件是 `requirements.lock` | 仓库未提交 `uv.lock`，依赖锁定以 `requirements.lock` 为准，CI 从它安装 |
-| CI | GitHub Actions | `.github/workflows/phase-7.yml`（Phase 0–4 重放、AST 证据重放、验证器注册表/探针/闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件/支持矩阵/闭环、API 自检/OpenAPI 快照/API 闭环、仓库一致性、凭据扫描） |
+| CI | GitHub Actions | `.github/workflows/phase-8.yml`（Phase 0–4 重放、AST 证据重放、验证器注册表/探针/闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件/支持矩阵/闭环、API 自检/OpenAPI 快照/API 闭环、仓库一致性、凭据扫描） |
 | 代码验证器 | 标准库 ast + 外部工具（Ruff / mypy / pytest 均由探针发现，不是包依赖） | Phase 5：注册表与项目档案是数据（`validation/`），证据带版本与配置哈希，缺工具即失败关闭 |
 
-Phase 0–4 明确不引入：LangGraph、向量数据库、FastAPI、MCP、Agent SDK 与任何 LLM 调用。
+Phase 0–4 明确不引入：LangGraph、向量数据库、FastAPI、MCP、Agent SDK 与任何 LLM 调用；
+Phase 7 引入了 FastAPI/uvicorn（只在传输层），Phase 8 引入 LangGraph（只在编排层，且只是消费者）。
+向量数据库、MCP 与任何 LLM 调用至今没有引入。
 Phase 2 里 dsh 只作为**外部进程与线协议**存在：适配器不导入 dsh 的类型，核心层更不知道 dsh 的存在。
 Phase 3 的检索层不导入任何 Agent SDK、Web 框架或向量库：embedding 是端口（`retrieval.vector`），
 用确定性本地实现做对照评测；固定评测集显示它没有跑赢 FTS5，因此没有进入默认链路。
@@ -487,8 +542,19 @@ Phase 3 的检索层不导入任何 Agent SDK、Web 框架或向量库：embeddi
   参数变化即失效；授权短时效、单次使用，执行器不解析任何自然语言批准；
 - 风险分类、参数白名单、权限、审批门禁与事后验证器都是 `registry/tool-registry.yaml` 里的数据，
   模型不能自行声明"我这个动作属于哪一类"；运行时描述与已审核哈希不一致的工具不可使用；
-- 执行后必须交证据（文件前后哈希、diff 摘要、退出码、证据不足按 `repair_required` 处理），
-  回滚能力按工具声明：声明不了就写 `unsupported`，绝不假装所有副作用都可撤销。
+- 执行后必须交证据（文件前后哈希、diff 摘要、退出码，证据不足按 `repair_required` 处理），
+  回滚能力按工具声明：声明不了就写 `unsupported`，绝不假装所有副作用都可撤销；
+- 编排层是**消费者**：它只回答"下一步做什么"，判定仍只有平台一条路径，
+  而且是仓库里唯一导入工作流框架的地方——删掉 `src/orchestration/`，平台照常独立运行；
+- 图状态里不放正文：需求原文、文件内容、工具输出与凭据只以摘要/引用存在，
+  checkpoint 是"单文件 + 原子替换"并带版本与兼容性凭据，相同输入得到逐字节相同的状态；
+- PASS/FAIL 只由结构化 Decision 决定，终态只由失败码决定（`blocked` / `needs_human` / `failed`），
+  未知路由标签、未知节点、非契约返回值一律失败关闭；
+- 恢复不沿用旧 allow：规则集、索引或工具 schema 变了就清掉旧 trace 与旧验证结果重新评估，
+  拿不到当前凭据也按"变了"处理；恢复还会清掉上一轮的失败标记；
+- 人工审批绑的是平台口径的 `action_hash`（覆盖参数、主体、工具 schema、上下文与 trace），
+  "图到达了审批节点"永远不等于用户批准；副作用前先写"意图"并立刻刷盘，
+  恢复时发现"开工未结算"即交给人（`side_effect_unknown`），不重放也不假装成功。
 
 ## 约定
 
