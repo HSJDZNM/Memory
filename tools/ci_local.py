@@ -12,6 +12,9 @@
     python tools/ci_local.py --hook       # pre-push 钩子用：更简短、失败即退出码 1
     python tools/ci_local.py --full --python C:\\path\\to\\python.exe
 
+    # 同一个覆盖，但 pre-push 钩子也用得上（钩子不接受参数）：
+    $env:CI_LOCAL_PYTHON = "C:\\path\\to\\python.exe"; git push
+
 只用标准库 + PyYAML（已在锁定依赖里）。bash-only 的步骤（heredoc、set +e、grep -q、
 cat > /tmp）在 Windows 上无法直接执行，脚本会**显式跳过并打印原因**，不假装跑过。
 """
@@ -29,10 +32,14 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 
 # 本地解释器：优先用仓库自己的 .venv，其次退回当前解释器。
+# `CI_LOCAL_PYTHON` 与 `--python` 是同一条逃生通道，区别只在于**钩子也能用**：
+# pre-push 钩子不接受参数（git 会把它自己的参数传进来），而受限环境里
+# `.venv` 可能缺依赖、也装不进去，此时用环境变量指向一个已验证的解释器。
 _VENV = ROOT / ".venv" / "Scripts" / "python.exe"
 if not _VENV.is_file():
     _VENV = ROOT / ".venv" / "bin" / "python"
-PYTHON = str(_VENV) if _VENV.is_file() else sys.executable
+_OVERRIDE = os.environ.get("CI_LOCAL_PYTHON", "").strip()
+PYTHON = _OVERRIDE or (str(_VENV) if _VENV.is_file() else sys.executable)
 
 # 这些标记说明该步骤是 bash-only（heredoc、set +e、grep -q、/tmp 路径），本机不执行。
 BASH_ONLY_MARKERS = ("<<'PY'", "<<'JSON'", "set +e", "set -e", "grep -q", "cat >", "/tmp/")
@@ -208,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--python",
         dest="python_executable",
-        help="覆盖步骤使用的 Python；用于仓库 .venv 存在但当前环境不可加载时",
+        help="覆盖步骤使用的 Python：.venv 存在但不可加载时用（也可设 CI_LOCAL_PYTHON）",
     )
     args = parser.parse_args(argv)
 

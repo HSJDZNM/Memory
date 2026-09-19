@@ -9,6 +9,7 @@ Git 钩子不能随仓库提交（.git/hooks 是本地目录），所以用一�
     python tools/install_hooks.py --show      # 只看当前钩子内容
 
 跳过单次检查：git push --no-verify
+解释器覆盖：设置环境变量 CI_LOCAL_PYTHON（钩子与 ci_local.py 都认它）
 """
 from __future__ import annotations
 
@@ -24,7 +25,11 @@ BACKUP = ROOT / ".git" / "hooks" / "pre-push.bak"
 SCRIPT = """#!/bin/sh
 # 由 tools/install_hooks.py 生成；不要手改，改 tools/ci_local.py。
 # 按改动范围跑 CI 的对应步骤，失败即阻断推送（跳过用 git push --no-verify）。
-exec "{python}" "{script}" --hook
+# 受限环境里 .venv 可能缺依赖、也装不进去：把 CI_LOCAL_PYTHON 指向已验证的解释器即可。
+# 钩子与 tools/ci_local.py --python 走的是同一条逃生通道。
+PY="{python}"
+if [ -n "$CI_LOCAL_PYTHON" ]; then PY="$CI_LOCAL_PYTHON"; fi
+exec "$PY" "{script}" --hook
 """
 
 
