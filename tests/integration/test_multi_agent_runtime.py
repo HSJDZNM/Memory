@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from adapters.base import EnforcementLevel
+from adapters.base import EnforcementLevel, RegistryError
 from adapters.conformance import SCENARIOS, run_conformance
 from adapters.dsh.enforcement import EnforcementBridge
 from adapters.loader import load_adapter, load_adapters, load_registry_from_repo
@@ -464,6 +464,127 @@ def test_breaker_is_per_agent_and_window_bounded(rules, registry, tmp_root: Path
         "generic-json", _generic_read("cap-b", "call-b"), execute=lambda e: None
     )
     assert allowed.outcome_code != "request_busy"
+
+
+# --------------------------------------------------------------------------- 熔断阈值接线
+
+
+def _adapter_config_with(tmp_root: Path, agent_id: str, **updates: int) -> Path:
+    """复制一份真实 adapter.yaml 并改掉给定键，返回新路径（不动仓库里的数据）。"""
+
+    import yaml
+
+    source = ADAPTERS_ROOT / agent_id / "adapter.yaml"
+    data = yaml.safe_load(source.read_text(encoding="utf-8"))
+    data.update(updates)
+    path = tmp_root / f"{agent_id}-override.yaml"
+    path.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8", newline="\n"
+    )
+    return path
+
+
+def test_breaker_thresholds_come_from_the_adapter_declaration(
+    rules, registry, tmp_root: Path
+) -> None:
+    """不显式传参时，阈值必须来自 adapters/<agent>/adapter.yaml，而不是代码里的常数。
+
+    这是本条的**回归钉子**：接线之前 max_events_per_window / window_seconds 是
+    "只声明、不执行"的死配置——全仓零读取点，把声明改成 1 也不会有任何熔断。
+    因此这里不能只断言"解析出的值等于声明值"（那可能只是两边都恰好等于 50），
+    必须真的把声明收紧到 1，观察第 2 条受治理事件变成 request_busy。
+    """
+
+    adapters = load_adapters(["generic-json"], root=REPO_ROOT, registry=registry)
+    declared = adapters["generic-json"].config
+    runtime = AgentRuntime(
+        adapters=adapters,
+        rules=rules,
+        ledger_path=tmp_root / "ledger-default.jsonl",
+        workspace=WORKSPACE,
+    )
+    assert runtime.breaker_limit == declared.max_events_per_window
+    assert runtime.window_seconds == declared.window_seconds
+
+    tightened = load_adapters(
+        ["generic-json"],
+        root=REPO_ROOT,
+        registry=registry,
+        configs={
+            "generic-json": _adapter_config_with(
+                tmp_root, "generic-json", max_events_per_window=1
+            )
+        },
+    )
+    tight = AgentRuntime(
+        adapters=tightened,
+        rules=rules,
+        ledger_path=tmp_root / "ledger-tight.jsonl",
+        workspace=WORKSPACE,
+    )
+    assert tight.breaker_limit == 1, "阈值必须来自声明"
+
+    first = tight.handle("generic-json", _generic_read("cfg-1", "call-1"), execute=lambda e: None)
+    second = tight.handle("generic-json", _generic_read("cfg-2", "call-2"), execute=lambda e: None)
+    assert first.outcome_code != "request_busy"
+    assert second.outcome_code == "request_busy", "声明收紧到 1 之后第 2 条就该熔断"
+
+
+def test_explicit_thresholds_win_over_the_declaration(rules, registry, tmp_root: Path) -> None:
+    """显式参数优先于声明：一致性套件与闭环靠它把阈值调小，来证明"熔断真的会发生"。"""
+
+    tightened = load_adapters(
+        ["generic-json"],
+        root=REPO_ROOT,
+        registry=registry,
+        configs={
+            "generic-json": _adapter_config_with(tmp_root, "generic-json", max_events_per_window=1)
+        },
+    )
+    runtime = AgentRuntime(
+        adapters=tightened,
+        rules=rules,
+        ledger_path=tmp_root / "ledger-explicit.jsonl",
+        workspace=WORKSPACE,
+        breaker_limit=5,
+    )
+    assert runtime.breaker_limit == 5
+
+
+def test_conflicting_declarations_are_refused(rules, registry, tmp_root: Path) -> None:
+    """同一运行时只解析一个阈值，声明分歧必须报错——不静默取 min/max。"""
+
+    adapters = load_adapters(["dsh", "generic-json"], root=REPO_ROOT, registry=registry)
+    adapters["generic-json"] = load_adapters(
+        ["generic-json"],
+        root=REPO_ROOT,
+        registry=registry,
+        configs={
+            "generic-json": _adapter_config_with(tmp_root, "generic-json", max_events_per_window=1)
+        },
+    )["generic-json"]
+
+    with pytest.raises(RegistryError) as info:
+        AgentRuntime(adapters=adapters, rules=rules, workspace=WORKSPACE)
+    assert "max_events_per_window" in str(info.value)
+    assert "generic-json=1" in str(info.value)
+
+
+def test_non_positive_window_is_refused(rules, registry, tmp_root: Path) -> None:
+    """window_seconds <= 0 会让窗口计数恒为 0、熔断永不触发（fail-open）。
+
+    声明侧有 gt=0，所以这条只能从**显式参数**进来——它正是先前唯一没有下限保护的入口。
+    """
+
+    adapters = load_adapters(["generic-json"], root=REPO_ROOT, registry=registry)
+    with pytest.raises(RegistryError):
+        AgentRuntime(
+            adapters=adapters,
+            rules=rules,
+            ledger_path=tmp_root / "ledger-window.jsonl",
+            workspace=WORKSPACE,
+            window_seconds=0,
+        )
 
 
 # --------------------------------------------------------------------------- 幂等

@@ -59,6 +59,7 @@ from .models import (
 __all__ = [
     "AGENT_RUNTIME_SCHEMA_VERSION",
     "DEFAULT_BREAKER_LIMIT",
+    "DEFAULT_WINDOW_SECONDS",
     "REASON_CODES",
     "AgentRuntime",
     "PolicyTimeout",
@@ -70,6 +71,7 @@ __all__ = [
 
 AGENT_RUNTIME_SCHEMA_VERSION = "1.0"
 DEFAULT_BREAKER_LIMIT = 50
+DEFAULT_WINDOW_SECONDS = 60
 
 # 面向 Agent 的受控原因码。Adapter 只能从这里取，不能自己编——
 # 否则"错误响应能被 Agent 理解"就退化成每个 Adapter 各说各话。
@@ -405,6 +407,63 @@ class TraceRegistry:
         return ""
 
 
+def _agreed_value(values: Mapping[str, int], field: str) -> int:
+    """多个 Adapter 对同一个阈值必须**全体一致**，分歧一律报错。
+
+    取 min 会让"某个 Agent 放宽了阈值"变成静默生效；取 max 则相反。
+    两种都不是调用方能预测的行为，而 AGENTS 核心约束 3 要求"冲突不得静默忽略"。
+    """
+
+    distinct = set(values.values())
+    if len(distinct) > 1:
+        detail = "、".join(f"{agent_id}={value}" for agent_id, value in sorted(values.items()))
+        raise RegistryError(
+            f"多个 Adapter 声明的 {field} 不一致：{detail}；"
+            "同一运行时只解析一个阈值，分歧必须显式解决"
+        )
+    return next(iter(distinct))
+
+
+def _resolve_thresholds(
+    adapters: Mapping[str, Adapter],
+    breaker_limit: Optional[int],
+    window_seconds: Optional[int],
+) -> tuple[int, int]:
+    """熔断阈值三级优先：**显式参数 > adapter 配置（全体一致）> 模块常数**。
+
+    `adapters/<agent_id>/adapter.yaml` 早就声明了 `max_events_per_window` / `window_seconds`，
+    但在这次接线之前**没有任何读取点**——声明了却不执行，等于这条约束不存在，
+    而且"改配置能调阈值"是一句空话。显式参数优先是为了让一致性套件 / 测试 / 闭环
+    能刻意把阈值调小（它们要证明的是"熔断真的会发生"）。
+
+    两个维度**各自**判定一致性：只消费 `window_seconds` 时不去管别处的
+    `max_events_per_window` 是否一致，否则显式传了阈值也会被无关分歧绊倒。
+
+    注意（已知复核边界）：`adapter.yaml` **不在** `approved.json` 的已审核哈希范围内
+    （那只覆盖 `manifest.yaml`），因此改这里的阈值不需要重新审核。
+    """
+
+    if breaker_limit is not None and window_seconds is not None:
+        return breaker_limit, window_seconds
+
+    limits: dict[str, int] = {}
+    windows: dict[str, int] = {}
+    for agent_id, adapter in adapters.items():
+        config = getattr(adapter, "config", None)
+        if config is None:
+            raise RegistryError(
+                f"Adapter {agent_id!r} 缺少能力声明配置（config）：无法解析熔断阈值"
+            )
+        limits[agent_id] = config.max_events_per_window
+        windows[agent_id] = config.window_seconds
+
+    if breaker_limit is None:
+        breaker_limit = _agreed_value(limits, "max_events_per_window")
+    if window_seconds is None:
+        window_seconds = _agreed_value(windows, "window_seconds")
+    return breaker_limit, window_seconds
+
+
 class AgentRuntime:
     """多 Agent 的公共判定入口。
 
@@ -422,8 +481,8 @@ class AgentRuntime:
         ledger_path: Optional[Path | str] = None,
         trace_path: Optional[Path | str] = None,
         workspace: Optional[Path | str] = None,
-        breaker_limit: int = DEFAULT_BREAKER_LIMIT,
-        window_seconds: int = 60,
+        breaker_limit: Optional[int] = None,
+        window_seconds: Optional[int] = None,
         clock_time: Optional[Callable[[], str]] = None,
         evaluator: Callable[[RuleSet, Any], ValidationResult] = evaluate,
         clock: Callable[[], float] = time.monotonic,
@@ -434,8 +493,14 @@ class AgentRuntime:
     ) -> None:
         if not adapters:
             raise RegistryError("AgentRuntime 至少需要一个 Adapter")
+        # 阈值先解析再校验：下面这几行拿到的永远是 int，None 不会漏到 725 行的比较里。
+        breaker_limit, window_seconds = _resolve_thresholds(adapters, breaker_limit, window_seconds)
         if breaker_limit <= 0:
             raise RegistryError("breaker_limit 必须是正整数")
+        # window_seconds 此前没有下限校验：0 或负数会让 _window_events 恒返回 0，
+        # 熔断永远不触发（fail-open）。它必须和 breaker_limit 一样在构造期就失败。
+        if window_seconds <= 0:
+            raise RegistryError("window_seconds 必须是正整数")
         self.adapters = dict(adapters)
         self.rules = rules
         self.registry = registry
