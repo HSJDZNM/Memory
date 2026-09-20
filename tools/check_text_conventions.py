@@ -45,14 +45,22 @@ def is_mirrored(path: Path) -> bool:
 
 
 def tracked_files() -> list[Path]:
+    """列出会被提交的文件。
+
+    必须用 `-z`（NUL 分隔）而不是按行切分：`core.quotepath` 默认开启，git 会把非 ASCII
+    路径转义成八进制并加引号（`"docs/.../\344\275\277\347\224\250.md"`）。那种字符串
+    `Path.is_file()` 为假，于是这些文件在下面的循环里被**静默跳过**——门禁少查了几个文件
+    却不报任何错。改成中文文件名时就是靠"检查数从 343 掉到 338"才发现的。
+    """
+
     completed = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         capture_output=True,
         text=True,
         encoding="utf-8",
         check=False,
     )
-    return [Path(line) for line in completed.stdout.splitlines() if line.strip()]
+    return [Path(item) for item in completed.stdout.split(chr(0)) if item.strip()]
 
 
 def main(argv: list[str]) -> int:
