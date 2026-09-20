@@ -1,0 +1,258 @@
+# 仓库功能清单（Engineering Policy Platform）
+
+> 本文是 `docs/architecture/` 三件套之一：
+> [功能清单](features.md)（本文）· [使用说明](usage-guide.md) · [规则文档转化为规则](rule-conversion.md) ·
+> 架构图：[技术架构总览（简化版）](technical-architecture.drawio) + [按技术抽象的流程架构图](technology-flow.drawio)。
+>
+> 事实来源：仓库里的实际代码、数据文件与 CI（`.github/workflows/phase-8.yml`）。
+> 与 `README.md` 冲突时以代码与数据为准。
+
+## 1. 定位
+
+本仓库是一个**独立于具体 Coding Agent 的软件工程治理层**：
+
+- 把工程规范变成**机器可执行规则**（YAML 是数据，不是提示词）；
+- 对**固定上下文**稳定给出 `allow` / `allow_with_warnings` / `block`；
+- 留下"命中了哪些规则、跳过了哪些、为什么"的**可重放审计证据**；
+- 全链路**失败关闭**：未知字段、未知枚举、未知版本、缺证据、工具不可用一律更严，绝不默认放行。
+
+三条"唯一"贯穿整个仓库：
+
+| 唯一 | 含义 | 守它的测试 |
+| --- | --- | --- |
+| 判定路径 | 本地、dsh、API、编排都只经过 `policy.engine.evaluate` | `tools/api_loop.py`、`tests/contract/test_decision_protocol.py` |
+| 工作流框架导入点 | 只有 `src/orchestration/langgraph_engine.py` 导入 langgraph，且构造引擎时才延迟导入 | `tests/contract/test_orchestration_engine.py`（检查两个方向） |
+| 凭据与正文 | 图状态 / 审计 / 台账里不放正文与密钥，只放摘要与引用 | `tests/security/*`、`tools/secret_scan.py` |
+
+### 1.1 完成度
+
+| 阶段 | 主题 | 状态 |
+| --- | --- | --- |
+| Phase 0 | 最小规则系统（YAML → Loader → Engine → CLI） | 完成 |
+| Phase 1 | Policy Engine（Context / Scope / Severity / Decision 协议） | 完成 |
+| Phase 2 | dsh Adapter 与 pre-execute Hook | 完成（真实产品链路） |
+| Phase 3 | 离线规范检索（SQLite FTS5 + Context Builder） | 完成（向量检索**未采纳**） |
+| Phase 4 | 受控执行（Tool Registry / 授权 / 台账 / 审计链） | 完成 |
+| Phase 5 | 代码验证器（AST / 依赖图 / Ruff / pytest 证据） | 完成（mypy 端口就位，**未启用类型规则**） |
+| Phase 6 | 多 Agent 适配（规范事件 / 能力声明 / 隔离 / 熔断） | 仓库实现完成；**第二个真实 Agent 产品验证待外部环境** |
+| Phase 7 | Policy API（DTO / OpenAPI 快照 / 认证 / 租户 / 预算 / 观测锚定） | 完成 |
+| Phase 8 | LangGraph 编排（消费者：状态 / 循环 / checkpoint / 人工审批） | 完成；**真实模型作者（ChangeAuthor）未接入** |
+
+## 2. 能力总览
+
+| # | 能力 | 解决什么问题 | 主要入口 |
+| --- | --- | --- | --- |
+| 1 | 规则加载与校验 | YAML 规则是数据，损坏 / 拼错必须在加载阶段报错 | `python -m policy.check --check-rules` |
+| 2 | 上下文与范围匹配 | "这条规则管不管这次变更"必须可解释 | `policy.scope` / `skipped_rules` |
+| 3 | 决策协议 | 决策带版本、可被下游原样解析、未知版本拒绝 | `schema_version = 1.0` |
+| 4 | dsh 接入 | 工具执行前拿到 allow / block，阻断不执行 | `python -m adapters.dsh.hooks` |
+| 5 | 规范检索 | 从离线镜像里找到"值得告诉 Agent"的片段并带来源 | `python -m retrieval.cli` |
+| 6 | 受控执行 | 授权绑到具体参数，执行一次，事后交证据 | `python -m enforcement.cli` |
+| 7 | 代码验证器 | 把代码变成确定性证据供规则判定 | `python -m validators.cli` |
+| 8 | 多 Agent 适配 | 一套规则服务多个 Agent Runtime，能力上限由声明推出 | `python -m adapters.cli` |
+| 9 | Policy API | 进程外共享判定能力，只增加信任边界 | `python -m policy_api.cli` |
+| 10 | LangGraph 编排 | "下一步做什么"的可恢复工作流（消费者） | `python -m orchestration.cli` |
+| 11 | 阶段验收证据 | 把实现版本、规则集哈希、测试结果固化成证据 | `python tools/phase_evidence.py` |
+| 12 | 学习手册 | 用真实模块逐段演示每个阶段 | `docs/learning/phase-*/walkthrough.ipynb` |
+
+## 3. 逐子系统功能清单
+
+### 3.1 判定核心 `src/policy/`（Phase 0 / 1 / 5）
+
+| 模块 | 功能 | 关键不变量 |
+| --- | --- | --- |
+| `models.py` | Rule / RuleSet / PolicyContext / Violation / ValidationResult / Decision / Severity / Operation 等不可变模型；正则与规范化函数 | 默认 `extra="forbid"` + `frozen=True`（`RuleScope` 是刻意的例外：允许未知维度并在 `extra_policy=reject` 时报错）；`SCHEMA_VERSION = "1.0"`；`POLICY_VERSION = "phase-1"`（协议世代名，不跟随平台阶段）；scope 6 个已知维度；6 个已知 checker；`RuleSet.identity` 与加载顺序无关 |
+| `loader.py` | 收集规则文件、解析 YAML、构造不可变 Rule | 只扫显式目录；隐藏文件跳过；按规范化相对路径排序；拒绝重复 ID、空文件、非映射顶层、路径逃逸；**任一文件失败即整体不加载**（原子语义） |
+| `scope.py` | 规则范围匹配与跳过原因 | 同维度多值 = OR，跨维度 = AND，`*` = 不限制；未知维度默认 reject（除非显式 `extra_policy: skip` 并记入 `ignored_dimensions`） |
+| `context.py` | 上下文规范化（仓库相对路径、canonical 标识符） | 只接受显式字段，不从文件名 / 目录 / 消息推断主体、权限、审批状态 |
+| `engine.py` | `evaluate(rule_set, context, evidence=...)` 唯一判定入口 | violation 按 `rule_id` 稳定排序；`matched_rules` / `skipped_rules` 有序；范围不匹配的规则必须写明原因 |
+| `checkers.py` | checker 分派（上下文类 + 证据类） | 没有证据就不能判通过；无验证器覆盖某 checker → `critical` 违规；关键验证器不可用 → `critical` 违规 |
+| `evidence.py` | 证据协议（`ValidationEvidence` / `DependencyFact` / `EvidenceBundle` / `Blocker`） | 证据只产结论、不产 allow / block；证据不进决策协议载荷（协议仍是 1.0） |
+| `check.py` | 规则检查 CLI | 退出码 0 / 1 / 2；`--json` 顶层是 CLI 包装，`result` 是可直接解析的决策载荷 |
+
+### 3.2 规范检索 `src/retrieval/`（Phase 3）
+
+| 模块 | 功能 |
+| --- | --- |
+| `corpus.py` | 加载 `knowledge/corpus.yaml`，与镜像 `manifest.json` 对齐（URL / 标题 / sha256 / 字节数），输出完整性报告与哈希漂移 |
+| `chunker.py` | 去除 front matter，按标题层级分块，超长章节再切；产出 `ChunkDraft`（`heading_path` / `heading_anchor` / `text_hash`） |
+| `store.py` | SQLite FTS5 索引库：`documents` / `chunks` / `chunks_fts` / `rule_sources` / run 台账 / 隔离表 |
+| `indexer.py` | 幂等重建、单文档原子替换、删除失效、隔离应用、规则溯源解析、run 报告 |
+| `query.py` | 原始查询规范化成受控词项 + 中英术语桥接（`query_expansion.yaml`），原始文本**永不拼进 SQL / FTS 表达式** |
+| `retriever.py` | 检索与排序；返回项必带来源路径、URL、许可与文本哈希 |
+| `context.py` | Engineering Context 组装：长度预算、引用 ID（`[K1]`…）、指令性文本过滤 |
+| `vector.py` | 向量检索端口（确定性本地实现，只作对照评测，未进默认链路） |
+| `cli.py` | `index` / `query` / `context` / `verify` / `stats` / `rules` / `quarantine` / `vector` 八个子命令 |
+
+显式状态：**无结果**（`no_results`）、**无权限**、**检索不可用**是三个不同的状态；不可用时只输出 `knowledge_unavailable`，绝不回退到"模型记忆里的规范"。
+
+### 3.3 受控执行 `src/enforcement/`（Phase 4）
+
+| 模块 | 功能 |
+| --- | --- |
+| `registry.py` | 加载 `registry/tool-registry.yaml`，与 `tool-registry.approved.json` 的已审核哈希比对；不一致的工具**不可使用** |
+| `action.py` | Action Request 与 `action_hash`（覆盖工具 schema 哈希、规范化参数、主体、权限、上下文摘要） |
+| `approvals.py` | 人工审批记录：与 `action_hash` 绑定、短时效、单次使用 |
+| `precheck.py` | 执行前决策：规则判定 + 权限 + 参数白名单 + 命令白名单 + 审批 + 限流 + 审计可写性 |
+| `executor.py` | 受控执行一次；重复 `action_id` 绝不执行第二次（台账 + 审计链两处拦截） |
+| `drivers.py` | 按注册表声明选择执行驱动：`file_edit` / `file_write` / `process_argv` / `shell_command` / `none`（只读工具是 `none`：平台不执行，只做授权与范围校验） |
+| `postcheck.py` | 事后验证：文件前后哈希、diff 摘要、语法检查、退出码；证据不足 → `repair_required` |
+| `audit.py` | 追加写审计摘要链（`sequence` + `prev_digest`）；密钥、绝对路径、控制字符、超长载荷脱敏或转义 |
+| `ledger.py` | 授权与幂等台账（JSONL） |
+| `trace.py` | 按 trace / action / request 重放审计链 |
+| `models.py` / `cli.py` | 模型与 `registry` / `precheck` / `execute` / `approve` / `trace` / `verify` / `self-check` 七个命令 |
+
+命令类工具有**两道结构性阻断**：命令组合符（分号、竖线、与号、反引号、美元括号、美元花括号、重定向、换行、回车与 NUL）→ `command_composition_blocked`；被禁片段（`../`、`..\`、`--output`、`--ext-diff`、`--no-index`）→ `command_fragment_blocked`。
+另有一条是**路径范围规则**（不是命令结构检查）：只读工具声明了 `path_scope: workspace`，目标归一化后必须落在受控项目内（范围等于项目根记为 `.`），越界或证明不了就拒绝。
+
+### 3.4 代码验证器 `src/validators/`（Phase 5）
+
+| 模块 | 功能 |
+| --- | --- |
+| `registry.py` | 加载 `validation/validators.yaml`（谁能产生证据、阶段、超时、版本区间、配置文件） |
+| `source.py` | 读取目标文件、内容哈希；超大 / 非 UTF-8 / 读不到都是失败关闭 |
+| `python_ast.py` | 标准库 `ast`：import / from-import（别名、相对）/ 动态 import / 调用链 / 语法错误 |
+| `depgraph.py` | 依赖图：解析到项目内文件 / 标准库 / 外部包；**解析失败不等于没有依赖** |
+| `docstrings.py` | PEP 257：按规则声明检查模块 / 类 / 函数 / 方法 |
+| `selection.py` | 变更集 → 最小相关测试（related → package → suite 三级升级） |
+| `adapters/` | 外部工具适配器（Ruff / mypy / pytest）：按声明模板调用、参数 allowlist、白名单环境变量、超时终止整棵进程树、输出脱敏限量 |
+| `pipeline.py` | 证据流水线聚合、`KNOWN_VALIDATOR_IDS`、证据可重放（相同输入 → 逐字节相同证据） |
+| `models.py` / `globs.py` / `cli.py` | 证据模型、路径匹配、`check` / `pipeline` / `registry` / `probe` 四个命令 |
+
+### 3.5 多 Agent 适配 `src/adapters/`（Phase 2 / 6）
+
+| 模块 | 功能 |
+| --- | --- |
+| `models.py` | 规范事件 `AgentEvent`（唯一交换协议）：未知版本 / 字段 / 事件类型 / 操作一律拒绝；`payload` 只承载 `path` / `params` / `text` / `cwd` |
+| `base.py` | Adapter 协议、能力声明、注册表、支持矩阵 |
+| `runtime.py` | 多 Agent 运行时：`<adapter.namespace>:<event_id>` 审计与幂等键、主体只认显式声明、trace 来源校验（伪造父 trace → `trace_forged`）、窗口熔断 |
+| `conformance.py` | 一致性套件：语义场景由各 Adapter 自己渲染；Adapter 不支持某事件必须显式失败 |
+| `loader.py` | 从 `adapters/<agent_id>/` 装配 Adapter，并与 `approved.json` 已审核哈希比对 |
+| `dsh_adapter.py` / `json_adapter.py` / `event_adapter.py` | 三种协议消费者的装配实现 |
+| `textfacts.py` | 从变更文本做词法级 import 提取（不做语义推断） |
+| `cli.py` | `matrix` / `approve` / `check` / `inspect` / `events` 五个命令 |
+| `dsh/` | `adapter.py`（纯映射）· `hooks.py`（Hook 进程、exit 0 / 2、审计、接线自检）· `enforcement.py`（Phase 4 桥接）· `README.md`（前置调查结论与实测偏差） |
+
+支持矩阵由 manifest 推出，不由文字声明：`dsh` = full 能力上限（还必须在运行时注入 Phase 5 证据与 Phase 4 enforcer）；`generic-json` = read_only；`legacy-post-only` = read_only（只有事后钩子，拦不住写）。
+
+### 3.6 Policy API `src/policy_api/`（Phase 7）
+
+| 模块 | 功能 |
+| --- | --- |
+| `models.py` / `errors.py` | 版本化 DTO 与领域模型分离；`API_SCHEMA_VERSION` 与决策协议版本**各自演进**；错误码 → HTTP 状态码由 `STATUS_BY_CODE` 推导 |
+| `config.py` | 加载 `api/policy-api.yaml`（租户 / 客户端令牌 sha256 / 预算 / 限流 / 观测落点） |
+| `auth.py` | Bearer 认证：**租户只来自令牌**，请求体里的 tenant 只是提示 |
+| `services.py` / `runtime.py` | 服务装配；判定仍调用 `policy.engine.evaluate`，证据只由服务端验证器流水线产出 |
+| `timeout.py` / `idempotency.py` | 墙钟预算（超时 → 504，绝不 allow）与幂等台账（重放返回原响应，换请求体 → 409） |
+| `observability.py` / `ops.py` | 请求级 JSONL 摘要日志（脱敏、超限即失败关闭）、指标端点（只对运维角色或 `metrics_clients`）、摘要链锚定 |
+| `contract.py` / `app.py` / `serve.py` / `testing.py` | `api/openapi.json` 契约快照、FastAPI 应用、uvicorn 启动、进程内 TestClient——**Web 框架依赖只存在于 `policy_api` 包内**（核心层禁止导入，契约测试会查） |
+| `probe.py` / `testing.py` / `serve.py` | HTTP Adapter、进程内测试客户端、uvicorn 启动 |
+| `cli.py` | `serve` / `self-check` / `openapi` / `clients` / `smoke` / `seal` 六个命令 |
+
+### 3.7 编排层 `src/orchestration/`（Phase 8 · 消费者）
+
+| 模块 | 功能 |
+| --- | --- |
+| `graph.py` / `nodes.py` | 图定义与单一职责节点：需求 → 检索 → 规划 → 实施 → 验证 ⇄ 修复 → 测试 → 收尾 |
+| `engines.py` / `langgraph_engine.py` | 两个引擎跑同一份 spec；`auto` 的回落**如实写进 `RunReport.engine`** |
+| `checkpoint.py` | 单文件 + 原子替换；`STATE_SCHEMA_VERSION` 是自己的版本；状态里没有墙钟字段（相同输入 → 逐字节相同状态） |
+| `limits.py` | 循环与预算硬上限（repair 轮次、工具调用、节点执行、token、费用、墙钟） |
+| `approvals.py` | 人工审批绑**平台口径的 `action_hash`**（含 trace）；图到达审批节点 ≠ 用户批准 |
+| `client.py` | 平台客户端（Policy API）：平台不可用 → `blocked`，不回落为本地判定 |
+| `tools.py` | 写入走 Phase 4 受控执行链；副作用前先写"意图"并立刻刷盘 |
+| `models.py` / `errors.py` / `runtime.py` / `cli.py` | 状态模型与失败码表；`self-check` / `graph` / `run` / `status` 四个命令 |
+
+### 3.8 dsh 接入（Phase 2 + Phase 4）
+
+| 能力 | 说明 |
+| --- | --- |
+| 两层接线 | profile patch 挂插件 + `.policy/hooks.json` 声明 Hook 命令（matcher **留空**，避免新工具绕过门禁） |
+| 失败关闭三件事 | 内部预算（5000ms）严格小于 dsh 超时（30s）· 任何异常转 exit 2 · 运行期接线自检 |
+| 显式上下文 | `layer` / `language` / `project` / `principal` 全部来自 `dsh-adapter.yaml`，缺失即失败关闭 |
+| 工具表白名单 | 未登记工具（含新版本新增、`mcp__` 前缀）一律阻断；升级 Agent 必须先更新工具表并补契约测试 |
+| 只读工具降级 | 降级的只是授权链路，不是范围校验：越界 / 穿越 / 证不了范围一律拒绝 |
+
+## 4. 数据与契约清单
+
+| 文件 / 目录 | 是什么 | 谁在读 | 改动后必须做什么 |
+| --- | --- | --- | --- |
+| `policies/**/*.yaml` | 6 条机器可执行规则（ARCH-001、DOC-001、STYLE-001/002、TESTING-001/002） | `policy.loader` | `python -m policy.check --check-rules`；语义变更递增 `version` |
+| `knowledge/corpus.yaml` | 摄取清单：6 个数据集、27 个条目、许可、tier / visibility、检索预算、隔离、`rule_sources` 溯源 | `retrieval.corpus` | `retrieval.cli verify` → `index` → `tools/retrieval_eval.py` |
+| `knowledge/query_expansion.yaml` | 24 条受控中英术语（只登记术语，不写句子） | `retrieval.query` | 同上；术语表变化要重记评测基线 |
+| `docs/<mirror>/` + `manifest.json` | 6 套官方文档离线镜像（Google / GitLab / OWASP / PEP / .NET / DORA），逐字复制 | `retrieval.corpus` / `tools/*_site.py` | 重新抓取时同步 manifest 的 sha256，否则 `verify` 退出 1 |
+| `registry/tool-registry.yaml` | 9 个受控工具（dsh 段 6 + orchestrator 段 3）：风险、参数白名单、权限、审批、事后验证器、限流 | `enforcement.registry` | `registry --approve --reviewer <name>` 重新审核 |
+| `registry/tool-registry.approved.json` | 已审核哈希 | `enforcement.registry` | 由 `--approve` 生成，不手改 |
+| `validation/validators.yaml` | 7 个验证器声明（py.source / py.ast / py.depgraph / py.docstring / tool.ruff / tool.mypy / tool.pytest） | `validators.registry` | 与 `pipeline.KNOWN_VALIDATOR_IDS` 一致（CI 比对） |
+| `validation/project.yaml` | 项目档案：语言识别、`python_roots`、路径模式 → 架构组件（层） | `validators.registry` | 补契约测试 |
+| `validation/test-layout.yaml` | 生产 ↔ 测试对应关系与测试选择升级链、进程硬限制 | `validators.selection` | 补契约测试 |
+| `validation/ruff.toml` / `mypy.ini` / `pytest.ini` | 外部工具配置（证据口径的一部分，哈希进证据） | 外部工具 | 改它等于改证据口径 |
+| `adapters/<agent_id>/manifest.yaml` + `adapter.yaml` + `fixtures/` | 每个 Agent 的能力声明与最小真实事件样本 | `adapters.loader` | `python -m adapters.cli approve --reviewer <name>` |
+| `adapters/approved.json` | 已审核哈希 | `adapters.loader` | 由 `approve` 生成，不手改 |
+| `api/policy-api.yaml` | 部署数据：租户、客户端令牌 sha256、预算、限流、观测落点 | `policy_api.config` | `policy_api.cli self-check` |
+| `api/openapi.json` | 传输契约快照 | `policy_api.contract` | `openapi --write` 显式更新（`--check` 是 CI 门禁） |
+| `tests/fixtures/` | 决策协议快照、Agent 事件、检索语料与固定评测集、验证器夹具项目、API 夹具 | 测试 | 决策快照只能显式更新（`POLICY_UPDATE_SNAPSHOTS=1`） |
+| `examples/` | 可重放的正例 / 反例与接线示例（dsh、enforcement） | CLI 与 CI | 保持可执行 |
+
+## 5. 仓库脚本（`tools/`，35 个文件）
+
+| 脚本 | 用途 |
+| --- | --- |
+| `ci_local.py` | 本机按 CI 顺序跑同一批检查，按改动范围选范围；`--full` / `--list` / `--hook` / `--python` |
+| `install_hooks.py` | 安装 / 卸载 pre-push 钩子（调 `ci_local.py --hook`，失败阻断推送） |
+| `check_repo_consistency.py` | 依赖锁三处一致、workflow 引用、`uv.lock` 要求、pytest `testpaths`、工具清单登记 |
+| `check_text_conventions.py` | UTF-8 / LF / 行尾空白 / 结尾换行（默认跳过第三方镜像） |
+| `secret_scan.py` | 凭据扫描门禁（与审计脱敏共用一份模式定义） |
+| `phase_evidence.py` | 生成阶段验收证据（版本、规则集哈希、语料、注册表、测试结果、闭环结论） |
+| `policy_bench.py` | 固定种子生成 10 / 100 / 1000 条规则的匹配性能基线（只记录不优化） |
+| `retrieval_eval.py` | 固定评测集基线（FTS5 门槛决定退出码，向量检索只作对照） |
+| `validator_loop.py` | Phase 5 闭环：AST 证据 / 失败关闭 / 测试选择 / 可重放 / 工具可追溯 |
+| `enforcement_loop.py` | Phase 4 闭环：允许一次 / 重放阻断 / 回滚 / 高风险阻断 / trace 可重放 |
+| `agent_loop.py` | Phase 6 闭环：等价结论 / 恰好执行一次 / 能力降级 / 隔离 / trace / 熔断 |
+| `api_loop.py` | Phase 7 闭环：本地与 API 决定整份相等 / 超时与不可达不 allow / 幂等 / 跨租户 / 锚定 |
+| `orchestration_loop.py` | Phase 8 闭环：真端口 + 真受控执行 + checkpoint 与恢复 |
+| `dsh_sandbox_loop.py` | Phase 2 真实 dsh 沙箱闭环；无 dsh 或沙箱禁止管道 stdio 时**环境跳过**（退出码 0 + reason） |
+| `build_learning_notebook.py` | 生成学习手册 notebook 与纯 Python 版，并逐单元执行校验（`--check` 是 CI 门禁） |
+| `phase6_cells.py` / `phase7_cells.py` / `phase8_cells.py` | Phase 6–8 手册的单元内容源（被生成器导入；**改这三阶段手册要改这里**，生成器里没有副本） |
+| `check_notebook.py` / `run_notebook_in_kernel.py` | notebook 结构与语法校验 / 在真实 Jupyter 内核里跑一遍 |
+| `cleanup.py` | 删除 `.tmp/`、`__pycache__/`、`.pytest_cache/`、`.uv-cache/`（白名单路径） |
+| `lock_requirements.py` | 从 pip 报告生成 `requirements.lock` |
+| `mirror_docs.py` / `learn_site.py` / `pep_site.py` / `dora_site.py` | 离线文档镜像流水线（不属于平台运行时） |
+| `owasp_cheatsheets/`（子目录，6 个脚本 + README + 许可文本） | OWASP Cheat Sheet 镜像的抓取 / 清洗 / 分析 / 校验流水线（见 `tools/README.md`，同样与平台运行时无关） |
+
+## 6. 测试与证据
+
+| 层 | 目录 | 覆盖 |
+| --- | --- | --- |
+| 单元 | `tests/unit/` | 模型、规范化、范围矩阵、决策聚合、分块 / 查询 / Context、注册表 / 参数 / 授权 / 审计、AST 事实 / 依赖图 / 适配器分类、API DTO / 配置 / 预算 / 幂等、编排状态 / 上限 / 失败码 / checkpoint / 审批语义 |
+| 契约 | `tests/contract/` | 决策协议快照、dsh 与多 Agent 映射契约、检索端口契约、受控执行协议、验证器证据协议、API 传输契约与 OpenAPI 快照、编排双引擎等价与依赖方向 |
+| 集成 | `tests/integration/` | 真实 CLI 子进程、性能基线、dsh Hook、检索索引与基线、受控执行器与闭环、验证器流水线、多 Agent 运行时、ASGI HTTP API、编排恢复 / 幂等 / 平台故障 |
+| 对抗 | `tests/security/` | 注入、越权、缓存失效、检索与验证器失败关闭、审批伪造、日志失效、多 Agent 对抗、API 未认证 / 跨租户 / 不可达（不返回 allow）、编排伪造审批与恢复绕过 |
+
+CI（`.github/workflows/phase-8.yml`）是一个 job、44 个具名步骤（外加 `actions/checkout`），逐阶段跑测试与闭环脚本，并生成阶段证据。
+
+## 7. 文档与学习材料
+
+| 位置 | 内容 |
+| --- | --- |
+| `README.md` | 安装、测试、各阶段命令（**必须保持实际可执行**） |
+| `AGENTS.md` | 面向 AI 编码代理的仓库约定与 39 条核心层约束 |
+| `docs/engineering-policy-platform/` | 分阶段架构、契约、数据源、测试策略、验收矩阵与三份复核记录 |
+| `docs/learning/phase-*/` | 每阶段四件套：`note.md` / `walkthrough.ipynb` / `walkthrough.py` / `README.md` |
+| `src/adapters/dsh/README.md` | dsh Hook 契约的前置调查结论与实测偏差（含沙箱 7.1 节） |
+| `api/README.md` · `knowledge/README.md` · `tools/README.md` | 各自数据目录的维护流程 |
+| `docs/architecture/` | 本文三件套 + 架构图 |
+
+## 8. 明确没有做 / 已知边界
+
+| 项 | 现状 |
+| --- | --- |
+| 向量检索 | 端口就位、评测跑过，**没有跑赢 FTS5**，未进默认链路 |
+| 类型检查规则 | mypy 端口与失败语义就位，**未启用类型规则**（本机与 CI 都没装 mypy，启用会让所有 Python 文件在缺工具时判红——这是数据决定的事） |
+| 第二个真实 Agent | 只有 `dsh` 是真实产品接入；`generic-json` / `legacy-post-only` / `http-api` 是合成协议消费者 |
+| 真实模型作者 | Phase 8 的候选改动来自可替换端口 `ChangeAuthor`，真实模型实现未接入 |
+| LLM 调用 / MCP / 向量数据库 | 至今没有引入 |
+| 审计链 | 是追加写**摘要链**，能发现中间被改 / 被删；**删尾部或整链重写发现不了**（对外证明靠 Phase 7 锚定，锚必须与日志分离存放） |
+| 命令白名单 | **不是沙箱**：白名单只描述"命令长什么样"；真正的隔离属于运行时的文件系统与进程沙箱 |
+| 审批 | 首版是"人工门禁写下的结构化记录"，不做签名与独立审批人名册 |
+| GitHub 侧保护 | 故意不启用规则集 / 分支保护：单人仓库里把检查前移到本机（pre-push 钩子） |
+| dsh 受限沙箱 | 禁止管道 stdio 的环境里 Hook 起不来（spawn EPERM），闭环按**环境跳过**并写出 reason 与复现命令，不把"跑不了"记成 pass |

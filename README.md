@@ -460,6 +460,7 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 .
 ├── .github/workflows/phase-8.yml      # CI：单元 / 契约 / 集成 / 对抗测试、AST 证据重放、验证器闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件与支持矩阵、API 自检 / OpenAPI 快照 / API 闭环、手册与证据
 ├── docs/
+│   ├── architecture/                  # 本仓库的技术架构图（draw.io 两页）与三份说明：功能清单 / 使用说明 / 规则文档转化为规则
 │   ├── dora-capabilities/             # DORA 软件交付能力指南离线镜像（37 篇）
 │   ├── dotnet-design-guidelines/      # .NET Framework 设计准则离线镜像（49 篇）
 │   ├── engineering-policy-platform/   # 本项目的分阶段架构、契约与测试路线

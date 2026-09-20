@@ -1,0 +1,353 @@
+# 规则文档 → 可执行规则：转化方法与条件
+
+> 本文是 `docs/architecture/` 三件套之一：
+> [功能清单](features.md) · [使用说明](usage-guide.md) · [规则文档转化为规则](rule-conversion.md)（本文）。
+> 配套图：架构图第 2 页「规则文档 → 可执行规则：转化链路与门禁条件」（技术视角见 [按技术抽象的流程架构图](technology-flow.drawio)）
+> （[technical-architecture.drawio](technical-architecture.drawio)，预览图 `technical-architecture-2-rule-conversion.drawio.png`）。
+>
+> 结论以代码为准：`src/policy/models.py`、`src/policy/loader.py`、`src/retrieval/corpus.py`、
+> `src/retrieval/indexer.py`、`src/validators/registry.py`、`src/policy/engine.py`。
+
+## 1. 一句话回答
+
+**仓库里的规则文档不会"自动"变成规则。** `docs/<mirror>/**` 下的官方文档首先是**只读的追溯与检索语料**；
+它们必须经过一次**显式、可评审的提炼动作**，写成 `policies/<domain>/<ID>.yaml`，
+再通过**两道加载门禁**（规则加载器 + 验证器注册表），才成为可执行的 `Rule`。
+
+**转换的四个必要条件**（缺一条就只能停在"检索用建议"，不能成为被引擎判定、会写进决策载荷的规则）：
+
+| # | 条件 | 判别式（★ = 代码强制，○ = 仓库约定） |
+| --- | --- | --- |
+| 1 | **本地来源** | ★ `source.kind` ∈ {`project-policy`, `standard`}（共享对话、外部文档**不能**作为可执行来源）；○ `source.path` **应**指向具体本地文件/章节——但它是可选字段，代码只做形状校验，也不校验文件是否存在 |
+| 2 | **可确定性判定** | ★ `enforcement.type = deterministic` + `checker` 是被实现的 6 个之一 + 该 checker 有验证器为它声明提供证据（`forbidden_dependency` 在无证据包时可只用上下文判定） |
+| 3 | **范围可枚举** | ★ 适用范围只用 6 个已知维度（`language` / `layer` / `module` / `operation` / `project` / `agent`）表达得出来；表达不出来就说明它还不是一条规则 |
+| 4 | **结论要落在决策表里** | ★ `severity` 必须是四值枚举（`error` / `critical` → block；`info` / `warning` → allow_with_warnings）；需要人工审批的用 `enforcement.requires_approval` 表达为 `block + required_action=approval`。**"能阻断"不是必要条件**——`DOC-001` 就是 `severity: warning`，命中只告警 |
+
+不满足时**正确的做法是让它停在第二层**（Curated Guidance：进语料、供检索），而不是写一条
+"看起来在管这件事、实际什么都没查"的规则——那正是 `Rule._body_matches_checker` 与
+"未知 checker 报错"要挡住的东西。
+
+### 1.1 强制 与 约定：先把这条线画清楚
+
+本文反复出现"必须"和"应当"，两者的分量完全不同。**代码拦得住的**（不满足就加载失败或判定失败）：
+
+- `source.kind` 的取值枚举；`id` / `version` / `name` / `description` / `message` 的存在与形状；
+- `scope` 的维度名必须已知、`operation` 必须取受控枚举、`severity` 必须是四值枚举；
+- `enforcement.type` + `enforcement.checker`，且 `rule` 体的键名必须与 checker 一致；
+- 同一规则集内 `id` 唯一；整批文件**原子**加载；
+- 该 checker 必须被实现、且注册表里至少有一个验证器为它声明提供证据（否则 `validation/validators.yaml` 自己加载不了）。
+
+**代码拦不住的**（仓库约定 + 评审要求，写成"应"而不是"必须"）：
+
+- `source.path` 指向真实存在的本地文件（**可选字段，只做形状校验**；共享对话被挡是因为 `kind` 枚举，不是因为 path）；
+- 由镜像文档提炼的规则在 `corpus.yaml` 的 `rule_sources` 里**登记溯源**（可选登记；登记之后才变成强制——解析不到会让索引 run 失败）；
+- 每条规则都要有正例 / 反例测试；
+- 规则文件名等于规则 ID（文件名只是约定，ID 只由 `id` 字段决定）；
+- 规则语义与 checker 语义真的匹配（代码只保证 checker 名合法，挡不住"把一条建议挂在 `style_lint` 上"）。
+
+## 2. 三层规范模型：决定"能不能阻断"
+
+来源：[`docs/engineering-policy-platform/02-repository-data-sources.md`](../engineering-policy-platform/02-repository-data-sources.md)。
+
+```text
+Raw Reference            Curated Guidance              Project Policy
+(docs/<mirror>/**)  →人工/受控提炼→  (knowledge/corpus.yaml)  →明确采纳+可验证测试→  (policies/**/*.yaml)
+离线镜像原文                          检索与解释，不阻断              机器可执行，可阻断执行
+```
+
+| 层 | 载体 | 谁能读 | 能不能阻断执行 |
+| --- | --- | --- | --- |
+| Raw Reference | `docs/owasp-cheatsheets/`、`docs/google-eng-practices/`、`docs/gitlab-code-review/`、`docs/python-pep-code-style/`、`docs/dotnet-design-guidelines/`、`docs/dora-capabilities/`（逐字复制上游原文 + `manifest.json`） | 人、`tools/mirror_docs.py`、检索摄取 | **不能**。网页指令、代码与示例不得直接触发工具 |
+| Curated Guidance | `knowledge/corpus.yaml` 里 `tier: guidance` 的数据集条目（分块后进 FTS5） | `src/retrieval/` → Engineering Context | **不能**。默认只用于检索与解释（`tier` 只决定 Context 里的优先级） |
+| Project Policy | `policies/<domain>/<ID>.yaml` | `policy.loader` → `policy.engine.evaluate` | **能**。按 `severity` 与决策表产生 allow / allow_with_warnings / block |
+
+两层之间的桥不是代码，而是**一次被写下来的、可评审的提炼动作**：
+
+- `Raw Reference → Curated Guidance`：在 `knowledge/corpus.yaml` 里登记数据集与条目；
+- `Curated Guidance → Project Policy`：写规则文件；可选地在 `rules(id, version, source_chunk_id)` 的溯源位
+  （`corpus.yaml` 的 `rule_sources`）登记"这条规则是哪一段文档提炼来的"——
+  这一步是**约定（convention），当前没有任何门禁强制它**，但**登记之后解析不到 chunk 就会让索引 run 失败**。
+
+## 3. 转化链路：七个台阶
+
+每一步都有**输入、动作、产物、条件**；任何一步不满足就失败关闭（不静默、不降级、不默认放行）。
+
+### 台阶 1：镜像与哈希登记（Raw Reference 落地）
+
+| 项 | 内容 |
+| --- | --- |
+| 输入 | 上游官方文档（URL + 抓取时间） |
+| 动作 | `tools/mirror_docs.py` 等镜像流水线抓取，逐字写入 `docs/<mirror>/**`，并在 `docs/<mirror>/manifest.json` 记录每页的 `local_path` / `source_url` / `title` / `sha256` / `bytes` |
+| 产物 | 离线镜像目录 + `manifest.json`（`fetched_at` 即该镜像的 revision） |
+| 条件 | 镜像目录必须存在且含 `manifest.json`，其 `pages` 是列表；**清单不许在 `corpus.yaml` 里手抄哈希**（手抄就会漂移） |
+
+### 台阶 2：语料登记（Curated Guidance）
+
+| 项 | 内容 |
+| --- | --- |
+| 输入 | `docs/<mirror>/manifest.json` |
+| 动作 | 在 `knowledge/corpus.yaml` 的 `datasets` 里加一个数据集，并列出要检索的 `entries` |
+| 产物 | `LoadedCorpus`：已解析条目（`title` / `source_url` / `license` / `tier` / `visibility` / `manifest_sha256`）+ 完整性报告 |
+| 条件 | 见 [条件表](#4-转换条件总表) 的 **C1 – C6** |
+
+当前仓库的数据集（`knowledge/corpus.yaml`，6 个数据集 / 27 个条目）：
+
+| dataset | tier | visibility | 许可 | 条目数 |
+| --- | --- | --- | --- | --- |
+| `google-eng-practices` | guidance | public | CC BY 3.0 | 2 |
+| `gitlab-code-review` | guidance | public | CC BY-SA 4.0 | 3 |
+| `owasp-cheatsheets` | guidance | public | CC BY-SA 4.0 | 3 |
+| `python-pep-code-style` | guidance | public | public domain（PEP 各篇 Copyright 声明） | 2 |
+| `dotnet-design-guidelines` | guidance | public | CC BY 4.0（上游 dotnet/docs；正文另含 Pearson 授权摘录声明） | 5 |
+| `dora-capabilities` | guidance | public | CC BY 4.0（Google LLC；站点页脚声明） | 12 |
+
+### 台阶 3：分块与索引
+
+| 项 | 内容 |
+| --- | --- |
+| 输入 | 已解析条目 + `policy` 预算（`max_chunk_chars` / `hard_max_chunk_chars` …） |
+| 动作 | `chunker` 去 front matter、按标题层级分块、超长章节再切；`indexer` 幂等写入 SQLite FTS5 |
+| 产物 | `.tmp/retrieval/index.sqlite3`：`documents` / `chunks`（`heading_path` / `heading_anchor` / `text_hash`）/ `chunks_fts` / `rule_sources` + 一次 run 报告 |
+| 条件 | 见 **C7 – C10** |
+
+三条索引不变式：**幂等**（同输入两次摄取，chunk_id 与 text_hash 完全一致）、
+**只动相关 chunk**（内容没变的文档连分块都不重跑）、**删除失效**（移出清单的文档及其 chunk 被删除且不再可检索）。
+
+### 台阶 4：提炼（唯一的人工 / 受控步骤）
+
+这是整条链路里**唯一没有代码自动完成**的一步，也是"文档 → 规则"真正的转化动作：
+
+1. 从镜像原文里挑出**可判定**的要求（"必须 / 不得 / 至少"这类能落到证据上的表述）；
+2. 查一遍 `checker` 清单（`src/policy/checkers.py` 的 `SUPPORTED_CHECKERS`，共 6 个）
+   与验证器注册表：**没有 checker / 没有验证器能提供证据的要求，转不成规则**；
+3. 把它写成规则文件，并用 `source` 指回具体本地文件（`source.path` 是可选字段；由镜像文档提炼的规则
+   建议同时在 `rule_sources` 登记溯源，那是约定而非门禁）；
+4. 用 `tests/` 里的夹具证明：**正例通过、反例阻断**。这一步是仓库惯例与评审要求，没有代码门禁
+   强制"每条规则都必须有测试"——但对已发布规则，"checker 必须被验证器覆盖"是有契约测试守着的。
+
+> 这一层刻意不引入 LLM：`models.py` 的 `SourceRef` 校验里写明"共享对话或外部文档不能作为可执行规则来源"，
+> `ARCH-001` 的注释也写明"依赖必须由确定性证据提供（AST 或依赖图），**不得由 LLM 裁决**"。
+
+### 台阶 5：规则文件（Project Policy）
+
+```yaml
+# policies/coding/DOC-001.yaml（真实文件，节选）
+id: DOC-001                     # 审计身份的一半，形如 ARCH-001
+version: 1                      # 审计身份的另一半；语义变更必须递增
+name: public-docstring-required # 稳定标识符（字母/数字/._-）
+description: 模块、类与顶层函数必须有 docstring（PEP 257）。
+scope:                          # 只能用已知维度；这里只声明 language
+  language: python
+severity: warning               # info | warning | error | critical
+enforcement:
+  type: deterministic           # 目前唯一支持的类型
+  checker: missing_docstring    # 必须与下面规则体的键名一致
+rule:
+  missing_docstring:
+    targets: [module, class, function]   # 策略决定写在这里，不藏在代码里
+    include_private: false
+message: 公开对象必须有 docstring，说明它的职责与副作用。
+source:
+  kind: standard                # project-policy | standard（只有这个枚举是强制的）
+  path: docs/python-pep-code-style/pep-257-docstrings/index.md   # 约定：指向本地来源，可选
+  note: PEP 257 的检查对象集合由本文件的 targets 决定。
+```
+
+> 文件名建议与 ID 一致（`policies/<domain>/<ID>.yaml`），但**文件名只是约定**：加载器只要求
+> "显式规则目录 + `.yaml`/`.yml` + 非隐藏文件"，规则 ID 只由 `id` 字段决定
+> （测试里就用 `ARCH-001-copy.yaml` 载入 `ARCH-001`）。
+
+### 台阶 6：验证器覆盖（证据从哪来）
+
+规则只声明"要查什么"（checker），**"谁来产生证据"是另一份数据**：`validation/validators.yaml`。
+
+| checker | 判定方式 | 提供证据的验证器 |
+| --- | --- | --- |
+| `forbidden_dependency` | 有 `EvidenceBundle` 时**只认证据里的依赖**（AST / 依赖图）；证据包没有服务该 checker 就是 critical 阻断；无证据包时才退回读上下文的 `dependencies`（Phase 0–4 契约） | `py.depgraph`（AST / 依赖图，默认路径） |
+| `missing_docstring` | 证据类 | `py.docstring`（标准库 `ast`） |
+| `style_lint` | 证据类 | `tool.ruff`（外部工具，探针发现） |
+| `type_check` | 证据类 | `tool.mypy`（端口就位，**当前无规则使用**） |
+| `missing_tests` / `failing_tests` | 证据类 | `tool.pytest`（按变更集选最小相关测试） |
+
+条件见 **C25**。要点：**每个受支持的 checker 都必须至少有一个验证器为它声明提供证据**，
+否则 `validation/validators.yaml` 自己就加载不了（`RegistryError`）——这条在加载阶段就报错，
+而不是等到运行时才发现"这条规则永远判不了"。
+
+### 台阶 7：生效、溯源与变更管理
+
+| 项 | 内容 |
+| --- | --- |
+| 生效 | `policy.loader` **原子**加载整个规则目录 → `RuleSet`（不可变、按路径稳定排序、`identity` = `sha256:…`） |
+| 溯源（**约定，非强制**） | 在 `corpus.yaml` 的 `rule_sources` 登记 `{rule_id, rule_version, dataset, source_path, heading_path}`；索引器把标题路径解析成稳定的 `chunk_id` 写进 `rule_sources` 表。当前仓库这一项是空的（见 §6 现状边界） |
+| 查询 | `python -m retrieval.cli rules --rule DOC-001`（正向）/ `--chunk <chunk_id>`（反向） |
+| 变更 | 语义变更 → 递增 `version`（`ARCH-001@1` → `ARCH-001@2`）；`RuleSet.identity` 随之变化 |
+
+`rule_set_hash` 的变化会**向外传播**（这是设计，不是副作用）：
+
+- Phase 7 的 API 把 `rule_set_hash` 写进请求级观测摘要；
+- Phase 8 的 checkpoint 把 `rule_set_hash` 当作**兼容性凭据**：规则集变了，恢复时会清掉旧 trace 与旧验证结果、
+  回到检索节点**重新评估**（**不沿用旧 allow**）；拿不到凭据按"变了"处理。
+
+## 4. 转换条件总表
+
+以下条件来自**代码**与**流程约定**，逐条可在对应文件里核对；约定型条目已标注「约定」（它们不会让门禁变红，
+但决定了这套体系"说得清、追得回"）。**代码强制型的条目一旦不满足，转化就停在原地或整体失败。**
+
+### A. 语料侧（`knowledge/corpus.yaml` + `src/retrieval/corpus.py` + `src/retrieval/models.py`）
+
+| # | 条件 | 不满足时的行为 | 证据位置 |
+| --- | --- | --- | --- |
+| C1 | 数据集名唯一、`mirror` 目录存在 | `CorpusError`（数据集名重复 / 镜像目录不存在） | `CorpusManifest._unique_datasets`、`corpus._resolve_dataset` |
+| C2 | 该数据集有 `manifest.json` 且含 `pages` 列表 | `CorpusError`：镜像目录缺少 manifest / 缺少 pages | `corpus.read_mirror_manifest` |
+| C3 | 每个 `entries` 条目都能在 `manifest.json` 的 `local_path` 里找到 | `CorpusError`：条目不在镜像 manifest 中（清单只能引用真实存在的页面） | `corpus._resolve_dataset` |
+| C4 | 该页有非空 `source_url` | `CorpusError` | `corpus._resolve_dataset` |
+| C5 | `license` 必填（缺失或为空是模型校验失败）；`license_source` 若声明则其文件必须存在 | `license` 缺失 → `CorpusError`：摄取清单校验失败，退出码 2；`license_source` 文件不存在 → 记 `license_source_missing` issue，`verify` 退出 1 | `corpus.load_corpus`、`corpus.verify_corpus` |
+| C6 | 本地文件的 `sha256` / 字节数与 manifest 一致 | 记 `hash_mismatch` / `size_mismatch` issue → **`verify` 退出 1**（CI 硬门禁）；摄取继续但漂移写进 document 行与 run 报告 | `corpus.verify_corpus`、`indexer._document_record` |
+
+> C6 的语义是"**不许静默**"而不是"直接拒绝"：合法的重爬会先更新 manifest 再更新文件；
+> 但漂移一定会被写下来、被计数、被退出码报出来。
+
+### B. 索引侧（`src/retrieval/indexer.py`）
+
+| # | 条件 | 不满足时的行为 |
+| --- | --- | --- |
+| C7 | 条目文件可读且是合法 UTF-8 | `IndexingError`（run 标记 failed） |
+| C8 | 每个 chunk 的 `text_hash = sha256(text)`、`char_count = len(text)` | 模型校验失败（`ChunkDraft` 不变量） |
+| C9 | `quarantine` 条目引用的 chunk 存在且 `text_hash` 与当前内容一致 | `IndexingError`（内容已变化，请重新确认后再登记） |
+| C10 | `rule_sources` 引用的 `dataset` 已声明；目标文档已索引（chunks 非空）；`heading_path` 能匹配到**分块结果**（按前缀匹配；省略 `heading_path` 表示匹配该文档全部 chunk，会逐条登记） | 未声明数据集 → 清单校验失败；未索引 / 标题路径匹配不到 → `IndexingError`（**不静默跳过**） |
+
+### C. 规则文件侧（`src/policy/models.py` + `src/policy/loader.py`）
+
+| # | 条件 | 不满足时的行为 |
+| --- | --- | --- |
+| C11 | 文件位于显式规则目录内、后缀 `.yaml`/`.yml`、非隐藏文件、不逃出 `repo_root` | `LoaderError`（路径逃出仓库直接拒绝）；隐藏文件与其它后缀被跳过 |
+| C12 | 可读、合法 UTF-8、非空、顶层是**映射** | 四种失败形态不同：读不到 / 非 UTF-8 → `LoaderError`（无行列）；空文件 → `RuleFileError`（无行列）；顶层非映射 → `RuleFileError`（无行列）；只有 **YAML 语法错误**才带 `行:列` |
+| C13 | `id` 匹配 `^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d+$`（校验前先 `upper()`，所以 `id: arch-001` 会被接受并规范成 `ARCH-001`）；`version ≥ 1`；`name` 是稳定标识符；`description` / `message` 非空 | 校验失败，退出码 2 |
+| C14 | `scope` 只使用已知维度（`language` / `layer` / `module` / `operation` / `project` / `agent`）；`operation` 取受控枚举；`*` = 不限制；空列表报错 | 未知维度默认 `reject`；确需忽略必须显式写 `scope.extra_policy: skip`（并记入 `ignored_dimensions`） |
+| C15 | `severity` ∈ {`info`, `warning`, `error`, `critical`} | 未知严重级别报错（不静默忽略） |
+| C16 | `enforcement.type` 只能是 `deterministic`，且必须声明非空 `checker` | 校验失败 |
+| C17 | `enforcement.checker` ∈ `KNOWN_CHECKERS`（6 个） | 报错："未知 checker …" |
+| C18 | `rule` 体的键名（`checker_name`）必须与 `enforcement.checker` **一致** | 报错："规则体与 checker 不一致"——挡住"看起来在管、实际没查" |
+| C19 | 规则体自身 schema（`forbidden_dependency` 非空；`missing_docstring.targets` ∈ {module, class, function, method}；`style_lint`/`type_check.tool` 非空且 codes 大写去重；`missing_tests.changed_only` 布尔；`failing_tests.tool` 非空） | 校验失败 |
+| C20 | `source.kind` ∈ {`project-policy`, `standard`}；`source.path` **若给出**必须是仓库相对路径（禁绝对路径、禁 `..`、禁非法字符——**可以整个省略**，省略不报错） | `kind` 不在枚举里 → "共享对话或外部文档不能作为可执行规则来源"；`path` 非法 → `normalize_repo_path` 的报错（绝对路径 / 逃出仓库根目录 / 含不支持字符） |
+| C21 | 未知**顶层字段**一律报错（`extra="forbid"`） | 校验失败 |
+| C22 | 同一规则集内 `id` 唯一（跨目录也算），且**语义变更必须递增 version** | `RuleFileError`（同时打印两处路径） |
+| C23 | **原子性**：整批文件全部成功才替换规则集 | 任一文件失败 → 整体不加载、现有规则集不被替换 |
+
+> `source.path` 目前只做**形状校验**（相对路径、字符集、不许逃逸），**不校验文件是否存在**——
+> 想让"来源必须指向真实文件"成为硬门禁，需要新增一条检查；这是当前实现与理想之间的已知差距。
+
+### D. 验证器与判定侧（`src/validators/registry.py` + `src/policy/checkers.py` + `src/policy/engine.py`）
+
+| # | 条件 | 不满足时的行为 |
+| --- | --- | --- |
+| C24 | 规则用到的 checker 必须被**实现**（`checkers._HANDLERS`）且被 `SUPPORTED_CHECKERS` 收录 | 加载阶段就已报错；引擎里的 `EngineError`（`_assert_executable`）是**防御性**代码，正常路径不可达（未知 checker 进不了规则集） |
+| C25 | 每个受支持的 checker 至少有一个验证器声明为它提供证据；验证器声明的 checker 必须是 `SUPPORTED_CHECKERS` 的子集；`rule_packs` 只能引用已声明的验证器；验证器 id 必须在实现里存在；`stage` 必须已定义、`requires` 必须**先于**依赖者；**声明了 `version_args` 的外部工具必须同时声明 `argv`**；外部工具声明的配置文件必须存在 | `RegistryError`（注册表整体加载失败） |
+| C26 | 证据类 checker 必须有 `EvidenceBundle`；只提供上下文的调用路径（Phase 2 Hook）拿不到证据时 | 记进 `skipped_rules`（写明"需要验证器证据"）；Phase 6 的写类动作**更严格**：没有 evidence provider 直接 `evidence_unavailable` **阻断**——绝不把 skipped 当成通过 |
+| C27 | 关键验证器必须真的跑成（缺失 / 版本不符 / 超时 / 崩溃 / 配置错误 / 输出非法） | 需要它的规则以 `critical` 违规**阻断**；同一批里的其他 PASS **抵消不了**它 |
+| C28 | **本次运行**的证据包没有为该 checker 成功产出证据（`bundle.serves(checker)` 为假）；若某验证器被 rule pack 漏选，则以"关键验证器不可用"阻断 | `uncovered_checker_violation`：`critical` 阻断；漏选走 `blocker_violation`（`NOT_SELECTED`）。**"注册表里没有任何验证器声明它"属于 C25，在加载阶段就被挡掉** |
+| C29 | "解析失败"不等于"没有依赖"：语法错误、动态 import 目标不是常量、项目内模块解析失败 | 一律阻断 |
+
+### E. 生效与变更管理
+
+| # | 条件 | 说明 |
+| --- | --- | --- |
+| C30 | 审计身份 = `rule_id@version`；语义变更递增 `version`，不允许同 id 并存两份 | `Rule.canonical_id`；`assert_unique` |
+| C31 | `RuleSet.identity` 与加载顺序无关（`exclude_none` + 排序后哈希） | 同一组规则无论从哪个目录顺序读进来，`rule_set_hash` 都一样 |
+| C32 | 决策协议版本只随**协议**变化：`SCHEMA_VERSION` / `POLICY_VERSION` 不随平台阶段变 | 加载新规则**不会**改变 `schema_version`；快照只能显式更新（`POLICY_UPDATE_SNAPSHOTS=1`） |
+| C33 | **约定（非强制）**：由镜像文档提炼的规则在 `rule_sources` 登记溯源；一旦登记就必须能解析到 chunk | 不登记：**没有任何报错**（当前仓库即是此状态）；登记了却解析不到 → 索引 run 失败（`IndexingError`），**不静默** |
+
+## 5. 什么不能成为规则
+
+| 输入 | 为什么不能 | 正确去向 |
+| --- | --- | --- |
+| 共享对话（例如设计背景链接） | `source.kind` 只接受 `project-policy` / `standard`；来源必须是本地的 | 只作为设计背景，写在文档里 |
+| 外部 URL（上游网页） | **约定**：`url` 只是可选说明字段，代码不校验它、判定侧也从不读 `rule.source`；靠镜像 + `corpus.yaml` 才能追溯 | 抓成镜像 → 登记 `corpus.yaml` → 检索用 |
+| 模型记忆 / LLM 判断 | 判定必须可确定性重放；ARCH-001 注释明确"不得由 LLM 裁决" | 变成检索语境的一部分，不参与判定 |
+| 只有"建议 / 尽量 / 注意"这类措辞的段落 | **约定**：代码只保证 checker 名合法，挡不住"把一条建议挂在 `style_lint` 上"——这条要靠评审 | 停在 Curated Guidance |
+| 无法用 6 个已知维度表达的适用范围 | 范围表达不出来就无法稳定判定 | 先用 6 个维度 + `validation/project.yaml` 的取值（它只能给已有维度补值，**加不出新维度**）表达；真要新增维度必须改代码（`KNOWN_SCOPE_DIMENSIONS` + `PolicyContext` 字段 + scope 访问器），否则降级为建议 |
+| `enforcement.type` 不是 `deterministic` | 目前唯一支持的类型 | 不写进 `policies/` |
+| 未知 checker / 未知枚举 / 未知字段 | 一律报错，绝不静默忽略或默认放行 | 先实现 checker + 验证器 + 测试 |
+
+## 6. 走查：PEP 257 → `DOC-001`
+
+| 台阶 | 实际内容 |
+| --- | --- |
+| 镜像 | `docs/python-pep-code-style/pep-257-docstrings/index.md`（数据集 `python-pep-code-style`，public domain） |
+| 语料 | `knowledge/corpus.yaml` → `datasets[name=python-pep-code-style].entries` 含 `pep-257-docstrings/index.md`，`tier: guidance` / `visibility: public` |
+| 索引 | 分块后进 `.tmp/retrieval/index.sqlite3`，每块带 `heading_path` 与 `text_hash` |
+| 提炼 | "公开对象必须有 docstring"是**可判定**要求 → 选 checker `missing_docstring` |
+| 规则 | `policies/coding/DOC-001.yaml`：`scope.language: python`、`severity: warning`、`source.kind: standard`、`source.path` 指回上面那个文件 |
+| 证据 | `validation/validators.yaml` 的 `py.docstring`（`critical: true`，`requires: [py.source, py.ast]`，`checkers: [missing_docstring]`） |
+| 判定 | `policy.engine.evaluate` → `checkers._finding_violations`：只认 `evidence.rule_id == "DOC-001"` 的条目；证据里带验证器 ID/版本、文件与行列 |
+| 溯源（约定，非强制） | 应在 `corpus.yaml` 的 `rule_sources` 里登记 `{rule_id: DOC-001, rule_version: 1, dataset: python-pep-code-style, source_path: pep-257-docstrings/index.md, heading_path: [...]}`，之后 `retrieval.cli rules --rule DOC-001` 能查回 chunk |
+
+> **现状边界（需要如实说明）**：仓库当前的 `corpus.yaml` 里 `rule_sources` 是**空列表**，
+> 因此 `python -m retrieval.cli rules --rule DOC-001` 目前查不到溯源；`DOC-001` 是"由镜像文档提炼"的规则，
+> 但溯源登记这一步在仓库里**尚未执行**。这是一条真实存在的落差（登记位、校验逻辑与测试都已就位，
+> 缺的是那条数据），不是文档修辞。
+
+## 7. 实操：把一篇文档变成一条规则
+
+以"新增一条来自 OWASP 文档的规则"为例（把名字换成你自己的）：
+
+```powershell
+$env:PYTHONPATH = "src"
+
+# ① 确认文档已在镜像里，并且哈希与 manifest 一致（漂移 → 退出 1）
+python -m retrieval.cli verify
+
+# ② 建索引，并确认这段内容真的检索得到（顺便看一眼它的 heading 结构）
+python -m retrieval.cli index
+python -m retrieval.cli query "工具返回值是否可信" --dataset owasp-cheatsheets --limit 3
+
+# ③ 选 checker：只有这 6 个能被判定，且每个都必须有验证器为它产证据
+python -m validators.cli registry
+
+# ④ 写规则文件（复制一条现成规则的形状，改 id / scope / severity / checker / rule / message / source）
+#    policies/security/SECRET-001.yaml
+
+# ⑤ 规则集能不能加载（原子性：一条坏 = 全部不加载，退出码 2）
+python -m policy.check --check-rules
+
+# ⑥ 证明它会判：反例阻断（退出码 1）、正例通过（退出码 0）
+#    注意 scope 要对得上：ARCH-001 只作用于 layer=controller，换成 --layer service 它会被跳过，
+#    那时"通过"只是"没规则管它"，不是"规则判它通过"（这正是 skipped_rules 存在的意义）。
+python -m policy.check examples/bad_controller.py --layer controller    # block，退出码 1
+python -m policy.check examples/good_controller.py --layer controller   # allow，退出码 0
+# 这条链路一定会跑验证器流水线，所以"正例通过"还依赖环境里有 Ruff：
+# 缺工具时 STYLE-* 会以 critical 失败关闭（退出码 1），先 python -m validators.cli probe 自查。
+
+# ⑦ 登记溯源（由镜像文档提炼出来的规则）
+#    在 knowledge/corpus.yaml 的 rule_sources 里加一条，然后重建索引并查回来
+python -m retrieval.cli index
+python -m retrieval.cli rules --rule SECRET-001
+
+# ⑧ 过门禁：文本规范 / 仓库一致性 / 凭据扫描 / 全量测试
+python tools/check_text_conventions.py
+python tools/check_repo_consistency.py
+python tools/secret_scan.py
+python -m pytest -q
+```
+
+**改完必须记住的三件事**：
+
+1. 语义变更 → 递增 `version`（`canonical_id` 变了，审计与快照才对得上）；
+2. `RuleSet.identity` 变了 → 检索结果缓存、Phase 7 观测摘要、Phase 8 checkpoint 的兼容性判定都会跟着变
+   （恢复会重新评估，不沿用旧 allow）；
+3. 如果这条规则依赖外部工具（Ruff / mypy / pytest），**工具没装 = 规则失败关闭**，
+   不是"跳过"——所以要么保证环境里有它，要么别启用这条规则。
+
+## 8. 与其它"声明审核"机制的共同点
+
+仓库里凡是"人写的数据变成运行时行为"的地方，用的都是同一套模式，理解一条就理解全部：
+
+| 数据 | 审核凭据 | 不一致时的后果 | 重新审核命令 |
+| --- | --- | --- | --- |
+| `policies/**/*.yaml` | `RuleSet.identity`（`rule_set_hash`） | 缓存 / checkpoint 兼容性判定变化，恢复重新评估 | `python -m policy.check --check-rules` |
+| `registry/tool-registry.yaml` | `tool-registry.approved.json` 的已审核哈希 | 该工具**不可使用**（pre-check 直接 block） | `python -m enforcement.cli registry --approve --reviewer <name>` |
+| `validation/validators.yaml` | 与 `KNOWN_VALIDATOR_IDS` / `SUPPORTED_CHECKERS` 的一致性（CI 断言） | 注册表加载失败 | 改数据 + 补实现 |
+| `adapters/<agent_id>/manifest.yaml` | `adapters/approved.json` 已审核哈希 | 未审核 / 哈希漂移 → 拒绝接入 | `python -m adapters.cli approve --reviewer <name>` |
+| `api/openapi.json` | 契约快照（`--check` 是 CI 门禁） | 漂移即退出 1 | `python -m policy_api.cli openapi --write` |
+
+**共同原则**：数据可以改，但改完必须**显式重新审核 / 重新生成凭据**；运行时不会替你猜"这次改动是安全的"。
