@@ -138,8 +138,9 @@ uv run python -m retrieval.cli context "代码评审需要检查哪些方面" --
 
 # 4) 固定评测集基线：FTS5 门槛决定退出码，向量检索只作为对照记录
 #    查询与门槛在 tests/fixtures/retrieval_eval/queries.yaml，
-#    记录在案的结果在 tests/fixtures/retrieval_eval/baseline-v2.json：
-#    排名或指标变了就会失败，除非显式重新记录（--record）
+#    记录在案的结果在 tests/fixtures/retrieval_eval/baseline-v3.json
+#    （tools/retrieval_eval.BASELINE_PATH 指向当前版本，旧版基线留在同一目录作为历史）：
+#    排名或指标变了就会失败，除非显式重新记录（--record）并递增评测集版本
 uv run python tools/retrieval_eval.py --method both
 ```
 
@@ -251,9 +252,12 @@ checker 提供证据"时，需要它的规则以 `critical` 违规阻断——�
 在 `validation/validators.yaml`（数据）里声明，探针负责发现，缺失即失败关闭。
 **前提**：`policies/coding/STYLE-*.yaml` 需要 PATH（或当前解释器同目录）上有 Ruff `>=0.6,<1`；
 没有它时连正例都会以 `tool.ruff@1.0 unavailable` 失败关闭（`python -m validators.cli probe` 可自查）。
-仓库当前的规则只启用了 Ruff（`policies/coding/STYLE-*.yaml`）；类型检查端口与失败语义已经就位，
-但没有启用类型规则：本机与 CI 都没有装 mypy，启用它会让所有 Python 文件在缺工具时一次性判红——
-这是数据决定的事，不是代码决定的。
+规则用到的诊断码全部来自 Ruff：`policies/coding/STYLE-*.yaml`（PEP 8）、`policies/coding/DOC-00{2..5}.yaml`（PEP 257 的形态要求）、
+`policies/security/SEC-*.yaml`（OWASP Cheat Sheet）。**"规则声明了某个码"与"这个码被 `validation/ruff.toml` 选中"必须双向一致**，
+否则那条规则永远拿不到证据（契约测试 `test_ruff_codes_are_declared_and_selected_in_both_directions` 守着它）。
+类型检查端口与失败语义已经就位，但没有启用类型规则：本机与 CI 都没有装 mypy，
+启用它会让所有 Python 文件在缺工具时一次性判红——这是数据决定的事，不是代码决定的。
+逐篇的"哪篇文档变成了哪条规则、哪篇没有"见 `docs/architecture/规则转化覆盖报告.md`。
 
 ### 多 Agent 适配（Phase 6）
 
@@ -475,7 +479,8 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 ├── knowledge/
 │   ├── corpus.yaml                    # Phase 3 摄取清单：数据集、许可、tier、可见性、检索预算
 │   └── query_expansion.yaml           # 受控中英术语表（跨语言词法桥接，只登记术语）
-├── policies/                          # 规则是数据：architecture（ARCH-001）、coding（DOC/STYLE）、testing（TESTING）
+├── policies/                          # 规则是数据：43 条 = architecture（ARCH-001）+ coding（DOC/STYLE）+ testing（TESTING）
+│                                      #   + security（SEC-*，由 OWASP 镜像提炼）；每条 standard 规则带正反例夹具与 chunk 级溯源
 ├── adapters/                          # Phase 6 能力声明（数据）：每个 Agent 的 manifest + adapter 配置 + 事件样本 + 已审核哈希
 ├── registry/                          # Phase 4 Tool Registry：工具授权表 + 已审核哈希清单
 ├── validation/                        # Phase 5 验证器数据：注册表、项目档案（语言/组件）、测试布局、工具配置

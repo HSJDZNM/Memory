@@ -7,7 +7,8 @@
 仓库已绑定 Python 技术栈（见下文），完成 Engineering Policy Platform 的 **Phase 0 至 Phase 8**；Phase 6 的第二真实 Agent 产品验证仍待外部环境，Phase 8 的真实模型作者（`ChangeAuthor` 端口的模型实现）同样未接入：
 
 - 可运行：根 `README.md` 中的安装、测试、CLI、Hook 自检、沙箱闭环、性能基线、检索索引与评测命令均已实际验证；
-- 有规则目录 `policies/`、核心源码 `src/policy/`（models / context / scope / engine / loader / check）、
+- 有规则目录 `policies/`（**43 条规则**：5 条项目自订 + 38 条由 `docs/<mirror>/**` 的镜像原文提炼，
+  每条 `standard` 规则都带正反例夹具与 chunk 级溯源）、核心源码 `src/policy/`（models / context / scope / engine / loader / check）、
   dsh 适配器 `src/adapters/dsh/`（adapter / hooks / 进程内转发插件）、
   多 Agent 适配层 `src/adapters/`（models / base / runtime / conformance / loader / cli / json_adapter / event_adapter / dsh_adapter）、
   能力声明是数据 `adapters/`（每个 Agent 一份 manifest + adapter 配置 + 事件样本 + `approved.json` 已审核哈希）、
@@ -161,7 +162,8 @@
     命令仍可能被改写成执行外部命令，真正的隔离属于运行时的文件系统与进程沙箱，不在本阶段；
     需要组合命令或被禁片段时必须改注册表并重新审核，说明为什么安全；
 18. 评测门槛与结果都随版本记录：门槛在 `tests/fixtures/retrieval_eval/queries.yaml`，
-    结果在 `tests/fixtures/retrieval_eval/baseline-v2.json`，代码里不写"脱离数据的常数"；
+    结果在 `tests/fixtures/retrieval_eval/baseline-v3.json`（`tools/retrieval_eval.BASELINE_PATH` 指向当前版本，
+    旧版基线留在同一目录作为历史），代码里不写"脱离数据的常数"；
     换 embedding、改术语表或改语料都必须重跑 `python tools/retrieval_eval.py --method both`，
     行为有意变化时用 `--record` 显式重记基线并递增评测集版本（`pytest` 也会比对这份基线）；
 19. 验证器只产证据、不判定：allow / block 仍由 Policy Engine 决定；每条证据必须带
@@ -264,6 +266,22 @@
     （`orchestrator` 段），改注册表必须重新审核；副作用之前先写"意图"并**立刻刷盘**
     （`NodeContext.commit`），恢复时发现"开工未结算"即 `side_effect_unknown` 交给人，
     既不重放也不假装成功；同一个幂等键重试不得产生第二次副作用（幂等跳过 + 平台台账两道闸）。
+40. **规范文档不会"自动"变成规则**：`docs/<mirror>/**` 首先是只读的追溯与检索语料，
+    转化是一次**显式、可评审的提炼**。一条规则要上线必须同时满足：`source.kind ∈ {project-policy, standard}`
+    且 `source.path` 指向**真实存在**的本地文件；`enforcement.checker` 是已实现的 6 个之一，
+    且 `validation/validators.yaml` 里有验证器为它声明产证据；适用范围能用 6 个维度表达；
+    `severity` 落在四值枚举里。不满足时**正确的做法是停在 Curated Guidance**（进 `knowledge/corpus.yaml`、供检索），
+    而不是写一条"看起来在管这件事、实际什么都没查"的规则。
+    由镜像文档提炼的规则（`source.kind: standard`）**必须**带正反例：
+    `tests/fixtures/rules/<ID>/bad.py` 必须命中、`good.py` 必须不命中（且不能被 `skipped_rules` 吞掉），
+    由 `tests/integration/test_rule_corpus.py` 走**真实验证器流水线**守住；
+    并在 `knowledge/corpus.yaml` 的 `rule_sources` 登记
+    `{rule_id, rule_version, dataset, source_path, heading_path}`（登记后解析不到 chunk 会让索引 run 失败）。
+    **Ruff 码的归属必须双向一致**：规则声明的码要被 `validation/ruff.toml` 的 `select` 选中，
+    `select` 的码要有规则归属——`tests/contract/test_validator_protocol.py` 的
+    `test_ruff_codes_are_declared_and_selected_in_both_directions` 守住这条；**单向不一致都等于"规则静默失效"**。
+    `type_check` 规则在装好 mypy 之前一律不启用（工具缺失 = 失败关闭，会让所有 Python 文件一次性判红）。
+    逐篇的转化判定与理由见 `docs/architecture/规则转化覆盖报告.md`，方法与七个台阶见 `规则文档转化为规则.md`。
 
 ## 临时文件与产物
 

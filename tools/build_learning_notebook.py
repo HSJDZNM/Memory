@@ -3087,7 +3087,8 @@ corpus_summary = {
 }"""
     ),
     markdown(
-        """**小结**：这 6 个数据集、27 个入口就是 Phase 3 的全部语料，它们全部来自仓库里已有的离线镜像。
+        """**小结**：这 6 个数据集的全部入口（数量见上一个单元的输出，它由清单决定、不写死在文档里）就是 Phase 3 的全部语料，
+它们全部来自仓库里已有的离线镜像。
 三件事刻意分开写：
 
 - `license` 是必填项：没有许可的语料不允许进入索引（`verify` 还会检查许可声明文件是否存在）；
@@ -4125,7 +4126,7 @@ state_rows = [
     {"stage": "pre-check 之前", "state": "request_created", "file_digest": INITIAL_DIGEST[:22] + "...",
      "note": "只有不可变请求；没有凭据，文件未变"},
     {"stage": "pre-check 允许", "state": "allow_with_grant", "file_digest": file_digest()[:22] + "...",
-     "note": "12 项检查跑完，签发与 action_hash 绑定的短时效 grant"},
+     "note": "13 项检查跑完，签发与 action_hash 绑定的短时效 grant"},
 ]
 grant_facts = {
     "ttl_seconds": ttl_seconds,
@@ -4136,7 +4137,7 @@ grant_facts = {
 }"""
     ),
     markdown(
-        """**小结**：允许路径跑满 12 项检查，每一项都留下结论；`skipped` 也是结论——
+        """**小结**：允许路径跑满 13 项检查，每一项都留下结论；`skipped` 也是结论——
 **“没跑”必须写清楚，不能默认成“通过”**：
 
 - `command_allowlist` / `approval` 对 `fs.edit` 是 `skipped`（它不是命令类、也不需要审批）；
@@ -5347,7 +5348,11 @@ def check_phase_3_structure(namespace: dict) -> list[str]:
     quote = chr(34)
 
     summary = namespace.get("corpus_summary") or {}
-    if summary.get("datasets") != 6 or summary.get("entries") != 27:
+    # 入口数从**清单对象**现算，不写字面量：语料是会长大的数据（来源文档会随着
+    # "文档 → 规则"的转化新增），写死 27 只会让手册在语料扩充时无声过期。
+    loaded = namespace.get("loaded")
+    declared = len(getattr(loaded, "entries", ()) or ())
+    if summary.get("datasets") != 6 or not declared:
         problems.append(f"语料摘要与文档不一致：{summary}")
     if not summary.get("ok"):
         problems.append("摄取清单的完整性校验没有通过")
@@ -5366,7 +5371,7 @@ def check_phase_3_structure(namespace: dict) -> list[str]:
 
     first = namespace.get("first_report")
     second = namespace.get("second_report")
-    if getattr(first, "documents_indexed", None) != 27:
+    if getattr(first, "documents_indexed", None) != declared:
         problems.append("第一次摄取没有覆盖清单里的全部入口")
     if getattr(second, "chunks_created", None) != 0 or getattr(second, "chunks_updated", None) != 0:
         problems.append("第二次摄取不是幂等的：不该有新建或更新的 chunk")
@@ -5438,6 +5443,7 @@ PHASE_4_CHECK_ORDER = (
     "action_window",
     "principal",
     "permissions",
+    "path_prefixes",
     "command_allowlist",
     "command_composition",
     "command_fragments",
