@@ -1,0 +1,114 @@
+<mxfile host="Electron" agent="dsh">
+  <diagram id="09-能不能成为规则" name="判定：一段文档要求能不能成为规则">
+    <mxGraphModel dx="1200" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=22;fontStyle=1" value="判定：一段文档要求能不能成为规则" vertex="1">
+          <mxGeometry height="30" width="1320" x="40" y="18" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#5F6368" value="四条必要条件缺一条，就只能停在 Curated Guidance——绝不写一条「看起来在管、其实没查」的规则" vertex="1">
+          <mxGeometry height="24" width="1320" x="40" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="q0" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3F6FB;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;文档里的一段要求&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;上游原文里的「必须 / 不得 / 至少」&lt;/font&gt;" vertex="1">
+          <mxGeometry height="66" width="620" x="190" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="q1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7DA;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;① 本地来源？&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;source.kind ∈ {project-policy, standard}&lt;/font&gt;" vertex="1">
+          <mxGeometry height="66" width="620" x="190" y="248" as="geometry" />
+        </mxCell>
+        <mxCell id="q2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7DA;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;② 可确定性判定？&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;deterministic + checker 已实现 + 有验证器产证据&lt;/font&gt;" vertex="1">
+          <mxGeometry height="66" width="620" x="190" y="366" as="geometry" />
+        </mxCell>
+        <mxCell id="q3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7DA;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;③ 范围可枚举？&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;只用 6 个已知维度表达得出来&lt;/font&gt;" vertex="1">
+          <mxGeometry height="66" width="620" x="190" y="484" as="geometry" />
+        </mxCell>
+        <mxCell id="q4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7DA;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;④ 结论落在决策表？&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;severity ∈ 四值枚举（error / critical → block）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="66" width="620" x="190" y="602" as="geometry" />
+        </mxCell>
+        <mxCell id="ok" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE9A8;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;Project Policy：可阻断&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;policies/&lt;domain&gt;/&lt;ID&gt;.yaml → 进决策载荷&lt;/font&gt;" vertex="1">
+          <mxGeometry height="66" width="620" x="190" y="720" as="geometry" />
+        </mxCell>
+        <mxCell id="guide" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8F9FA;strokeColor=#DADCE0;strokeWidth=2;fontSize=16;fontColor=#3C4043;arcSize=14;" value="&lt;b&gt;否则：停在 Curated Guidance&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;进语料，供检索与解释；不产生 allow / block&lt;/font&gt;" vertex="1">
+          <mxGeometry height="76" width="420" x="900" y="326" as="geometry" />
+        </mxCell>
+        <mxCell id="never" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDE7E7;strokeColor=#D9534F;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;明确禁止：不做成规则&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;共享对话 / 外部 URL / 模型记忆 / 未知 checker&lt;/font&gt;" vertex="1">
+          <mxGeometry height="76" width="420" x="900" y="602" as="geometry" />
+        </mxCell>
+        <mxCell id="edge0" edge="1" parent="1" source="q0" target="q1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge1" edge="1" parent="1" source="q1" target="q2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge2" edge="1" parent="1" source="q2" target="q3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge3" edge="1" parent="1" source="q3" target="q4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge4" edge="1" parent="1" source="q4" target="ok" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge5" edge="1" parent="1" source="q1" target="guide" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;dashed=1;" value="否">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="855.0" y="281.0" />
+              <mxPoint x="855.0" y="364.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge6" edge="1" parent="1" source="q2" target="guide" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;dashed=1;" value="否">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="855.0" y="399.0" />
+              <mxPoint x="855.0" y="364.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge7" edge="1" parent="1" source="q3" target="guide" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;dashed=1;" value="否">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="855.0" y="517.0" />
+              <mxPoint x="855.0" y="364.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge8" edge="1" parent="1" source="q4" target="guide" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;dashed=1;" value="否">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="855.0" y="635.0" />
+              <mxPoint x="855.0" y="364.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge9" edge="1" parent="1" source="q4" target="ok" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="四条都满足">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#5F6368" value="黄 = 必要条件 ｜ 灰 = 正确的降级去向 ｜ 红 = 明确禁止" vertex="1">
+          <mxGeometry height="20" width="1320" x="40" y="866" as="geometry" />
+        </mxCell>
+        <mxCell id="footer" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#5F6368" value="代码强制的是枚举、形状、checker 一致性与批量原子性；「语义真的匹配」「来源指向真实文件」靠评审，不靠代码。" vertex="1">
+          <mxGeometry height="20" width="1320" x="40" y="842" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

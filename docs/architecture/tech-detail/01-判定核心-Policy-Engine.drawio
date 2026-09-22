@@ -1,0 +1,119 @@
+<mxfile host="Electron" agent="dsh">
+  <diagram id="01-判定核心-Policy-Engine" name="单技术：Policy Engine 内部流程">
+    <mxGraphModel dx="1200" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1240" pageHeight="1010" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=22;fontStyle=1" value="单技术：Policy Engine 内部流程" vertex="1">
+          <mxGeometry height="30" width="1160" x="40" y="18" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#5F6368" value="唯一入口 policy.engine.evaluate；相同输入必须得到相同结论" vertex="1">
+          <mxGeometry height="24" width="1160" x="40" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="rs" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;规则集就绪&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;RuleSet.identity（与加载顺序无关）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ctx" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;上下文规范化&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;normalize_context · 只接受显式字段&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="match" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;范围匹配&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;matching_rules · 同维 OR / 跨维 AND&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="skip" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7DA;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;跳过要写原因&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;skipped_rules（skipped ≠ 通过）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="370" as="geometry" />
+        </mxCell>
+        <mxCell id="ev" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7DA;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;证据门禁&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;blocker_for / serves(checker)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="460" as="geometry" />
+        </mxCell>
+        <mxCell id="disp" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;checker 分派&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;checker_handler(checker)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="sort" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;违规稳定排序&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;violations.sort(rule_id)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="640" as="geometry" />
+        </mxCell>
+        <mxCell id="appr" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;审批标记&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;requires_approval → RequiredAction&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="730" as="geometry" />
+        </mxCell>
+        <mxCell id="dec" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE9A8;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;三值判定&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;allow / allow_with_warnings / block&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="820" as="geometry" />
+        </mxCell>
+        <mxCell id="nocov" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDE7E7;strokeColor=#D9534F;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;无证据不判通过&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;验证器不可用 / 未覆盖 → critical&lt;/font&gt;" vertex="1">
+          <mxGeometry height="76" width="280" x="950" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="needappr" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDE7E7;strokeColor=#D9534F;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;高风险要人批&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;RequiredAction.APPROVAL&lt;/font&gt;" vertex="1">
+          <mxGeometry height="76" width="280" x="950" y="692" as="geometry" />
+        </mxCell>
+        <mxCell id="edge0" edge="1" parent="1" source="rs" target="ctx" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge1" edge="1" parent="1" source="ctx" target="match" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge2" edge="1" parent="1" source="match" target="skip" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge3" edge="1" parent="1" source="skip" target="ev" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge4" edge="1" parent="1" source="ev" target="disp" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge5" edge="1" parent="1" source="disp" target="sort" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge6" edge="1" parent="1" source="sort" target="appr" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge7" edge="1" parent="1" source="appr" target="dec" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge8" edge="1" parent="1" source="disp" target="nocov" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;dashed=1;" value="证据缺失">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="835.0" y="582.0" />
+              <mxPoint x="835.0" y="538.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge9" edge="1" parent="1" source="appr" target="needappr" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;dashed=1;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="835.0" y="762.0" />
+              <mxPoint x="835.0" y="730.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#5F6368" value="黄 = 门禁与判定 ｜ 红 = 失败关闭路径" vertex="1">
+          <mxGeometry height="20" width="1160" x="40" y="976" as="geometry" />
+        </mxCell>
+        <mxCell id="footer" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#5F6368" value="规则加载在 loader.py（任一文件失败即整体不加载）；证据由 Phase 5 验证器产出，engine 只消费。" vertex="1">
+          <mxGeometry height="20" width="1160" x="40" y="952" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

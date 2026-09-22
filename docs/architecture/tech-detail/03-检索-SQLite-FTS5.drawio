@@ -1,0 +1,108 @@
+<mxfile host="Electron" agent="dsh">
+  <diagram id="03-检索-SQLite-FTS5" name="单技术：离线规范检索（SQLite FTS5）">
+    <mxGraphModel dx="1200" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1240" pageHeight="1010" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=22;fontStyle=1" value="单技术：离线规范检索（SQLite FTS5）" vertex="1">
+          <mxGeometry height="30" width="1160" x="40" y="18" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#5F6368" value="先有可解释的词法基线；向量检索是端口，未进默认链路" vertex="1">
+          <mxGeometry height="24" width="1160" x="40" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="r1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3F6FB;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;摄取清单&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;knowledge/corpus.yaml&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="r2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7DA;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;镜像哈希校验&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;manifest.json sha256（漂移 → verify 退出 1）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="r3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;分块&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;chunker：标题层级 + 预算打包（原文不改写）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="r4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE9A8;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;FTS5 索引库&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;documents / chunks / chunks_fts（CJK 逐字切分）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="370" as="geometry" />
+        </mxCell>
+        <mxCell id="r5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7DA;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;查询规范化&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;query.py：受控词项 + 术语桥接&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="460" as="geometry" />
+        </mxCell>
+        <mxCell id="r6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;参数化查询&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;MATCH ?（原始文本永不拼进 SQL）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="r7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7DA;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;权限过滤&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;AccessScope（查询文本不能扩权）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="640" as="geometry" />
+        </mxCell>
+        <mxCell id="r8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;结果带来源&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;路径 / URL / 许可 / 文本哈希&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="730" as="geometry" />
+        </mxCell>
+        <mxCell id="r9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE9A8;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;三个显式状态&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;no_results / 无权限 / knowledge_unavailable&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="820" as="geometry" />
+        </mxCell>
+        <mxCell id="nofallback" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDE7E7;strokeColor=#D9534F;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;绝不回退模型记忆&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;不可用时只输出 knowledge_unavailable&lt;/font&gt;" vertex="1">
+          <mxGeometry height="86" width="280" x="950" y="596" as="geometry" />
+        </mxCell>
+        <mxCell id="edge0" edge="1" parent="1" source="r1" target="r2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge1" edge="1" parent="1" source="r2" target="r3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge2" edge="1" parent="1" source="r3" target="r4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge3" edge="1" parent="1" source="r4" target="r5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge4" edge="1" parent="1" source="r5" target="r6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge5" edge="1" parent="1" source="r6" target="r7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge6" edge="1" parent="1" source="r7" target="r8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge7" edge="1" parent="1" source="r8" target="r9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge8" edge="1" parent="1" source="r7" target="nofallback" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;dashed=1;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="835.0" y="672.0" />
+              <mxPoint x="835.0" y="639.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#5F6368" value="黄 = 门禁 ｜ 红 = 失败关闭" vertex="1">
+          <mxGeometry height="20" width="1160" x="40" y="976" as="geometry" />
+        </mxCell>
+        <mxCell id="footer" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#5F6368" value="索引库是构建产物（.tmp/retrieval/index.sqlite3），可随时重建；相似度分数只用于排序，不是授权信号。" vertex="1">
+          <mxGeometry height="20" width="1160" x="40" y="952" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

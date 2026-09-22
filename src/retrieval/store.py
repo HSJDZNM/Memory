@@ -55,110 +55,111 @@ DEFAULT_DB_PATH = ".tmp/retrieval/index.sqlite3"
 SCHEMA_STATEMENTS: Tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS schema_meta (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
+        key TEXT PRIMARY KEY,                        -- 元数据键：schema_version / generation / corpus_input_hash
+        value TEXT NOT NULL                          -- 元数据值（一律文本存储）
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS documents (
-        document_id TEXT PRIMARY KEY,
-        dataset TEXT NOT NULL,
-        source_path TEXT NOT NULL,
-        source_url TEXT NOT NULL,
-        title TEXT NOT NULL,
-        license TEXT NOT NULL,
-        license_source TEXT,
-        tier TEXT NOT NULL,
-        visibility TEXT NOT NULL,
-        language TEXT,
-        content_hash TEXT NOT NULL,
-        manifest_hash TEXT,
-        byte_size INTEGER NOT NULL,
-        mirror_revision TEXT,
-        chunker_version TEXT NOT NULL,
-        front_matter TEXT NOT NULL DEFAULT '[]',
-        ingested_at TEXT NOT NULL,
-        UNIQUE (dataset, source_path)
+        document_id TEXT PRIMARY KEY,                -- doc_+sha256(dataset|source_path)[:20]；重爬不换 ID
+        dataset TEXT NOT NULL,                       -- 数据集名（knowledge/corpus.yaml）
+        source_path TEXT NOT NULL,                   -- 镜像内相对路径；规则的 source.path 指向它
+        source_url TEXT NOT NULL,                    -- 上游 URL（引用与审计用，判定侧从不读）
+        title TEXT NOT NULL,                         -- 文档标题
+        license TEXT NOT NULL,                       -- 许可；缺失即清单校验失败（C5）
+        license_source TEXT,                         -- 许可原文路径（声明了就必须存在）
+        tier TEXT NOT NULL,                          -- guidance / policy：只影响检索优先级，不阻断
+        visibility TEXT NOT NULL,                    -- public / internal：检索可见性
+        language TEXT,                               -- 语言（可空）
+        content_hash TEXT NOT NULL,                  -- 当前文件内容 sha256
+        manifest_hash TEXT,                          -- manifest 登记的 sha256；与上一列不等即哈希漂移（C6）
+        byte_size INTEGER NOT NULL,                  -- 字节数（与 manifest 的 bytes 比对）
+        mirror_revision TEXT,                        -- 镜像抓取时间（该镜像的 revision）
+        chunker_version TEXT NOT NULL,               -- 分块器版本；变化即强制重切（幂等短路失效）
+        front_matter TEXT NOT NULL DEFAULT '[]',     -- 页头键值对 JSON（分块时已剔除，保留可审计）
+        ingested_at TEXT NOT NULL,                   -- 摄取时间（只记录，不参与幂等判定）
+        UNIQUE (dataset, source_path)                -- 同一数据集内不允许同路径两份
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS chunks (
-        chunk_id TEXT PRIMARY KEY,
-        document_id TEXT NOT NULL REFERENCES documents(document_id) ON DELETE CASCADE,
-        ordinal INTEGER NOT NULL,
-        heading_path TEXT NOT NULL,
-        heading_anchor TEXT NOT NULL,
-        text TEXT NOT NULL,
-        text_hash TEXT NOT NULL,
-        char_count INTEGER NOT NULL,
-        kind TEXT NOT NULL,
-        part_index INTEGER NOT NULL,
-        truncated INTEGER NOT NULL DEFAULT 0,
-        original_chars INTEGER,
-        oversized INTEGER NOT NULL DEFAULT 0,
-        quarantined INTEGER NOT NULL DEFAULT 0,
-        revision INTEGER NOT NULL DEFAULT 1,
-        UNIQUE (document_id, ordinal)
+        chunk_id TEXT PRIMARY KEY,                   -- chunk_+sha256(document_id|anchor|part_index)[:24]；与标题锚点稳定对应
+        document_id TEXT NOT NULL REFERENCES documents(document_id) ON DELETE CASCADE,  -- 归属文档
+        ordinal INTEGER NOT NULL,                    -- 文档内顺序号（0 起）
+        heading_path TEXT NOT NULL,                  -- 标题路径 JSON；rule_sources 用它的前缀匹配溯源（C10）
+        heading_anchor TEXT NOT NULL,                -- 章节锚点；chunk_id 的输入之一
+        text TEXT NOT NULL,                          -- 正文：进 AI 上下文、也是提炼时人读的原文
+        text_hash TEXT NOT NULL,                     -- 正文 sha256：幂等比对、隔离核对（C9）
+        char_count INTEGER NOT NULL,                 -- 字符数（上下文预算用）
+        kind TEXT NOT NULL,                          -- prose / code / mixed
+        part_index INTEGER NOT NULL,                 -- 同章节被切多片时的片号（1 起）
+        truncated INTEGER NOT NULL DEFAULT 0,        -- 是否被硬上限截断
+        original_chars INTEGER,                      -- 截断前的原文长度
+        oversized INTEGER NOT NULL DEFAULT 0,        -- 是否超过硬上限（提示需人工拆分）
+        quarantined INTEGER NOT NULL DEFAULT 0,      -- 是否被隔离：隔离片段不参与检索
+        revision INTEGER NOT NULL DEFAULT 1,         -- 片段修订号：内容变则递增，ID 不变
+        UNIQUE (document_id, ordinal)                -- 同一文档内顺序号唯一
     )
     """,
     """
     CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-        chunk_id UNINDEXED,
-        text,
-        heading_path,
-        tokenize = 'unicode61 remove_diacritics 2'
+        chunk_id UNINDEXED,                          -- 主键，不参与分词
+        text,                                        -- 正文：bm25 权重 1.0
+        heading_path,                                -- 标题路径：bm25 权重 0.35
+        tokenize = 'unicode61 remove_diacritics 2'   -- 分词器；影子表 chunks_fts_* 由 FTS5 维护，不要手改
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS index_runs (
-        run_id TEXT PRIMARY KEY,
-        started_at TEXT NOT NULL,
-        completed_at TEXT,
-        input_hash TEXT NOT NULL,
-        status TEXT NOT NULL,
-        documents_indexed INTEGER NOT NULL DEFAULT 0,
-        chunks_created INTEGER NOT NULL DEFAULT 0,
-        chunks_updated INTEGER NOT NULL DEFAULT 0,
-        chunks_unchanged INTEGER NOT NULL DEFAULT 0,
-        chunks_removed INTEGER NOT NULL DEFAULT 0,
-        documents_removed INTEGER NOT NULL DEFAULT 0,
-        truncated_chunks INTEGER NOT NULL DEFAULT 0,
-        oversized_chunks INTEGER NOT NULL DEFAULT 0,
-        empty_sections INTEGER NOT NULL DEFAULT 0,
-        quarantined_chunks INTEGER NOT NULL DEFAULT 0,
-        note TEXT
+        run_id TEXT PRIMARY KEY,                     -- 本次 run 的 id
+        started_at TEXT NOT NULL,                    -- 开始时间
+        completed_at TEXT,                           -- 结束时间（未结束为空）
+        input_hash TEXT NOT NULL,                    -- 本次输入指纹（清单 + 镜像）
+        status TEXT NOT NULL,                        -- running / completed / failed
+        documents_indexed INTEGER NOT NULL DEFAULT 0,    -- 处理的文档数
+        chunks_created INTEGER NOT NULL DEFAULT 0,       -- 新建片段数（首次摄取 = 535）
+        chunks_updated INTEGER NOT NULL DEFAULT 0,       -- 内容变化的片段数
+        chunks_unchanged INTEGER NOT NULL DEFAULT 0,     -- 未变片段数（幂等的可验证证据）
+        chunks_removed INTEGER NOT NULL DEFAULT 0,       -- 删除失效的片段数
+        documents_removed INTEGER NOT NULL DEFAULT 0,    -- 删除失效的文档数
+        truncated_chunks INTEGER NOT NULL DEFAULT 0,     -- 被截断的片段数
+        oversized_chunks INTEGER NOT NULL DEFAULT 0,     -- 超硬上限的片段数
+        empty_sections INTEGER NOT NULL DEFAULT 0,       -- 空章节数
+        quarantined_chunks INTEGER NOT NULL DEFAULT 0,   -- 隔离片段数
+        note TEXT                                    -- 备注（失败原因等）
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS rule_sources (
-        rule_id TEXT NOT NULL,
-        rule_version INTEGER NOT NULL,
-        chunk_id TEXT NOT NULL REFERENCES chunks(chunk_id) ON DELETE CASCADE,
-        PRIMARY KEY (rule_id, rule_version, chunk_id)
+        rule_id TEXT NOT NULL,                       -- 规则 ID（如 DOC-001）
+        rule_version INTEGER NOT NULL,               -- 规则版本；与 rule_id 合成审计身份 rule_id@version（C30）
+        chunk_id TEXT NOT NULL REFERENCES chunks(chunk_id) ON DELETE CASCADE,  -- 该规则溯源到的片段
+        PRIMARY KEY (rule_id, rule_version, chunk_id)  -- 主键即 N:M：一条规则可挂多个 chunk，一个 chunk 可被多条规则引用
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS quarantined_chunks (
-        chunk_id TEXT PRIMARY KEY,
-        document_id TEXT NOT NULL,
-        text_hash TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        quarantined_at TEXT NOT NULL
+        chunk_id TEXT PRIMARY KEY,                   -- 被隔离的片段
+        document_id TEXT NOT NULL,                   -- 归属文档（留痕用）
+        text_hash TEXT NOT NULL,                     -- 登记时的正文哈希；内容变了要重新确认（C9）
+        reason TEXT NOT NULL,                        -- 隔离原因（必须写清楚）
+        quarantined_at TEXT NOT NULL                 -- 登记时间
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS chunk_embeddings (
-        chunk_id TEXT PRIMARY KEY REFERENCES chunks(chunk_id) ON DELETE CASCADE,
-        model TEXT NOT NULL,
-        dim INTEGER NOT NULL,
-        vector BLOB NOT NULL,
-        embedded_at TEXT NOT NULL
+        chunk_id TEXT PRIMARY KEY REFERENCES chunks(chunk_id) ON DELETE CASCADE,  -- 片段
+        model TEXT NOT NULL,                         -- 嵌入模型名（端口就位，当前未启用）
+        dim INTEGER NOT NULL,                        -- 向量维度
+        vector BLOB NOT NULL,                        -- 向量二进制
+        embedded_at TEXT NOT NULL                    -- 嵌入时间
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_documents_dataset ON documents(dataset)",
     "CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id)",
     "CREATE INDEX IF NOT EXISTS idx_runs_status ON index_runs(status)",
 )
+
 
 _SCHEMA_VERSION_KEY = "schema_version"
 _GENERATION_KEY = "generation"

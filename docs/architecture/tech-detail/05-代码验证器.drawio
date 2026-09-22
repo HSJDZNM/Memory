@@ -1,0 +1,108 @@
+<mxfile host="Electron" agent="dsh">
+  <diagram id="05-代码验证器" name="单技术：代码验证器（Phase 5）">
+    <mxGraphModel dx="1200" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1240" pageHeight="1010" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=22;fontStyle=1" value="单技术：代码验证器（Phase 5）" vertex="1">
+          <mxGeometry height="30" width="1160" x="40" y="18" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#5F6368" value="验证器只产证据；allow / block 仍由 Policy Engine 决定" vertex="1">
+          <mxGeometry height="24" width="1160" x="40" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="v1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;变更集&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;git diff / 显式文件列表&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="v2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7DA;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;读取 + 内容哈希&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;source.py（超大 / 非 UTF-8 → 失败关闭）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="v3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3F6FB;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;验证器注册表&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;validation/validators.yaml&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="v4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;最小相关测试&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;selection：related → package → suite&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="370" as="geometry" />
+        </mxCell>
+        <mxCell id="v5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;标准库 AST&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;python_ast / depgraph（解析失败 ≠ 没有依赖）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="460" as="geometry" />
+        </mxCell>
+        <mxCell id="v6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;外部工具探针&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;Ruff / pytest（mypy 端口就绪，未启用）&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="v7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;按模板调用&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;allowlist / 白名单 env / 超时杀进程树 / 输出脱敏&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="640" as="geometry" />
+        </mxCell>
+        <mxCell id="v8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE9A8;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;证据包&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;EvidenceBundle：ID+版本+行列+配置哈希&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="730" as="geometry" />
+        </mxCell>
+        <mxCell id="v9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;交回判定核心&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;验证器只产证据，不判 allow / block&lt;/font&gt;" vertex="1">
+          <mxGeometry height="64" width="600" x="120.0" y="820" as="geometry" />
+        </mxCell>
+        <mxCell id="critical" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDE7E7;strokeColor=#D9534F;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;没证据就阻断&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;工具缺失 / 版本不符 / 超时 / 未覆盖 → critical&lt;/font&gt;" vertex="1">
+          <mxGeometry height="96" width="280" x="950" y="596" as="geometry" />
+        </mxCell>
+        <mxCell id="edge0" edge="1" parent="1" source="v1" target="v2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge1" edge="1" parent="1" source="v2" target="v3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge2" edge="1" parent="1" source="v3" target="v4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge3" edge="1" parent="1" source="v4" target="v5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge4" edge="1" parent="1" source="v5" target="v6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge5" edge="1" parent="1" source="v6" target="v7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge6" edge="1" parent="1" source="v7" target="v8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge7" edge="1" parent="1" source="v8" target="v9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge8" edge="1" parent="1" source="v6" target="critical" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#5F6368;strokeWidth=1.5;endArrow=blockThin;endFill=1;labelBackgroundColor=#ffffff;fontSize=11;dashed=1;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="835.0" y="582.0" />
+              <mxPoint x="835.0" y="644.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#5F6368" value="黄 = 门禁 ｜ 红 = 失败关闭" vertex="1">
+          <mxGeometry height="20" width="1160" x="40" y="976" as="geometry" />
+        </mxCell>
+        <mxCell id="footer" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#5F6368" value="外部工具不是包依赖：由探针发现，缺失即失败关闭；证据里不得出现绝对路径、耗时或凭据。" vertex="1">
+          <mxGeometry height="20" width="1160" x="40" y="952" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
