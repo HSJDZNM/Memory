@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>系统 · 文档 → 规则 操作台</title>
+<link rel="stylesheet" href="assets/style.css?v=202609221359">
+</head>
+<body data-page="system">
+<header class="top">
+  <div class="brand">文档 → 规则 操作台
+    <span class="meta">原型 v202609221359 · 2026-09-22 13:59 UTC · <span class="q" data-tip="静态原型：只读 + 预演；没有写路径。数据取自仓库真实文件快照。">?</span></span>
+  </div>
+  <nav class="nav"><a href="index.html">操作台</a><a href="data.html">数据层</a><a href="authoring.html">提炼与审查</a><a href="gates.html">门禁与证据</a><a href="activation.html">审批与生效</a><a href="system.html">系统</a></nav>
+</header>
+<main>
+  <h1>系统</h1>
+  <div class="tabs"><button data-tab="conn">连接</button><button data-tab="routes">路由</button><button data-tab="gaps">缺口</button><button data-tab="rules">红线 · 反模式</button></div>
+<section data-panel="conn">
+<div class="panel"><div class="toolbar" style="margin-top:0"><button class="btn" id="probe-btn">GET /v1/health/live</button><span class="small">目标 http://127.0.0.1:8088</span><span class="q" data-tip="独立源页面读不到响应：服务端没有 CORS 中间件（app.user_middleware == []），预检 OPTIONS 返回 405 且无 ACAO">?</span></div><div id="probe-out"></div></div>
+<table><thead><tr><th>项</th><th>内容</th><th>来源</th></tr></thead><tbody><tr><td>CORS</td><td>app.user_middleware == []；预检 OPTIONS → 405，无 ACAO</td><td><span class="chip n">实测</span></td></tr><tr><td>静态托管</td><td>/、/index.html、/console 全 404 not_found</td><td><span class="chip n">实测</span></td></tr><tr><td>认证</td><td>无令牌 / 错令牌 → 401；多租户未声明 tenant → 403 token_scope_mismatch</td><td><span class="chip n">实测</span></td></tr><tr><td>租户 404</td><td>enabled: false → retryable: false；装配失败 → retryable: true</td><td><span class="chip n">实测</span></td></tr><tr><td>幂等</td><td>&gt;8192 字节响应显式返回 503 idempotency_unavailable，不写残缺重放记录</td><td><span class="chip n">实测</span></td></tr><tr><td>预算</td><td>evaluate / retrieve 2000ms，validate 10000ms；并发 8</td><td><span class="chip n">实测</span></td></tr><tr><td>失败关闭</td><td>未配索引 503；超预算 503；验证器失败 → 200 但 block</td><td><span class="chip n">实测</span></td></tr><tr><td>静态挂载</td><td>app.mount 不进 OpenAPI paths → 不需要 openapi --write</td><td><span class="chip n">实测</span></td></tr><tr><td>挂载点</td><td>挂到 / 后未知 POST 404→405、错方法 405→404</td><td><span class="chip n">评审实测</span></td></tr><tr><td>响应形状</td><td>无 response_model，不受契约快照保护</td><td><span class="chip n">评审实测</span></td></tr></tbody></table>
+</section>
+<section data-panel="routes" class="hide">
+<table><thead><tr><th>name</th><th>method</th><th>path</th></tr></thead><tbody><tr><td><span class="mono">evaluate</span></td><td>POST</td><td><span class="mono">/v1/policy/evaluate</span></td></tr><tr><td><span class="mono">retrieve</span></td><td>POST</td><td><span class="mono">/v1/knowledge/retrieve</span></td></tr><tr><td><span class="mono">validate</span></td><td>POST</td><td><span class="mono">/v1/validation/evaluate</span></td></tr><tr><td><span class="mono">health</span></td><td>GET</td><td><span class="mono">/v1/health/live</span></td></tr><tr><td><span class="mono">readiness</span></td><td>GET</td><td><span class="mono">/v1/health/ready</span></td></tr><tr><td><span class="mono">metrics</span></td><td>GET</td><td><span class="mono">/v1/ops/metrics</span></td></tr></tbody></table>
+</section>
+<section data-panel="gaps" class="hide">
+<table><thead><tr><th>#</th><th>能力</th><th>最小设计</th><th>状态</th></tr></thead><tbody><tr><td><span class="chip gap">G1</span></td><td>镜像 / 语料状态</td><td><span class="mono">GET /v1/corpus/status</span></td><td>缺</td></tr><tr><td><span class="chip gap">G2</span></td><td>分块与溯源读取</td><td><span class="mono">GET /v1/corpus/chunks</span></td><td>缺</td></tr><tr><td><span class="chip gap">G3</span></td><td>草稿校验</td><td><span class="mono">POST /v1/rules/draft</span></td><td>缺</td></tr><tr><td><span class="chip gap">G4</span></td><td>规则集加载预演</td><td><span class="mono">POST /v1/rules/preview</span></td><td>缺</td></tr><tr><td><span class="chip gap">G5</span></td><td>门禁聚合</td><td><span class="mono">POST /v1/gates/run</span></td><td>缺</td></tr><tr><td><span class="chip gap">G6</span></td><td>会话身份</td><td><span class="mono">GET /v1/session</span></td><td>缺</td></tr><tr><td><span class="chip prop">G7</span></td><td>提交与审批</td><td><span class="mono">不在 policy_api 内（走 Phase 4）</span></td><td>提案</td></tr><tr><td><span class="chip prop">G8</span></td><td>作业模型</td><td><span class="mono">暂不立项（索引重建实测 149ms）</span></td><td>不做</td></tr></tbody></table>
+</section>
+<section data-panel="rules" class="hide">
+<table><thead><tr><th>#</th><th>不变量</th><th>依据</th></tr></thead><tbody><tr><td><span class="chip n">R1</span></td><td>判定只有一条路径</td><td><span class="mono">AGENTS.md 30</span></td></tr><tr><td><span class="chip n">R2</span></td><td>证据只由服务端产出</td><td><span class="mono">AGENTS.md 32</span></td></tr><tr><td><span class="chip n">R3</span></td><td>租户只来自令牌</td><td><span class="mono">AGENTS.md 33</span></td></tr><tr><td><span class="chip n">R4</span></td><td>生效写入必须人工审批</td><td><span class="mono">AGENTS.md 38/39</span></td></tr><tr><td><span class="chip n">R5</span></td><td>规则集加载原子</td><td><span class="mono">C22 / C23</span></td></tr><tr><td><span class="chip n">R6</span></td><td>skipped_rules ≠ 通过</td><td><span class="mono">规则文档 §1</span></td></tr><tr><td><span class="chip n">R7</span></td><td>关键验证器不可用即阻断</td><td><span class="mono">C27 / C28</span></td></tr><tr><td><span class="chip n">R8</span></td><td>超时 / 503 / 504 ≠ allow</td><td><span class="mono">AGENTS.md 33</span></td></tr><tr><td><span class="chip n">R9</span></td><td>哈希漂移不许静默</td><td><span class="mono">C6 / AGENTS.md 12</span></td></tr><tr><td><span class="chip n">R10</span></td><td>观测只记摘要</td><td><span class="mono">AGENTS.md 34</span></td></tr><tr><td><span class="chip n">R11</span></td><td>审计身份 = rule_id@version</td><td><span class="mono">C30</span></td></tr><tr><td><span class="chip n">R12</span></td><td>不引入 LLM 判定</td><td><span class="mono">功能清单 253</span></td></tr></tbody></table>
+<table><thead><tr><th>禁止项</th><th>原因</th></tr></thead><tbody><tr><td><span class="chip no">AI 一键生成规则</span></td><td>台阶 4 无自动化且不引入 LLM；来源必须本地（C20）</td></tr><tr><td><span class="chip no">忽略门禁 / 强制启用</span></td><td>C23 一条坏 = 整批不加载；空集也拒绝替换</td></tr><tr><td><span class="chip no">改已发布规则不升 version</span></td><td>审计身份 = rule_id@version（C30）</td></tr><tr><td><span class="chip no">把建议写成规则</span></td><td>代码挡不住把建议挂在 style_lint 上</td></tr><tr><td><span class="chip no">跨租户查看 / 提交</span></td><td>租户只来自令牌，越权即拒绝</td></tr><tr><td><span class="chip no">客户端自带证据 / 决策</span></td><td>证据只由服务端流水线产出</td></tr><tr><td><span class="chip no">自由文本 YAML 编辑</span></td><td>未知字段 / 枚举 / checker 一律报错（C17、C21）</td></tr><tr><td><span class="chip no">保存即生效</span></td><td>生效须人工审批且绑 action_hash</td></tr><tr><td><span class="chip no">审批当通用许可</span></td><td>审批绑 action_hash，短时效、单次使用</td></tr><tr><td><span class="chip no">摘要链当防篡改日志</span></td><td>删尾或整链重写发现不了</td></tr></tbody></table>
+</section>
+
+</main>
+<script src="assets/data.js?v=202609221359"></script>
+<script src="assets/app.js?v=202609221359"></script>
+</body>
+</html>

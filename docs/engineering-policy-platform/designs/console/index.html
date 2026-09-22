@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>操作台 · 文档 → 规则 操作台</title>
+<link rel="stylesheet" href="assets/style.css?v=202609221359">
+</head>
+<body data-page="index">
+<header class="top">
+  <div class="brand">文档 → 规则 操作台
+    <span class="meta">原型 v202609221359 · 2026-09-22 13:59 UTC · <span class="q" data-tip="静态原型：只读 + 预演；没有写路径。数据取自仓库真实文件快照。">?</span></span>
+  </div>
+  <nav class="nav"><a href="index.html">操作台</a><a href="data.html">数据层</a><a href="authoring.html">提炼与审查</a><a href="gates.html">门禁与证据</a><a href="activation.html">审批与生效</a><a href="system.html">系统</a></nav>
+</header>
+<main>
+  <h1>操作台</h1>
+  <div class="row c4"><a class="panel" style="display:block" href="data.html"><div class="small"><span class="chip gap">第 1 步</span></div><div style='margin-top:6px;font-weight:600'>数据层</div><div class="small">6 镜像 · 6 语料 · 1013 chunk</div></a><a class="panel" style="display:block" href="authoring.html"><div class="small"><span class="chip gap">第 2 步</span></div><div style='margin-top:6px;font-weight:600'>提炼与审查</div><div class="small">1013 个候选点可勾选</div></a><a class="panel" style="display:block" href="gates.html"><div class="small"><span class="chip ok">第 3 步</span></div><div style='margin-top:6px;font-weight:600'>门禁与证据</div><div class="small">6 checker · 7 验证器</div></a><a class="panel" style="display:block" href="activation.html"><div class="small"><span class="chip no">第 4 步</span></div><div style='margin-top:6px;font-weight:600'>审批与生效</div><div class="small">1 个待审批动作</div></a></div>
+<div class="row c4" style="margin-top:12px"><div class="panel kpi"><b>43</b><span>规则<span class="q" data-tip="真实加载 policies/">?</span></span></div><div class="panel kpi"><b>1013</b><span>chunk<span class="q" data-tip="检索索引中的片段数">?</span></span></div><div class="panel kpi"><b>6</b><span>语料数据集<span class="q" data-tip="knowledge/corpus.yaml">?</span></span></div><div class="panel kpi"><b>7</b><span>验证器<span class="q" data-tip="validation/validators.yaml">?</span></span></div></div>
+<h2>阻塞</h2>
+<div class="panel"><div class="toolbar" style="margin:0"><span class="chip no" data-tip="orc.policy.write / orc.policy.edit 均 approval: required；普通写工具阻断五个信任根 ｜ 修法：回归：test_generic_orchestrator_writes_cannot_touch_trust_roots">B1 受保护写入已修复</span><span class="chip no" data-tip="runtime.index.hash_drift 读取 LoadedCorpus.verification.drift ｜ 修法：回归：test_retrieve_reports_real_corpus_hash_drift">B2 HTTP 面漂移已修复</span><span class="chip no" data-tip="响应无法完整保存时返回 503 idempotency_unavailable ｜ 修法：回归：test_oversized_idempotent_response_fails_explicitly_without_a_false_replay">B3 幂等超限已修复</span><a class="small" href="system.html">详情 →</a></div></div>
+<h2>系统状态</h2>
+<div class="panel"><div class="small">rule_set_hash<span class="q" data-tip="RuleSet.identity：规则内容变化即变化，传播到检索缓存、Phase 7 观测摘要、Phase 8 checkpoint 兼容性判定">?</span></div><div class="mono">sha256:7a19264fd5790c71c8a10cee198fd23f876f4cdf04ec2307e6f93e8a72cb077d</div><div class="small" style="margin-top:8px">rule_sources<span class="q" data-tip="由镜像文档提炼的规则应在此登记溯源；当前为 0 条，所以 DOC-001 查不回原文 chunk（CLI 退出 1）">?</span></div><div><span class="chip ok">38 条</span></div></div>
+
+</main>
+<script src="assets/data.js?v=202609221359"></script>
+<script src="assets/app.js?v=202609221359"></script>
+</body>
+</html>

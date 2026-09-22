@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>审批 · 生效 · 溯源（⑦） · 文档 → 规则 操作台</title>
+<link rel="stylesheet" href="assets/style.css?v=202609221359">
+</head>
+<body data-page="activation">
+<header class="top">
+  <div class="brand">文档 → 规则 操作台
+    <span class="meta">原型 v202609221359 · 2026-09-22 13:59 UTC · <span class="q" data-tip="静态原型：只读 + 预演；没有写路径。数据取自仓库真实文件快照。">?</span></span>
+  </div>
+  <nav class="nav"><a href="index.html">操作台</a><a href="data.html">数据层</a><a href="authoring.html">提炼与审查</a><a href="gates.html">门禁与证据</a><a href="activation.html">审批与生效</a><a href="system.html">系统</a></nav>
+</header>
+<main>
+  <h1>审批 · 生效 · 溯源（⑦）</h1>
+  <h2>提交</h2>
+<table><tbody id="submit-body"></tbody></table>
+<div class="toolbar"><button class="btn" disabled data-tip="原型没有写路径；真实提交必须走 Phase 4 受控执行链（新建 orc.policy.write / 编辑 orc.policy.edit，审批绑 action_hash）">提交审批</button><button class="btn ghost" disabled data-tip="驳回同样属于审批动作，需要平台记录">驳回</button><span class="chip gap" data-tip="新建规则选择 orc.policy.write，编辑选择 orc.policy.edit；普通编排写工具拒绝信任根">P-1 已修：规则写入工具均需审批</span></div>
+<h2>生效</h2>
+<div class="panel">
+<div class="small">rule_set_hash<span class="q" data-tip="生效后它会变，并传播到检索缓存、Phase 7 观测摘要、Phase 8 checkpoint 兼容性判定">?</span></div><div class="mono">sha256:7a19264fd5790c71c8a10cee198fd23f876f4cdf04ec2307e6f93e8a72cb077d</div>
+<div class="toolbar" style="margin-top:10px"><span class="chip n">已生效</span><span class="chip n">未生效</span><span class="chip no">生效失败（503 rule_set_unavailable）</span></div>
+</div>
+<h2>溯源</h2>
+<div class="toolbar"><span class="chip gap" data-tip="登记位与校验逻辑已就位，缺的是数据；登记后解析不到 chunk 会让索引 run 失败（C10/C33）">rule_sources 38 条</span></div>
+<table><thead><tr><th>登记项</th><th>取值</th></tr></thead><tbody><tr><td>rule_id / rule_version</td><td><span class="mono">DOC-001 / 1</span></td></tr><tr><td>dataset</td><td><span class="mono">python-pep-code-style</span></td></tr><tr><td>source_path</td><td><span class="mono">pep-257-docstrings/index.md</span></td></tr><tr><td>heading_path</td><td><span class="mono">["Docstring Conventions", "…"]</span></td></tr></tbody></table>
+<h2>失败语义</h2>
+<table><thead><tr><th>情况</th><th>结果</th></tr></thead><tbody><tr><td>不登记</td><td><span class="chip gap">无报错</span> （约定非强制，C33）</td></tr><tr><td>登记但 chunk 解析不到</td><td><span class="chip no">索引 run 失败</span>（C10/C33）</td></tr><tr><td>chunk 内容变化（text_hash 不一致）</td><td><span class="chip no">阻断</span>（C9）</td></tr></tbody></table>
+</main>
+<script src="assets/data.js?v=202609221359"></script>
+<script src="assets/app.js?v=202609221359"></script>
+</body>
+</html>
