@@ -1,0 +1,26 @@
+# Phase 5 语言专项规则包：PEP 8「Programming Recommendations」——not ... in / not ... is。
+# E713 是 `not x in y`，E714 是 `not x is y`，同一句原文的两半，合并在一条规则里。
+#
+# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L855）§"Programming Recommendations"：
+#   "Use `is not` operator rather than `not ... is`. While both expressions are
+#    functionally identical, the former is more readable and preferred:"
+#   同节 Correct 例子 "if foo is not None:"、Wrong 例子 "if not foo is None:"。
+id: STYLE-008
+version: 1
+name: prefer-not-in-and-is-not
+description: 写成 not in / is not，不要写成 not ... in / not ... is（Ruff E713 + E714）。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [E713, E714]
+message: 成员判断写 not in、身份判断写 is not，不要写 not ... in / not ... is（Ruff E713 / E714；PEP 8「Programming Recommendations」）。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  note: PEP 8 明说两种写法功能等价，只是可读性与推荐次序不同，所以按 warning 处理。

@@ -1,0 +1,35 @@
+# SEC-001：禁止用 eval/exec 执行动态代码（Ruff S307 / S102）。
+# 证据来自 tool.ruff 的诊断码；"哪个码归哪条规则"由本文件决定，工具不决定策略。
+#
+# 原文依据（Django REST Framework Cheat Sheet，小节
+# "## OWASP API Security Top 10 (2019)" -> "### API8:2019 Injection" -> "#### RCE"）：
+#   "Also, DO NOT add user input to dangerous methods (`eval()`, `exec()` and
+#    `execfile()`) and DO NOT load user-controlled pickle files, which includes the
+#    pandas method `pandas.read_pickle()`."
+#
+# 同一要求在 Injection Prevention Cheat Sheet 的 "### Scripting languages" 里也写着：
+#   "All scripting languages used in web applications have a form of an `eval` call which
+#    receives code at runtime and executes it. If code is crafted using unvalidated and
+#    unescaped user input code injection can occur which allows an attacker to subvert
+#    application logic and eventually to gain local access."
+#
+# 严重级别：原文是 "DO NOT ..." 的祈使禁止，不是"建议"，因此按 error 阻断。
+id: SEC-001
+version: 1
+name: no-dynamic-code-execution
+description: 禁止用 eval()/exec() 执行动态代码。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S102, S307]
+message: 禁止用 eval()/exec() 执行动态代码，改用只解析数据的库（Ruff S307/S102）。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/12_编程语言与框架专项/Python/Django_REST_Framework_Cheat_Sheet.md
+  note: '小节 "### API8:2019 Injection -> #### RCE"；Django REST Framework (DRF) Cheat Sheet。'

@@ -1,0 +1,26 @@
+# Phase 5 语言专项规则包：PEP 8「Function and Variable Names」——函数与方法名。
+#
+# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L770；方法见 L786）§"Function and Variable Names"：
+#   "Function names should be lowercase, with words separated by underscores as necessary to
+#    improve readability."
+#   §"Method Names and Instance Variables"："Use the function naming rules: lowercase with words
+#    separated by underscores as necessary to improve readability."
+id: STYLE-015
+version: 1
+name: function-names-lowercase
+description: 函数与方法名小写，必要时用下划线分词（lower_case_with_underscores）。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [N802]
+message: 函数与方法名请用小写加下划线（Ruff N802；PEP 8「Function and Variable Names」）。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  note: 方法沿用函数命名规则，见同 PEP「Method Names and Instance Variables」。

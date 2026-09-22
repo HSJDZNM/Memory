@@ -1,0 +1,38 @@
+# Phase 5 语言专项规则包：PEP 8「Function and Variable Names」——参数名小写。
+#
+# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L772；首参与保留字见 L778-L782）§"Function and Variable Names"：
+#   "Variable names follow the same convention as function names."
+#   即 "Function names should be lowercase, with words separated by underscores as necessary to
+#    improve readability."；§"Function and Method Arguments" 进一步规定首参与保留字的写法：
+#   "Always use `self` for the first argument to instance methods."
+#   "Always use `cls` for the first argument to class methods."
+#   "If a function argument's name clashes with a reserved keyword, it is generally better to
+#    append a single trailing underscore rather than use an abbreviation or spelling corruption."
+#
+# 忠实性说明（写给评审）：PEP 8 没有一句独立的"参数名必须小写"——它把参数归入变量，
+# 由"变量沿用函数命名约定"推出；因此这里引的是同一节的两句原文，不是外部推测。
+#
+# 覆盖边界（2026-09 复查后修订）：本规则只声明 N803，而 **N803 只管参数名的大小写**。
+# PEP 8 在「Function and Method Arguments」里另外两条要求（首参 self / cls、保留字冲突时加单个
+# 尾下划线）分别对应 N804 / N805，这两个码**没有启用**：实测 `def m(this)` / `def m(klass)`
+# 在 N803 下零诊断。所以 description 与 message 只写它们真正保证得了的那一条——
+# 描述覆盖不到的东西，就是"看起来在管、实际没查"。
+id: STYLE-016
+version: 1
+name: argument-names-lowercase
+description: 函数与方法参数名必须小写（N803 只检查参数名本身）。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [N803]
+message: 参数名请用小写（Ruff N803；PEP 8「Function and Variable Names」）。首参 self/cls 与保留字尾下划线不在本条覆盖范围内。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  note: 参数属于变量，PEP 8 明写变量沿用函数命名约定；首参与保留字的细则在同 PEP 的 Function and Method Arguments 一节。

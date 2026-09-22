@@ -1,0 +1,27 @@
+# Phase 5 语言专项规则包：PEP 257「One-line Docstrings」——摘要用祈使语气。
+#
+# 出处：docs/python-pep-code-style/pep-257-docstrings/index.md（L63）§"One-line Docstrings"：
+#   "The docstring is a phrase ending in a period. It prescribes the function or method’s
+#    effect as a command (“Do this”, “Return that”), not as a description; e.g. don’t write
+#    “Returns the pathname …”."
+id: DOC-004
+version: 1
+name: docstring-imperative-mood
+description: docstring 摘要描述"这个函数做什么"（祈使语气），不要写成"它返回了什么"的描述句。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [D401]
+message: docstring 摘要请用祈使语气（Return / Do ...），不要用描述语气（Returns ...）（Ruff D401；PEP 257「One-line Docstrings」）。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-257-docstrings/index.md
+  note: >
+    D401 靠英文动词形态判断，中文摘要不参与（原文本就是英文规范）；D400/D415（句号结尾）
+    与中文标点冲突，已在 validation/ruff.toml 里刻意不启用。

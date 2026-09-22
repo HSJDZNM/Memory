@@ -1,0 +1,36 @@
+# Phase 5 语言专项规则包：PEP 8「Programming Recommendations」——禁止裸 except。
+#
+# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L901 / L910）§"Programming Recommendations"：
+#   "When catching exceptions, mention specific exceptions whenever possible instead of using
+#    a bare `except:` clause:"
+#   "A bare `except:` clause will catch SystemExit and KeyboardInterrupt exceptions, making
+#    it harder to interrupt a program with Control-C, and can disguise other problems."
+#
+# 覆盖边界（实测 ruff 0.14.13）：E722 只认裸 `except:` 本身，不看处理器体里做了什么——
+# `except:` 里写 `logging.exception("x")` 或 `traceback.print_exc()` **仍报 E722**（error），
+# 只有"处理器体里仅剩 `raise`"这一种放宽场景不报。也就是说 PEP 8 给的两个放宽场景，Ruff
+# 只认第二个；需要放宽时走 validation/ruff.toml 的 per-file-ignores 显式豁免。
+id: STYLE-010
+version: 1
+name: no-bare-except
+description: 禁止裸 except，必须写明要捕获的异常类型（catch 全部请写 except Exception）。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [E722]
+message: 不要用裸 except；请写明具体异常类型，或至少写 except Exception（Ruff E722；PEP 8「Programming Recommendations」）。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  note: >
+    PEP 8 给出两个可放宽的场景（会打印/记录 traceback；清理后原样 raise），
+    但 Ruff 只认第二个：裸 except 体里只有 `raise` 时不报 E722（实测），而
+    `logging.exception("x")` / `traceback.print_exc()` 这类"打印/记录后继续"的写法实测
+    **仍报 E722**（error）。所以这条例外**需要**显式豁免机制：确需放宽时走
+    validation/ruff.toml 的 per-file-ignores 集中登记，不要指望"写了 traceback"就自动放行。

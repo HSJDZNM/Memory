@@ -1,0 +1,31 @@
+# SEC-022：禁止开启可被外部改写的日志监听配置（logging.config.listen）。
+#
+# 原文依据：OWASP Logging Cheat Sheet
+#   § "Customizable logging"（镜像第 186-191 行）
+#   "It should not be possible to completely deactivate application logging or logging of
+#    events that are necessary for compliance requirements"
+#   "Alterations to the level/extent of logging must be intrinsic to the application (e.g.
+#    undertaken automatically by the application based on an approved algorithm) or follow
+#    change management processes (e.g. changes to configuration data, modification of
+#    source code)"
+#   logging.config.listen() 起的是一个监听 socket：谁能连上谁就能在运行时下发整份日志
+#   配置（包括把日志整个关掉），既不是"应用内在的"，也没有走变更管理。
+id: SEC-022
+version: 1
+name: no-remote-logging-config-listener
+description: 日志配置变更必须来自应用内部或走变更管理，禁止 logging.config.listen 远程监听。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S612]
+message: 禁止开启 logging.config.listen 远程改写日志配置；配置必须来自应用内部或变更管理。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/10_日志、监控与错误处理/Logging_Cheat_Sheet.md
+  note: § Customizable logging；Ruff S612 只识别 logging.config.listen 这一处确定性写法。

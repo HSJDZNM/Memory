@@ -1,0 +1,27 @@
+# SEC-018：在 except 分支里记录异常必须用 logging.exception，而不是 logging.error。
+#
+# 原文依据：OWASP Logging Cheat Sheet
+#   § "Event attributes" -> "Additionally consider recording:"
+#   "Extended details e.g. stack trace, system error messages, debug information, HTTP
+#    request body, HTTP response headers and body"
+#   只有 logging.exception 会把 stack trace 一并写进记录；logging.error 只写消息，
+#   异常类型、出错位置与调用链全部丢失，事后无法还原出事点。
+id: SEC-018
+version: 1
+name: log-exception-with-traceback
+description: 记录异常必须用 logging.exception（保留 stack trace），而不是 logging.error。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [TRY400]
+message: 记录异常请用 logging.exception / logger.exception，以保留 stack trace。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/10_日志、监控与错误处理/Logging_Cheat_Sheet.md
+  note: § Event attributes（Extended details：stack trace / system error messages）；Ruff TRY400 提供确定性证据。

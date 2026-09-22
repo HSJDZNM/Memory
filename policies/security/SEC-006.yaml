@@ -1,0 +1,42 @@
+# SEC-006：禁止 yaml.load 不带 SafeLoader（Ruff S506）。
+#
+# 原文依据（Django REST Framework Cheat Sheet，小节
+# "## OWASP API Security Top 10 (2019)" -> "### API8:2019 Injection" -> "#### RCE"）：
+#   "To stop this problem, use the `Loader=yaml.SafeLoader` for YAML files. DO NOT load
+#    user-controlled YAML files using the method `load()`."
+#
+# 同一个坑在 Deserialization Cheat Sheet 的 "### Python" -> "#### Clear-box Review" 里列成第 2 条：
+#   "2. Uses of `PyYAML` with `load`:"
+#   （示例代码即 `yaml.load(document)`，其中 document 是
+#     "!!python/object/apply:os.system ['ipconfig']"）
+#
+# 覆盖边界（实测 ruff 0.14.13）：
+#   ① 误报（重要）：`yaml.load(stream, Loader=_StrictLoader)`，其中
+#      `class _StrictLoader(yaml.SafeLoader)`，**仍报** S506——工具只比对 Loader 实参是不是
+#      字面 `SafeLoader`，不看继承关系；而子类化 SafeLoader 再加映射构造钩子，恰恰是本仓库
+#      自己的加固写法（src/enforcement/registry.py:67,375 与 src/adapters/dsh/adapter.py:372,568），
+#      这两个安全实现会被本规则误判。需要豁免时走 validation/ruff.toml 的 per-file-ignores
+#      显式豁免（本仓库既有的显式豁免口径，见 STYLE-005 的同款说明）。
+#   ② 漏判：`yaml.unsafe_load`、`yaml.full_load`、`yaml.load_all` **都不报**——最危险的
+#      `unsafe_load` 反而落在覆盖之外。
+#
+# 严重级别："DO NOT load ..." 是祈使禁止，因此 error。
+id: SEC-006
+version: 1
+name: no-unsafe-yaml-load
+description: 禁止 yaml.load 不带 SafeLoader。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S506]
+message: 禁止用 yaml.load 解析不可信 YAML，改用 yaml.safe_load（Ruff S506）。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/12_编程语言与框架专项/Python/Django_REST_Framework_Cheat_Sheet.md
+  note: '小节 "### API8:2019 Injection -> #### RCE"；Deserialization Cheat Sheet "### Python -> #### Clear-box Review" 第 2 条同源。'

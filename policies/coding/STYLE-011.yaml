@@ -1,0 +1,27 @@
+# Phase 5 语言专项规则包：PEP 8「Programming Recommendations」——不要给变量赋 lambda。
+#
+# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L875）§"Programming Recommendations"：
+#   "Always use a def statement instead of an assignment statement that binds a lambda
+#    expression directly to an identifier:"
+#   理由（同节）："The first form means that the name of the resulting function object is
+#    specifically ‘f’ instead of the generic ‘<lambda>’. This is more useful for tracebacks
+#    and string representations in general."
+id: STYLE-011
+version: 1
+name: no-lambda-assignment
+description: 不得把 lambda 直接赋值给标识符，请改用 def 语句。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [E731]
+message: 用 def 定义函数，不要写 f = lambda ...；后者会让 traceback 里只剩 <lambda>（Ruff E731；PEP 8「Programming Recommendations」）。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  note: "PEP 8 的 Wrong 例子就是 f = lambda x: 2*x。"

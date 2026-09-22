@@ -1,0 +1,36 @@
+# SEC-021：禁止使用明文协议（telnet / ftp）。
+#
+# 原文依据：OWASP Secure Product Design Cheat Sheet
+#   § "Security Focus Areas" -> "### 5. Configuration"（第 6 条）
+#   "Always use Secure Communications: Use secure protocols for communication, such as
+#    HTTPS, to protect against eavesdropping and tampering."
+#   同一文件 "### 4. Code" 第 4 条："Cryptography: Use cryptographic functions and
+#    protocols to protect data in transit and at rest, such as HTTPS and encryption"
+#   telnet 与 ftp 把口令和内容明文放在线路上，正是该要求要排除的协议；
+#   Ruff S312 / S321 提供"用了 telnet / ftp 客户端"的确定性证据。
+# 覆盖边界（实测 ruff 0.14.13）：
+#   ① S321 对 `ftplib.FTP_TLS`（**加密**版 FTP）也会报——与 Ruff 自己的 S321 文档里
+#      "consider using FTPS (which secures FTP using SSL/TLS) or SFTP" 直接冲突，属于工具误报；
+#      需要用它时按显式豁免口径处理，不要为了过 lint 退回明文 FTP。
+#   ② S312（telnetlib）在 Python 3.13 已随 PEP 594 从标准库移除该模块，但本仓库
+#      validation/ruff.toml 的 target-version = py311 下这条码仍然适用——目标版本决定这条码
+#      今天还有没有实际对象。
+id: SEC-021
+version: 1
+name: no-cleartext-protocols
+description: 禁止使用明文协议 telnet / ftp，通信必须使用加密协议。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S312, S321]
+message: 禁止明文协议：不要用 telnetlib / ftplib，改用 SSH / SFTP / HTTPS。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/01_安全需求、架构与治理/Secure_Product_Design_Cheat_Sheet.md
+  note: § Security Focus Areas → 5. Configuration 第 6 条（Always use Secure Communications）。

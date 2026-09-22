@@ -1,0 +1,26 @@
+# Phase 5 语言专项规则包：PEP 8「Programming Recommendations」——与 None 比较。
+#
+# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L851）§"Programming Recommendations"：
+#   "Comparisons to singletons like None should always be done with `is` or `is not`,
+#    never the equality operators."
+#   （同节紧接着说 "beware of writing `if x` when you really mean `if x is not None`"；
+#     E711 只覆盖 == / != 这一半，"真值判断代替 is not None"没有对应码位。）
+id: STYLE-006
+version: 1
+name: compare-none-with-is
+description: 与 None 比较必须用 is / is not，不得用 == / !=。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [E711]
+message: 与 None 比较只能用 is 或 is not，不能用 == / !=（Ruff E711；PEP 8「Programming Recommendations」）。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  note: E711 覆盖 == None 与 != None；"用 if x 代替 if x is not None"那半句没有启用码位。

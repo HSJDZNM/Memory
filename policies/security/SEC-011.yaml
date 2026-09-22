@@ -1,0 +1,46 @@
+# SEC-011：禁止用非密码学随机数承担安全用途（Ruff S311）。
+#
+# 原文依据（Cryptographic Storage Cheat Sheet，小节
+# "## Algorithms" -> "### Secure Random Number Generation"）：
+#   "Random numbers (or strings) are needed for various security critical functionality,
+#    such as generating encryption keys, IVs, session IDs, CSRF tokens or password reset
+#    tokens. As such, it is important that these are generated securely, and that it is not
+#    possible for an attacker to guess and predict them."
+#   "Pseudo-Random Number Generators (PRNG) provide low-quality randomness that are much
+#    faster, and can be used for non-security related functionality (such as ordering
+#    results on a page, or randomizing UI elements). However, they **must not** be used for
+#    anything security critical, as it is often possible for attackers to guess or predict
+#    the output."
+#   同节表格点出 Python 这一行：
+#     "| Python | `random()` | [secrets()](https://docs.python.org/3/library/secrets.html#module-secrets) |"
+#   （Unsafe Functions = random()，Cryptographically Secure Functions = secrets()）
+#
+# 覆盖边界（实测 ruff 0.14.13）：S311 只认 `random` 的 random / randint / choice / randrange /
+# uniform **调用**（`random.Random(seed).shuffle(...)` 这类实例方法也报）；
+# `random.getrandbits(128)`、模块级的 `random.shuffle`、`random.seed` **都不报**——用
+# getrandbits 生成密钥 / 令牌正是典型的安全误用，恰好落在覆盖之外。
+# 反向的误报同样存在：原文的措辞是 "they **must not** be used for anything security critical"，
+# 同一句明确**允许**非安全用途（UI 抖动、测试里的确定性打乱、页面排序），而工具只看得见
+# "调用了 random"，看不见这次调用是不是安全用途。仓库自己的 tests/unit/test_decisions.py:131
+# 就用它证明"排序与加载顺序无关"，会被本规则判 block——需要豁免时按显式豁免口径处理。
+#
+# 严重级别：原文用 "**must not** be used for anything security critical"，因此 error。
+id: SEC-011
+version: 1
+name: no-non-crypto-random
+description: 禁止用非密码学随机数承担安全用途。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S311]
+message: 禁止用 random 模块生成密钥/会话 ID/令牌等安全用途，改用 secrets（Ruff S311）。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/07_令牌、联合身份与密码学/Cryptographic_Storage_Cheat_Sheet.md
+  note: '小节 "### Secure Random Number Generation"（含 Python 的 random() vs secrets() 对照行）。'

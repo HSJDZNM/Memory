@@ -1,0 +1,27 @@
+# SEC-019：禁止把服务默认绑定到 0.0.0.0（全部网卡）。
+#
+# 原文依据：OWASP NoSQL Security Cheat Sheet
+#   § "Network & Transport Security"
+#   "**Bind services to internal interfaces** , not `0.0.0.0`."
+#   同一要求在同镜像的 MCP Security Cheat Sheet 里写得更直白（旁证，非 source.path）：
+#   "Bind MCP HTTP/SSE servers to specific interfaces (e.g., 127.0.0.1), never 0.0.0.0
+#    unless explicitly required."
+id: SEC-019
+version: 1
+name: no-bind-all-interfaces
+description: 服务必须绑定明确的内部接口，禁止默认绑定 0.0.0.0 全部网卡。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S104]
+message: 服务必须绑定确切的内部接口（如 127.0.0.1），禁止 0.0.0.0。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/02_输入验证、注入与文件处理/NoSQL_Security_Cheat_Sheet.md
+  note: § Network & Transport Security；Ruff S104 只识别字面量 0.0.0.0。

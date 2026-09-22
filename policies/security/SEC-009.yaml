@@ -1,0 +1,41 @@
+# SEC-009：禁止使用不安全的 XML 解析器（XXE / 实体膨胀）
+# （Ruff S313 cElementTree、S314 ElementTree、S315 expatreader、S316 expatbuilder、
+#   S317 sax、S318 minidom）。
+#
+# 原文依据（XML External Entity Prevention Cheat Sheet，小节 "## Python"）：
+#   "The table below shows you which various XML parsing modules in Python 3 are
+#    vulnerable to certain XXE attacks."
+#   该表格把 sax / etree / minidom / pulldom 四个模块在
+#   "Billion Laughs" 与 "Quadratic Blowup" 两行全部标成 "Vulnerable"。
+#   "To protect your application from the applicable attacks, the [defusedxml] package
+#    exists to help you sanitize your input and protect your application against DDoS and
+#    remote attacks."
+#
+# 覆盖边界（实测 ruff 0.14.13）：
+#   ① 镜像原文的 Vulnerable 表格把 **pulldom** 也列为受影响，但 Ruff 的 `S319`
+#      （suspicious-xml-pull-dom-usage，对应 `xml.dom.pulldom.parse`）**没有被 select**，
+#      所以 `xml.dom.pulldom.parse(...)` 本规则不报——这是已知缺口，不是"pulldom 安全"。
+#   ② `defusedxml` / `lxml` 不报：它们是原文给出的替代方向，不在本规则的证据范围内
+#      （"不报"只表示不在这条规则的射程里，不表示解析器已按安全参数配置）。
+#
+# 严重级别：原文把标准库这几类解析器直接标为 Vulnerable 并给出专门的替代包，
+# 属于必须处置的缺陷（同文档 "## Introduction" 也写明 XXE 会导致敏感数据泄露/SSRF），因此 error。
+id: SEC-009
+version: 1
+name: no-insecure-xml-parsers
+description: 禁止使用不安全的 XML 解析器（XXE / 实体膨胀）。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S313, S314, S315, S316, S317, S318]
+message: 禁止使用 xml.etree / xml.sax / xml.dom 等不安全解析器，改用 defusedxml（Ruff S313-S318）。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/02_输入验证、注入与文件处理/XML_External_Entity_Prevention_Cheat_Sheet.md
+  note: '小节 "## Python"（模块 Vulnerable 对照表 + defusedxml 建议）。'

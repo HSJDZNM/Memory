@@ -1,0 +1,37 @@
+# SEC-014：外部请求必须显式设置超时（抗资源耗尽）。
+#
+# 原文依据：OWASP Denial of Service Cheat Sheet
+#   § "Network attacks" -> "### Rate limiting"（镜像第 82-88 行）
+#   "**Define an absolute connection timeout**"
+#   同一小节把"最小入站速率 / 绝对连接超时 / 最大入站速率 / 总带宽上限 / 负载上限"
+#   并列为抗资源耗尽的措施；没有超时的出站请求同样会长期占住连接与工作线程。
+#
+# 覆盖边界（实测 ruff 0.14.13；与 Ruff 自己的 S113 文档不一致）：S113 **只覆盖模块级
+# `requests.<verb>()` 调用缺 timeout**（`requests.get(url)` 报，显式写 `timeout=None` 也报）；
+# `requests.Session().get`、`Session.request(...)`、`httpx`、`urllib`、`socket` **全都不报**。
+# Ruff 的 S113 文档写着 "uses of the Python `requests` or `httpx` module"，实测 httpx 不报——
+# 这里记的是实测结论，不是文档口径。因此"本规则没报"不等于"每个出站请求都有超时"。
+#
+# 严重级别：引文出自 DoS Cheat Sheet § "Network attacks" -> "### Rate limiting" 的清单条目
+# "Define an absolute connection timeout"（是"该做"的清单，不是 "DO NOT" 式禁止），按字面本可
+# 落到 warning；本项目取 error：没有超时的出站请求会无限期占住连接与工作线程，是可直接触发的
+# 资源耗尽路径，不是风格问题。
+id: SEC-014
+version: 1
+name: external-request-timeout-required
+description: 调用外部 HTTP 服务必须显式设置 timeout；确定性证据只覆盖模块级 requests.<verb>() 缺 timeout（timeout=None 也算缺）。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S113]
+message: 外部请求必须传有效的 timeout=（timeout=None 不算；OWASP DoS Cheat Sheet：Define an absolute connection timeout）；Ruff S113 只认模块级 requests.get/post 等写法，Session / httpx / urllib / socket 不在证据范围内。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/11_业务逻辑与反自动化/Denial_of_Service_Cheat_Sheet.md
+  note: § Network attacks → Rate limiting（清单条目 "Define an absolute connection timeout"）；Ruff S113 实测只覆盖模块级 requests.<verb>() 的缺超时（含 timeout=None），Session / httpx / urllib / socket 不在证据范围内。

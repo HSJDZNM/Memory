@@ -1,0 +1,55 @@
+# SEC-007：禁止用 shell 执行外部命令、把命令拼成字符串、在 shell 里用通配符
+# （Ruff S602 shell=True、S605 通过 shell 启动进程、S609 带 shell 的通配符注入）。
+#
+# 原文依据（OS Command Injection Defense Cheat Sheet，小节
+# "## Primary Defenses" -> "### Defense Option 1: Avoid calling OS commands directly"）：
+#   "The primary defense is to avoid calling OS commands directly. Built-in library
+#    functions are a very good alternative to OS Commands, as they cannot be manipulated
+#    to perform tasks other than those it is intended to do."
+# 同文档 "## Code examples" -> "### Java" -> "_Incorrect usage:_"：
+#   "In this example, the command together with the arguments are passed as a one string,
+#    making it easy to manipulate that expression and inject malicious strings."
+# 同文档 "## Code examples" -> "### PHP" 结尾的建议（S609 的原文）：
+#   "**Hardcode the command** : never allow the user to choose which executable to run."
+#   "**Hardcode options** : required flags (e.g., `--directory-prefix`) should be in the
+#    code, not in user input."
+# 通配符注入在 Injection Prevention Cheat Sheet 的 "### Operating System Commands ->
+# #### Remediation" 里也有对应要求：
+#   "**Input validation** - the values for commands and the relevant arguments should be
+#    both validated. ... When it comes to the **commands** used, these must be validated
+#    against a list of allowed commands."
+#
+# 严重级别：原文用 "The primary defense is to avoid ..." / "never allow the user to choose
+# which executable to run"，是禁止性要求，因此 error。
+#
+# 覆盖边界（2026-09 复查后修订，写给评审）：
+#   * S602 只认字面量 shell=True；shell=VAR、shell=1 不报（工具行为，实测）。
+#   * S605 对**硬编码**命令也报（os.system("ls -l")），且它的诊断消息自称
+#     "seems safe, but may be changed in the future"——即这个码本身是"提示"语气，
+#     本规则是**按项目政策**把它提到 error 的（理由是 os.system 无法做参数转义）。
+#   * S609 只在带 shell 时触发；不带 shell 的 Popen("chmod 777 *") 只报 S607，不报 S609。
+#   * **刻意不纳入 S607**：S607 的真实语义是"可执行文件不是绝对路径"，与本条引用的
+#     OWASP 原文（不得把命令交给 shell / 不得让用户挑可执行文件）不是同一件事；
+#     2026-09 的复查实测它在 subprocess.run(["ls","-l"]) 这种**硬编码**命令上也会报，
+#     把仓库自己的门禁脚本（tools/ci_local.py）判成 block。出处撑不起的行为不写进规则。
+#   * 本规则**不覆盖**：subprocess 列表形态的参数注入（那是"参数有没有来自不可信输入"，
+#     静态码判不了）、os.exec* 系列、以及命令之外的解释器调用（python -c 等）。
+id: SEC-007
+version: 2
+name: no-shell-command-execution
+description: 禁止用 shell 执行外部命令、把命令与参数拼成一个字符串、在 shell 里使用通配符。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S602, S605, S609]
+message: 不要通过 shell 执行外部命令（shell=True / os.system / 带通配符的 shell 调用）；改用内建库函数或参数列表形式的调用。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/02_输入验证、注入与文件处理/OS_Command_Injection_Defense_Cheat_Sheet.md
+  note: '小节 "### Defense Option 1: Avoid calling OS commands directly" 与 "## Code examples -> ### Java -> _Incorrect usage:_"。S605 的 error 级是项目政策（工具自身只给提示语气），S607 因出处不成立已被排除。'

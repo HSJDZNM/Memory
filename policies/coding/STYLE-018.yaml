@@ -1,0 +1,25 @@
+# Phase 5 语言专项规则包：PEP 8「Imports」——import 分组与排序。
+#
+# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L273-L279）§"Imports"：
+#   "Imports should be grouped in the following order: 1. Standard library imports.
+#    2. Related third party imports. 3. Local application/library specific imports."
+#   "You should put a blank line between each group of imports."
+id: STYLE-018
+version: 1
+name: import-grouping-and-order
+description: import 按「标准库 / 第三方 / 本地」三组排列，组间空一行（isort 口径）。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [I001]
+message: import 未按标准库 / 第三方 / 本地分组排序，组间需要空行（Ruff I001；PEP 8「Imports」）。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  note: 分组顺序与组间空行都写在同一段；具体排序口径由 isort（Ruff I001）实现。

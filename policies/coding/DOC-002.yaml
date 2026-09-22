@@ -1,0 +1,26 @@
+# Phase 5 语言专项规则包：PEP 257「Multi-line Docstrings」——摘要与正文之间空一行。
+#
+# 出处：docs/python-pep-code-style/pep-257-docstrings/index.md（L82）§"Multi-line Docstrings"：
+#   "Multi-line docstrings consist of a summary line just like a one-line docstring, followed
+#    by a blank line, followed by a more elaborate description. The summary line may be used by
+#    automatic indexing tools; it is important that it fits on one line and is separated from
+#    the rest of the docstring by a blank line."
+id: DOC-002
+version: 1
+name: docstring-summary-blank-line
+description: 多行 docstring 的摘要行与后续正文之间必须空一行。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [D205]
+message: docstring 的摘要行与正文之间需要空一行（Ruff D205；PEP 257「Multi-line Docstrings」）。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-257-docstrings/index.md
+  note: DOC-001 管"有没有 docstring"，本条管"多行 docstring 的摘要有没有被空行分开"，两者不重叠。

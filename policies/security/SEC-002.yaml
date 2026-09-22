@@ -1,0 +1,42 @@
+# SEC-002：禁止对不可信数据做原生反序列化（Ruff S301 pickle / S302 marshal）。
+#
+# 原文依据（Deserialization Cheat Sheet，小节 "### Python" -> "#### Clear-box Review"）：
+#   "The following API in Python will be vulnerable to serialization attack. Search code
+#    for the pattern below.
+#    1. The uses of `pickle/c_pickle/_pickle` with `load/loads`"
+# 同文档 "## What is Deserialization" 给出为什么"语言原生反序列化"整体算同一类风险：
+#   "many programming languages have native ways to serialize objects. These native
+#    formats usually offer more features than JSON or XML, including customization of the
+#    serialization process. Unfortunately, the features of these native deserialization
+#    mechanisms can sometimes be repurposed for malicious effect when operating on
+#    untrusted data. Attacks against deserializers have been found to allow
+#    denial-of-service, access control, or remote code execution (RCE) attacks."
+#
+# 出处说明（评审请重点看这条）：marshal 与 pickle 同属"Python 语言原生反序列化"，
+# 但**原文没有点名 marshal**。本规则用上面第二段"native deserialization mechanisms"
+# 的同类判断把 S302 一并纳入，而不是给 marshal 编一个不存在的出处。
+# pickle 侧另有一句更直接的祈使句（Django REST Framework Cheat Sheet
+# "### API8:2019 Injection -> #### RCE"）：
+#   "DO NOT load user-controlled pickle files, which includes the pandas method
+#    `pandas.read_pickle()`."
+#
+# 严重级别：原文是 "DO NOT load user-controlled pickle files" 的祈使禁止，因此 error。
+id: SEC-002
+version: 1
+name: no-native-deserialization
+description: 禁止对不可信数据做 pickle/marshal 原生反序列化。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S301, S302]
+message: 禁止对不可信数据做 pickle/marshal 反序列化，改用 JSON 等纯数据格式（Ruff S301/S302）。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/02_输入验证、注入与文件处理/Deserialization_Cheat_Sheet.md
+  note: '小节 "### Python -> #### Clear-box Review"；marshal 的依据是 "## What is Deserialization" 的同类判断。'

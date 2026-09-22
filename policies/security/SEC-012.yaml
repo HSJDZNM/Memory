@@ -1,0 +1,56 @@
+# SEC-012：禁止关闭模板自动转义 / mark_safe / 裸 SQL
+# （Ruff S701 jinja2 autoescape=False、S308 mark_safe、S611 Django RawSQL）。
+#
+# 原文依据（Django Security Cheat Sheet，小节 "## Cross Site Scripting (XSS)"）：
+#   "Use the built-in template system to render templates in Django. Refer to Django's
+#    Automatic HTML escaping documentation to learn more."
+#   "Try to avoid using the `safe` filter (or `mark_safe` function) to disable Django's
+#    automatic template escaping. If you do need to use it, make sure the input is from a
+#    trusted source. Extra caution is required when handling user-controlled inputs."
+# 裸 SQL 那一条的原文（Django REST Framework Cheat Sheet，小节
+# "### API8:2019 Injection" -> "#### SQLi"）：
+#   "**To prevent this problem, use parametrized queries.** Be careful when using dangerous
+#    methods like `raw()`, `extra()` and custom SQL (via `cursor.execute()`). DO NOT add
+#    user input to dangerous methods (`raw()`, `extra()`, `cursor.execute()`)."
+# 框架自动转义为何是默认依赖（Cross Site Scripting Prevention Cheat Sheet，
+# "## XSS Defense Philosophy" / "## Output Encoding"）：
+#   "Ensuring that **all variables** go through validation and are then escaped or
+#    sanitized is known as **perfect injection resistance**. Any variable that does not go
+#    through this process is a potential weakness."
+#   "start with your framework's default output encoding protection. Automatic encoding and
+#    escaping functions are built into most frameworks."
+#   同文档 "## Framework Security" 把这类"escape hatch"直接列成会用错的地方：
+#   "problems can occur if frameworks are used insecurely, such as: _escape hatches_ that
+#    frameworks use to directly manipulate the DOM"
+#
+# 与 SEC-008 的重叠（刻意的，两处口径都要知道）：同一件"SQL 注入 / 参数化查询"被两条规则
+# 同时管——SEC-008 取 S608 一侧、error；本条取 S611 一侧、warning（理由见下面）。一段拼 SQL
+# 的代码会**两条同时命中**，报错列表里出现两条不是重复缺陷，而是刻意的双出口。
+# 覆盖边界（实测 ruff 0.14.13）：S308 / S611 只对**动态构造**的实参报——
+# `mark_safe("<b>literal</b>")` 与 `RawSQL("literal sql")` **都不报**，所以本规则不回答
+# "有没有对不受信内容用 mark_safe"，只回答"实参是不是拼出来的"。
+#
+# 严重级别：最贴合 S308/S701 的原文用的是建议性措辞 "Try to avoid using ... to disable
+# Django's automatic template escaping. If you do need to use it, make sure the input is
+# from a trusted source." —— 原文承认存在受信任输入的合规用法，因此这条按 warning
+# 计入 allow_with_warnings，而不是 error 阻断。（S611 侧的原文是 "DO NOT add user input
+# to dangerous methods"，更硬；但一条规则只有一个 severity，取原文中较弱的那一侧以免过度阻断。）
+id: SEC-012
+version: 1
+name: no-template-escaping-bypass
+description: 禁止关闭模板自动转义、mark_safe 与裸 SQL。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S308, S611, S701]
+message: 不要关闭模板自动转义、不要用 mark_safe 放行未转义 HTML、不要用 RawSQL 拼查询（Ruff S701/S308/S611）。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/12_编程语言与框架专项/Python/Django_Security_Cheat_Sheet.md
+  note: '小节 "## Cross Site Scripting (XSS)"；裸 SQL 的原文在 Django REST Framework Cheat Sheet "### API8:2019 Injection -> #### SQLi"。'

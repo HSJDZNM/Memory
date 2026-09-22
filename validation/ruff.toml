@@ -5,6 +5,75 @@
 line-length = 100
 target-version = "py311"
 
+# 豁免机制（规则注释里多处引用它，所以在这里写明现状）：
+#   本仓库允许对**具体文件**做显式豁免，写法是在下面加一个 `[lint.per-file-ignores]` 段，
+#   形如 `"src/enforcement/registry.py" = ["S506"]`。
+#   **当前刻意留空**：没有任何文件获得豁免。加豁免必须同时写明理由（为什么安全），
+#   因为豁免是唯一能让某条规则在某个文件上"不再说话"的地方——它必须是可评审的显式动作，
+#   而不是"把规则删掉"或"把码从 select 里去掉"。
+#   需要豁免的已知场景（工具行为，规则改不了）：SEC-006 会把
+#   `yaml.load(stream, Loader=_StrictLoader)`（SafeLoader 子类）判成 unsafe loader。
+
 [lint]
 # 只启用有明确项目规则归属的码；未映射的码会作为 unmapped_findings 计数上报，不参与判定。
-select = ["E501", "E401", "F401", "F811", "F841"]
+#
+# 归属表（每个码都能在 policies/ 里查到它的规则；加码必须同时加规则）：
+#   E401            -> STYLE-003  一行只导入一个模块（PEP 8）
+#   E402            -> STYLE-004  import 必须位于文件顶部（PEP 8）
+#   E501            -> STYLE-001  单行不超过 100 列（项目政策，覆盖 PEP 8 的 79）
+#   E711 / E712     -> STYLE-006 / STYLE-007  与 None / True / False 的比较写法（PEP 8）
+#   E713 / E714     -> STYLE-008  not ... in / not ... is 的写法（PEP 8）
+#   E721            -> STYLE-009  禁止用 type() 比较类型（PEP 8）
+#   E722            -> STYLE-010  禁止裸 except（PEP 8）
+#   E731            -> STYLE-011  禁止把 lambda 赋值给变量（PEP 8）
+#   E741            -> STYLE-012  禁止 l / I / O 这类歧义变量名（PEP 8）
+#   F401            -> STYLE-002  未使用的导入（PEP 8）
+#   F403 / F405     -> STYLE-005  禁止通配符导入（PEP 8）
+#   F811 / F841     -> 未归属（Phase 5 遗留：由 unmapped_findings 计数，不参与判定）
+#   N801            -> STYLE-014  类名 CapWords（PEP 8）
+#   N802            -> STYLE-015  函数与方法名小写下划线（PEP 8）
+#   N803            -> STYLE-016  参数名小写（PEP 8）
+#   N806/N815/N816  -> STYLE-017  变量名不得大小写混排（PEP 8）
+#   I001            -> STYLE-018  import 分组与排序（PEP 8）
+#   D200 / D205     -> DOC-002 / DOC-003  docstring 摘要形态（PEP 257）
+#   D419            -> 刻意未 select（2026-09 复查实测：py.docstring 已把"空 docstring"
+#                      判成 DOC-001 的 missing_docstring，再挂一条 D419 是对同一个缺陷判两次，
+#                      且严重级别倒挂（缺=warning、空=error）——重复的规则不如没有）
+#   D401            -> DOC-004  摘要使用祈使/命令式语气（PEP 257）
+#   S1xx / S3xx / S5xx / S6xx / S7xx -> SEC-001..SEC-0xx（OWASP Cheat Sheet 系列）
+#   具体归属（规则文件里出现的码必须在这里被 select，否则那条规则永远拿不到证据）：
+#     S102 -> SEC-001  S104 -> SEC-019  S105/S106/S107 -> SEC-004
+#     S110/S112 -> SEC-015  S113 -> SEC-014
+#     S301/S302 -> SEC-002  S303/S324 -> SEC-003  S307 -> SEC-001  S308 -> SEC-012
+#     S310 -> SEC-010  S311 -> SEC-011  S312/S321 -> SEC-021
+#     S313..S318 -> SEC-009  S323/S501 -> SEC-005  S506 -> SEC-006
+#     S602/S605/S609 -> SEC-007  S608 -> SEC-008  S611 -> SEC-012
+#     S607 -> 刻意未 select：它的真实语义是"可执行文件不是绝对路径"，与 SEC-007 引用的
+#             OWASP 原文不是同一件事，实测还会把硬编码命令判成违规（仓库自己的门禁脚本）
+#     S612 -> SEC-022  S701 -> SEC-012
+#   LOG015 / TRY400 -> SEC-017 / SEC-018  根 logger / 记录异常而非消息（OWASP Logging）
+#
+# 刻意**没有** select 的码（有过候选规则，但镜像原文撑不起它实际判定的范围，宁可不要这条规则）：
+#   S101 assert        —— 唯一谈到 assert 的镜像段落（C-Based Toolchain Hardening §ASSERT）鼓励相反做法；
+#   S108 硬编码临时路径 —— 镜像里只有"不要用用户可控文件名"，不是同一件事；
+#   B006 可变默认参数   —— 全镜像没有原文；B904 异常链 —— Error Handling Cheat Sheet 未要求 raise ... from；
+#   W605 非法转义序列   —— 唯一可引的是 PEP 257「docstring 里有反斜杠就用 r"""…"""」，作用域是 docstring，
+#                        而 W605 报**任何字符串**：既覆盖不足又覆盖越界，出处撑不起判定范围。
+select = [
+  # --- pycodestyle / pyflakes（PEP 8）---
+  "E401", "E402", "E501", "E711", "E712", "E713", "E714", "E721", "E722", "E731", "E741",
+  "F401", "F403", "F405", "F811", "F841",
+  # --- pep8-naming（PEP 8 命名约定）---
+  "N801", "N802", "N803", "N806", "N815", "N816",
+  # --- isort（PEP 8 import 分组）---
+  "I001",
+  # --- pydocstyle（PEP 257；D400/D415/D213 与中文句号冲突，刻意不启用）---
+  "D200", "D205", "D401",
+  # --- flake8-bandit（OWASP Cheat Sheet 的确定性出口）---
+  "S102", "S104", "S105", "S106", "S107", "S110", "S112", "S113",
+  "S301", "S302", "S303", "S307", "S308", "S310", "S311", "S312", "S313", "S314", "S315",
+  "S316", "S317", "S318", "S321", "S323", "S324", "S501", "S506", "S602", "S605",
+  "S608", "S609", "S611", "S612", "S701",
+  # --- flake8-logging / tryceratops（日志与异常记录）---
+  "LOG015", "TRY400",
+]

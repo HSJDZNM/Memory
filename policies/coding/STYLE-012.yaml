@@ -1,0 +1,26 @@
+# Phase 5 语言专项规则包：PEP 8「Names to Avoid」——禁止 l / I / O 这类单字符变量名。
+#
+# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L725）§"Names to Avoid"：
+#   "Never use the characters ‘l’ (lowercase letter el), ‘O’ (uppercase letter oh), or
+#    ‘I’ (uppercase letter eye) as single character variable names."
+#   "In some fonts, these characters are indistinguishable from the numerals one and zero.
+#    When tempted to use ‘l’, use ‘L’ instead."
+id: STYLE-012
+version: 1
+name: no-ambiguous-single-char-names
+description: 禁止用 l / I / O 作为单字符变量名（在多数等宽字体里与 1 / 0 难以区分）。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [E741]
+message: 不要用 l / I / O 作变量名，它们与数字 1 / 0 难以分辨；请改用有含义的名字（Ruff E741；PEP 8「Names to Avoid」）。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  note: E741 的歧义名集合是 l / I / O，与 PEP 8 列举的三个字符一致。

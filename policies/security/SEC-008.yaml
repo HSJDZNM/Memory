@@ -1,0 +1,44 @@
+# SEC-008：禁止用字符串拼接构造 SQL（Ruff S608）。
+#
+# 原文依据（SQL Injection Prevention Cheat Sheet，小节 "## What Is a SQL Injection Attack?"）：
+#   "Attackers can use SQL injection on an application if it has dynamic database queries
+#    that use string concatenation and user-supplied input. To avoid SQL injection flaws,
+#    developers need to:
+#      1. Stop writing dynamic queries with string concatenation.
+#      2. Prevent malicious SQL input from being included in executed queries."
+# 同一 source.path 的 "### Defense Option 1: Prepared Statements (with Parameterized
+# Queries)" 小节（镜像 L46 起）给出替代做法：
+#   "Also, prepared statements ensure that an attacker cannot change the intent of a query,
+#    even if SQL commands are inserted by an attacker."（镜像 L48）
+# 措辞更正：这里原先引的是 "Prepared statements ensure that an attacker is not able to change
+# the intent of a query …" 并标成"同文档"。复查实测该措辞在本 source.path 里 **0 命中**；全镜像
+# 唯一逐字命中在另一篇文档 docs/owasp-cheatsheets/02_输入验证、注入与文件处理/
+# Injection_Prevention_Cheat_Sheet.md L61。本小节确实存在（L46），只是措辞如上——引文与出处
+# 必须同时对上，否则"溯源"是假的。
+#
+# 覆盖边界（实测 ruff 0.14.13）：S608 只认"SQL 字面量经拼接 / f-string / % / .format() 之后
+# 交给 execute"的形态（四种写法实测都报）；参数化查询
+# `cur.execute("… WHERE id = %s", (uid,))` **不报**——那正是原文要求的写法，所以"没报"是预期的，
+# 不是"查过了"。另见 SEC-012：同一段拼 SQL 的代码会被 SEC-008（S608）与 SEC-012（S611）
+# **两条同时命中**。
+#
+# 严重级别："Stop writing dynamic queries with string concatenation." 是祈使禁止，因此 error。
+id: SEC-008
+version: 1
+name: no-sql-string-concatenation
+description: 禁止用字符串拼接构造 SQL。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S608]
+message: 禁止拼接 SQL 字符串，改用参数化查询（占位符 + 参数）（Ruff S608）。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/02_输入验证、注入与文件处理/SQL_Injection_Prevention_Cheat_Sheet.md
+  note: '小节 "## What Is a SQL Injection Attack?" 与 "### Defense Option 1: Prepared Statements"。'

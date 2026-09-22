@@ -1,0 +1,40 @@
+# SEC-005：禁止关闭 TLS 证书校验（Ruff S501 requests verify=False / S323 未校验 SSL 上下文）。
+#
+# 原文依据（Mobile Application Security Cheat Sheet，小节
+# "## Network Communication" -> "### 2. Use Secure Protocols"）：
+#   "Use HTTPS for all network communication.
+#    Do not override SSL certificate validation to allow self-signed or invalid certificates.
+#    Avoid mixed version SSL sessions."
+#
+# 出处说明（评审请重点看这条）：任务表建议的 Transport_Layer_Security_Cheat_Sheet.md
+# **没有**"不要关闭证书校验"的等价祈使句（实测：该文档讲的是协议/密码套件/证书签发，
+# 只在 "## Certificates" 里说证书必须由受信任 CA 签发）。镜像里真正写着这条禁止性要求的
+# 是上面的 Mobile Application Security Cheat Sheet。该句本身与平台无关（"override SSL
+# certificate validation"），Python 的 verify=False / _create_unverified_context() 正是它描述的写法。
+#
+# 覆盖边界（实测 ruff 0.14.13）：S501 只认 `requests` / `httpx` 调用里的**字面量**
+# `verify=False`（`requests.get(url, verify=False, timeout=5)` 与 `httpx.get(url, verify=False)`
+# 都报）。下面这些等价写法**都不报**：`s = requests.Session(); s.verify = False`（会话属性）、
+# `s.request("GET", url, verify=False)`（会话对象的方法）、`verify=0`、`verify=VAR`（非字面量）。
+# 于是"本规则没报"只说明没写那个字面量，不能当作"证书校验一定开着"。
+#
+# 严重级别："Do not override ..." 是祈使禁止，因此 error。
+id: SEC-005
+version: 1
+name: no-disabled-tls-verification
+description: 禁止关闭 TLS 证书校验。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S323, S501]
+message: 禁止关闭 TLS 证书校验（verify=False / 未校验的 SSL 上下文）（Ruff S501/S323）。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/15_移动与嵌入式安全/Mobile_Application_Security_Cheat_Sheet.md
+  note: '小节 "## Network Communication -> ### 2. Use Secure Protocols"；Transport Layer Security Cheat Sheet 无等价祈使句。'

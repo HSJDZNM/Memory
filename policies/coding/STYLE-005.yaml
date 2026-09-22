@@ -1,0 +1,28 @@
+# Phase 5 语言专项规则包：PEP 8「Imports」——禁止通配符导入。
+# F403 是通配符导入本身，F405 是"这个名字可能来自通配符导入、也可能是未定义"，
+# 两者是同一条要求的一体两面，因此合并在一条规则里。
+#
+# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L314）§"Imports"：
+#   "Wildcard imports (`from <module> import *`) should be avoided, as they make it unclear
+#    which names are present in the namespace, confusing both readers and many automated tools."
+id: STYLE-005
+version: 1
+name: no-wildcard-imports
+description: 禁止 from <module> import * 通配符导入，以及由此产生的名字来源不明（F403 + F405）。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [F403, F405]
+message: 禁止通配符导入；请显式列出要导入的名字（Ruff F403 / F405；PEP 8「Imports」）。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  note: >
+    PEP 8 承认一种"可辩护"的例外（把内部接口重新发布为公开 API）；确定性检查器无法区分
+    这两种意图，所以项目若确需该例外，只能走显式豁免（per-file-ignores），不能靠"看起来像"。

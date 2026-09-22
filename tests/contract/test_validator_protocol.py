@@ -9,6 +9,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -72,6 +73,55 @@ def test_every_shipped_rule_is_covered_by_a_validator() -> None:
             rule.canonical_id,
             rule.enforcement.checker,
         )
+
+
+# Phase 5 就选了、但从来没有规则归属的 Ruff 码：它们只进 unmapped_findings 计数，不参与判定。
+# 这里显式登记是"如实记账"，不是给新增留的口子——新增要选一个码，就必须同时有规则声明它。
+LEGACY_UNOWNED_RUFF_CODES = frozenset({"F811", "F841"})
+
+
+def ruff_select() -> frozenset[str]:
+    """validation/ruff.toml 里真正 select 的 Ruff 码。"""
+
+    document = tomllib.loads(
+        (REPO_ROOT / "validation" / "ruff.toml").read_text(encoding="utf-8")
+    )
+    return frozenset(document["lint"]["select"])
+
+
+def test_ruff_codes_are_declared_and_selected_in_both_directions() -> None:
+    """Ruff 码的归属必须双向一致，否则规则会"静默失效"。
+
+    两个方向都必须是空集：
+
+    - **规则声明了、但没被 select 的码**：工具根本不会报这个码，那条规则永远拿不到证据，
+      也永远不会出现在 violations 里——正是"看起来在管这件事、实际什么都没查"；
+    - **select 了、但没有规则归属的码**：诊断只被计入 unmapped_findings，不参与判定，
+      却在 `validation/ruff.toml` 里摆出"这是被治理的"的姿态。
+
+    `validation/ruff.toml` 的注释表就是这条不变量的可读版本；本用例是它的机器版本。
+    """
+
+    selected = ruff_select()
+    declared: dict[str, set[str]] = {}
+    for rule in load_rule_set([POLICIES_DIR], repo_root=REPO_ROOT).rules:
+        body = getattr(rule.rule, "style_lint", None)
+        if body is None:
+            continue
+        for code in body.codes:
+            declared.setdefault(code, set()).add(rule.canonical_id)
+
+    unselected = sorted(set(declared) - selected)
+    assert unselected == [], (
+        "规则声明了没有在 validation/ruff.toml 里 select 的 Ruff 码，那些规则永远不会命中："
+        + repr([(code, sorted(declared[code])) for code in unselected])
+    )
+
+    unowned = sorted(selected - set(declared) - LEGACY_UNOWNED_RUFF_CODES)
+    assert unowned == [], (
+        "validation/ruff.toml select 了没有规则归属的 Ruff 码；要么写规则声明它，"
+        "要么把它从 select 里去掉（否则它只是一条永远不计入判定的诊断）：" + repr(unowned)
+    )
 
 
 def test_rule_packs_only_reference_validators_of_their_language() -> None:

@@ -1,0 +1,37 @@
+# SEC-015：授权/安全路径不得静默吞掉异常（except-pass / except-continue）。
+#
+# 原文依据：OWASP Authorization Cheat Sheet
+#   § "Exit Safely when Authorization Checks Fail"（镜像第 94-99 行）
+#   "Ensure all exception and failed access control checks are handled no matter how unlikely
+#    they seem (OWASP Top Ten Proactive Controls C10: Handle all errors and exceptions)."
+#   "Improper handling of such failures can lead to the application being left in an
+#    unpredictable state (CWE-280: Improper Handling of Insufficient Permissions or Privileges)."
+#   `except: pass` / `except: continue` 就是"没有被处理"：失败既不记录也不上报，
+#   调用方看到的是"检查走完了"，与原文要求的"失败即安全退出"相反。
+#   证据范围（实测 ruff 0.14.13）：S110/S112 只覆盖**宽泛 / 裸处理器**（except Exception /
+#   except:）里的 pass 与 continue；写成具体异常类型（except AttributeError: pass）不触发——
+#   工具能证到哪一步就只声明哪一步，不把"没报"当成"没问题"。
+#   同一批实测里更危险的 fail-open 写法**不报**：`except Exception: return True` 与
+#   `except: return None` 都在覆盖之外——"没有诊断"在这里恰恰是最该人看的那一类代码，
+#   本规则不能当授权路径的安全证明。
+# 与 STYLE-010（E722）的重叠：同一行 `except: pass` 会**同时**命中 E722 与 S110，两条都是
+# error——同一个裸处理器在"异常写法"与"静默吞掉"两个口径上各记一次，是刻意保留的双证据。
+id: SEC-015
+version: 1
+name: no-silent-exception-swallow
+description: 授权与安全路径不得用 except-pass / except-continue 静默吞掉异常。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S110, S112]
+message: 异常必须被处理或上报；禁止 except-pass / except-continue 静默吞掉授权失败。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/06_授权与访问控制/Authorization_Cheat_Sheet.md
+  note: § Exit Safely when Authorization Checks Fail；Ruff S110/S112 只覆盖宽泛处理器里的 pass / continue。

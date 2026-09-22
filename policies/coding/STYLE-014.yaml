@@ -1,0 +1,27 @@
+# Phase 5 语言专项规则包：PEP 8「Class Names」——类名 CapWords。
+#
+# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L741）§"Class Names"：
+#   "Class names should normally use the CapWords convention."
+#   同节还有一句例外："The naming convention for functions may be used instead in cases where
+#    the interface is documented and used primarily as a callable."
+id: STYLE-014
+version: 1
+name: class-names-capwords
+description: 类名使用 CapWords（首字母大写的驼峰）约定，例如 MyClass 而不是 my_class。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [N801]
+message: 类名请使用 CapWords 约定（Ruff N801；PEP 8「Class Names」）。
+source:
+  kind: standard
+  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  note: >
+    PEP 8 允许"主要当可调用对象用、且有文档的接口"改用函数命名约定；这条例外需要文档判断，
+    确定性检查器查不了，项目若要用它必须显式豁免。

@@ -1,0 +1,33 @@
+# SEC-017：禁止直接调用根 logger（顶层的 logging.info / logging.warning 等调用）。
+#
+# 原文依据：OWASP Logging Cheat Sheet
+#   § "Event attributes"
+#   "The application logs must record \"when, where, who and what\" for each event."
+#   "Where" 一组里的条目："Code location e.g. script name, module name"
+# 因果更正（复查实测用 logging.Handler 抓 LogRecord 复核）：直接调用根 logger 让记录里的
+# logger 名恒为 "root"，失去的是"这条日志来自哪个可配置主体"这一维度；但
+# `logging.info("x")` 与 `logging.getLogger(__name__).info("x")` 相比，丢的**只是 logger 名**
+# ——LogRecord 的 module / pathname / lineno / funcName 仍然齐全（它们取自调用栈，不经过
+# logger 名）。早先注释写"where 这一项在记录里就不存在了"，那个因果是错的。
+# OWASP 要求的 Code location 仍可由 %(module)s / %(pathname)s 满足，因此本条是弱证据，定 warning。
+# 覆盖边界（实测 ruff 0.14.13）：LOG015 只认顶层的 `logging.<level>()` 调用；
+# `logging.getLogger().info("x")`（无名称的 getLogger）实测**零诊断**，不在本规则的证据范围内。
+id: SEC-017
+version: 1
+name: no-root-logger-call
+description: 日志必须通过带名称的 logger 发出，禁止直接调用根 logger。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [LOG015]
+message: 请用 logging.getLogger(__name__) 得到的模块 logger，不要直接调用根 logger。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/10_日志、监控与错误处理/Logging_Cheat_Sheet.md
+  note: § Event attributes（when/where/who/what 与 Code location）；Ruff LOG015 提供确定性证据，但它只认顶层 logging.<level>() 调用，无名称的 getLogger 不在证据范围内；本条定 warning 的理由见文件头（丢的是 logger 名，不是 Code location）。

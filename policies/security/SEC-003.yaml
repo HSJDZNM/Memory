@@ -1,0 +1,50 @@
+# SEC-003：禁止把 MD5/SHA-1 等弱哈希用于安全目的
+# （Ruff S324 hashlib / S303 cryptography.hazmat.primitives.hashes）。
+#
+# 原文依据（Transport Layer Security Cheat Sheet，小节
+# "## Certificates" -> "### Use Strong Cryptographic Hashing Algorithms"）：
+#   "Certificates should use SHA-256 for the hashing algorithm, rather than the older MD5
+#    and SHA-1 algorithms. These have a number of cryptographic weaknesses, and are not
+#    trusted by modern browsers."
+#
+# 出处说明（评审请重点看这条）：任务表建议的 Cryptographic_Storage_Cheat_Sheet.md
+# **全文没有出现 MD5/SHA-1**（实测 grep 无命中），不能当这条的出处；真正写着这条要求的
+# 是上面的 Transport Layer Security Cheat Sheet（小节标题本身就是祈使句 "Use Strong
+# Cryptographic Hashing Algorithms"，正文用 "rather than" 把 MD5/SHA-1 明确排除）。
+# 旁证（同为镜像原文）：
+#   Password_Storage_Cheat_Sheet.md "## Introduction" 之后：
+#     "This means that they should be slow (unlike algorithms such as MD5 and SHA-1,
+#      which were designed to be fast)"
+#   SAML_Security_Cheat_Sheet.md："Reject SHA-1-based algorithms (...)"
+#
+# 覆盖边界（实测 ruff 0.14.13）：
+#   * S303 覆盖的是 `cryptography.hazmat.primitives.hashes`（当前主流的 cryptography 包）
+#     里的 MD5 / SHA-1 等弱哈希——Ruff 自己的 S303 示例就是 `hashes.Hash(hashes.MD5())`。
+#     注释原先只写 "Crypto.Hash"，会被读成已废弃的 PyCrypto；夹具里的 `Crypto.Hash` 写法
+#     实测同样命中，但那是 PyCryptodome 的兼容入口，不是这条规则要表达的重点。
+#   * `hashlib.md5(..., usedforsecurity=False)` **不报**："显式声明非安全用途"的调用被视为
+#     已处置，不在 S324 的证据范围内。
+#
+# 严重级别：原文字面是 "Certificates should use SHA-256 for the hashing algorithm, rather than
+# the older MD5 and SHA-1 algorithms."——用的是 "should"，按字面判据本可落到 warning；本项目按
+# 安全政策取 error：弱哈希在安全场景（证书、签名、完整性校验）是实际可利用的缺陷，不是可选
+# 优化，小节标题本身也是祈使句，正文还给出"存在密码学弱点、现代浏览器不再信任"的事实依据。
+id: SEC-003
+version: 1
+name: no-weak-hash-algorithms
+description: 禁止把 MD5/SHA-1 等弱哈希用于安全目的。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S303, S324]
+message: 禁止用 MD5/SHA-1 等弱哈希做安全用途，改用 SHA-256 及以上（Ruff S324/S303）。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/08_传输层、网络与数据保护/Transport_Layer_Security_Cheat_Sheet.md
+  note: '小节 "### Use Strong Cryptographic Hashing Algorithms"；Cryptographic Storage Cheat Sheet 不含 MD5/SHA-1 原文。'

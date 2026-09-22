@@ -1,0 +1,46 @@
+# SEC-004：禁止在源码里硬编码口令、密钥与默认凭据（Ruff S105 / S106 / S107）。
+#
+# 原文依据（Cryptographic Storage Cheat Sheet，小节 "## Key Storage"）：
+#   "However, the following basic rules can still be followed:
+#      * Do not hard-code keys into the application source code.
+#      * Do not check keys into version control systems."
+#
+# 口令与默认凭据那一半的原文（Django REST Framework Cheat Sheet，小节
+# "### API7:2019 Security Misconfiguration"）：
+#   "**DO NOT use default passwords. Set the Django settings `DEBUG` and
+#    `DEBUG_PROPAGATE_EXCEPTIONS` to False. ... Set `SECRET_KEY` to a random value and
+#    NEVER hardcode secrets.**"
+#   （"## Other Security Risks" -> "### Secret Management" 另有：
+#     "**Secrets should never be hardcoded. The best practice is to use a Secret Manager.**"）
+#
+# 覆盖边界（实测 ruff 0.14.13）：S105/S106/S107 是**按变量名 / 参数名 / 关键字实参名做的
+# 字符串启发式**，不是语义分析，所以两头都不严（本仓库 src/policy_api/errors.py:43 就是
+# 真实误报现场）：
+#   漏判：`API_KEY`、`api_key`、`private_key`、`credential` **不报**；字典值
+#     `{"password": "hunter2"}` 不报；`os.environ.get("PASSWORD", "hunter2")` 不报；
+#     位置实参 `connect("hunter2")` 不报；`password = f"prefix-{x}"` 不报。
+#   误报：`TOKEN_EXPIRED = "token_expired"` 这类错误码常量被判 hardcoded password
+#     （实测 src/policy_api/errors.py:43，同文件 :44 亦然）。
+# 结论：这条只能当"提醒"，**不是"没有硬编码凭据"的证明**——判据落在名字上，不落在值上，
+# 真正的凭据治理要靠 secrets manager 与代码评审。
+#
+# 严重级别：两处都是 "Do not ..." / "DO NOT ..." / "NEVER ..." 的祈使禁止，因此 error。
+id: SEC-004
+version: 1
+name: no-hardcoded-credentials
+description: 禁止在源码里硬编码口令、密钥与默认凭据。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S105, S106, S107]
+message: 禁止硬编码口令/密钥/默认凭据，改从环境变量或 secrets manager 读取（Ruff S105/S106/S107）。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/07_令牌、联合身份与密码学/Cryptographic_Storage_Cheat_Sheet.md
+  note: '小节 "## Key Storage"；口令与默认凭据的原文在 Django REST Framework Cheat Sheet "### API7:2019 Security Misconfiguration"。'

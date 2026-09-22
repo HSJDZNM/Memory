@@ -1,0 +1,50 @@
+# SEC-010：禁止对不可信 URL 直接发起请求（SSRF）（Ruff S310）。
+#
+# 原文依据（Server-Side Request Forgery Prevention Cheat Sheet，小节
+# "### Case 1 - Application can send request only to identified and trusted applications"
+#  -> "##### Application layer" -> "###### URL"）：
+#   "Do not accept complete URLs from the user because URL are difficult to validate and
+#    the parser can be abused depending on the technology used as showcased by the
+#    following talk of Orange Tsai."
+#   "If network related information is really needed then only accept a valid IP address
+#    or domain name."
+#   "**Match the host against an allowlist, and build the request yourself.** The input
+#    here is an IP address or a domain name rather than a whole URL, so compare that value
+#    against an explicit allowlist of permitted destinations, then build the request from
+#    the entry that matched, together with a scheme, port and path the application fixes
+#    itself."
+#   "**Treat parser disagreement as a rejection.** ... CPython's urllib.parse derives the
+#    host with netloc.rpartition('@'), so urlsplit(...).hostname returns evil.com. Reject a
+#    URL whose host is not read identically by every parser in play, rather than
+#    reconciling the readings."
+#
+# 覆盖边界（实测 ruff 0.14.13）：
+#   ① S310 只覆盖 `urllib` 家族（urlopen / urlretrieve / Request 等）且只做 scheme 审计；
+#      `requests.get(url)`、`httpx`、`socket`、`urllib3` **都不报**——而请求库恰恰是 SSRF 最
+#      典型的入口，所以本规则只是 SSRF 的**部分**证据。
+#   ② 按上面的原文改完可能**仍然是红的**：主机名 allowlist 校验之后自行拼 URL
+#      （`url = "https://" + host + "/api"; urllib.request.urlopen(url)`）实测**仍报 S310**；
+#      实测只有把字面量直接写在调用处（`urllib.request.urlopen("https://example.invalid")`）
+#      才零报，写成模块级常量再传入同样报。也就是说，本条推荐的 allowlist 写法落不进 S310 的
+#      "零报"形态——需要豁免时按显式豁免口径处理，不要为了消警告把 allowlist 拆掉。
+#
+# 严重级别："Do not accept complete URLs from the user ..." 是祈使禁止，因此 error。
+id: SEC-010
+version: 1
+name: no-untrusted-url-open
+description: 禁止对不可信 URL 直接发起请求（SSRF）。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [S310]
+message: 禁止对不可信 URL 直接 urlopen，改为按 allowlist 校验主机后自行拼装请求（Ruff S310）。
+source:
+  kind: standard
+  path: docs/owasp-cheatsheets/02_输入验证、注入与文件处理/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.md
+  note: '小节 "##### Application layer -> ###### URL"（Case 1）。'
