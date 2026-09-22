@@ -305,6 +305,54 @@ def test_rule_source_registration_and_cascade_delete(tmp_root) -> None:
         store.close()
 
 
+def test_rule_source_is_replaced_when_the_heading_changes(tmp_root) -> None:
+    """溯源是派生数据：改标题路径后必须**替换**旧行，而不是与旧行并集。
+
+    不替换的后果不是"多出一行"：`retrieval.cli rules --rule X` 会同时返回新旧两批 chunk，
+    "这段原文被哪条规则引用"跟着漂移——而这正是溯源要防的事。
+    """
+
+    loaded = load_fixture_corpus(
+        tmp_root,
+        rule_sources=[
+            {
+                "rule_id": "REVIEW-902",
+                "rule_version": 1,
+                "dataset": "guides",
+                "source_path": "topics.md",
+                "heading_path": ["Review Topics", "Tests"],
+            }
+        ],
+    )
+    store = open_store(tmp_root)
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        before = store.rule_sources(rule_id="REVIEW-902")
+        assert [row.heading_path for row in before] == [("Review Topics", "Tests")]
+
+        # 同一份文档、同一个规则，只把溯源指向的小节换掉。
+        moved = load_fixture_corpus(
+            tmp_root,
+            rule_sources=[
+                {
+                    "rule_id": "REVIEW-902",
+                    "rule_version": 1,
+                    "dataset": "guides",
+                    "source_path": "topics.md",
+                    "heading_path": ["Review Topics", "Documentation"],
+                }
+            ],
+        )
+        ingest(moved, store, repo_root=tmp_root)
+        after = store.rule_sources(rule_id="REVIEW-902")
+        assert [row.heading_path for row in after] == [("Review Topics", "Documentation")]
+        # 旧 chunk 上不能再挂着这条规则。
+        old_chunk = before[0].chunk_id
+        assert store.rules_for_chunk(old_chunk) == ()
+    finally:
+        store.close()
+
+
 def test_rule_source_with_unknown_heading_fails(tmp_root) -> None:
     loaded = load_fixture_corpus(
         tmp_root,

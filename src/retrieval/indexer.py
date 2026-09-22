@@ -376,7 +376,18 @@ def _resolve_rule_sources(
     repo_root: Path,
     mirrors: dict[str, str],
 ) -> Tuple[Tuple[str, int, str], ...]:
-    """把清单里的规则溯源解析成稳定的 chunk_id 并写入 rule_sources 表。"""
+    """把清单里的规则溯源解析成稳定的 chunk_id 并写入 rule_sources 表。
+
+    写入前先把溯源表收敛到**本次清单声明的规则集合**：既清掉被改过标题路径的旧行，
+    也清掉已经从清单里移除的规则——与"移出清单的文档连同 chunk 一起消失"同一个口径。
+    不这样做的话，改一次小节就会让同一条规则同时指向新旧两批 chunk，溯源自己先漂移。
+    """
+
+    declared = sorted({(item.rule_id, item.rule_version) for item in loaded.manifest.rule_sources})
+    declared_set = set(declared)
+    stale = [key for key in store.rule_source_keys() if key not in declared_set]
+    for rule_id, rule_version in declared + stale:
+        store.clear_rule_source(rule_id=rule_id, rule_version=rule_version)
 
     registered: list[Tuple[str, int, str]] = []
     for item in loaded.manifest.rule_sources:

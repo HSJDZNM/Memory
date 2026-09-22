@@ -778,6 +778,28 @@ class ChunkStore:
             ).fetchall()
         return tuple(_rule_source_from_row(row, self) for row in rows)
 
+    def rule_source_keys(self) -> Tuple[Tuple[str, int], ...]:
+        """当前已登记的 (rule_id, rule_version) 去重清单，用于清理陈旧溯源。"""
+
+        rows = self._execute(
+            "SELECT DISTINCT rule_id, rule_version FROM rule_sources ORDER BY rule_id, rule_version"
+        ).fetchall()
+        return tuple((str(row["rule_id"]), int(row["rule_version"])) for row in rows)
+
+    def clear_rule_source(self, *, rule_id: str, rule_version: int) -> int:
+        """删掉某条规则已登记的溯源行，返回删除条数。
+
+        溯源表是**从摄取清单推导出来的派生数据**：清单改了标题路径，上一次留下的行必须被
+        替换而不是与新的行并集——否则 `retrieval.cli rules --rule X` 会同时返回新旧两批 chunk，
+        "这段原文被哪条规则引用"也跟着漂移，而这正是溯源要防的事。
+        """
+
+        cursor = self._execute(
+            "DELETE FROM rule_sources WHERE rule_id = ? AND rule_version = ?",
+            (rule_id, rule_version),
+        )
+        return int(cursor.rowcount)
+
     def rules_for_chunk(self, chunk_id: str) -> Tuple[Tuple[str, int], ...]:
         rows = self._execute(
             "SELECT rule_id, rule_version FROM rule_sources WHERE chunk_id = ? "
