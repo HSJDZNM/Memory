@@ -17,6 +17,7 @@ Phase 1 在 Phase 0 的基础上补齐 Context、Scope、Severity 与 Decision�
 from __future__ import annotations
 
 import re
+import unicodedata
 from enum import Enum
 from hashlib import sha256
 from typing import Any, ClassVar, FrozenSet, Mapping, Optional, Tuple, Union
@@ -75,7 +76,23 @@ __all__ = [
     "parse_decision",
 ]
 
-_REPO_PATH_RE = re.compile(r"^[A-Za-z0-9._@+/-]+$")
+# 仓库相对路径的字符集：**ASCII 仍走白名单，额外允许非 ASCII 路径段**。
+#
+# 为什么放宽：镜像语料里有非 ASCII 的目录名（OWASP Cheat Sheet 用中文分类，例如
+# "02_输入验证、注入与文件处理"），而规则要能用 source.path 指回那段原文；
+# 只允许 ASCII 会把"指向真实来源"变成加载期错误，逼规则要么放弃溯源、要么写假路径。
+# retrieval.models.normalize_source_path 早就为同一原因放宽过一次（那里写了这段分歧）。
+#
+# 为什么不是"换成黑名单"：白名单挡住的不只是 Windows 非法字符，还有 Shell 与命令行的
+# 元字符（`;` `$` `&` `(` `)` `|` 反引号 …）——AGENTS.md 的核心约束 17 正是围绕它们
+# 做结构性阻断（tests/security/test_validator_adversarial.py 会直接验这条）。
+# 所以：ASCII 字符逐个走白名单，非 ASCII 字符只排除控制 / 格式 / 空白类。
+_REPO_PATH_ASCII_RE = re.compile(r"^[A-Za-z0-9._@+/-]+$")
+
+# 非 ASCII 侧要排除的 Unicode 类别：
+#   Cc 控制、Cf 格式（含零宽与方向控制）、Cs 代理、Co 私用、Cn 未分配、
+#   Zs 空格分隔符、Zl 行分隔、Zp 段分隔——它们要么不可见，要么能改变显示或断行。
+_REPO_PATH_UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zs", "Zl", "Zp"})
 _DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:")
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 SOURCE_KINDS = ("project-policy", "standard")
@@ -117,8 +134,10 @@ def canonical_identifier(value: str) -> str:
 def normalize_repo_path(value: str) -> str:
     """把路径规范化为仓库相对形式：反斜杠转 "/"，去掉 "./" 前缀与尾部 "/"。
 
-    拒绝绝对路径与 ".." 逃逸。这属于 PolicyContextError（配置/执行错误），
-    而不是模型校验错误，便于 CLI 用退出码 2 区分。
+    拒绝绝对路径、盘符前缀与 ".." 逃逸，拒绝控制字符与路径元字符（Windows 文件名里
+    不允许出现的 : * ? " < > |）。**允许非 ASCII 路径段**：仓库自己的文档目录是中文名，
+    镜像语料的分类目录也是中文名，规则来源与上下文文件都必须能指向它们。
+    这属于 PolicyContextError（配置/执行错误），而不是模型校验错误，便于 CLI 用退出码 2 区分。
     """
 
     if not isinstance(value, str):
@@ -144,9 +163,26 @@ def normalize_repo_path(value: str) -> str:
         raise PolicyContextError(f"路径必须指向仓库内的文件: {raw!r}")
 
     normalized = "/".join(segments)
-    if not _REPO_PATH_RE.match(normalized):
-        raise PolicyContextError(f"路径包含不支持的字符: {raw!r}")
+    _assert_path_charset(normalized, raw=raw)
     return normalized
+
+
+def _assert_path_charset(normalized: str, *, raw: str) -> None:
+    """字符集校验：ASCII 走白名单，非 ASCII 逐字排除控制 / 格式 / 空白类。
+
+    分成两段而不是"一个正则搞定"，是因为两段的理由不同：
+    ASCII 侧是白名单（Shell 与命令行元字符必须拒绝），非 ASCII 侧是黑名单（中文目录名必须放行）。
+    """
+
+    for char in normalized:
+        if ord(char) < 128:
+            if not _REPO_PATH_ASCII_RE.match(char):
+                raise PolicyContextError(f"路径包含不支持的字符: {raw!r}")
+            continue
+        if unicodedata.category(char) in _REPO_PATH_UNSAFE_CATEGORIES:
+            raise PolicyContextError(
+                "路径包含不可见的非 ASCII 字符（控制 / 格式 / 空白类）: " + repr(raw)
+            )
 
 
 class PolicyContextError(ValueError):

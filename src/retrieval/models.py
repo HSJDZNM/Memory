@@ -221,9 +221,11 @@ _CONTROL_CHARS = tuple(chr(code) for code in range(0, 32)) + (chr(127),)
 def normalize_source_path(value: str) -> str:
     """规范化**镜像文档**路径：反斜杠转 "/"、去 "./" 与多余分隔符。
 
-    与 policy.models.normalize_repo_path 的差别只有一个：这里允许非 ASCII 目录名
-    （OWASP 镜像用中文分类目录）。绝对路径、控制字符与 ".." 逃逸一律拒绝。
-    代码路径（PolicyContext.file / 规则来源）仍然走 policy 层更严格的规范化。
+    这里与 policy.models.normalize_repo_path 都允许非 ASCII 段（OWASP 镜像用中文分类目录，
+    仓库的架构文档目录同样是中文名），两边都不再要求 ASCII。
+    差别只剩一处：policy 层额外拒绝路径元字符（Windows 文件名里不允许的 : * ? " < > |），
+    因为规则来源与 PolicyContext.file 必须真的能表示仓库里的一个文件。
+    两边都拒绝绝对路径、控制字符与 ".." 逃逸。
     """
 
     if not isinstance(value, str):
