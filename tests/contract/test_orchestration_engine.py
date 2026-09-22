@@ -29,7 +29,7 @@ from policy import models as policy_models
 
 from orchestration import models as orchestration_models
 from orchestration.checkpoint import CHECKPOINT_SCHEMA_VERSION
-from orchestration.client import API_SCHEMA_VERSION
+from orchestration.client import API_SCHEMA_VERSION, EvaluateCall, RetrieveCall, ValidateCall
 from orchestration.errors import NodeContractError
 from orchestration.graph import DEFAULT_SPEC, END, ROUTERS, validation_outcome
 from orchestration.models import (
@@ -418,3 +418,34 @@ def test_platform_snapshot_versions_come_from_the_core() -> None:
     fields = PlatformSnapshot.model_fields
     assert fields["policy_version"].default == policy_models.POLICY_VERSION
     assert fields["decision_schema_version"].default == policy_models.SCHEMA_VERSION
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        EvaluateCall(
+            request_id="evaluate-1",
+            context={"file": "src/shop/order_controller.py"},
+            principal={},
+            idempotency_key="orchestration-action-1",
+        ),
+        RetrieveCall(
+            request_id="retrieve-1",
+            context={"file": "src/shop/order_controller.py"},
+            principal={},
+            idempotency_key="orchestration-action-1",
+            query="policy",
+        ),
+        ValidateCall(
+            request_id="validate-1",
+            context={"file": "src/shop/order_controller.py"},
+            principal={},
+            idempotency_key="orchestration-action-1",
+            target="src/shop/order_controller.py",
+        ),
+    ],
+)
+def test_policy_calls_never_send_orchestration_idempotency_key(call) -> None:
+    """判定信封不复用编排动作键，避免大响应进入 API 幂等台账。"""
+
+    assert "idempotency_key" not in call.envelope()

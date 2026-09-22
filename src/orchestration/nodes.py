@@ -525,10 +525,6 @@ def _apply_change(
         principal=dict(context.task.principal),
         trace_id=state.trace_id,
     )
-    # 幂等键必须覆盖"这次到底发了什么"：平台按（键 + 请求摘要）记账，
-    # 同一个键配上不同的请求体会得到 409（真实 API 是文件台账，跨进程仍然记得）。
-    # 键随请求走，同一个请求重放才真的幂等；请求变了，键就该变。
-    call = replace(call, idempotency_key=f"{key}:{canonical_digest(call.envelope())}")
     decision = context.client.evaluate(call)
     state = _trace(state, node, decision, status=StageStatus.OK)
     # 平台的"需要人工审批"是 block + required_action=approval：它不是"策略拒绝"，

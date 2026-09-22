@@ -130,7 +130,11 @@ def failure_code_for(status: int, code: Optional[str]) -> FailureCode:
 
 @dataclass(frozen=True)
 class PlatformCall:
-    """一次平台调用的信封。`context` / `principal` 是平台 DTO 形状的普通映射。"""
+    """一次平台调用的信封。
+
+    `context` / `principal` 是平台 DTO 形状的普通映射；编排幂等键只属于
+    checkpoint 与受控工具副作用，不会进入判定请求信封。
+    """
 
     request_id: str
     context: Mapping[str, Any]
@@ -147,7 +151,7 @@ class PlatformCall:
             "principal": dict(self.principal),
             "context": dict(self.context),
         }
-        for name in ("tenant", "trace_id", "idempotency_key", "budget_ms"):
+        for name in ("tenant", "trace_id", "budget_ms"):
             value = getattr(self, name)
             if value is not None:
                 payload[name] = value
