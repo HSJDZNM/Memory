@@ -237,7 +237,7 @@ class IdempotencyLedger:
         body: Mapping[str, Any],
         canonical_body: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        """写入一次结果（响应体超限时只记状态码，台账不变成第二份数据仓库）。
+        """写入一次结果；响应体无法完整保存时显式失败，不写残缺条目。
 
         `canonical_body` 是**键序已固定**的那一份（调用方会把它作为本次响应返回）。
         给了它就直接存它：重放于是与首次逐字节相同；没给就按 `sort_keys` 规范化。
@@ -252,11 +252,28 @@ class IdempotencyLedger:
             serialized = json.dumps(source, ensure_ascii=False, sort_keys=True)
         except (TypeError, ValueError):
             serialized = None
-        if serialized is None or len(serialized.encode("utf-8")) > _MAX_RESPONSE_BYTES:
-            stored_body: dict[str, Any] = {}
-        else:
-            parsed = json.loads(serialized)
-            stored_body = parsed if isinstance(parsed, dict) else {}
+        if serialized is None:
+            raise ApiError(
+                ErrorCode.IDEMPOTENCY_UNAVAILABLE,
+                "响应无法序列化进幂等台账；拒绝返回不可可靠重放的结果",
+                retryable=True,
+            )
+        response_bytes = len(serialized.encode("utf-8"))
+        if response_bytes > _MAX_RESPONSE_BYTES:
+            raise ApiError(
+                ErrorCode.IDEMPOTENCY_UNAVAILABLE,
+                f"响应体 {response_bytes} 字节超过幂等台账上限 {_MAX_RESPONSE_BYTES} 字节；"
+                "拒绝写入残缺重放记录",
+                retryable=True,
+            )
+        parsed = json.loads(serialized)
+        if not isinstance(parsed, dict):
+            raise ApiError(
+                ErrorCode.IDEMPOTENCY_UNAVAILABLE,
+                "幂等响应必须是 JSON 对象；拒绝写入不可重放的结果",
+                retryable=True,
+            )
+        stored_body = parsed
         record = {
             "ledger_schema_version": IDEMPOTENCY_SCHEMA_VERSION,
             "entry_key": entry_key,

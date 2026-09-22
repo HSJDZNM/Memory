@@ -676,7 +676,10 @@ class ApiRuntime:
                 "index_version": retrieval.index_version,
                 "generation": int(getattr(stats, "generation", 0) or 0),
                 "corpus_input_hash": getattr(stats, "corpus_input_hash", None),
-                "hash_drift": [],
+                "hash_drift": sorted(
+                    f"{issue.dataset}:{issue.source_path}"
+                    for issue in loaded.verification.drift
+                ),
                 "documents": int(getattr(stats, "documents", 0) or 0),
                 "chunks": int(getattr(stats, "chunks", 0) or 0),
                 "quarantined": int(getattr(stats, "quarantined", 0) or 0),

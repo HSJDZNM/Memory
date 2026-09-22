@@ -110,7 +110,7 @@ def error_code(response: Any) -> str:
     return response.json()["error"]["code"]
 
 
-def index_fixture(tmp_root: Path) -> tuple[Path, Path]:
+def index_fixture(tmp_root: Path, *, drift: tuple[str, ...] = ()) -> tuple[Path, Path]:
     """为检索用例建一份**真实索引**，返回 `(语料根, 索引库)`。
 
     用 Phase 3 的夹具语料与真实摄取流水线（`load_corpus` + `ingest`），
@@ -119,7 +119,7 @@ def index_fixture(tmp_root: Path) -> tuple[Path, Path]:
 
     corpus_root = tmp_root / "corpus"
     db = tmp_root / "index" / "retrieval.sqlite3"
-    loaded = load_corpus(write_fixture_corpus(corpus_root), repo_root=corpus_root)
+    loaded = load_corpus(write_fixture_corpus(corpus_root, drift=drift), repo_root=corpus_root)
     with ChunkStore(db) as store:
         report = ingest(loaded, store, repo_root=corpus_root)
     assert report.documents_indexed == len(loaded.entries)
@@ -467,6 +467,26 @@ def test_idempotency_replays_the_stored_response_and_conflicts_on_other_bodies(t
     assert [row["replayed"] for row in runtime.request_log.read_back()] == [False, True, False]
 
 
+def test_oversized_idempotent_response_fails_explicitly_without_a_false_replay(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """存不下完整响应时，两次调用都显式 503，绝不能重放成 ``200 + {}``。"""
+
+    from policy_api import idempotency
+
+    monkeypatch.setattr(idempotency, "_MAX_RESPONSE_BYTES", 1)
+    _, client, _ = build_api(tmp_root)
+    payload = {**envelope("it-idempotent-large", context=BAD_CONTEXT), "idempotency_key": "key-large"}
+
+    first = client.post("/v1/policy/evaluate", headers=auth(), json=payload)
+    second = client.post("/v1/policy/evaluate", headers=auth(), json=payload)
+
+    for response in (first, second):
+        assert response.status_code == 503
+        assert error_code(response) == "idempotency_unavailable"
+        assert "Idempotency-Replayed" not in response.headers
+
+
 # --------------------------------------------------------------------------- readiness
 
 
@@ -585,6 +605,27 @@ def test_retrieve_returns_cited_hits_from_a_real_index(tmp_root: Path) -> None:
     # 因此"索引里有多少片段"必须比"这次返回了几条"大——否则 limit 根本没生效。
     assert body["index"]["documents"] == 4
     assert body["index"]["chunks"] > len(hits) == 3
+
+
+def test_retrieve_reports_real_corpus_hash_drift(tmp_root: Path) -> None:
+    """HTTP 索引身份必须暴露语料加载器发现的漂移，不能固定返回空列表。"""
+
+    corpus_root, db = index_fixture(tmp_root, drift=("guides/index.md",))
+    _, client, _ = build_api(tmp_root, corpus_root=corpus_root, db=db)
+    response = client.post(
+        "/v1/knowledge/retrieve",
+        headers=auth(),
+        json={
+            "api_version": "1.0",
+            "request_id": "it-retrieve-drift",
+            "tenant": "alpha",
+            "principal": {"subject": "alice"},
+            "context": dict(GOOD_CONTEXT),
+            "query": "guide",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["index"]["hash_drift"] == ["guides:index.md"]
 
 
 def test_retrieve_rejects_a_decision_ref_the_service_never_computed(tmp_root: Path) -> None:

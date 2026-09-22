@@ -407,12 +407,14 @@ def test_idempotency_ledger_persists_to_file_and_survives_restart(tmp_root: Path
     hit = reopened.lookup(**lookup, digest="d1")
     assert hit is not None and hit.body == {"decision": "allow"}
 
-    # 响应体超限时只记状态码：台账不能变成第二份数据仓库（结论仍然可重放）。
+    # 响应体超限时不能写入“200 + 空对象”的残缺结论：显式 503，且不留条目。
     oversized = {"blob": "x" * 9000}
     second = {**lookup, "key": "k2"}
-    reopened.record(**second, digest="d2", status=200, body=oversized)
-    big = reopened.lookup(**second, digest="d2")
-    assert big is not None and big.status == 200 and big.body == {}
+    with pytest.raises(ApiError) as info:
+        reopened.record(**second, digest="d2", status=200, body=oversized)
+    assert info.value.code is ErrorCode.IDEMPOTENCY_UNAVAILABLE
+    assert info.value.status == 503
+    assert reopened.lookup(**second, digest="d2") is None
 
 
 def test_idempotency_ledger_with_zero_ttl_never_expires(tmp_root: Path) -> None:
