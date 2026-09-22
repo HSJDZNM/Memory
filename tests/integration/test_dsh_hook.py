@@ -31,6 +31,8 @@ from policy.engine import EngineError, evaluate
 from policy.loader import load_rule_set
 from policy.models import Decision, ValidationResult
 
+from conftest import POLICIES_DIR, REPO_ROOT
+
 from conftest import REPO_ROOT, dsh_event, write_dsh_config
 
 pytestmark = pytest.mark.integration
@@ -141,14 +143,19 @@ def test_out_of_scope_write_is_allowed_and_reports_the_skipped_rule(dsh_config_p
     skipped = {item.rule_id: item.reasons for item in outcome.decision.skipped_rules}
     # Phase 5：证据类 checker（docstring / 风格 / 测试）在只有上下文的调用路径上
     # 明确记为"没有验证器证据"，而不是当作通过；ARCH-001 仍按范围跳过并写明原因。
-    assert set(skipped) == {
+    # 规则集随规则语料增长，这里守住"每条规则恰好进 matched 或 skipped 之一"，
+    # 而不是把当时的 6 条规则写死；写死的清单只会随新增规则过期。
+    all_rules = load_rule_set([POLICIES_DIR], repo_root=REPO_ROOT)
+    assert set(skipped) | set(outcome.decision.matched_rules) == set(all_rules.ids)
+    assert not (set(skipped) & set(outcome.decision.matched_rules))
+    assert {
         "ARCH-001@1",
         "DOC-001@1",
         "STYLE-001@1",
         "STYLE-002@1",
         "TESTING-001@1",
         "TESTING-002@1",
-    }
+    } <= set(skipped)
     assert "layer" in " ".join(skipped["ARCH-001@1"])
     assert all("验证器" in reason for reason in skipped["DOC-001@1"])
 

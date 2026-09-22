@@ -48,7 +48,7 @@ from retrieval.vector import VectorRetriever  # noqa: E402
 
 CORPUS_PATH = "knowledge/corpus.yaml"
 EVAL_PATH = "tests/fixtures/retrieval_eval/queries.yaml"
-BASELINE_PATH = "tests/fixtures/retrieval_eval/baseline-v2.json"
+BASELINE_PATH = "tests/fixtures/retrieval_eval/baseline-v3.json"
 ARTIFACT_PATH = ".tmp/artifacts/phase-3-retrieval-baseline.json"
 DEFAULT_DB = ".tmp/retrieval/eval-index.sqlite3"
 

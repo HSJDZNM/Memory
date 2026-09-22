@@ -14,6 +14,15 @@
 #     语料扩充后"正确答案集合"会变大，这个字段让"原来的来源掉到第几名"依然可见；
 #   - 相似度分数不作为授权信号，也不进入门槛。
 #
+# v3 变更（2026-09）：语料扩到 42 个入口——把 `policies/**` 里由镜像文档提炼的 39 条规则
+#   （PEP 8 / PEP 257 / OWASP Cheat Sheet）所引用的 15 篇来源文档登记进 owasp-cheatsheets 数据集，
+#   让 `rule_sources` 的溯源（rule → chunk）能解析。**门槛没有放宽**（hit@5 / support@5 仍为 1.0，
+#   precision 下限 0.60、recall 下限 0.85 原样）。
+#   实测变化（如实记录，不粉饰）：fts5 precision@5 0.829 → 0.800；Q6 的首个期望文档从第 1 名掉到第 2 名
+#   （top 5 内，hit@5 仍为 1.0）；Q2 的 reference_rank 从 12 升到 9。向量方法（参考用、不决定退出码）
+#   support@5 0.857 → 0.714，在 v2 时就已经不达门槛，本次没有变好也没有变坏到影响退出码。
+#   为什么值得：语料扩充的收益是"每条安全/风格规则都能追回原文"，代价记在这里而不是藏起来。
+#
 # v2 变更（2026-09）：语料新增 DORA 能力模型镜像（6 个数据集 / 27 个入口）。
 #   Q2「生产代码是否应与测试同时提交」的直接答案来源随之扩大：DORA 的 test-automation /
 #   continuous-integration / trunk-based-development 三篇里都有能独立回答该问题的原句
@@ -22,7 +31,7 @@
 #   **门槛没有放宽**（hit@5 与 support@5 仍为 1.0）。原来点名的两篇 Google 文档改记在
 #   reference_documents 里，排名进基线但不再作为门槛——它们掉出 top 5 这件事必须被看见。
 
-version: 2
+version: 3
 
 thresholds:
   top_k: 5

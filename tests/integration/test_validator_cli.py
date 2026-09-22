@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO_ROOT
+from conftest import POLICIES_DIR, REPO_ROOT
+from policy.loader import load_rule_set
 
 pytestmark = pytest.mark.integration
 
@@ -114,10 +115,17 @@ def test_check_command_exits_one_on_findings() -> None:
     payload = json.loads(completed.stdout)
     validators = {item["validator"] for item in payload["evidence"]["evidence"]}
     assert "tool.ruff@1.0" in validators
-    assert {item["rule_id"] for item in payload["evidence"]["evidence"]} <= {
-        "STYLE-001",
-        "STYLE-002",
-    }
+    # 每条证据都必须归到一条真实存在、且**声明了这个诊断码**的规则上。
+    # 这比"写死两个规则 id"更强：它同时挡住"证据指向不存在的规则"与
+    # "把诊断码挂到没声明它的规则上"（后者会让规则看起来在管这件事）。
+    rules = {rule.id: rule for rule in load_rule_set([POLICIES_DIR], repo_root=REPO_ROOT).rules}
+    for item in payload["evidence"]["evidence"]:
+        rule = rules.get(item["rule_id"])
+        assert rule is not None, "证据指向了不存在的规则：" + item["rule_id"]
+        body = getattr(rule.rule, "style_lint", None)
+        assert body is not None and item["value"] in body.codes, (
+            "诊断码被归到了没有声明它的规则上：" + item["rule_id"] + " / " + item["value"]
+        )
 
 
 def test_pipeline_command_matches_policy_check() -> None:

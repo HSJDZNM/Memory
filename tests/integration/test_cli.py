@@ -173,11 +173,22 @@ def test_directory_instead_of_file_exits_2() -> None:
 
 
 def test_check_rules_mode_validates_without_file() -> None:
+    """--check-rules 的通过输出里，规则条数必须等于 policies/ 下真实的 .yaml 文件数。
+
+    这里刻意不写死条数：规则语料是会长的（Phase 0 的 1 条 → Phase 5 的 6 条 →
+    由 PEP / OWASP 镜像文档提炼出的规则语料）。写死只会让用例随新增规则过期，
+    真正的不变量是"报告出来的条数 == 磁盘上的规则文件数"。
+    """
+
     completed = run_cli("--check-rules")
 
     assert completed.returncode == EXIT_ALLOWED, completed.stderr
-    # Phase 0 的 1 条 -> Phase 5 的 6 条：ARCH-001 与各阶段的规则包都在同一份规则集里
-    assert "规则集校验通过，共 6 条规则" in completed.stdout
+    on_disk = sum(
+        1
+        for path in (REPO_ROOT / "policies").rglob("*.yaml")
+        if not path.name.startswith(".")
+    )
+    assert f"规则集校验通过，共 {on_disk} 条规则" in completed.stdout
 
 
 def test_check_rules_mode_fails_on_corrupted_rules(tmp_root: Path) -> None:
@@ -220,16 +231,18 @@ def test_json_output_matches_policy_decision_contract() -> None:
     assert result["request_id"] == "req-json"
     assert result["trace_id"] is None
     assert result["required_action"] is None
-    assert result["matched_rules"] == [
-        "ARCH-001" + "@" + "1",
-        "DOC-001" + "@" + "1",
-        "STYLE-001" + "@" + "1",
-        "STYLE-002" + "@" + "1",
-    ]
-    assert [item["rule_id"] for item in result["skipped_rules"]] == [
-        "TESTING-001" + "@" + "1",
-        "TESTING-002" + "@" + "1",
-    ]
+    # 规则集是会长大的（Phase 0 的 1 条 → 由 PEP / OWASP 镜像提炼出的规则语料）。
+    # 这里守住的不变量是"每条规则恰好进 matched 或 skipped 之一"——
+    # 规则悄悄从两份清单里消失，才是真正要挡的事；写死清单只会随新增规则过期。
+    rules = load_rule_set(default_rule_dirs(REPO_ROOT), repo_root=REPO_ROOT)
+    matched = list(result["matched_rules"])
+    skipped_ids = [item["rule_id"] for item in result["skipped_rules"]]
+    assert sorted(matched + skipped_ids) == sorted(rules.ids)
+    assert len(set(matched)) == len(matched) and len(set(skipped_ids)) == len(skipped_ids)
+    # 这个上下文（python / layer=controller / 有依赖声明）下，绑定层与语言的规则必须命中。
+    assert {"ARCH-001@1", "DOC-001@1", "STYLE-001@1", "STYLE-002@1"} <= set(matched)
+    # TESTING-001/002 只在有变更集（operation=create/edit）时参与判断，本次没有 → 必须写明被跳过。
+    assert {"TESTING-001@1", "TESTING-002@1"} <= set(skipped_ids)
     assert result["policy_version"] == "phase-1"
     assert result["rule_set_hash"] == payload["rule_set"]["identity"]
     violation = result["violations"][0]
@@ -243,14 +256,9 @@ def test_json_output_matches_policy_decision_contract() -> None:
         "file": BAD_EXAMPLE,
         "detail": "layer=controller 直接依赖 repository",
     }
-    assert payload["rule_set"]["ids"] == [
-        "ARCH-001" + "@" + "1",
-        "DOC-001" + "@" + "1",
-        "STYLE-001" + "@" + "1",
-        "STYLE-002" + "@" + "1",
-        "TESTING-001" + "@" + "1",
-        "TESTING-002" + "@" + "1",
-    ]
+    # CLI 报出来的规则清单必须与 Loader 加载到的一模一样（顺序也一致）：
+    # 不一致意味着 CLI 少读/多读了一个规则目录，或规则集被中途替换过。
+    assert payload["rule_set"]["ids"] == list(rules.ids)
     assert payload["rule_set"]["schema_version"] == SCHEMA_VERSION
     assert payload["rule_set"]["identity"].startswith("sha256:")
     assert payload["context"]["file"] == BAD_EXAMPLE
@@ -326,19 +334,36 @@ def test_run_function_is_reentrant(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_default_rule_dirs_point_at_repository_policies() -> None:
+    """默认规则目录 = 仓库的 policies/，且**目录里的每一个 .yaml 都真的被加载**。
+
+    这里刻意不写死规则清单：规则语料是会长大的数据（本仓库的规则来自 PEP 与 OWASP 镜像文档），
+    写死清单的用例只会随着新增规则过期，然后在"改断言"里失去意义。
+    真正要守住的不变量是"磁盘上的规则文件"与"加载出来的规则"一一对应——
+    漏加载一条规则等于那条规则静默失效，必须红。
+    """
+
     directories = default_rule_dirs(REPO_ROOT)
 
     assert directories == (REPO_ROOT / "policies",)
     rules = load_rule_set(directories, repo_root=REPO_ROOT)
-    assert "ARCH-001" + "@" + "1" in rules.ids
-    assert rules.source_paths == (
-        "policies/architecture/ARCH-001.yaml",
-        "policies/coding/DOC-001.yaml",
-        "policies/coding/STYLE-001.yaml",
-        "policies/coding/STYLE-002.yaml",
-        "policies/testing/TESTING-001.yaml",
-        "policies/testing/TESTING-002.yaml",
-    )
+
+    on_disk = {
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in (REPO_ROOT / "policies").rglob("*.yaml")
+        if not path.name.startswith(".")
+    }
+    assert set(rules.source_paths) == on_disk
+    assert len(rules.rules) == len(on_disk)
+
+    # 六条 Phase 0–5 的基线规则必须一直在：它们是有正反例夹具的锚点。
+    assert {
+        "ARCH-001@1",
+        "DOC-001@1",
+        "STYLE-001@1",
+        "STYLE-002@1",
+        "TESTING-001@1",
+        "TESTING-002@1",
+    } <= set(rules.ids)
 
 
 def test_repository_example_dependencies_are_declared() -> None:

@@ -100,7 +100,15 @@ def test_eval_set_covers_documented_queries() -> None:
     """评测集必须覆盖数据源文档里列出的七个主题，且每个查询都可判定。"""
 
     eval_set = retrieval_eval.load_eval_set()
-    assert eval_set.version == 2
+    # 评测集版本必须与记录在案的基线一致：改了查询或改了语料都要重新记录基线（--record）
+    # 并同时递增 queries.yaml 的 version，否则"基线"就不再描述当前的评测集。
+    recorded = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    assert eval_set.version == recorded["eval_set_version"], (
+        "评测集版本与基线不一致：queries.yaml 的 version="
+        + str(eval_set.version)
+        + "，基线里是 "
+        + str(recorded["eval_set_version"])
+    )
     assert len(eval_set.queries) == 7
     for query in eval_set.queries:
         assert query.expected_documents, f"{query.id} 缺少期望文档"

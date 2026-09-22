@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from conftest import REPO_ROOT, load_fixture_corpus, write_fixture_corpus
+from retrieval.corpus import load_corpus
 
 pytestmark = pytest.mark.integration
 
@@ -211,11 +212,15 @@ def test_real_corpus_end_to_end_via_cli(tmp_root: Path) -> None:
 
     db = tmp_root / "real-index.sqlite3"
     args = ["--db", str(db)]
+    # 期望的文档数从摄取清单现算：语料会长大（新增来源文档），写死 27 只会随语料过期。
+    expected_documents = len(
+        load_corpus(REPO_ROOT / "knowledge" / "corpus.yaml", repo_root=REPO_ROOT).entries
+    )
     indexed = run_cli(*args, "index", "--json")
     assert indexed.returncode == 0, indexed.stderr
     report = json.loads(indexed.stdout)
     assert report["status"] == "completed"
-    assert report["documents_indexed"] == 27
+    assert report["documents_indexed"] == expected_documents
     assert report["chunks_created"] > 200
 
     verified = run_cli("verify")
