@@ -835,7 +835,14 @@ def test_check_list_is_complete_for_governed_actions(enforcement_paths):
     )
 
     names = [item.check for item in checks]
-    assert names[:5] == ["registry", "action_window", "principal", "permissions", "command_allowlist"]
+    assert names[:6] == [
+        "registry",
+        "action_window",
+        "principal",
+        "permissions",
+        "path_prefixes",
+        "command_allowlist",
+    ]
     assert "approval" in names and "policy" in names and "ledger" in names
     assert spec is not None and warnings == ()
 

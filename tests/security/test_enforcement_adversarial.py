@@ -16,7 +16,7 @@ import pytest
 from enforcement.action import build_action_request
 from enforcement.approvals import ApprovalError, ApprovalRecord, verify_approval
 from enforcement.audit import FileAuditSink, NullAuditSink
-from enforcement.drivers import DriverResult
+from enforcement.drivers import DriverError, DriverResult, FileDriver
 from enforcement.executor import ControlledExecutor
 from enforcement.ledger import EnforcementLedger
 from enforcement.models import (
@@ -25,9 +25,11 @@ from enforcement.models import (
     ExecutionStatus,
     FinalOutcome,
     ReasonCode,
+    DriverKind,
     utc_now,
 )
 from enforcement.precheck import pre_execute
+from enforcement.registry import load_registry
 
 from enforcement_support import (
     EnforcementPaths,
@@ -376,6 +378,42 @@ def test_cli_refuses_a_request_that_points_outside_the_workspace(enforcement_pat
     assert completed.returncode == 2
     assert "path_out_of_scope" in completed.stderr
     assert not (enforcement_paths.root / "escape-cleaned").exists()
+
+
+def test_generic_orchestrator_writes_cannot_touch_trust_roots(enforcement_paths):
+    """普通编排写工具即使绕过节点选择，也不能写入平台信任根。"""
+
+    registry = load_registry(
+        REPO_ROOT / "registry" / "tool-registry.yaml",
+        approved_path=REPO_ROOT / "registry" / "tool-registry.approved.json",
+    ).registry
+    spec = registry.tool("orc.fs.write")
+    assert spec is not None
+    for index, prefix in enumerate(("policies", "registry", "adapters", "api", "validation")):
+        request = build_action_request(
+            spec,
+            {"file_path": f"{prefix}/candidate.txt", "content": "not allowed\n"},
+            action_id=f"protected-{index}",
+            request_id=f"protected-{index}",
+            agent="orchestrator",
+            subject="local-user",
+            roles=("developer",),
+            permissions=registry.permissions_for(["developer"]),
+            workspace=enforcement_paths.workspace,
+        )
+        pre = pre_execute(
+            request,
+            registry=registry,
+            ledger=EnforcementLedger(enforcement_paths.ledger),
+            sink=FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace),
+        )
+        assert pre.decision.decision is Decision.BLOCK
+        assert pre.decision.reason_code is ReasonCode.PATH_OUT_OF_SCOPE
+        with pytest.raises(DriverError):
+            FileDriver(DriverKind.FILE_WRITE).execute(
+                request, spec, workspace=enforcement_paths.workspace
+            )
+        assert not (enforcement_paths.workspace / prefix / "candidate.txt").exists()
 
 # --------------------------------------------------------------------------- 台账落盘
 

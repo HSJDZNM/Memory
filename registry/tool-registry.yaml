@@ -277,6 +277,7 @@ tools:
         type: path
         required: true
         path_scope: workspace
+        blocked_prefixes: [policies, registry, adapters, api, validation]
         description: 目标文件（工作区相对路径；逃出工作区一律拒绝）
       - name: old_string
         type: string
@@ -308,11 +309,38 @@ tools:
         type: path
         required: true
         path_scope: workspace
+        blocked_prefixes: [policies, registry, adapters, api, validation]
       - name: content
         type: string
         required: true
         max_chars: 200000
     notes: 与 dsh 的 fs.write 同形，但主体与审计命名空间是编排层自己：两个 Agent 不共用授权
+
+  - id: orc.policy.write
+    title: 编排层新建规则文件（高风险：必须人工审批）
+    agent: orchestrator
+    tool_name: write_policy
+    schema_version: "1.0"
+    risk: reversible_write
+    effect: file_write
+    driver: file_write
+    required_permissions: [repo.write]
+    approval: required
+    rollback: file_snapshot
+    post_checks: [content_matches, target_exists, file_syntax, diff_recorded]
+    rate_limit: {max_calls: 10, window_seconds: 60, max_failures: 2, breaker_seconds: 300}
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+        pattern: ^policies/[A-Za-z0-9._/-]+$
+        description: 只允许新建工作区内 policies/ 下的规则文件
+      - name: content
+        type: string
+        required: true
+        max_chars: 200000
+    notes: 新建规则同样会改变判定依据，必须走与规则编辑相同的人工审批门禁
 
   - id: orc.policy.edit
     title: 编排层修改规则文件（高风险：必须人工审批）

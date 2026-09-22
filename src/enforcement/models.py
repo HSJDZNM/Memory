@@ -380,6 +380,10 @@ class ParamSpec(StrictModel):
     path_scope: Optional[str] = Field(
         default=None, description="path 类型的作用域：workspace 表示必须落在工作区内"
     )
+    blocked_prefixes: Tuple[str, ...] = Field(
+        default=(),
+        description="path 类型禁止触达的工作区相对路径前缀；pre-check 与驱动都会校验",
+    )
     escalating_values: Tuple[str, ...] = Field(
         default=(), description="这些取值会额外要求 requires_permission（参数绑定授权）"
     )
@@ -414,6 +418,22 @@ class ParamSpec(StrictModel):
             raise ValueError("枚举值不得重复")
         return value
 
+    @field_validator("blocked_prefixes")
+    @classmethod
+    def _check_blocked_prefixes(cls, value: Tuple[str, ...]) -> Tuple[str, ...]:
+        normalized: list[str] = []
+        for item in value:
+            prefix = item.replace("\\", "/").strip("/")
+            parts = prefix.split("/")
+            if not prefix or any(part in ("", ".", "..") for part in parts):
+                raise ValueError(f"禁止路径前缀必须是规范的工作区相对路径，得到 {item!r}")
+            if re.fullmatch(r"[A-Za-z0-9._/-]+", prefix) is None:
+                raise ValueError(f"禁止路径前缀含不受控字符，得到 {item!r}")
+            normalized.append(prefix)
+        if len({item.casefold() for item in normalized}) != len(normalized):
+            raise ValueError("禁止路径前缀不得重复（忽略大小写）")
+        return tuple(normalized)
+
     @model_validator(mode="after")
     def _check_shape(self) -> "ParamSpec":
         if self.type is ParamType.STRING_LIST:
@@ -423,6 +443,8 @@ class ParamSpec(StrictModel):
             raise ValueError(f"{self.name}: max_items/max_item_chars 只适用于 string_list")
         if self.type is ParamType.PATH and self.path_scope not in (None, "workspace"):
             raise ValueError(f"{self.name}: path_scope 只支持 workspace 或省略")
+        if self.blocked_prefixes and self.type is not ParamType.PATH:
+            raise ValueError(f"{self.name}: blocked_prefixes 只适用于 path 参数")
         if self.escalating_values and not self.requires_permission:
             raise ValueError(
                 f"{self.name}: 声明了 escalating_values 就必须声明 requires_permission，"

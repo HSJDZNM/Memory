@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional, Protocol, Sequence
 
+from .action import blocked_path_prefix
 from .models import (
     FORBIDDEN_COMMAND_FRAGMENTS,
     ActionRequest,
@@ -140,6 +141,12 @@ class FileDriver:
         relative = str(request.value_of("file_path") or request.value_of("path") or "")
         if not relative:
             raise DriverError("文件类动作缺少 file_path 参数")
+        blocked_path = blocked_path_prefix(spec, request.params)
+        if blocked_path is not None:
+            parameter, path, prefix = blocked_path
+            raise DriverError(
+                f"参数 {parameter} 的路径 {path!r} 命中受保护前缀 {prefix!r}，拒绝执行"
+            )
         target = _resolve(workspace, relative)
         snapshot = snapshot_of(target, relative=relative)
 

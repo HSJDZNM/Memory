@@ -27,7 +27,7 @@ from typing import Mapping, Optional, Sequence
 
 from policy.models import Decision, RequiredAction, ValidationResult
 
-from .action import required_permissions_for
+from .action import blocked_path_prefix, required_permissions_for
 from .approvals import ApprovalError, ApprovalRecord, verify_approval
 from .audit import AuditSink
 from .ledger import EnforcementLedger
@@ -208,6 +208,28 @@ def check_list(
     else:
         checks.append(
             _check("permissions", CheckStatus.PASSED, ReasonCode.ALLOW, f"required={list(required)}")
+        )
+
+    # 4a) 受保护路径：普通写工具不能触达注册表声明的信任根。
+    blocked_path = blocked_path_prefix(spec, request.params)
+    if blocked_path is not None:
+        parameter, path, prefix = blocked_path
+        checks.append(
+            _check(
+                "path_prefixes",
+                CheckStatus.FAILED,
+                ReasonCode.PATH_OUT_OF_SCOPE,
+                f"参数 {parameter} 的路径 {path!r} 命中受保护前缀 {prefix!r}；"
+                "必须改用该信任根的专用受控工具",
+            )
+        )
+    elif any(item.blocked_prefixes for item in spec.parameters):
+        checks.append(
+            _check("path_prefixes", CheckStatus.PASSED, ReasonCode.ALLOW, "未命中受保护路径前缀")
+        )
+    else:
+        checks.append(
+            _check("path_prefixes", CheckStatus.SKIPPED, ReasonCode.ALLOW, "该工具未声明禁止路径前缀")
         )
 
     # 4b) 命令白名单：完整匹配，不允许前缀绕过。

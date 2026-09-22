@@ -43,6 +43,7 @@ from .models import (
 
 __all__ = [
     "ActionRequestError",
+    "blocked_path_prefix",
     "build_action_request",
     "context_digest",
     "normalize_params",
@@ -229,6 +230,26 @@ def required_permissions_for(spec: ToolSpec, params: Sequence[ParamValue]) -> Tu
             assert declaration.requires_permission is not None
             required.add(declaration.requires_permission)
     return tuple(sorted(required))
+
+
+def blocked_path_prefix(
+    spec: ToolSpec, params: Sequence[ParamValue]
+) -> Optional[tuple[str, str, str]]:
+    """返回首个命中的 ``(参数名, 路径, 禁止前缀)``；没有命中则返回 None。"""
+
+    values = {item.name: item.value for item in params}
+    for declaration in spec.parameters:
+        if not declaration.blocked_prefixes:
+            continue
+        raw = values.get(declaration.name)
+        if not isinstance(raw, str):
+            continue
+        candidate = raw.replace("\\", "/").strip("/").casefold()
+        for prefix in declaration.blocked_prefixes:
+            normalized = prefix.casefold()
+            if candidate == normalized or candidate.startswith(normalized + "/"):
+                return declaration.name, raw, prefix
+    return None
 
 
 def context_digest(

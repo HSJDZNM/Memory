@@ -1,44 +1,48 @@
 {
-  "approved_at": "2026-09-18T18:38:51.418501Z",
+  "approved_at": "2026-09-22T13:43:37.664175Z",
   "approved_schema_version": "1.0",
-  "registry_digest": "sha256:5e84cd67d60875f7a769b40cc71c51e9de2081e1814c4677451afa6d2ccc7cca",
+  "registry_digest": "sha256:68237f8c271a5c29f2109f457c11a64e30574f1f46512d14f285c0b6fa78a3ed",
   "registry_version": 1,
-  "reviewed_by": "phase-8-agent",
+  "reviewed_by": "codex-review",
   "tools": {
     "exec.bash": {
-      "schema_hash": "sha256:0d916cc5bcc3ac6fba90b758b18aaeb1636d426fc634159d10e97904dc8690c7",
+      "schema_hash": "sha256:8f4d7cd6db8ca8297535717c5affbb14fd4d35dd44c2af52acce17db335a4099",
       "schema_version": "1.0"
     },
     "exec.pwsh": {
-      "schema_hash": "sha256:a21576852dd7b092eefc119c3c040084369eb3f7e031a89b5f7a70d4d6d11291",
+      "schema_hash": "sha256:dc4f40b55bda45bb1d985d92ea903ea68f811a91b599d6f011796ba40fe3e9f2",
       "schema_version": "1.0"
     },
     "exec.run_code": {
-      "schema_hash": "sha256:2331efc161623fb26df6bba8652d67b8e1f1477fcc0ab057e1d9dfd1affcaf97",
+      "schema_hash": "sha256:794ce1e50ceafdb7e4643fa87d53a86401fd0cd750288de49478a9df9b8be157",
       "schema_version": "1.0"
     },
     "fs.edit": {
-      "schema_hash": "sha256:1bbbf37ae5c690009acc383e2c9b1d28504a22f59554312e51ac6e5583c1d927",
+      "schema_hash": "sha256:778befb25d6ff103bf050809e8a077f06df8f4b1fe849e2e14be743e4e83491a",
       "schema_version": "1.0"
     },
     "fs.read": {
-      "schema_hash": "sha256:c50e230bfcf6c29126a29b145ced2b9f586aa6b5a2db0ee043c04135b699f187",
+      "schema_hash": "sha256:60e056c5fae51e1fe561bbf9bb0bbd29ffe95052d33436d626612393756311a8",
       "schema_version": "1.0"
     },
     "fs.write": {
-      "schema_hash": "sha256:f03c62944e61e0b64f358144d9a765da952ca0a231fa1b43e008f5e3d1f7ac8d",
+      "schema_hash": "sha256:f348efbb695282f9f90093ab2bdb91756a7961f032f3891206263246009a592a",
       "schema_version": "1.0"
     },
     "orc.fs.edit": {
-      "schema_hash": "sha256:6e114c43c105eaaa9bf79ed1d3781fbf0f6b61c2f42db9a348d2fd62a06e6c55",
+      "schema_hash": "sha256:538c6d5898e3d59d09263adb419e12f4a5378150620f73244e730138dde18a07",
       "schema_version": "1.0"
     },
     "orc.fs.write": {
-      "schema_hash": "sha256:e75379d3a0cb42256fc9a22369411038d60db92d035780c70f8aef6c3ab4c9da",
+      "schema_hash": "sha256:18b43438bb237ad6f9a7d6c7eb6dca12f5d29b00bdf9e4efe5ca751c931a69f4",
       "schema_version": "1.0"
     },
     "orc.policy.edit": {
-      "schema_hash": "sha256:92570cb6208cdc6e3b793fa2f63587cdbed302c5fa069eaccfc488292c553de2",
+      "schema_hash": "sha256:7b00d14e21326e47873e6c2c7fdbb7662cf6f2944c3675a654ab9ed32354ccfa",
+      "schema_version": "1.0"
+    },
+    "orc.policy.write": {
+      "schema_hash": "sha256:4920398fa3c6bfe1fc39d64ea83c18cf2dab1ac90fb92365fa9b825819bf49bd",
       "schema_version": "1.0"
     }
   }

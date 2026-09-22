@@ -720,3 +720,17 @@ def test_change_digest_binds_parameters() -> None:
     changed = Change(path=TARGET_PATH, summary="写入", content="b\n")
     assert action_key("task-1", base) != action_key("task-1", changed)
     assert action_key("task-1", base, repair_rounds=1) != action_key("task-1", base)
+
+
+def test_policy_changes_use_approval_gated_tools_for_create_and_edit() -> None:
+    """新建与编辑规则都会改变判定依据，不能落到普通文件工具。"""
+
+    created = Change(path="policies/coding/NEW-001.yaml", summary="新建规则", content="id: NEW-001\n")
+    edited = Change(
+        path="policies/coding/OLD-001.yaml",
+        summary="修改规则",
+        old="severity: warning",
+        replacement="severity: error",
+    )
+    assert created.tool_id == "orc.policy.write"
+    assert edited.tool_id == "orc.policy.edit"

@@ -351,20 +351,44 @@ def test_orchestrator_tools_match_the_orchestration_layer():
     这条测试让漂移在门禁里就暴露，而不是等到运行时。
     """
 
-    from orchestration.nodes import EDIT_TOOL, PROTECTED_EDIT_TOOL, WRITE_TOOL
+    from orchestration.nodes import (
+        EDIT_TOOL,
+        PROTECTED_EDIT_TOOL,
+        PROTECTED_WRITE_TOOL,
+        WRITE_TOOL,
+    )
 
     registry = load_registry(ENFORCEMENT_REGISTRY, approved_path=ENFORCEMENT_APPROVED).registry
     owned = [spec for spec in registry.tools if spec.agent == "orchestrator"]
-    assert {spec.id for spec in owned} == {EDIT_TOOL, WRITE_TOOL, PROTECTED_EDIT_TOOL}
+    assert {spec.id for spec in owned} == {
+        EDIT_TOOL,
+        WRITE_TOOL,
+        PROTECTED_EDIT_TOOL,
+        PROTECTED_WRITE_TOOL,
+    }
     for spec in owned:
         assert registry.is_approved(spec), f"{spec.id} 未被审核：受控执行链会拒绝执行"
         # 写入类工具必须声明路径范围，否则无法判断目标是否逃出受控工作区。
         paths = [item for item in spec.parameters if item.type.value == "path"]
         assert paths and all(item.path_scope == "workspace" for item in paths), spec.id
     # 改"判定依据本身"的动作必须走人工审批，且驱动可用（平台侧真的能执行）。
-    protected = registry.tool(PROTECTED_EDIT_TOOL)
-    assert protected is not None and protected.approval is ApprovalMode.REQUIRED
-    assert protected.driver is DriverKind.FILE_EDIT
+    protected_edit = registry.tool(PROTECTED_EDIT_TOOL)
+    protected_write = registry.tool(PROTECTED_WRITE_TOOL)
+    assert protected_edit is not None and protected_edit.approval is ApprovalMode.REQUIRED
+    assert protected_edit.driver is DriverKind.FILE_EDIT
+    assert protected_write is not None and protected_write.approval is ApprovalMode.REQUIRED
+    assert protected_write.driver is DriverKind.FILE_WRITE
+    assert protected_write.parameter("file_path").pattern.startswith("^policies/")
+    for tool_id in (EDIT_TOOL, WRITE_TOOL):
+        generic = registry.tool(tool_id)
+        assert generic is not None
+        assert set(generic.parameter("file_path").blocked_prefixes) == {
+            "policies",
+            "registry",
+            "adapters",
+            "api",
+            "validation",
+        }
 
 
 def test_read_only_tools_are_explicitly_not_governed_in_phase_4():

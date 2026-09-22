@@ -710,7 +710,7 @@ state_rows = [
     {"stage": "pre-check 之前", "state": "request_created", "file_digest": INITIAL_DIGEST[:22] + "...",
      "note": "只有不可变请求；没有凭据，文件未变"},
     {"stage": "pre-check 允许", "state": "allow_with_grant", "file_digest": file_digest()[:22] + "...",
-     "note": "12 项检查跑完，签发与 action_hash 绑定的短时效 grant"},
+     "note": "13 项检查跑完，签发与 action_hash 绑定的短时效 grant"},
 ]
 grant_facts = {
     "ttl_seconds": ttl_seconds,
@@ -721,7 +721,7 @@ grant_facts = {
 }
 
 # ----------------------------------------------------------------------------
-# **小结**：允许路径跑满 12 项检查，每一项都留下结论；`skipped` 也是结论——
+# **小结**：允许路径跑满 13 项检查，每一项都留下结论；`skipped` 也是结论——
 # **“没跑”必须写清楚，不能默认成“通过”**：
 #
 # - `command_allowlist` / `approval` 对 `fs.edit` 是 `skipped`（它不是命令类、也不需要审批）；

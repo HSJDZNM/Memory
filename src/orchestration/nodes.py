@@ -66,6 +66,7 @@ __all__ = [
 EDIT_TOOL = "orc.fs.edit"
 WRITE_TOOL = "orc.fs.write"
 PROTECTED_EDIT_TOOL = "orc.policy.edit"
+PROTECTED_WRITE_TOOL = "orc.policy.write"
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,7 @@ class Change:
     def tool_id(self) -> str:
         if self.old is not None:
             return PROTECTED_EDIT_TOOL if self.path.startswith("policies/") else EDIT_TOOL
-        return WRITE_TOOL
+        return PROTECTED_WRITE_TOOL if self.path.startswith("policies/") else WRITE_TOOL
 
     def params(self) -> dict[str, Any]:
         if self.old is not None:
