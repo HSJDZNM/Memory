@@ -38,5 +38,5 @@ rule:
 message: 禁止用 yaml.load 解析不可信 YAML，改用 yaml.safe_load（Ruff S506）。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/12_编程语言与框架专项/Python/Django_REST_Framework_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/12_编程语言与框架专项/Python/Django_REST_Framework_Cheat_Sheet.md
   note: '小节 "### API8:2019 Injection -> #### RCE"；Deserialization Cheat Sheet "### Python -> #### Clear-box Review" 第 2 条同源。'

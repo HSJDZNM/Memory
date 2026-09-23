@@ -1,7 +1,7 @@
 # Phase 3 检索夹具
 
 固定语料与评测集的说明。每一项都写明用途、预期结果与是否包含敏感数据；
-按[测试策略](../../../docs/engineering-policy-platform/testing/test-strategy.md)，禁止真实凭据、
+按[测试策略](../../../docs/project/engineering-policy-platform/testing/test-strategy.md)，禁止真实凭据、
 用户数据与生产日志。
 
 ## retrieval_corpus/（分块、索引、检索与对抗测试的语料）
@@ -27,7 +27,7 @@ manifest.json 里的 sha256 必须与被测文件一致，手写哈希会随文�
 | queries.yaml | 版本化评测集：查询、期望文档、supporting_terms 与门槛（hit@k / support@k / 来源完整性 / 排序稳定性） |
 | baseline-v1.json / baseline-v2.json | 版本化**结果**：记录在案的每查询排名、指标、查询词项与 `reference_rank`（计划书点名的来源当前排第几，只记录不作门槛）；`tools/retrieval_eval.py` 与 `tests/integration/test_retrieval_eval_baseline.py` 都会与当前基线比较，不一致即失败（行为有意变化时用 `--record` 显式重记并递增评测集版本） |
 
-评测集直接来自[仓库数据源](../../../docs/engineering-policy-platform/02-repository-data-sources.md#评测查询集)，
+评测集直接来自[仓库数据源](../../../docs/project/engineering-policy-platform/02-repository-data-sources.md#评测查询集)，
 门槛随评测集版本记录，代码里不写"脱离数据的常数"。修改查询或门槛必须递增 version，
 并重跑 python tools/retrieval_eval.py 更新 .tmp/artifacts/phase-3-retrieval-baseline.json。
 

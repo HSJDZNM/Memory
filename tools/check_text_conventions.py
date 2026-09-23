@@ -25,12 +25,12 @@ CRLF_SUFFIXES = {".bat", ".cmd", ".ps1"}
 
 # 逐字复制上游原文的目录/文件：这些内容不按本仓库的排版约定改写。
 MIRRORED_PREFIXES = (
-    "docs/dora-capabilities/",
-    "docs/dotnet-design-guidelines/",
-    "docs/gitlab-code-review/",
-    "docs/google-eng-practices/",
-    "docs/owasp-cheatsheets/",
-    "docs/python-pep-code-style/",
+    "docs/mirrors/dora-capabilities/",
+    "docs/mirrors/dotnet-design-guidelines/",
+    "docs/mirrors/gitlab-code-review/",
+    "docs/mirrors/google-eng-practices/",
+    "docs/mirrors/owasp-cheatsheets/",
+    "docs/mirrors/python-pep-code-style/",
     "tools/owasp_cheatsheets/",
 )
 

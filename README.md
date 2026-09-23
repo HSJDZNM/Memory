@@ -18,7 +18,7 @@
 > Phase 0 的 YAML Rule → Loader → Engine → CLI 链路、Phase 1 的 Context/Scope/Decision、
 > Phase 2 的 dsh Adapter 与 pre-execute Hook、Phase 3 的离线检索、Phase 4 的受控执行、
 > Phase 5 的代码验证器仍然有效，并被后续阶段的测试继续覆盖。
-> 阶段计划见 [Engineering Policy Platform 文档集](docs/engineering-policy-platform/README.md)。
+> 阶段计划见 [Engineering Policy Platform 文档集](docs/project/engineering-policy-platform/README.md)。
 
 ## 快速开始
 
@@ -257,7 +257,7 @@ checker 提供证据"时，需要它的规则以 `critical` 违规阻断——�
 否则那条规则永远拿不到证据（契约测试 `test_ruff_codes_are_declared_and_selected_in_both_directions` 守着它）。
 类型检查端口与失败语义已经就位，但没有启用类型规则：本机与 CI 都没有装 mypy，
 启用它会让所有 Python 文件在缺工具时一次性判红——这是数据决定的事，不是代码决定的。
-逐篇的"哪篇文档变成了哪条规则、哪篇没有"见 `docs/architecture/规则转化覆盖报告.md`。
+逐篇的"哪篇文档变成了哪条规则、哪篇没有"见 `docs/project/architecture/规则转化覆盖报告.md`。
 
 ### 多 Agent 适配（Phase 6）
 
@@ -308,7 +308,7 @@ uv run python tools/agent_loop.py                                 # 多 Agent �
 请求视图和摘要都由平台内部生成，外部载荷不能覆盖。
 
 新增一个 Adapter 的完整流程（不需要改核心层）见
-[Phase 6 实施记录](docs/engineering-policy-platform/phases/phase-6-multi-agent-adapters.md#实施记录)。
+[Phase 6 实施记录](docs/project/engineering-policy-platform/phases/phase-6-multi-agent-adapters.md#实施记录)。
 
 ### Policy API（Phase 7）
 
@@ -427,15 +427,15 @@ uv run python tools/policy_bench.py --counts 10 100 1000
 
 | 手册 | 内容 |
 | --- | --- |
-| [Phase 0](docs/learning/phase-0/walkthrough.ipynb) | 一条规则从 YAML 到 PASS/FAIL 的完整链路 |
-| [Phase 1](docs/learning/phase-1/walkthrough.ipynb) | 上下文规范化、范围匹配、严重级别与可解释决策 |
-| [Phase 2](docs/learning/phase-2/walkthrough.ipynb) | dsh 事件映射、Hook 阻断、失败关闭与真实沙箱闭环 |
-| [Phase 3](docs/learning/phase-3/walkthrough.ipynb) | 分块、FTS5 检索、来源控制、Context 预算与"知识不可用" |
-| [Phase 4](docs/learning/phase-4/walkthrough.ipynb) | 工具注册表、参数绑定的授权、受控执行、事后验证与审计链重放 |
-| [Phase 5](docs/learning/phase-5/walkthrough.ipynb) | AST 事实与依赖图、外部工具适配器与失效分类、测试选择、证据 → 判定与失败关闭 |
-| [Phase 6](docs/learning/phase-6/walkthrough.ipynb) | 规范事件、能力声明与支持矩阵、一致性套件、跨 Agent 隔离与循环熔断 |
-| [Phase 7](docs/learning/phase-7/walkthrough.ipynb) | DTO 与领域模型分离、错误码 → 状态码、租户与令牌边界、预算与超时、幂等台账、本地与经 API 的决策整份相等 |
-| [Phase 8](docs/learning/phase-8/walkthrough.ipynb) | 最小图状态、循环上限、两个引擎跑同一份 spec、checkpoint 与恢复、人工审批、失败关闭表 |
+| [Phase 0](docs/project/learning/phase-0/walkthrough.ipynb) | 一条规则从 YAML 到 PASS/FAIL 的完整链路 |
+| [Phase 1](docs/project/learning/phase-1/walkthrough.ipynb) | 上下文规范化、范围匹配、严重级别与可解释决策 |
+| [Phase 2](docs/project/learning/phase-2/walkthrough.ipynb) | dsh 事件映射、Hook 阻断、失败关闭与真实沙箱闭环 |
+| [Phase 3](docs/project/learning/phase-3/walkthrough.ipynb) | 分块、FTS5 检索、来源控制、Context 预算与"知识不可用" |
+| [Phase 4](docs/project/learning/phase-4/walkthrough.ipynb) | 工具注册表、参数绑定的授权、受控执行、事后验证与审计链重放 |
+| [Phase 5](docs/project/learning/phase-5/walkthrough.ipynb) | AST 事实与依赖图、外部工具适配器与失效分类、测试选择、证据 → 判定与失败关闭 |
+| [Phase 6](docs/project/learning/phase-6/walkthrough.ipynb) | 规范事件、能力声明与支持矩阵、一致性套件、跨 Agent 隔离与循环熔断 |
+| [Phase 7](docs/project/learning/phase-7/walkthrough.ipynb) | DTO 与领域模型分离、错误码 → 状态码、租户与令牌边界、预算与超时、幂等台账、本地与经 API 的决策整份相等 |
+| [Phase 8](docs/project/learning/phase-8/walkthrough.ipynb) | 最小图状态、循环上限、两个引擎跑同一份 spec、checkpoint 与恢复、人工审批、失败关闭表 |
 
 不想开 Jupyter 就运行同内容的纯 Python 版本（`walkthrough.py`）。
 
@@ -446,7 +446,7 @@ uv run python tools/phase_evidence.py            # 默认写到 .tmp/artifacts/p
 ```
 
 证据包含实现版本、规则集哈希（`sha256:...`）、测试命令、用例数、失败数与 JUnit 报告路径，
-格式遵循[测试策略](docs/engineering-policy-platform/testing/test-strategy.md)，不记录密钥或隐私数据。
+格式遵循[测试策略](docs/project/engineering-policy-platform/testing/test-strategy.md)，不记录密钥或隐私数据。
 
 ### 清理临时文件
 
@@ -460,19 +460,26 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 
 ## 目录结构
 
+`docs/` 分两层：`docs/mirrors/` 是**第三方离线镜像**（逐字复制、只读，同时是检索语料），
+`docs/project/` 是**本项目自己维护的文档**。两类的差别、改路径时要连带改哪些引用，见 [docs/README.md](docs/README.md)。
+
 ```text
 .
 ├── .github/workflows/phase-8.yml      # CI：单元 / 契约 / 集成 / 对抗测试、AST 证据重放、验证器闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件与支持矩阵、API 自检 / OpenAPI 快照 / API 闭环、手册与证据
 ├── docs/
-│   ├── architecture/                  # 本仓库的技术架构图（draw.io 两页）与三份说明：功能清单 / 使用说明 / 规则文档转化为规则
-│   ├── dora-capabilities/             # DORA 软件交付能力指南离线镜像（37 篇）
-│   ├── dotnet-design-guidelines/      # .NET Framework 设计准则离线镜像（49 篇）
-│   ├── engineering-policy-platform/   # 本项目的分阶段架构、契约与测试路线
-│   ├── gitlab-code-review/            # GitLab 评审规范离线镜像（20 篇）
-│   ├── google-eng-practices/          # Google 工程实践指南离线镜像（14 篇）
-│   ├── learning/                      # 面向人的学习手册（按阶段：phase-0 … phase-8）
-│   ├── owasp-cheatsheets/             # OWASP 代码安全指南离线归档（118 篇）
-│   └── python-pep-code-style/         # PEP 8 / PEP 257 文档镜像（11 篇）
+│   ├── README.md                      # docs 分层地图：镜像与本项目文档各放哪、路径改动要连带改什么
+│   ├── mirrors/                       # 第三方离线镜像（Raw Reference）：逐字复制上游原文、只读、同时是检索语料
+│   │   ├── dora-capabilities/         # DORA 软件交付能力指南离线镜像（37 篇）
+│   │   ├── dotnet-design-guidelines/  # .NET Framework 设计准则离线镜像（49 篇）
+│   │   ├── gitlab-code-review/        # GitLab 评审规范离线镜像（20 篇）
+│   │   ├── google-eng-practices/      # Google 工程实践指南离线镜像（14 篇）
+│   │   ├── owasp-cheatsheets/         # OWASP 代码安全指南离线归档（124 篇）
+│   │   └── python-pep-code-style/     # PEP 8 / PEP 257 文档镜像（12 篇）
+│   └── project/                       # 本项目自己写、自己维护的文档（与代码一起评审与演进）
+│       ├── architecture/              # 技术架构图（draw.io 两页）+ 说明三件套 + 术语与口径 + 规则转化覆盖报告
+│       ├── engineering-policy-platform/  # 分阶段架构、契约、数据源、测试策略与复核记录
+│       ├── learning/                  # 面向人的学习手册（按阶段：phase-0 … phase-8）
+│       └── rule-effects/              # 规则效果演示与多违规案例检测报告（本地产出，非镜像）
 ├── examples/                          # 可重放的 CLI 示例（正例 / 反例）
 ├── examples/dsh/                      # dsh 接线示例：hooks.json / dsh-adapter.yaml / profile-patch.yml
 ├── examples/enforcement/              # 受控执行示例请求（编辑 / 高风险命令 + 审批）
@@ -529,7 +536,7 @@ Phase 7 引入了 FastAPI/uvicorn（只在传输层），Phase 8 引入 LangGrap
 Phase 2 里 dsh 只作为**外部进程与线协议**存在：适配器不导入 dsh 的类型，核心层更不知道 dsh 的存在。
 Phase 3 的检索层不导入任何 Agent SDK、Web 框架或向量库：embedding 是端口（`retrieval.vector`），
 用确定性本地实现做对照评测；固定评测集显示它没有跑赢 FTS5，因此没有进入默认链路。
-依赖引入门禁见[技术选型与目标目录](docs/engineering-policy-platform/03-technology-and-layout.md)。
+依赖引入门禁见[技术选型与目标目录](docs/project/engineering-policy-platform/03-technology-and-layout.md)。
 
 ## 架构约定
 

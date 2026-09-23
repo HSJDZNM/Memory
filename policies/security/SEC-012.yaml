@@ -52,5 +52,5 @@ rule:
 message: 不要关闭模板自动转义、不要用 mark_safe 放行未转义 HTML、不要用 RawSQL 拼查询（Ruff S701/S308/S611）。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/12_编程语言与框架专项/Python/Django_Security_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/12_编程语言与框架专项/Python/Django_Security_Cheat_Sheet.md
   note: '小节 "## Cross Site Scripting (XSS)"；裸 SQL 的原文在 Django REST Framework Cheat Sheet "### API8:2019 Injection -> #### SQLi"。'

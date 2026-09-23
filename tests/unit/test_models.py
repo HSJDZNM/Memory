@@ -271,14 +271,14 @@ def test_normalize_repo_path_helper() -> None:
 def test_repo_path_accepts_non_ascii_segments() -> None:
     """非 ASCII 路径段必须被接受：镜像语料与仓库文档都用中文目录名。
 
-    规则要用 source.path 指回 `docs/owasp-cheatsheets/02_输入验证、注入与文件处理/…`，
-    上下文文件也可能是 `docs/architecture/使用说明.md`；要求 ASCII 会让"指向真实来源"
+    规则要用 source.path 指回 `docs/mirrors/owasp-cheatsheets/02_输入验证、注入与文件处理/…`，
+    上下文文件也可能是 `docs/project/architecture/使用说明.md`；要求 ASCII 会让"指向真实来源"
     变成加载期错误。放宽的只是字符集，结构拒绝（绝对路径 / 盘符 / ".." / 元字符）不变。
     """
 
-    mirrored = "docs/owasp-cheatsheets/02_输入验证、注入与文件处理/SQL_Injection_Prevention_Cheat_Sheet.md"
+    mirrored = "docs/mirrors/owasp-cheatsheets/02_输入验证、注入与文件处理/SQL_Injection_Prevention_Cheat_Sheet.md"
     assert normalize_repo_path(mirrored) == mirrored
-    assert normalize_repo_path("docs/architecture/使用说明.md") == "docs/architecture/使用说明.md"
+    assert normalize_repo_path("docs/project/architecture/使用说明.md") == "docs/project/architecture/使用说明.md"
 
     for raw in ("src/order/a*b.py", "src/order/a:b.py", "src/order/a?b.py"):
         with pytest.raises(PolicyContextError):

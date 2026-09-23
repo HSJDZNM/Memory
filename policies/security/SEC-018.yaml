@@ -23,5 +23,5 @@ rule:
 message: 记录异常请用 logging.exception / logger.exception，以保留 stack trace。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/10_日志、监控与错误处理/Logging_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/10_日志、监控与错误处理/Logging_Cheat_Sheet.md
   note: § Event attributes（Extended details：stack trace / system error messages）；Ruff TRY400 提供确定性证据。

@@ -1,0 +1,339 @@
+<mxfile host="Electron" agent="dsh" pages="2">
+  <diagram id="arch-page-1" name="1-技术架构总览（简化版）">
+    <mxGraphModel dx="6817" dy="2357" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2060" pageHeight="1370" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="t1" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=24;fontColor=#333333;" value="Memory 仓库技术架构：分层与单一判定路径" vertex="1">
+          <mxGeometry height="36" width="1840" x="80" y="14" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#6b6b6b;" value="规则是数据 · 判定只有一条路径（src/policy/）· 未知一律拒绝、失败关闭 · 相同输入得到相同结论&amp;#xa;实测：CI 44 步 · 规则 6 条 · 语料 6 数据集 / 27 篇 / 535 chunk · 验证器 7 个 · *_loop.py 6 个（命令见 docs/project/architecture/术语与口径.md）" vertex="1">
+          <mxGeometry height="36" width="1840" x="80" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="b1" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="① 消费方 / 入口（src/adapters/dsh/ · tools/api_loop.py）" vertex="1">
+          <mxGeometry height="168" width="1840" x="80" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="b1_cap" parent="b1" style="text;html=1;align=right;verticalAlign=middle;fontSize=11;fontColor=#7a7a7a;" value="真实 Agent 与合成消费者走同一套契约（adapters/dsh/manifest.yaml）（功能清单 3.7 / 3.8）" vertex="1">
+          <mxGeometry height="34" width="1080" x="740" y="4" as="geometry" />
+        </mxCell>
+        <mxCell id="c1_1" parent="b1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="dsh Agent Runtime&amp;#xa;src/adapters/dsh/ · 跨层 ① ②：执行前阻断 + 执行后验证" vertex="1">
+          <mxGeometry height="100" width="432" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c1_2" parent="b1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="其他 Agent Runtime&amp;#xa;adapters/&lt;agent_id&gt;/manifest.yaml · 能力上限由声明推出" vertex="1">
+          <mxGeometry height="100" width="432" x="476" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c1_3" parent="b1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="上层编排与服务&amp;#xa;src/orchestration/ · src/policy_api/ · 都只是消费者" vertex="1">
+          <mxGeometry height="100" width="432" x="932" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c1_4" parent="b1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="人与 CI&amp;#xa;tools/ci_local.py · pytest · 仓库门禁" vertex="1">
+          <mxGeometry height="100" width="432" x="1388" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="b2" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="② 接入与协议转换（src/adapters/ · src/policy_api/app.py）" vertex="1">
+          <mxGeometry height="168" width="1840" x="80" y="286" as="geometry" />
+        </mxCell>
+        <mxCell id="b2_cap" parent="b2" style="text;html=1;align=right;verticalAlign=middle;fontSize=11;fontColor=#7a7a7a;" value="只做协议转换：不猜上下文，声明不出来就失败关闭（src/adapters/base.py）（功能清单 3.5 / 3.6 / 3.8）" vertex="1">
+          <mxGeometry height="34" width="1080" x="740" y="4" as="geometry" />
+        </mxCell>
+        <mxCell id="c2_1" parent="b2" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="事件适配&amp;#xa;src/adapters/models.py · 原始事件 → 规范事件 → 固定上下文" vertex="1">
+          <mxGeometry height="100" width="432" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c2_2" parent="b2" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="能力声明&amp;#xa;adapters/&lt;agent_id&gt;/manifest.yaml + approved.json · 哈希漂移即拒绝" vertex="1">
+          <mxGeometry height="100" width="432" x="476" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c2_3" parent="b2" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="多 Agent 运行时&amp;#xa;src/adapters/runtime.py · 命名空间隔离 · trace 校验 · 窗口熔断" vertex="1">
+          <mxGeometry height="100" width="432" x="932" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c2_4" parent="b2" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="HTTP 传输边界&amp;#xa;src/policy_api/ · 跨层 ② ④：认证 / 租户 / 预算 / 幂等 / 观测" vertex="1">
+          <mxGeometry height="100" width="432" x="1388" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="b3" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="③ 判定核心（唯一判定路径 · src/policy/）" vertex="1">
+          <mxGeometry height="168" width="1840" x="80" y="482" as="geometry" />
+        </mxCell>
+        <mxCell id="b3_cap" parent="b3" style="text;html=1;align=right;verticalAlign=middle;fontSize=11;fontColor=#7a7a7a;" value="加载 → 范围匹配 → 证据 → 判定（src/policy/engine.py）（功能清单 3.1）" vertex="1">
+          <mxGeometry height="34" width="1080" x="740" y="4" as="geometry" />
+        </mxCell>
+        <mxCell id="c3_1" parent="b3" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#fff2cc;strokeColor=#d6b656;" value="规则加载&amp;#xa;src/policy/loader.py · 一条坏 = 整批不加载" vertex="1">
+          <mxGeometry height="100" width="432" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c3_2" parent="b3" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#fff2cc;strokeColor=#d6b656;" value="范围匹配&amp;#xa;src/policy/scope.py · 同维度 OR、跨维度 AND；未知维度报错" vertex="1">
+          <mxGeometry height="100" width="432" x="476" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c3_3" parent="b3" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#fff2cc;strokeColor=#d6b656;" value="判定引擎&amp;#xa;policy.engine.evaluate · allow / allow_with_warnings / block" vertex="1">
+          <mxGeometry height="100" width="432" x="932" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c3_4" parent="b3" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#fff2cc;strokeColor=#d6b656;" value="决策协议&amp;#xa;src/policy/models.py · schema_version 未知即拒绝消费" vertex="1">
+          <mxGeometry height="100" width="432" x="1388" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="b4" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="④ 能力层（src/retrieval/ · src/enforcement/ · src/validators/）" vertex="1">
+          <mxGeometry height="168" width="1840" x="80" y="678" as="geometry" />
+        </mxCell>
+        <mxCell id="b4_cap" parent="b4" style="text;html=1;align=right;verticalAlign=middle;fontSize=11;fontColor=#7a7a7a;" value="检索只说“找到什么”，验证器只产证据，受控执行只管“执行一次”（validation/validators.yaml）&amp;#xa;（功能清单 3.2 / 3.3 / 3.4 / 3.6）" vertex="1">
+          <mxGeometry height="34" width="1080" x="740" y="4" as="geometry" />
+        </mxCell>
+        <mxCell id="c4_1" parent="b4" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;" value="规范检索&amp;#xa;src/retrieval/ · 带来源的上下文；不可用即显式报错" vertex="1">
+          <mxGeometry height="100" width="432" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c4_2" parent="b4" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;" value="代码验证器&amp;#xa;src/validators/ · AST / 依赖图 / Lint / 测试 → 确定性证据" vertex="1">
+          <mxGeometry height="100" width="432" x="476" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c4_3" parent="b4" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" value="受控执行&amp;#xa;src/enforcement/ · 授权绑 action_hash · 单次使用" vertex="1">
+          <mxGeometry height="100" width="432" x="932" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c4_4" parent="b4" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;" value="服务化&amp;#xa;src/policy_api/ · 跨层 ② ④：同一份 Decision 经 HTTP 对外，不复制逻辑" vertex="1">
+          <mxGeometry height="100" width="432" x="1388" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="b5" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="⑤ 数据与契约（policies/ · knowledge/ · registry/ · validation/ · adapters/ · api/）" vertex="1">
+          <mxGeometry height="168" width="1840" x="80" y="874" as="geometry" />
+        </mxCell>
+        <mxCell id="b5_cap" parent="b5" style="text;html=1;align=right;verticalAlign=middle;fontSize=11;fontColor=#7a7a7a;" value="改行为改数据，不改代码（policies/ · registry/ · adapters/ · validation/）（功能清单 §4）" vertex="1">
+          <mxGeometry height="34" width="1080" x="740" y="4" as="geometry" />
+        </mxCell>
+        <mxCell id="c5_1" parent="b5" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="规则与语料&amp;#xa;policies/ · knowledge/corpus.yaml · 官方文档离线镜像" vertex="1">
+          <mxGeometry height="100" width="432" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c5_2" parent="b5" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="授权与档案&amp;#xa;registry/tool-registry.yaml · validation/validators.yaml" vertex="1">
+          <mxGeometry height="100" width="432" x="476" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c5_3" parent="b5" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="能力声明与部署&amp;#xa;adapters/*/manifest.yaml · api/policy-api.yaml" vertex="1">
+          <mxGeometry height="100" width="432" x="932" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c5_4" parent="b5" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="审核哈希与契约快照&amp;#xa;adapters/approved.json · api/openapi.json" vertex="1">
+          <mxGeometry height="100" width="432" x="1388" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="b6" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="⑥ 证据与门禁（tools/ci_local.py · .github/workflows/ · tools/*_loop.py）" vertex="1">
+          <mxGeometry height="168" width="1840" x="80" y="1070" as="geometry" />
+        </mxCell>
+        <mxCell id="b6_cap" parent="b6" style="text;html=1;align=right;verticalAlign=middle;fontSize=11;fontColor=#7a7a7a;" value="退出码即结论：0 通过 / 1 违规或漂移 / 2 配置错误（tools/ci_local.py）&amp;#xa;（功能清单 §5 仓库脚本 / §6 测试与证据）" vertex="1">
+          <mxGeometry height="34" width="1080" x="740" y="4" as="geometry" />
+        </mxCell>
+        <mxCell id="c6_1" parent="b6" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;" value="运行期产物&amp;#xa;.tmp/retrieval/ · 台账（ledger）· 摘要链（audit chain）· checkpoint" vertex="1">
+          <mxGeometry height="100" width="432" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c6_2" parent="b6" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;" value="阶段证据与报告&amp;#xa;tools/phase_evidence.py · 规则集哈希 · 用例数" vertex="1">
+          <mxGeometry height="100" width="432" x="476" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c6_3" parent="b6" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;" value="仓库门禁&amp;#xa;tools/ci_local.py · 文本规范 / 凭据扫描 / CI 实测 44 步" vertex="1">
+          <mxGeometry height="100" width="432" x="932" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="c6_4" parent="b6" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;" value="闭环脚本&amp;#xa;tools/*_loop.py 实测 6 个&amp;#xa;命令：Get-ChildItem tools/*_loop.py" vertex="1">
+          <mxGeometry height="100" width="432" x="1388" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9e9e9e;verticalAlign=top;fontSize=12;fontStyle=1;" value="Legend 图例：每个色块一句概括 + 一个精确锚点" vertex="1">
+          <mxGeometry height="96" width="1840" x="80" y="1260" as="geometry" />
+        </mxCell>
+        <mxCell id="legends0" parent="legend" style="rounded=0;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="" vertex="1">
+          <mxGeometry height="16" width="30" x="20" y="48" as="geometry" />
+        </mxCell>
+        <mxCell id="legendt0" parent="legend" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#333333;" value="入口与协议转换（src/adapters/）" vertex="1">
+          <mxGeometry height="44" width="316" x="56" y="36" as="geometry" />
+        </mxCell>
+        <mxCell id="legends1" parent="legend" style="rounded=0;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="" vertex="1">
+          <mxGeometry height="16" width="30" x="380" y="48" as="geometry" />
+        </mxCell>
+        <mxCell id="legendt1" parent="legend" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#333333;" value="判定核心（src/policy/）" vertex="1">
+          <mxGeometry height="44" width="316" x="416" y="36" as="geometry" />
+        </mxCell>
+        <mxCell id="legends2" parent="legend" style="rounded=0;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="" vertex="1">
+          <mxGeometry height="16" width="30" x="740" y="48" as="geometry" />
+        </mxCell>
+        <mxCell id="legendt2" parent="legend" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#333333;" value="决策与受控执行（③ 判定核心 · ④ 能力层；src/enforcement/）" vertex="1">
+          <mxGeometry height="44" width="316" x="776" y="36" as="geometry" />
+        </mxCell>
+        <mxCell id="legends3" parent="legend" style="rounded=0;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="" vertex="1">
+          <mxGeometry height="16" width="30" x="1100" y="48" as="geometry" />
+        </mxCell>
+        <mxCell id="legendt3" parent="legend" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#333333;" value="数据与契约（policies/ · registry/）" vertex="1">
+          <mxGeometry height="44" width="316" x="1136" y="36" as="geometry" />
+        </mxCell>
+        <mxCell id="legends4" parent="legend" style="rounded=0;html=1;fillColor=#f5f5f5;strokeColor=#666666;" value="" vertex="1">
+          <mxGeometry height="16" width="30" x="1460" y="48" as="geometry" />
+        </mxCell>
+        <mxCell id="legendt4" parent="legend" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#333333;" value="能力子系统、证据与门禁（validation/ · tools/）" vertex="1">
+          <mxGeometry height="44" width="316" x="1496" y="36" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="b1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.3;exitY=1;exitDx=0;exitDy=0;entryX=0.3;entryY=0;entryDx=0;entryDy=0;" target="b2" value="原始事件">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="b2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.3;exitY=1;exitDx=0;exitDy=0;entryX=0.3;entryY=0;entryDx=0;entryDy=0;" target="b3" value="规范事件 / 显式上下文">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="b4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.38;exitY=0;exitDx=0;exitDy=0;entryX=0.38;entryY=1;entryDx=0;entryDy=0;" target="b3" value="证据与授权请求">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="b3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.62;exitY=1;exitDx=0;exitDy=0;entryX=0.62;entryY=0;entryDx=0;entryDy=0;" target="b4" value="Decision">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="b5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="b3" value="规则 / 档案 / 声明（都是数据）">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="40" y="958" />
+              <mxPoint x="40" y="566" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="b4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.55;entryDx=0;entryDy=0;" target="b6" value="决策 / 证据 / 台账落盘">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1960" y="804" />
+              <mxPoint x="1960" y="1162" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="arch-page-2" name="2-规则文档转化为规则">
+    <mxGraphModel dx="1400" dy="1000" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1720" pageHeight="3000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="t1" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=24;fontColor=#333333;" value="Memory 仓库：规则文档 → 可执行规则（转化链路与门禁条件）" vertex="1">
+          <mxGeometry height="36" width="1600" x="60" y="14" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#6b6b6b;" value="Raw Reference 不能直接变成规则：七个台阶每级都有显式条件，任何一级不满足就失败关闭（不静默、不降级、不默认放行）&amp;#xa;台阶口径见 docs/project/architecture/规则文档转化为规则.md；判定结果只有 allow / allow_with_warnings / block 三种" vertex="1">
+          <mxGeometry height="40" width="1600" x="60" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="st1" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="台阶 1 · 镜像与哈希登记（docs/&lt;mirror&gt;/manifest.json）" vertex="1">
+          <mxGeometry height="170" width="1600" x="60" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="st2" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="台阶 2 · 语料登记 Curated Guidance（knowledge/corpus.yaml）" vertex="1">
+          <mxGeometry height="435" width="1600" x="60" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="st3" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="台阶 3 · 分块与索引（src/retrieval/）" vertex="1">
+          <mxGeometry height="435" width="1600" x="60" y="735" as="geometry" />
+        </mxCell>
+        <mxCell id="st4" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="台阶 4 · 提炼 · 唯一的人工步骤（对照 src/policy/checkers.py）" vertex="1">
+          <mxGeometry height="330" width="1600" x="60" y="1190" as="geometry" />
+        </mxCell>
+        <mxCell id="st5" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="台阶 5 · 规则文件 Project Policy（policies/&lt;domain&gt;/&lt;ID&gt;.yaml）" vertex="1">
+          <mxGeometry height="435" width="1600" x="60" y="1540" as="geometry" />
+        </mxCell>
+        <mxCell id="st6" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="台阶 6 · 验证器覆盖 · 证据从哪来（validation/validators.yaml）" vertex="1">
+          <mxGeometry height="200" width="1600" x="60" y="1995" as="geometry" />
+        </mxCell>
+        <mxCell id="st7" parent="1" style="swimlane;startSize=36;html=1;fontSize=13;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#fbfbfb;strokeColor=#9e9e9e;container=1;collapsible=0;" value="台阶 7 · 生效、溯源与变更管理（src/policy/loader.py）" vertex="1">
+          <mxGeometry height="722" width="1600" x="60" y="2215" as="geometry" />
+        </mxCell>
+        <mxCell id="st8" parent="st7" style="swimlane;startSize=30;html=1;fontSize=12;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#ffffff;strokeColor=#9e9e9e;container=1;collapsible=0;" value="判定与消费（规则生效之后；policy.engine.evaluate 一条路径）" vertex="1">
+          <mxGeometry height="520" width="1560" x="20" y="186" as="geometry" />
+        </mxCell>
+        <mxCell id="g1" parent="st2" style="swimlane;startSize=30;html=1;fontSize=12;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#ffffff;strokeColor=#b85450;container=1;collapsible=0;" value="门禁 ① · 摄取完整性校验（src/retrieval/corpus.py）" vertex="1">
+          <mxGeometry height="375" width="720" x="860" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="g2" parent="st3" style="swimlane;startSize=30;html=1;fontSize=12;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#ffffff;strokeColor=#b85450;container=1;collapsible=0;" value="门禁 ② · 规则溯源可解析（src/retrieval/indexer.py）" vertex="1">
+          <mxGeometry height="375" width="720" x="860" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="g3" parent="st5" style="swimlane;startSize=30;html=1;fontSize=12;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;fillColor=#ffffff;strokeColor=#b85450;container=1;collapsible=0;" value="门禁 ③ · loader 加载门禁（src/policy/loader.py）" vertex="1">
+          <mxGeometry height="375" width="720" x="860" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="p2a1" parent="st1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;" value="离线镜像与哈希登记&amp;#xa;docs/&lt;mirror&gt;/** 逐字复制 + manifest.json：source_url / title / sha256 / bytes / fetched_at" vertex="1">
+          <mxGeometry height="96" width="1560" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="p2a2" parent="st2" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="摄取清单（数据）&amp;#xa;knowledge/corpus.yaml：dataset · license · license_source · tier · visibility · entries · 预算&amp;#xa;实测 6 数据集 / 27 条目 / rule_sources 0 条" vertex="1">
+          <mxGeometry height="120" width="820" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="p2d1" parent="g1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#fff2cc;strokeColor=#d6b656;" value="门禁在查什么&amp;#xa;条目在该镜像 manifest 中？许可声明文件存在？本地 sha256 一致？" vertex="1">
+          <mxGeometry height="120" width="680" x="20" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="p2x1" parent="g1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f8cecc;strokeColor=#b85450;" value="失败分支 · retrieval.cli verify 退出 1&amp;#xa;条目不在 manifest、许可声明缺失 → 加载失败；&amp;#xa;sha256 / 字节数漂移 → 写进 document 行、run 报告与漂移清单（CI 硬门禁），绝不静默继续" vertex="1">
+          <mxGeometry height="175" width="680" x="20" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="p2a3" parent="st3" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="分块与索引&amp;#xa;chunker（按标题分块，超长再切）→ SQLite FTS5：documents / chunks（heading_path · heading_anchor · text_hash）&amp;#xa;实测 42 documents / 1013 chunks（命令：sqlite3 .tmp/retrieval/index.sqlite3）" vertex="1">
+          <mxGeometry height="130" width="820" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="p2d2" parent="g2" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#fff2cc;strokeColor=#d6b656;" value="门禁在查什么&amp;#xa;dataset 已声明？文档已索引？heading_path 在原文中存在？" vertex="1">
+          <mxGeometry height="120" width="680" x="20" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="p2x2" parent="g2" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f8cecc;strokeColor=#b85450;" value="失败分支 · 索引 run 标 failed&amp;#xa;rule_sources 指向未索引文档、或标题路径在原文中不存在 → 抛 IndexingError（不静默跳过）；&amp;#xa;进程中断留下的 running 会在下次 run 标成 interrupted" vertex="1">
+          <mxGeometry height="175" width="680" x="20" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="p2a4" parent="st4" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#e1d5e7;strokeColor=#9673a6;" value="人工 / 受控提炼（没有代码自动完成）&amp;#xa;从原文挑出可判定的要求 → 查 checker 清单 → 写成规则文件 → 用夹具证明正例通过、反例阻断" vertex="1">
+          <mxGeometry height="130" width="820" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="p2note" parent="st4" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#e1d5e7;strokeColor=#9673a6;" value="三层规范模型（决定“能不能阻断”）&amp;#xa;Raw Reference → Curated Guidance → Project Policy&amp;#xa;只有 Project Policy 允许阻断执行；前两层只用于追溯、检索与解释&amp;#xa;本台阶没有图内门禁：它是唯一的人工步骤，没有代码门禁强制&amp;#xa;完整解释见 docs/project/architecture/规则文档转化为规则.md" vertex="1">
+          <mxGeometry height="280" width="720" x="860" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="p2a5" parent="st5" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;" value="规则文件（数据）&amp;#xa;policies/&lt;domain&gt;/&lt;ID&gt;.yaml：id · version · name · description · scope · severity ·&amp;#xa;enforcement{type, checker} · rule{…} · message · source{kind, path}&amp;#xa;实测 43 条规则（38 条由镜像原文提炼，各带正反例与 chunk 级溯源）" vertex="1">
+          <mxGeometry height="160" width="820" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="p2d3" parent="g3" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#fff2cc;strokeColor=#d6b656;" value="门禁在查什么&amp;#xa;结构 · id 形状 · scope 维度 · severity · enforcement · 规则体与 checker 一致 · source.kind · 重复 ID" vertex="1">
+          <mxGeometry height="120" width="680" x="20" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="p2x3" parent="g3" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f8cecc;strokeColor=#b85450;" value="失败分支 · RuleFileError / LoaderError，退出码 2&amp;#xa;规则集加载是原子的：任一文件失败都不替换现有规则集；&amp;#xa;同一 id 重复定义直接拒绝（语义变更递增 version，而不是并存两份）；&amp;#xa;只有 YAML 语法错误带 行:列" vertex="1">
+          <mxGeometry height="175" width="680" x="20" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="p2a6v" parent="st6" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;" value="验证器注册表（数据）&amp;#xa;validation/validators.yaml：7 个验证器 / 2 个 rule pack（python-core / python-tools）→ 证据（EvidenceBundle）&amp;#xa;每个受支持的 checker 都必须至少有一个验证器为它声明提供证据，否则注册表自己加载不了&amp;#xa;本台阶没有图内门禁：注册表自身在加载阶段报错；判定侧的失败关闭见 p2x4" vertex="1">
+          <mxGeometry height="125" width="1560" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="p2a6" parent="st7" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#fff2cc;strokeColor=#d6b656;" value="RuleSet（不可变 · 按路径稳定排序 · identity = sha256:…）&amp;#xa;src/policy/loader.py 原子加载整个规则目录；rule_set_hash 变化会传播到 API 观测摘要与编排层 checkpoint&amp;#xa;溯源是约定而非门禁：corpus.yaml 的 rule_sources 当前 0 条" vertex="1">
+          <mxGeometry height="110" width="1560" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="p2a7" parent="st8" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" value="判定引擎（唯一判定路径）&amp;#xa;policy.engine.evaluate ＋ PolicyContext（显式字段）＋ 证据（EvidenceBundle）" vertex="1">
+          <mxGeometry height="130" width="800" x="20" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="p2a8" parent="st8" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#ffe6cc;strokeColor=#d79b00;" value="Decision&amp;#xa;allow / allow_with_warnings / block&amp;#xa;需要人工审批时 block ＋ required_action = approval" vertex="1">
+          <mxGeometry height="120" width="800" x="20" y="206" as="geometry" />
+        </mxCell>
+        <mxCell id="p2a9" parent="st8" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;" value="后续消费者&amp;#xa;src/enforcement/（受控执行恰好一次）· src/policy_api/（Phase 7）· src/orchestration/（Phase 8）&amp;#xa;＋ 证据（EvidenceBundle）· 台账（ledger）· 摘要链（audit chain）· 阶段证据（可重放）" vertex="1">
+          <mxGeometry height="150" width="800" x="20" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="p2x4" parent="st8" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f8cecc;strokeColor=#b85450;" value="失败分支 · 判定侧的失败关闭（绝不会“默认放行”）&amp;#xa;· 证据类 checker 没有证据（EvidenceBundle）→ 记进 skipped_rules；Phase 6 写类动作没有 evidence provider → evidence_unavailable 阻断&amp;#xa;· 关键验证器缺失 / 版本不符 / 超时 / 崩溃 / 配置错误 / 输出非法 → 需要它的规则以 critical 阻断（同批 PASS 抵消不了）&amp;#xa;· 本次证据包没有为某个 checker 产出证据 → uncovered_checker_violation（critical）阻断&amp;#xa;· 未知 checker / 未知 scope 维度 / 未知操作枚举 / 未知协议版本 → 加载或消费阶段报错&amp;#xa;· “解析失败”不等于“没有依赖”：语法错误、动态 import 目标不是常量、项目内模块解析失败，一律阻断&amp;#xa;· 超时 / 服务不可达 / 规则集读不出来，只会更严（不会 allow）" vertex="1">
+          <mxGeometry height="430" width="690" x="850" y="52" as="geometry" />
+        </mxCell>
+        <mxCell id="p2e0" edge="1" parent="1" source="p2a1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="p2a2" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2e1" edge="1" parent="st2" source="p2a2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="p2d1" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2e2" edge="1" parent="1" source="p2d1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="p2a3" value="是">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2e3" edge="1" parent="st3" source="p2a3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="p2d2" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2e4" edge="1" parent="1" source="p2d2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="p2a4" value="是">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2e5" edge="1" parent="1" source="p2a4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="p2a5" value="写规则">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2e6" edge="1" parent="st5" source="p2a5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="p2d3" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2e7" edge="1" parent="1" source="p2d3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="p2a6" value="是">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2e8" edge="1" parent="st7" source="p2a6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="p2a7" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2e9" edge="1" parent="st8" source="p2a7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="p2a8" value="结构化 Decision">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2e10" edge="1" parent="st8" source="p2a8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="p2a9" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2e11" edge="1" parent="1" source="p2a6v" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;dashed=1;" target="p2a7" value="证据（EvidenceBundle）">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="30" y="2102" />
+              <mxPoint x="30" y="2518" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="p2f1" edge="1" parent="g1" source="p2d1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#b85450;" target="p2x1" value="否">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2f2" edge="1" parent="g2" source="p2d2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#b85450;" target="p2x2" value="否">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2f3" edge="1" parent="g3" source="p2d3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#b85450;" target="p2x3" value="否">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+</mxfile>

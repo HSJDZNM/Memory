@@ -1,6 +1,6 @@
 # Phase 5 语言专项规则包：PEP 8「Imports」——import 必须位于文件顶部。
 #
-# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L271）§"Imports"：
+# 出处：docs/mirrors/python-pep-code-style/pep-8-python-code/index.md（L271）§"Imports"：
 #   "Imports are always put at the top of the file, just after any module comments and
 #    docstrings, and before module globals and constants."
 #   （同节「Module Level Dunder Names」补充：模块级 dunder 放在 docstring 之后、
@@ -22,5 +22,5 @@ rule:
 message: import 只能在文件顶部（模块注释与 docstring 之后、模块级代码之前）（Ruff E402；PEP 8「Imports」）。
 source:
   kind: standard
-  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  path: docs/mirrors/python-pep-code-style/pep-8-python-code/index.md
   note: PEP 8「Imports」写明 import 永远放在文件顶部；模块级 dunder 是唯一的例外次序说明。

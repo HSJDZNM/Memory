@@ -436,7 +436,7 @@ def readme_facts():
 
 def _manifest_facts():
     """从刚落盘的 manifest.json 读取本轮抓取实况（该文件在写 README 之前已写出）。"""
-    out = Path(__file__).resolve().parent.parent / "docs" / "dora-capabilities" / "manifest.json"
+    out = Path(__file__).resolve().parent.parent / "docs" / "mirrors" / "dora-capabilities" / "manifest.json"
     if not out.is_file():
         return []
     try:

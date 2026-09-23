@@ -46,5 +46,5 @@ rule:
 message: 禁止用 MD5/SHA-1 等弱哈希做安全用途，改用 SHA-256 及以上（Ruff S324/S303）。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/08_传输层、网络与数据保护/Transport_Layer_Security_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/08_传输层、网络与数据保护/Transport_Layer_Security_Cheat_Sheet.md
   note: '小节 "### Use Strong Cryptographic Hashing Algorithms"；Cryptographic Storage Cheat Sheet 不含 MD5/SHA-1 原文。'

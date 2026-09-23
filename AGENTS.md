@@ -7,7 +7,7 @@
 仓库已绑定 Python 技术栈（见下文），完成 Engineering Policy Platform 的 **Phase 0 至 Phase 8**；Phase 6 的第二真实 Agent 产品验证仍待外部环境，Phase 8 的真实模型作者（`ChangeAuthor` 端口的模型实现）同样未接入：
 
 - 可运行：根 `README.md` 中的安装、测试、CLI、Hook 自检、沙箱闭环、性能基线、检索索引与评测命令均已实际验证；
-- 有规则目录 `policies/`（**43 条规则**：5 条项目自订 + 38 条由 `docs/<mirror>/**` 的镜像原文提炼，
+- 有规则目录 `policies/`（**43 条规则**：5 条项目自订 + 38 条由 `docs/mirrors/<mirror>/**` 的镜像原文提炼，
   每条 `standard` 规则都带正反例夹具与 chunk 级溯源）、核心源码 `src/policy/`（models / context / scope / engine / loader / check）、
   dsh 适配器 `src/adapters/dsh/`（adapter / hooks / 进程内转发插件）、
   多 Agent 适配层 `src/adapters/`（models / base / runtime / conformance / loader / cli / json_adapter / event_adapter / dsh_adapter）、
@@ -17,43 +17,43 @@
   测试 `tests/{unit,contract,integration,security}` 与 CI `.github/workflows/phase-8.yml`；
 - Phase 1 的决策协议为 `SCHEMA_VERSION = "1.0"`，快照在 `tests/fixtures/decisions/`；
 - Phase 2 的 Hook 契约、脱敏事件 fixture 与失败关闭设计分别在 `src/adapters/dsh/README.md`、
-  `tests/fixtures/agent_events/dsh/` 与 `docs/engineering-policy-platform/phases/phase-2-dsh-adapter.md` 的实施记录里；
+  `tests/fixtures/agent_events/dsh/` 与 `docs/project/engineering-policy-platform/phases/phase-2-dsh-adapter.md` 的实施记录里；
   `tools/dsh_sandbox_loop.py` 在 dsh 缺失**或**沙箱禁止管道 stdio（Hook spawn EPERM）时按环境跳过
   （退出码 0 + 写明 reason/reproduce，见 README 第 7.1 节）；它绝不把"跑不了"记成 pass；
 - Phase 3 的摄取清单 `knowledge/corpus.yaml`、检索层 `src/retrieval/`（chunker / corpus / store / indexer /
   query / retriever / vector / context / cli）、固定评测集 `tests/fixtures/retrieval_eval/queries.yaml`、
-  基线脚本 `tools/retrieval_eval.py` 与实施记录见 `docs/engineering-policy-platform/phases/phase-3-retrieval.md`；
+  基线脚本 `tools/retrieval_eval.py` 与实施记录见 `docs/project/engineering-policy-platform/phases/phase-3-retrieval.md`；
   索引库是构建产物，落在 `.tmp/retrieval/`，可随时重建；
 - Phase 4 的受控执行层 `src/enforcement/`（models / registry / action / approvals / audit / ledger /
   precheck / executor / drivers / postcheck / trace / cli）、数据化工具注册表
   `registry/tool-registry.yaml` 与已审核哈希 `registry/tool-registry.approved.json`、
   dsh 侧桥接 `src/adapters/dsh/enforcement.py`、受控执行闭环 `tools/enforcement_loop.py`；
-  实施记录见 `docs/engineering-policy-platform/phases/phase-4-tool-enforcement.md`；
+  实施记录见 `docs/project/engineering-policy-platform/phases/phase-4-tool-enforcement.md`；
 - Phase 5 的验证器层 `src/validators/`（python_ast / depgraph / docstrings / selection / adapters /
   pipeline / cli）、证据协议 `src/policy/evidence.py` 与 checker 分派 `src/policy/checkers.py`、
   数据化的验证器注册表与项目档案 `validation/`（validators / project / test-layout / ruff.toml / mypy.ini / pytest.ini）、
   语言专项规则包 `policies/coding/` 与 `policies/testing/`、夹具项目与假工具
   `tests/fixtures/validators/`、验证器闭环 `tools/validator_loop.py`；
-  实施记录见 `docs/engineering-policy-platform/phases/phase-5-code-validators.md`；
+  实施记录见 `docs/project/engineering-policy-platform/phases/phase-5-code-validators.md`；
 - Phase 6 的规范事件 Schema 与能力声明模型 `src/adapters/models.py`、
   适配器协议与支持矩阵 `src/adapters/base.py`、
   多 Agent 运行时 `src/adapters/runtime.py`（命名空间隔离 / trace 来源校验 / 窗口熔断）、
   一致性套件 `src/adapters/conformance.py`、CLI `src/adapters/cli.py`、
   探针夹具 `tests/fixtures/agent_events/workspace/`、多 Agent 闭环 `tools/agent_loop.py`；
   当前只有 dsh 是真实产品接入，`generic-json` / `legacy-post-only` 是合成协议消费者；
-  实施记录见 `docs/engineering-policy-platform/phases/phase-6-multi-agent-adapters.md`；
+  实施记录见 `docs/project/engineering-policy-platform/phases/phase-6-multi-agent-adapters.md`；
 - Phase 7 的服务化层 `src/policy_api/`（models / errors / config / auth / services / runtime /
   timeout / idempotency / observability / ops / app / contract / cli / testing / probe）、
   部署数据与契约快照 `api/`（policy-api.yaml + openapi.json，说明见 `api/README.md`）、
   API 闭环 `tools/api_loop.py`、测试夹具 `tests/fixtures/api/`；
   **核心层不依赖 Web 框架**，只有 `policy_api` 的 HTTP 应用依赖 fastapi/uvicorn；
-  实施记录见 `docs/engineering-policy-platform/phases/phase-7-policy-api.md`；
+  实施记录见 `docs/project/engineering-policy-platform/phases/phase-7-policy-api.md`；
 - Phase 8 的编排层 `src/orchestration/`（models / errors / limits / checkpoint / approvals / client /
   tools / nodes / graph / engines / langgraph_engine / runtime / cli）、编排闭环
   `tools/orchestration_loop.py`、工具注册表新增的 `orchestrator` 段（含"改规则需人工审批"的
-  `orc.policy.edit`）、学习手册 `docs/learning/phase-8/`；
+  `orc.policy.edit`）、学习手册 `docs/project/learning/phase-8/`；
   **它是仓库里唯一导入工作流框架的地方**（只有 `langgraph_engine.py`，且构造引擎时才导入），
-  核心层从不导入它；实施记录见 `docs/engineering-policy-platform/phases/phase-8-langgraph-orchestration.md`。
+  核心层从不导入它；实施记录见 `docs/project/engineering-policy-platform/phases/phase-8-langgraph-orchestration.md`。
 
 **改动前先读 `README.md` 与实际的 `git ls-files`，不要假设未登记的目录或框架存在。**
 
@@ -266,7 +266,7 @@
     （`orchestrator` 段），改注册表必须重新审核；副作用之前先写"意图"并**立刻刷盘**
     （`NodeContext.commit`），恢复时发现"开工未结算"即 `side_effect_unknown` 交给人，
     既不重放也不假装成功；同一个幂等键重试不得产生第二次副作用（幂等跳过 + 平台台账两道闸）。
-40. **规范文档不会"自动"变成规则**：`docs/<mirror>/**` 首先是只读的追溯与检索语料，
+40. **规范文档不会"自动"变成规则**：`docs/mirrors/<mirror>/**` 首先是只读的追溯与检索语料，
     转化是一次**显式、可评审的提炼**。一条规则要上线必须同时满足：`source.kind ∈ {project-policy, standard}`
     且 `source.path` 指向**真实存在**的本地文件；`enforcement.checker` 是已实现的 6 个之一，
     且 `validation/validators.yaml` 里有验证器为它声明产证据；适用范围能用 6 个维度表达；
@@ -281,7 +281,7 @@
     `select` 的码要有规则归属——`tests/contract/test_validator_protocol.py` 的
     `test_ruff_codes_are_declared_and_selected_in_both_directions` 守住这条；**单向不一致都等于"规则静默失效"**。
     `type_check` 规则在装好 mypy 之前一律不启用（工具缺失 = 失败关闭，会让所有 Python 文件一次性判红）。
-    逐篇的转化判定与理由见 `docs/architecture/规则转化覆盖报告.md`，方法与七个台阶见 `规则文档转化为规则.md`。
+    逐篇的转化判定与理由见 `docs/project/architecture/规则转化覆盖报告.md`，方法与七个台阶见 `规则文档转化为规则.md`。
 
 ## 临时文件与产物
 
@@ -302,7 +302,7 @@
 
 ## 学习手册（每个阶段一个目录）
 
-每个阶段完成后在 `docs/learning/<phase>/` 下补齐四个文件：
+每个阶段完成后在 `docs/project/learning/<phase>/` 下补齐四个文件：
 
 ```text
 note.md            # 任务内容、对象清单与对象关系（手写）
@@ -317,10 +317,10 @@ README.md          # 怎么用、怎么维护、常见问题（手写）
   `tools/phase8_cells.py`**，由生成器在文件头导入——生成器里没有它们的副本；
 - 生成器会从两个工作目录各跑一遍全部代码单元，并断言示例退出码与文档里写过的 JSON 键名，
   任何不一致都会让生成失败，因此手册里的代码始终可运行、说明始终与输出一致；
-- 新增阶段时同步更新索引 `docs/learning/README.md`；
+- 新增阶段时同步更新索引 `docs/project/learning/README.md`；
 - **手册里打印表格一律用生成器注入的 `pad()`**（按显示宽度补位）：`f"{文本:<10}"` 数的是字符个数，
   中文在等宽字体里占 2 列，中英混排的列会被挤歪；自由文本（原因、许可、细节）放最后一列；
-- 提交前运行 `python tools/check_notebook.py docs/learning/*/walkthrough.ipynb` 校验结构。
+- 提交前运行 `python tools/check_notebook.py docs/project/learning/*/walkthrough.ipynb` 校验结构。
 
 ## 引入新技术栈时需要同步更新
 

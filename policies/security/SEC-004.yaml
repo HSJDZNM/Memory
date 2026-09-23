@@ -42,5 +42,5 @@ rule:
 message: 禁止硬编码口令/密钥/默认凭据，改从环境变量或 secrets manager 读取（Ruff S105/S106/S107）。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/07_令牌、联合身份与密码学/Cryptographic_Storage_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/07_令牌、联合身份与密码学/Cryptographic_Storage_Cheat_Sheet.md
   note: '小节 "## Key Storage"；口令与默认凭据的原文在 Django REST Framework Cheat Sheet "### API7:2019 Security Misconfiguration"。'

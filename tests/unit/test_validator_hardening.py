@@ -1,6 +1,6 @@
 """Phase 5 复核回归：独立复核发现的问题与它们的修复都钉在这里。
 
-每条用例对应 docs/engineering-policy-platform/reviews/post-phase-5-review.md 里的一个编号。
+每条用例对应 docs/project/engineering-policy-platform/reviews/post-phase-5-review.md 里的一个编号。
 共同点是：它们都是"看起来有保护、实际没有"或"依赖根本没被看见"的形态。
 """
 

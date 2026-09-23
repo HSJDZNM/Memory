@@ -51,5 +51,5 @@ rule:
 message: 不要通过 shell 执行外部命令（shell=True / os.system / 带通配符的 shell 调用）；改用内建库函数或参数列表形式的调用。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/02_输入验证、注入与文件处理/OS_Command_Injection_Defense_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/02_输入验证、注入与文件处理/OS_Command_Injection_Defense_Cheat_Sheet.md
   note: '小节 "### Defense Option 1: Avoid calling OS commands directly" 与 "## Code examples -> ### Java -> _Incorrect usage:_"。S605 的 error 级是项目政策（工具自身只给提示语气），S607 因出处不成立已被排除。'

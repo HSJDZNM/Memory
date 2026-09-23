@@ -29,7 +29,7 @@ def targets():
     """本次镜像的页面清单：PEP 8 / PEP 257 两个根文档，及其正文实际引用的文档。
 
     清单由根文档正文中的超链接逐一评估后确定（每个链接都实际抓取并阅读），
-    判断依据见 docs/python-pep-code-style/README.md 的「收录范围与取舍」。
+    判断依据见 docs/mirrors/python-pep-code-style/README.md 的「收录范围与取舍」。
     """
     peps = [
         ("pep-0008", "pep-8-python-code/index.md", "PEP 8 - Style Guide for Python Code",

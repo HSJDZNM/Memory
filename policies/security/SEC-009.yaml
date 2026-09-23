@@ -37,5 +37,5 @@ rule:
 message: 禁止使用 xml.etree / xml.sax / xml.dom 等不安全解析器，改用 defusedxml（Ruff S313-S318）。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/02_输入验证、注入与文件处理/XML_External_Entity_Prevention_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/02_输入验证、注入与文件处理/XML_External_Entity_Prevention_Cheat_Sheet.md
   note: '小节 "## Python"（模块 Vulnerable 对照表 + defusedxml 建议）。'

@@ -31,9 +31,9 @@ policy:
 datasets:
   - name: google-eng-practices
     title: Google Engineering Practices
-    mirror: docs/google-eng-practices
+    mirror: docs/mirrors/google-eng-practices
     license: CC BY 3.0
-    license_source: docs/google-eng-practices/LICENSE.txt
+    license_source: docs/mirrors/google-eng-practices/LICENSE.txt
     tier: guidance
     visibility: public
     entries:
@@ -42,9 +42,9 @@ datasets:
 
   - name: gitlab-code-review
     title: GitLab Code Review Guidelines
-    mirror: docs/gitlab-code-review
+    mirror: docs/mirrors/gitlab-code-review
     license: CC BY-SA 4.0
-    license_source: docs/gitlab-code-review/README.md
+    license_source: docs/mirrors/gitlab-code-review/README.md
     tier: guidance
     visibility: public
     entries:
@@ -54,9 +54,9 @@ datasets:
 
   - name: owasp-cheatsheets
     title: OWASP Cheat Sheet Series
-    mirror: docs/owasp-cheatsheets
+    mirror: docs/mirrors/owasp-cheatsheets
     license: CC BY-SA 4.0
-    license_source: docs/owasp-cheatsheets/LICENSE.txt
+    license_source: docs/mirrors/owasp-cheatsheets/LICENSE.txt
     tier: guidance
     visibility: public
     entries:
@@ -85,9 +85,9 @@ datasets:
 
   - name: python-pep-code-style
     title: Python PEP 8 / PEP 257
-    mirror: docs/python-pep-code-style
+    mirror: docs/mirrors/python-pep-code-style
     license: public domain（PEP 各篇 Copyright 声明）
-    license_source: docs/python-pep-code-style/LICENSE.md
+    license_source: docs/mirrors/python-pep-code-style/LICENSE.md
     tier: guidance
     visibility: public
     entries:
@@ -96,9 +96,9 @@ datasets:
 
   - name: dotnet-design-guidelines
     title: .NET Framework Design Guidelines
-    mirror: docs/dotnet-design-guidelines
+    mirror: docs/mirrors/dotnet-design-guidelines
     license: CC BY 4.0（上游 dotnet/docs；正文另含 Pearson Education 授权摘录声明）
-    license_source: docs/dotnet-design-guidelines/README.md
+    license_source: docs/mirrors/dotnet-design-guidelines/README.md
     tier: guidance
     visibility: public
     entries:
@@ -114,9 +114,9 @@ datasets:
   # 目录页本身也收录，便于回答"有哪些能力、各自属于哪个模型"。
   - name: dora-capabilities
     title: DORA Capability Model (Google Cloud DORA)
-    mirror: docs/dora-capabilities
+    mirror: docs/mirrors/dora-capabilities
     license: CC BY 4.0（Google LLC；站点页脚声明）
-    license_source: docs/dora-capabilities/README.md
+    license_source: docs/mirrors/dora-capabilities/README.md
     tier: guidance
     visibility: public
     entries:

@@ -2,7 +2,7 @@
 # N806 函数内变量、N815 类作用域变量、N816 全局变量：同一条原文在三个作用域的落点，
 # 合并在一条规则里，避免同一句要求被拆成三条互相引用不到的规则。
 #
-# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L772、L774；全局变量见 L764）§"Function and Variable Names"：
+# 出处：docs/mirrors/python-pep-code-style/pep-8-python-code/index.md（L772、L774；全局变量见 L764）§"Function and Variable Names"：
 #   "Variable names follow the same convention as function names."
 #   "mixedCase is allowed only in contexts where that’s already the prevailing style
 #    (e.g. threading.py), to retain backwards compatibility."
@@ -24,7 +24,7 @@ rule:
 message: 变量名不得大小写混排；请用小写加下划线（Ruff N806 / N815 / N816；PEP 8「Function and Variable Names」）。
 source:
   kind: standard
-  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  path: docs/mirrors/python-pep-code-style/pep-8-python-code/index.md
   note: >
     PEP 8 只对"已经普遍使用 mixedCase 的历史代码"（如 threading.py）开一个向后兼容口子；
     那属于既有库的内部一致性取舍，新建代码不适用，所以本规则按 warning 全量检查。

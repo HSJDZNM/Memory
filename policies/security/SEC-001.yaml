@@ -31,5 +31,5 @@ rule:
 message: 禁止用 eval()/exec() 执行动态代码，改用只解析数据的库（Ruff S307/S102）。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/12_编程语言与框架专项/Python/Django_REST_Framework_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/12_编程语言与框架专项/Python/Django_REST_Framework_Cheat_Sheet.md
   note: '小节 "### API8:2019 Injection -> #### RCE"；Django REST Framework (DRF) Cheat Sheet。'

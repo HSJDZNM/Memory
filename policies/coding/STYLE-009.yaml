@@ -1,6 +1,6 @@
 # Phase 5 语言专项规则包：PEP 8「Programming Recommendations」——类型比较用 isinstance。
 #
-# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L1008）§"Programming Recommendations"：
+# 出处：docs/mirrors/python-pep-code-style/pep-8-python-code/index.md（L1008）§"Programming Recommendations"：
 #   "Object type comparisons should always use isinstance() instead of comparing types directly:"
 #   同节 Correct 例子 "if isinstance(obj, int):"、Wrong 例子 "if type(obj) is type(1):"。
 id: STYLE-009
@@ -20,7 +20,7 @@ rule:
 message: 类型比较请改用 isinstance()；type() 相等比较会漏掉子类与鸭子类型（Ruff E721；PEP 8「Programming Recommendations」）。
 source:
   kind: standard
-  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  path: docs/mirrors/python-pep-code-style/pep-8-python-code/index.md
   note: >
     E721 覆盖 type(x) == type(y) 与 type(x) == SomeType；PEP 8 的 Wrong 例子
     "type(obj) is type(1)" 用的是 is，Ruff 新版本只对 == 形态报 E721，

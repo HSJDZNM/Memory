@@ -36,5 +36,5 @@ rule:
 message: 禁止关闭 TLS 证书校验（verify=False / 未校验的 SSL 上下文）（Ruff S501/S323）。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/15_移动与嵌入式安全/Mobile_Application_Security_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/15_移动与嵌入式安全/Mobile_Application_Security_Cheat_Sheet.md
   note: '小节 "## Network Communication -> ### 2. Use Secure Protocols"；Transport Layer Security Cheat Sheet 无等价祈使句。'

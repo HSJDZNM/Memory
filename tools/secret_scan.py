@@ -34,12 +34,12 @@ BINARY_SUFFIXES = {
 
 # 逐字复制上游原文的目录：镜像正文里的"示例密钥"不是本仓库的凭据。
 MIRRORED_PREFIXES = (
-    "docs/dora-capabilities/",
-    "docs/dotnet-design-guidelines/",
-    "docs/gitlab-code-review/",
-    "docs/google-eng-practices/",
-    "docs/owasp-cheatsheets/",
-    "docs/python-pep-code-style/",
+    "docs/mirrors/dora-capabilities/",
+    "docs/mirrors/dotnet-design-guidelines/",
+    "docs/mirrors/gitlab-code-review/",
+    "docs/mirrors/google-eng-practices/",
+    "docs/mirrors/owasp-cheatsheets/",
+    "docs/mirrors/python-pep-code-style/",
     "tools/owasp_cheatsheets/",
 )
 

@@ -224,7 +224,15 @@ def check_notebook_form() -> list[str]:
     """
 
     issues: list[str] = []
-    for path in sorted((ROOT / "docs" / "learning").glob("*/walkthrough.ipynb")):
+    notebooks = sorted((ROOT / "docs" / "project" / "learning").glob("*/walkthrough.ipynb"))
+    if not notebooks:
+        # 目录改层而检查器没跟着改，会让本检查"命中 0 个、判定一致"——静默失效正是本仓库最忌讳的失败形态，
+        # 所以这里显式报错，绝不把"一个都没查到"当成通过。
+        issues.append(
+            "docs/project/learning 下没有找到任何 */walkthrough.ipynb：检查器路径与实际目录不一致"
+            "（检查器不会静默通过一个空集合）"
+        )
+    for path in notebooks:
         relative = path.relative_to(ROOT).as_posix()
         try:
             document = json.loads(path.read_text(encoding="utf-8"))

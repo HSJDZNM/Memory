@@ -3,7 +3,7 @@
 import json, os, re, collections, datetime, shutil
 BT = chr(96); F = BT*3
 def c(x): return BT + str(x) + BT
-OUT = "docs/owasp-cheatsheets"
+OUT = "docs/mirrors/owasp-cheatsheets"
 st = json.load(open("_work/owasp-cheatsheets/build_state.json", encoding="utf-8"))
 meta = json.load(open("_work/owasp-cheatsheets/meta.json", encoding="utf-8"))
 tax = json.load(open("_work/owasp-cheatsheets/taxonomy.json", encoding="utf-8"))
@@ -157,7 +157,7 @@ A(""); A("---"); A("")
 A("## 四、判定与排除记录"); A("")
 A("爬取全部 122 个候选链接后逐篇阅读正文，**排除 4 篇**：它们不是安全指南正文，而是指向新位置的废弃占位页。"); A("")
 A("| 已废弃文档 | 抓取到的内容 | 迁移去向 | 处理 |"); A("| --- | --- | --- | --- |")
-u2p = {k: v.replace("docs/owasp-cheatsheets" + os.sep, "").replace(os.sep, "/") for k, v in st["url2path"].items()}
+u2p = {k: v.replace("docs/mirrors/owasp-cheatsheets" + os.sep, "").replace(os.sep, "/") for k, v in st["url2path"].items()}
 A("| Access Control Cheat Sheet | 「DEPRECATED: The Access Control cheatsheet has been deprecated.」（约 220 字符） | [Authorization Cheat Sheet](" +
   u2p["https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html"] + ") | 不保存 |")
 A("| TLS Cipher String Cheat Sheet | 「DEPRECATED: ... Please visit the Transport Layer Security Cheat Sheet instead.」（约 250 字符） | [Transport Layer Security Cheat Sheet](" +
@@ -189,7 +189,7 @@ A("python tools/owasp_cheatsheets/pipeline.py all")
 A("")
 A("  01_analyze.py   解析站点四个索引页 -> _work/owasp-cheatsheets/taxonomy.json")
 A("  02_fetch.py     抓取 122 篇文档 + 6 个索引页 -> _work/owasp-cheatsheets/{content/,meta.json}")
-A("  03_build.py     按层级写入 -> docs/owasp-cheatsheets/（并改写站内链接为相对路径）")
+A("  03_build.py     按层级写入 -> docs/mirrors/owasp-cheatsheets/（并改写站内链接为相对路径）")
 A("  04_index.py     生成 README/STRUCTURE/manifest/LICENSE，并统一换行与编码")
 A("  05_verify.py    校验链接完整性、编码、换行与 manifest 校验和")
 A(F)
@@ -303,7 +303,7 @@ B(F)
 B("")
 B("## 2. 与上游 URL 路径的关系")
 B("")
-B("仓库内既有的两份镜像（" + c("docs/google-eng-practices") + "、" + c("docs/gitlab-code-review") + "）遵循"
+B("仓库内既有的两份镜像（" + c("docs/mirrors/google-eng-practices") + "、" + c("docs/mirrors/gitlab-code-review") + "）遵循"
   "「本地目录与 URL 路径严格一一对应」。**本库是有意的例外**：本任务要求按安全领域做层级划分，"
   "因此物理目录按主题重排，不再等于上游 URL 路径。")
 B("")

@@ -1,6 +1,6 @@
 # Phase 5 语言专项规则包：PEP 8「Programming Recommendations」——禁止裸 except。
 #
-# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L901 / L910）§"Programming Recommendations"：
+# 出处：docs/mirrors/python-pep-code-style/pep-8-python-code/index.md（L901 / L910）§"Programming Recommendations"：
 #   "When catching exceptions, mention specific exceptions whenever possible instead of using
 #    a bare `except:` clause:"
 #   "A bare `except:` clause will catch SystemExit and KeyboardInterrupt exceptions, making
@@ -27,7 +27,7 @@ rule:
 message: 不要用裸 except；请写明具体异常类型，或至少写 except Exception（Ruff E722；PEP 8「Programming Recommendations」）。
 source:
   kind: standard
-  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  path: docs/mirrors/python-pep-code-style/pep-8-python-code/index.md
   note: >
     PEP 8 给出两个可放宽的场景（会打印/记录 traceback；清理后原样 raise），
     但 Ruff 只认第二个：裸 except 体里只有 `raise` 时不报 E722（实测），而

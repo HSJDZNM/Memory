@@ -19,5 +19,5 @@ rule:
 message: 公开对象必须有 docstring，说明它的职责与副作用。
 source:
   kind: standard
-  path: docs/python-pep-code-style/pep-257-docstrings/index.md
+  path: docs/mirrors/python-pep-code-style/pep-257-docstrings/index.md
   note: PEP 257 的检查对象集合由本文件的 targets 决定。

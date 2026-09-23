@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""检查 docs/architecture 的文风：概括性语言与精确描述性语言是否失衡。
+"""检查 docs/project/architecture 的文风：概括性语言与精确描述性语言是否失衡。
 
 用法：
 
@@ -7,7 +7,7 @@
 
 退出码：0 = 平衡；1 = 有失衡项（概括句过长 / 长句比例过高 / 术语墙 / 连续无标点 / 图上标签缺两层写法）。
 
-与 docs/architecture/术语与口径.md §7 一致，但**只检查散文**：
+与 docs/project/architecture/术语与口径.md §7 一致，但**只检查散文**：
 - 表格行与代码围栏不参与句子/长句/术语墙判定（它们本来就该密）；
 - 概括句取每个 H2 小节的第一段散文（跳过表格、围栏、标题、引用块）。
 """
@@ -19,7 +19,7 @@ import re
 import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-ARCH = ROOT / "docs/architecture"
+ARCH = ROOT / "docs/project/architecture"
 BT = chr(96)
 TOKEN = BT + "[^" + BT + "\n]+" + BT
 FENCE_OPEN = "^\\s*(" + BT * 3 + "|~~~)"

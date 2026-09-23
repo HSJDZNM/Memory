@@ -1,4 +1,4 @@
-"""生成阶段验收证据（对应 docs/.../testing/test-strategy.md 的证据格式）。
+"""生成阶段验收证据（对应 docs/project/engineering-policy-platform/testing/test-strategy.md 的证据格式）。
 
 用法：
 

@@ -33,5 +33,5 @@ rule:
 message: 异常必须被处理或上报；禁止 except-pass / except-continue 静默吞掉授权失败。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/06_授权与访问控制/Authorization_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/06_授权与访问控制/Authorization_Cheat_Sheet.md
   note: § Exit Safely when Authorization Checks Fail；Ruff S110/S112 只覆盖宽泛处理器里的 pass / continue。

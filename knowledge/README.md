@@ -31,7 +31,8 @@ python tools/phase_evidence.py                 # 把语料事实写进阶段证�
 
 ## 新增数据集
 
-1. 在 `docs/<mirror>/` 下准备镜像与 manifest.json（上游 URL、标题、sha256、字节数、抓取时间）；
-2. 在 `corpus.yaml` 里加一个 dataset：`name / title / mirror / license / license_source / tier / visibility / entries`；
+1. 在 `docs/mirrors/<镜像名>/` 下准备镜像与 manifest.json（上游 URL、标题、sha256、字节数、抓取时间）；
+   目录层级属于布局，**dataset 名（`name:`）是权限与溯源的稳定标识，不随目录改名**；
+2. 在 `corpus.yaml` 里加一个 dataset：`name / title / mirror / license / license_source / tier / visibility / entries`（`mirror` 写 `docs/mirrors/<镜像名>`）；
 3. 跑 `verify`（哈希、许可、条目）→ `index`（幂等重建）→ `retrieval_eval.py`（门槛是否仍达标）；
 4. 若新数据集进入固定评测集的期望文档，必须同时递增评测集 version 并更新阶段记录里的基线数字。

@@ -8,7 +8,7 @@ from conftest import REPO_ROOT
 
 pytestmark = pytest.mark.contract
 
-APP_JS = REPO_ROOT / "docs" / "engineering-policy-platform" / "designs" / "console" / "assets" / "app.js"
+APP_JS = REPO_ROOT / "docs" / "project" / "engineering-policy-platform" / "designs" / "console" / "assets" / "app.js"
 
 
 def test_console_never_derives_policy_decision_from_severity() -> None:

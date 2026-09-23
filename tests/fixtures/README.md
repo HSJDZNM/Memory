@@ -1,7 +1,7 @@
 # 测试夹具
 
 每一项都说明用途、预期结果、关联规则，以及是否包含敏感数据。
-根据[测试策略](../../docs/engineering-policy-platform/testing/test-strategy.md)，禁止加入真实凭据、用户数据或生产日志。
+根据[测试策略](../../docs/project/engineering-policy-platform/testing/test-strategy.md)，禁止加入真实凭据、用户数据或生产日志。
 
 ## 仓库内可执行示例（examples/）
 

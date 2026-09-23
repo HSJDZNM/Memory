@@ -46,5 +46,5 @@ rule:
 message: 禁止对不可信 URL 直接 urlopen，改为按 allowlist 校验主机后自行拼装请求（Ruff S310）。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/02_输入验证、注入与文件处理/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/02_输入验证、注入与文件处理/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.md
   note: '小节 "##### Application layer -> ###### URL"（Case 1）。'

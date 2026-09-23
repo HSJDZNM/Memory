@@ -1,6 +1,6 @@
 # Phase 5 语言专项规则包：PEP 257「One-line Docstrings」——单行摘要不得折行。
 #
-# 出处：docs/python-pep-code-style/pep-257-docstrings/index.md（L48、L61）§"One-line Docstrings"：
+# 出处：docs/mirrors/python-pep-code-style/pep-257-docstrings/index.md（L48、L61）§"One-line Docstrings"：
 #   "One-liners are for really obvious cases. They should really fit on one line."
 #   "The closing quotes are on the same line as the opening quotes. This looks better for
 #    one-liners."
@@ -22,5 +22,5 @@ rule:
 message: 单行 docstring 必须完整落在一行里（开闭三引号同一行）（Ruff D200；PEP 257「One-line Docstrings」）。
 source:
   kind: standard
-  path: docs/python-pep-code-style/pep-257-docstrings/index.md
+  path: docs/mirrors/python-pep-code-style/pep-257-docstrings/index.md
   note: D200 命中"内容只有一行、但闭合三引号被折到下一行"的写法，正是原文说的 closing quotes 位置问题。

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""校验 docs/owasp-cheatsheets：链接完整性、编码、换行、manifest 校验和。
+"""校验 docs/mirrors/owasp-cheatsheets：链接完整性、编码、换行、manifest 校验和。
 
 用法:
     python tools/owasp_cheatsheets/05_verify.py
@@ -11,7 +11,7 @@ import os
 import re
 import sys
 
-OUT = "docs/owasp-cheatsheets"
+OUT = "docs/mirrors/owasp-cheatsheets"
 BT = chr(96)
 LINK = re.compile(r"\[([^\]]*)\]\(\s*([^)\s]+?)(\s+\"[^\"]*\")?\s*\)")
 FENCE = re.compile("(?ms)^" + BT * 3 + r".*?^" + BT * 3)

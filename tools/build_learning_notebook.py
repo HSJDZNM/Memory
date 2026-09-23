@@ -1,9 +1,9 @@
-"""生成各阶段学习手册 notebook（docs/learning/<phase>/walkthrough.ipynb）。
+"""生成各阶段学习手册 notebook（docs/project/learning/<phase>/walkthrough.ipynb）。
 
 每个阶段一份 notebook，内容写在本文件的 PHASE_*_CELLS 里。为什么用脚本生成而不是手写
 .ipynb：手工编辑的 notebook 容易在合并时产生巨大 JSON diff。生成时顺带做三件事：
 
-1. 把全部代码单元导出为 docs/learning/<phase>/walkthrough.py，便于直接阅读与 git diff；
+1. 把全部代码单元导出为 docs/project/learning/<phase>/walkthrough.py，便于直接阅读与 git diff；
 2. 按顺序在独立命名空间里执行每个代码单元，任何异常都会让生成失败；
 3. 断言每个示例打印的退出码，并核对文档里写过的 JSON 键名与对象字段。
 
@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-LEARNING_DIR = REPO_ROOT / "docs" / "learning"
+LEARNING_DIR = REPO_ROOT / "docs" / "project" / "learning"
 PHASE_0_DIR = LEARNING_DIR / "phase-0"
 PHASE_1_DIR = LEARNING_DIR / "phase-1"
 PHASE_2_DIR = LEARNING_DIR / "phase-2"
@@ -191,7 +191,7 @@ scope:
     markdown(
         """### 这一段代码要做什么
 
-笔记本文件放在 `docs/learning/phase-0/` 里，而真正要 import 的代码在 `src/policy/` 里。
+笔记本文件放在 `docs/project/learning/phase-0/` 里，而真正要 import 的代码在 `src/policy/` 里。
 所以第一件事是把 `src/` 目录告诉 Python，让它能 `import policy`。
 顺手把这次要反复用的"规则集"加载一次，后面的单元直接复用，不重复读文件。
 
@@ -225,7 +225,7 @@ def find_repo_root(start: Path) -> Path:
 
 
 # Path.cwd() 是"当前工作目录"。如果从仓库根目录启动 notebook，它本身就能用于判断。
-NOTEBOOK_DIR = Path.cwd() if Path("policies").is_dir() else Path("docs/learning/phase-0")
+NOTEBOOK_DIR = Path.cwd() if Path("policies").is_dir() else Path("docs/project/learning/phase-0")
 REPO_ROOT = find_repo_root(NOTEBOOK_DIR.resolve())  # resolve() 把路径变成绝对路径
 SRC_DIR = REPO_ROOT / "src"  # 运算符 / 在这里表示拼接路径，不是除法
 
@@ -264,7 +264,7 @@ print("提示: 全部单元应在数秒内执行完；本单元应当立刻打�
 遇到这种情况，按顺序尝试：
 
 1. 在**普通** Jupyter / VS Code 里打开本 notebook；
-2. 或直接运行同内容的纯 Python 版本：`python docs/learning/phase-0/walkthrough.py`，
+2. 或直接运行同内容的纯 Python 版本：`python docs/project/learning/phase-0/walkthrough.py`，
    它按顺序执行每个单元并在进程内打印同样的结果；
 3. 或先用 `README.md` 里的 CLI 命令做最小验证。
 
@@ -610,7 +610,7 @@ for _ in range(3):
         """# 8. 反例与正例：退出码与人类可读输出
 
 # 把工作目录切到仓库根目录再调用：示例里的 examples/... 是仓库相对路径，
-# 如果 notebook 从别的目录启动（例如 docs/learning/phase-0），相对路径就找不到了。
+# 如果 notebook 从别的目录启动（例如 docs/project/learning/phase-0），相对路径就找不到了。
 # 这样写让本单元在任何打开方式下都得到同样的结论。
 REPO_ROOT_STR = str(REPO_ROOT)
 _previous_dir = os.getcwd()
@@ -796,7 +796,7 @@ Phase 0 的价值一半来自"做完了什么"，另一半来自"明确没做什
 
 ## 下一步
 
-按 docs/engineering-policy-platform/phases/ 的顺序，Phase 1 把这里的 PolicyContext 补全成
+按 docs/project/engineering-policy-platform/phases/ 的顺序，Phase 1 把这里的 PolicyContext 补全成
 完整的 Context / Scope / Severity / Decision 体系，并给每个决定附上"命中或跳过了哪些规则、为什么"的解释。
 本仓库的 Phase 1 已完成，继续读 [../phase-1/walkthrough.ipynb](../phase-1/walkthrough.ipynb) 即可。
 
@@ -892,7 +892,7 @@ Phase 1 有一条贯穿全篇的约定：**"规则是否相关"与"是否违规"
     markdown(
         """### 这一段代码要做什么
 
-笔记本放在 docs/learning/phase-1/，代码在 src/，性能基线脚本在 tools/。
+笔记本放在 docs/project/learning/phase-1/，代码在 src/，性能基线脚本在 tools/。
 所以先把这两个目录告诉 Python，再加载规则集，后面所有单元都复用这一份。
 
 与 Phase 0 相比多导入两个模块：context（规范化器）与 scope（范围匹配器）。"""
@@ -914,7 +914,7 @@ def find_repo_root(start: Path) -> Path:
     return Path.cwd()
 
 
-NOTEBOOK_DIR = Path.cwd() if Path("policies").is_dir() else Path("docs/learning/phase-1")
+NOTEBOOK_DIR = Path.cwd() if Path("policies").is_dir() else Path("docs/project/learning/phase-1")
 REPO_ROOT = find_repo_root(NOTEBOOK_DIR.resolve())
 
 # src/ 放核心库，tools/ 放仓库脚本（本手册最后要用 tools/policy_bench.py 跑基线）。
@@ -1808,7 +1808,7 @@ dsh 把退出码 1、崩溃、被超时杀掉都当作"非阻断失败"——**�
     markdown(
         """### 这一段代码要做什么
 
-笔记本放在 docs/learning/phase-2/，代码在 src/adapters/dsh/。先找到仓库根目录、
+笔记本放在 docs/project/learning/phase-2/，代码在 src/adapters/dsh/。先找到仓库根目录、
 把 src/ 告诉 Python，再准备一个本次专用的临时工作区：
 
 - 所有写盘动作都落在仓库的 `.tmp/learning/<uuid>/` 下（仓库约定：临时文件只写 `.tmp/`，
@@ -1839,7 +1839,7 @@ def find_repo_root(start):
 
 # Path.cwd() 是当前工作目录：从仓库根启动时它本身就是仓库根，
 # 从 notebook 所在目录启动时靠 find_repo_root 往上找。
-NOTEBOOK_DIR = Path.cwd() if Path("policies").is_dir() else Path("docs/learning/phase-2")
+NOTEBOOK_DIR = Path.cwd() if Path("policies").is_dir() else Path("docs/project/learning/phase-2")
 REPO_ROOT = find_repo_root(NOTEBOOK_DIR.resolve())
 
 # src/ 放核心库（policy）与适配器（adapters.dsh）；两个工作目录下都能 import。
@@ -2929,8 +2929,8 @@ print("写成 edit|write 会让新增工具根本进不了 Hook，等于没有�
         """**小结**：手册到这里结束。如果只记一句话，记这句：
 **策略层的价值不在于"告诉模型该怎么做"，而在于"在工具执行之前，它说了不算的时候还能拦住"。**
 
-想继续往下读：Phase 3 的检索在 docs/learning/phase-3/，Phase 4 的受控执行在
-docs/learning/phase-4/（同一份 dsh 事件在受控链路里长什么样，Phase 4 手册的单元 9 与 11 有完整演示）。"""
+想继续往下读：Phase 3 的检索在 docs/project/learning/phase-3/，Phase 4 的受控执行在
+docs/project/learning/phase-4/（同一份 dsh 事件在受控链路里长什么样，Phase 4 手册的单元 9 与 11 有完整演示）。"""
     ),
 ]
 
@@ -3001,7 +3001,7 @@ Phase 3 有一条贯穿全篇的约定：**检索结果是不可信数据**。�
     markdown(
         """### 这一段代码要做什么
 
-笔记本放在 `docs/learning/phase-3/`，代码在 `src/retrieval/`。先找到仓库根目录、
+笔记本放在 `docs/project/learning/phase-3/`，代码在 `src/retrieval/`。先找到仓库根目录、
 把 `src/` 与 `tools/` 告诉 Python，再准备本次专用的临时工作区：
 
 - 所有写盘动作都落在 `.tmp/learning/` 下（仓库约定：临时文件只写 `.tmp/`，
@@ -3440,7 +3440,7 @@ print("索引库连接已关闭；临时目录由 python tools/cleanup.py 统一
     markdown(
         """## 接下来读什么
 
-- 阶段设计与实施记录：`docs/engineering-policy-platform/phases/phase-3-retrieval.md`
+- 阶段设计与实施记录：`docs/project/engineering-policy-platform/phases/phase-3-retrieval.md`
 - 语料与词表的维护方式：`knowledge/README.md`
 - 评测集与夹具说明：`tests/fixtures/retrieval_corpus/README.md`
 - 基线数字与阶段证据：`.tmp/artifacts/phase-3-retrieval-baseline.json`、
@@ -3529,7 +3529,7 @@ Phase 4 有一条贯穿全篇的约定：**执行权与审批权分开**——�
     markdown(
         """### 这一段代码要做什么
 
-笔记本放在 `docs/learning/phase-4/`，代码在 `src/enforcement/`。先找到仓库根目录、
+笔记本放在 `docs/project/learning/phase-4/`，代码在 `src/enforcement/`。先找到仓库根目录、
 把 `src/` 与 `tools/` 告诉 Python，再准备本次专用的临时工作区：
 
 - 所有写盘动作都落在 `.tmp/learning/` 下（仓库约定：临时文件只写 `.tmp/`）；
@@ -4905,7 +4905,7 @@ print("临时目录由 python tools/cleanup.py 统一清理；它只动 .tmp/，
     markdown(
         """## 接下来读什么
 
-- 阶段设计与实施记录：`docs/engineering-policy-platform/phases/phase-4-tool-enforcement.md`
+- 阶段设计与实施记录：`docs/project/engineering-policy-platform/phases/phase-4-tool-enforcement.md`
 - 工具注册表与审核流程：`registry/tool-registry.yaml`、
   `python -m enforcement.cli registry --verify`
 - dsh 侧接线（PreToolUse / PostToolUse）：`src/adapters/dsh/enforcement.py`、
@@ -5867,7 +5867,7 @@ import sys
 import uuid
 from pathlib import Path
 
-# 手册要能从两个工作目录跑：仓库根目录，以及 docs/learning/phase-5/。
+# 手册要能从两个工作目录跑：仓库根目录，以及 docs/project/learning/phase-5/。
 _candidate = Path.cwd()
 REPO_ROOT = _candidate
 while not (REPO_ROOT / "src" / "policy").is_dir() and REPO_ROOT != REPO_ROOT.parent:
@@ -6324,7 +6324,7 @@ print("小结：证据不足、路径越界、注册表读不到都不会给出�
 
 相关文件：
 
-- 阶段设计与实施记录：`docs/engineering-policy-platform/phases/phase-5-code-validators.md`
+- 阶段设计与实施记录：`docs/project/engineering-policy-platform/phases/phase-5-code-validators.md`
 - 证据协议与 checker 分派：`src/policy/evidence.py`、`src/policy/checkers.py`
 - 验证器实现：`src/validators/`（python_ast / depgraph / docstrings / selection / adapters / pipeline / cli）
 - 数据：`validation/validators.yaml`、`validation/project.yaml`、`validation/test-layout.yaml`、工具配置

@@ -4,7 +4,7 @@ import json, os, re, shutil, datetime, collections
 
 BT = chr(96); FENCE = BT * 3
 SRC = "_work/owasp-cheatsheets/content"
-OUT = "docs/owasp-cheatsheets"
+OUT = "docs/mirrors/owasp-cheatsheets"
 TODAY = datetime.date.today().isoformat()
 
 meta = json.load(open("_work/owasp-cheatsheets/meta.json", encoding="utf-8"))

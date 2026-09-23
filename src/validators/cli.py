@@ -116,7 +116,7 @@ def _git_changed(ref: str, anchor: Path) -> Tuple[str, ...]:
     import subprocess
 
     # -c core.quotepath=false：git 默认会把非 ASCII 路径 C 引号转义成
-    # "docs/architecture/\344\275\277..."，得到的是**不可用**的路径，
+    # "docs/project/architecture/\344\275\277..."，得到的是**不可用**的路径，
     # 而仓库自己的文档目录就是中文名（policy.models.normalize_repo_path 也允许非 ASCII）。
     # 只影响这一次调用，不改用户的 git 配置。
     completed = subprocess.run(

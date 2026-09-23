@@ -1,7 +1,7 @@
 # Phase 5 语言专项规则包：PEP 8「Imports」——一行只导入一个模块。
 # 证据来自 tool.ruff 的诊断码归属：哪条诊断属于哪条规则由规则数据决定，不由工具决定。
 #
-# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L248）§"Imports"：
+# 出处：docs/mirrors/python-pep-code-style/pep-8-python-code/index.md（L248）§"Imports"：
 #   "Imports should usually be on separate lines:"
 #   同节紧随其后的 # Wrong 例子即 "import sys, os"。
 id: STYLE-003
@@ -21,5 +21,5 @@ rule:
 message: 一行只能导入一个模块，请把同一行的 import 拆成多行（Ruff E401；PEP 8「Imports」）。
 source:
   kind: standard
-  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  path: docs/mirrors/python-pep-code-style/pep-8-python-code/index.md
   note: PEP 8「Imports」首条即 import 通常应各占一行，Wrong 例子就是 import sys, os。

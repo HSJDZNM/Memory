@@ -42,5 +42,5 @@ rule:
 message: 禁止用 random 模块生成密钥/会话 ID/令牌等安全用途，改用 secrets（Ruff S311）。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/07_令牌、联合身份与密码学/Cryptographic_Storage_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/07_令牌、联合身份与密码学/Cryptographic_Storage_Cheat_Sheet.md
   note: '小节 "### Secure Random Number Generation"（含 Python 的 random() vs secrets() 对照行）。'

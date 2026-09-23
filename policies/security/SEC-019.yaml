@@ -23,5 +23,5 @@ rule:
 message: 服务必须绑定确切的内部接口（如 127.0.0.1），禁止 0.0.0.0。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/02_输入验证、注入与文件处理/NoSQL_Security_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/02_输入验证、注入与文件处理/NoSQL_Security_Cheat_Sheet.md
   note: § Network & Transport Security；Ruff S104 只识别字面量 0.0.0.0。

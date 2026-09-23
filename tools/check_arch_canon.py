@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""检查 docs/architecture 的图 / 文 / 口径表是否三处同口径，以及图的包含关系是否成立。
+"""检查 docs/project/architecture 的图 / 文 / 口径表是否三处同口径，以及图的包含关系是否成立。
 
 用法：
 
     python tools/check_arch_canon.py
 
 退出码：0 = 三处同口径且包含关系成立；1 = 有不一致（逐条打印）。
-它对应 docs/architecture/README.md 的「改图 / 改文 / 改口径必须三处同改」硬规则。
+它对应 docs/project/architecture/README.md 的「改图 / 改文 / 改口径必须三处同改」硬规则。
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import urllib.parse
 from collections import defaultdict
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-ARCH = ROOT / "docs/architecture"
+ARCH = ROOT / "docs/project/architecture"
 
 CANON_LAYERS = [
     ("① 消费方", "消费方"),
@@ -116,7 +116,7 @@ def main() -> int:
             problems.append("图/文都未出现实测数字：%s" % number)
     canon_file = ARCH / "术语与口径.md"
     if not canon_file.is_file():
-        problems.append("缺少口径表：docs/architecture/术语与口径.md")
+        problems.append("缺少口径表：docs/project/architecture/术语与口径.md")
     else:
         canon_text = canon_file.read_text(encoding="utf-8")
         for section in ("分层", "编号", "数字", "核对"):

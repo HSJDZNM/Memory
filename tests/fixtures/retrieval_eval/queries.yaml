@@ -1,6 +1,6 @@
 # Phase 3 固定评测集（版本 2）
 #
-# 来源：docs/engineering-policy-platform/02-repository-data-sources.md#评测查询集。
+# 来源：docs/project/engineering-policy-platform/02-repository-data-sources.md#评测查询集。
 # 这份文件是**评测资产**，不是"为了让基线好看"的参数：查询、期望文档与门槛一起版本化，
 # 改动它必须同时更新 version 并在阶段记录里说明（旧基线与新基线不可直接比较）。
 #

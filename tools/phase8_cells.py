@@ -6,7 +6,7 @@
 
     python tools/build_learning_notebook.py --phase phase-8
 
-生成器会从两个工作目录（仓库根与 docs/learning/phase-8/）各跑一遍全部代码单元，
+生成器会从两个工作目录（仓库根与 docs/project/learning/phase-8/）各跑一遍全部代码单元，
 并核对这里写过的结构断言。
 
 本阶段**不使用 exit_code_markers**：手册里没有 CLI 退出码——编排层的结论是结构化的
@@ -97,11 +97,11 @@ Agent 之后，上面再盖一层"有状态、可循环、可恢复"的工作流
   其余小节只用不依赖第三方框架的参考引擎；
 - **不碰仓库真实文件**：所有演示产物写在 .tmp/learning-phase-8/ 下（演示工作区、
   checkpoint、审批记录），而且第一个代码单元先清理——这份手册会被
-  **从两个工作目录各跑一遍**（仓库根与 docs/learning/phase-8/），临时目录必须每轮从零开始。
+  **从两个工作目录各跑一遍**（仓库根与 docs/project/learning/phase-8/），临时目录必须每轮从零开始。
 
     $env:PYTHONPATH = 'src'
-    jupyter lab docs/learning/phase-8/walkthrough.ipynb   # 交互式阅读
-    python docs/learning/phase-8/walkthrough.py           # 纯 Python 版，直接看输出
+    jupyter lab docs/project/learning/phase-8/walkthrough.ipynb   # 交互式阅读
+    python docs/project/learning/phase-8/walkthrough.py           # 纯 Python 版，直接看输出
 
 第一个代码单元的末尾会多出一小段生成器追加的表格工具函数（pad / display_width）：
 中英混排的表格必须按**显示宽度**补位——f-string 的宽度写法数的是字符个数，
@@ -130,7 +130,7 @@ def find_repo_root(start):
 
 
 REPO_ROOT = find_repo_root(Path.cwd())
-NOTEBOOK_DIR = REPO_ROOT / 'docs' / 'learning' / 'phase-8'
+NOTEBOOK_DIR = REPO_ROOT / 'docs' / 'project' / 'learning' / 'phase-8'
 # 仓库不把 src 装进 site-packages：import policy / orchestration 全靠这条路径。
 for extra in (REPO_ROOT / 'src', REPO_ROOT / 'tools'):
     if str(extra) not in sys.path:
@@ -1322,7 +1322,7 @@ print('小结：终态由失败码查表决定，节点与引擎都不许自己�
     _markdown("""
 ## 接下来读什么
 
-- 阶段设计与实施记录：docs/engineering-policy-platform/phases/phase-8-langgraph-orchestration.md
+- 阶段设计与实施记录：docs/project/engineering-policy-platform/phases/phase-8-langgraph-orchestration.md
 - 编排层总览与恢复语义：src/orchestration/README.md
 - 状态与节点契约：src/orchestration/models.py、nodes.py、graph.py、limits.py、errors.py
 - checkpoint / 审批 / 端口：src/orchestration/checkpoint.py、approvals.py、client.py、tools.py

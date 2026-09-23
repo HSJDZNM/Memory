@@ -270,5 +270,5 @@ Phase 4 之后，受控工具（写类 + 高权限执行类）在 Hook 里多走
     # 真实沙箱闭环（受控临时项目，不连接生产仓库与真实凭据）
     dsh --profile headless --patch <patch.yml> "用 edit 工具修改 src/shop/order_controller.py"
 
-沙箱闭环的完整步骤、断言与观测结果见 docs/engineering-policy-platform/phases/phase-2-dsh-adapter.md
+沙箱闭环的完整步骤、断言与观测结果见 docs/project/engineering-policy-platform/phases/phase-2-dsh-adapter.md
 的"实施记录"一节。

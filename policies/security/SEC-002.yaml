@@ -38,5 +38,5 @@ rule:
 message: 禁止对不可信数据做 pickle/marshal 反序列化，改用 JSON 等纯数据格式（Ruff S301/S302）。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/02_输入验证、注入与文件处理/Deserialization_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/02_输入验证、注入与文件处理/Deserialization_Cheat_Sheet.md
   note: '小节 "### Python -> #### Clear-box Review"；marshal 的依据是 "## What is Deserialization" 的同类判断。'

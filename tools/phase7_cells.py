@@ -5,7 +5,7 @@
 
     python tools/build_learning_notebook.py --phase phase-7
 
-生成器会从两个工作目录（仓库根与 docs/learning/phase-7/）各跑一遍全部代码单元，
+生成器会从两个工作目录（仓库根与 docs/project/learning/phase-7/）各跑一遍全部代码单元，
 并核对这里写过的结构断言。
 
 本阶段**不使用 exit_code_markers**：Phase 7 是 HTTP / 进程内调用，没有 CLI 退出码
@@ -84,13 +84,13 @@ PHASE_7_CELLS: list[tuple[str, str]] = [
 - **不需要安装 src/**：下面第一个代码单元自己把 src/ 与 tools/ 加进 sys.path；
 - **不需要起服务、不需要网络**：第 7 节用进程内调用助手 policy_api.testing.call；
 - **不碰仓库真实文件**：所有演示产物写在 .tmp/learning-phase-7/ 下，而且每个代码单元
-  开始前先清理——这份手册会被**从两个工作目录各跑一遍**（仓库根与 docs/learning/phase-7/），
+  开始前先清理——这份手册会被**从两个工作目录各跑一遍**（仓库根与 docs/project/learning/phase-7/），
   临时目录因此必须每轮从零开始。
 
 ```powershell
 $env:PYTHONPATH = 'src'
-jupyter lab docs/learning/phase-7/walkthrough.ipynb   # 交互式阅读
-python docs/learning/phase-7/walkthrough.py           # 纯 Python 版，直接看输出
+jupyter lab docs/project/learning/phase-7/walkthrough.ipynb   # 交互式阅读
+python docs/project/learning/phase-7/walkthrough.py           # 纯 Python 版，直接看输出
 ```
 
 第一个代码单元的末尾会多出一小段生成器追加的表格工具函数（pad / display_width）：
@@ -118,7 +118,7 @@ def find_repo_root(start):
 
 
 REPO_ROOT = find_repo_root(Path.cwd())
-NOTEBOOK_DIR = REPO_ROOT / 'docs' / 'learning' / 'phase-7'
+NOTEBOOK_DIR = REPO_ROOT / 'docs' / 'project' / 'learning' / 'phase-7'
 # 仓库不把 src 装进 site-packages：import policy 与 policy_api 全靠这条路径。
 for extra in (REPO_ROOT / 'src', REPO_ROOT / 'tools'):
     if str(extra) not in sys.path:
@@ -622,7 +622,7 @@ print('小结：判定仍然只有 policy.engine.evaluate 一条路径；API 与
 - 观测日志**不可写就失败关闭**（503 audit_unavailable）：决定记不下来，就不返回决定；
 - **一个已知的实现缺陷**（手册照实显示、不做绕过）：租户的 validators 是配置里的相对
   路径，而它由加载方按**进程工作目录**解析；租户的其余路径都按 --root 锚定，只有它漏了。
-  于是从仓库根启动时 readiness 是 ready，从 docs/learning/phase-7/ 启动时同一个租户
+  于是从仓库根启动时 readiness 是 ready，从 docs/project/learning/phase-7/ 启动时同一个租户
   会被如实报成"验证器不可服务"——readiness 没有说谎，但配置的锚定规则被破坏了一处；
 - seal_audit 把摘要链末值封成可对外发布的锚，verify_seal 检查日志是否被动过。
   它是**摘要链不是防篡改日志**：锚必须放到日志写不到的地方才有意义。
@@ -662,7 +662,7 @@ for tenant_id, name, detail in readiness_failures:
 if ('fixture-shop', 'validators') in readiness_failed_checks:
     print('   说明：租户 fixture-shop 的 validators 是配置里的**相对路径**')
     print('   （validation/validators.yaml），而它由加载方按**进程工作目录**解析；')
-    print('   从仓库根启动时能解析，从 docs/learning/phase-7/ 启动时解析不到。')
+    print('   从仓库根启动时能解析，从 docs/project/learning/phase-7/ 启动时解析不到。')
     print('   这是实现里的一个真实缺陷（租户的其余路径都按 --root 锚定，只有 validators 漏了），')
     print('   手册照实显示它，而不是改配置把它绕过去。')
 print()
@@ -815,7 +815,7 @@ print('小结：超时 504、忙碌 503、依赖不可用 503、审计不可写 
 
 相关文件：
 
-- 阶段设计与实施记录：docs/engineering-policy-platform/phases/phase-7-policy-api.md
+- 阶段设计与实施记录：docs/project/engineering-policy-platform/phases/phase-7-policy-api.md
 - DTO 与错误码：src/policy_api/models.py、src/policy_api/errors.py
 - 配置、认证与租户装配：src/policy_api/config.py、auth.py、services.py
 - 运行时：src/policy_api/runtime.py（认证 -> 幂等 -> 预算 -> 分派 -> 观测）、

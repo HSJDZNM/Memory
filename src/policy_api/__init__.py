@@ -1,6 +1,6 @@
 """Phase 7：Policy API —— 把已经稳定的核心能力服务化。
 
-设计边界（对应 docs/engineering-policy-platform/phases/phase-7-policy-api.md）：
+设计边界（对应 docs/project/engineering-policy-platform/phases/phase-7-policy-api.md）：
 
 1. **API 是传输边界，不是第二份业务逻辑**：判定仍由 `policy.engine.evaluate` 做，
    检索仍由 `retrieval` 做，证据仍由 `validators.pipeline` 产出。本包只做

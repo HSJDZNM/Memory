@@ -1,6 +1,6 @@
 # Phase 5 语言专项规则包：PEP 8「Programming Recommendations」——与 True / False 比较。
 #
-# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L1039）§"Programming Recommendations"：
+# 出处：docs/mirrors/python-pep-code-style/pep-8-python-code/index.md（L1039）§"Programming Recommendations"：
 #   "Don’t compare boolean values to True or False using `==`:"（紧随其后标为 Worse 的是
 #    "if greeting is True:"）。
 id: STYLE-007
@@ -20,7 +20,7 @@ rule:
 message: 不要把布尔值与 True / False 用 == / != 比较，直接判断该布尔值本身（Ruff E712；PEP 8「Programming Recommendations」）。
 source:
   kind: standard
-  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  path: docs/mirrors/python-pep-code-style/pep-8-python-code/index.md
   note: >
     E712 默认只覆盖 == / !=；PEP 8 同节还写了更糟的 `if greeting is True:`，
     但 validation/ruff.toml 没有启用对应码位（E712 的 strict 检查属于 preview），故不在本规则范围内。

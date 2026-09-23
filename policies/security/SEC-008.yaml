@@ -12,7 +12,7 @@
 #    even if SQL commands are inserted by an attacker."（镜像 L48）
 # 措辞更正：这里原先引的是 "Prepared statements ensure that an attacker is not able to change
 # the intent of a query …" 并标成"同文档"。复查实测该措辞在本 source.path 里 **0 命中**；全镜像
-# 唯一逐字命中在另一篇文档 docs/owasp-cheatsheets/02_输入验证、注入与文件处理/
+# 唯一逐字命中在另一篇文档 docs/mirrors/owasp-cheatsheets/02_输入验证、注入与文件处理/
 # Injection_Prevention_Cheat_Sheet.md L61。本小节确实存在（L46），只是措辞如上——引文与出处
 # 必须同时对上，否则"溯源"是假的。
 #
@@ -40,5 +40,5 @@ rule:
 message: 禁止拼接 SQL 字符串，改用参数化查询（占位符 + 参数）（Ruff S608）。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/02_输入验证、注入与文件处理/SQL_Injection_Prevention_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/02_输入验证、注入与文件处理/SQL_Injection_Prevention_Cheat_Sheet.md
   note: '小节 "## What Is a SQL Injection Attack?" 与 "### Defense Option 1: Prepared Statements"。'

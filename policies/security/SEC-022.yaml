@@ -27,5 +27,5 @@ rule:
 message: 禁止开启 logging.config.listen 远程改写日志配置；配置必须来自应用内部或变更管理。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/10_日志、监控与错误处理/Logging_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/10_日志、监控与错误处理/Logging_Cheat_Sheet.md
   note: § Customizable logging；Ruff S612 只识别 logging.config.listen 这一处确定性写法。

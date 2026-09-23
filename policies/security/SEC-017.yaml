@@ -29,5 +29,5 @@ rule:
 message: 请用 logging.getLogger(__name__) 得到的模块 logger，不要直接调用根 logger。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/10_日志、监控与错误处理/Logging_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/10_日志、监控与错误处理/Logging_Cheat_Sheet.md
   note: § Event attributes（when/where/who/what 与 Code location）；Ruff LOG015 提供确定性证据，但它只认顶层 logging.<level>() 调用，无名称的 getLogger 不在证据范围内；本条定 warning 的理由见文件头（丢的是 logger 名，不是 Code location）。

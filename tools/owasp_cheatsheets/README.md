@@ -1,7 +1,7 @@
 # OWASP 代码安全指南库：抓取与归档流水线
 
 从 OWASP Cheat Sheet Series 的 Secure Code Review Cheat Sheet 出发，抓取全部候选指南，
-逐篇判定取舍，并按安全领域层级化归档到 `docs/owasp-cheatsheets/`。
+逐篇判定取舍，并按安全领域层级化归档到 `docs/mirrors/owasp-cheatsheets/`。
 
 ## 用法
 
@@ -14,8 +14,8 @@
 | --- | --- | --- |
 | `01_analyze.py` | 解析站点四个索引页，建立交叉引用 | _work/owasp-cheatsheets/taxonomy.json |
 | `02_fetch.py` | 抓取 122 篇候选文档 + 6 个索引页 | _work/owasp-cheatsheets/content/、meta.json |
-| `03_build.py` | 按层级写入，改写站内链接为相对路径 | docs/owasp-cheatsheets/ |
-| `04_index.py` | 生成 README / STRUCTURE / manifest / LICENSE，统一换行与编码 | docs/owasp-cheatsheets/ |
+| `03_build.py` | 按层级写入，改写站内链接为相对路径 | docs/mirrors/owasp-cheatsheets/ |
+| `04_index.py` | 生成 README / STRUCTURE / manifest / LICENSE，统一换行与编码 | docs/mirrors/owasp-cheatsheets/ |
 | `05_verify.py` | 校验链接、编码、换行与 manifest 校验和 | 退出码 |
 
 中间产物位于 `_work/owasp-cheatsheets/`，可随时删除后重跑；`_work/` 不入库。
@@ -35,7 +35,7 @@ Windows 下 asyncio 子进程依赖命名管道，Playwright 驱动在受限沙�
 
 **与 mirror_docs.py 的关系。** 该引擎的模型是「本地目录与 URL 路径严格一一对应」，
 而本库按任务要求做了主题重排，二者模型不同，故单独成一套流水线；
-差异与代价记录在 `docs/owasp-cheatsheets/STRUCTURE.md` 第 2 节。
+差异与代价记录在 `docs/mirrors/owasp-cheatsheets/STRUCTURE.md` 第 2 节。
 
 ## 文件
 

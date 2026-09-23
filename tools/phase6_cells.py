@@ -74,7 +74,7 @@ PHASE_6_CELLS: list[tuple[str, str]] = [
     _code("""
         # 0. 起步：定位仓库、准备规则与三个 Adapter
 
-        # 手册可能从仓库根启动，也可能从 docs/learning/phase-6/ 启动：向上找到 pyproject.toml 为止。
+        # 手册可能从仓库根启动，也可能从 docs/project/learning/phase-6/ 启动：向上找到 pyproject.toml 为止。
         import json
         import shutil
         import sys
@@ -91,7 +91,7 @@ PHASE_6_CELLS: list[tuple[str, str]] = [
 
 
         REPO_ROOT = find_repo_root(Path.cwd())
-        NOTEBOOK_DIR = REPO_ROOT / 'docs' / 'learning' / 'phase-6'
+        NOTEBOOK_DIR = REPO_ROOT / 'docs' / 'project' / 'learning' / 'phase-6'
         # 让解释器找到 src/ 与 tools/：仓库不把 src 装进 site-packages，全靠这条路径。
         for extra in (REPO_ROOT / 'src', REPO_ROOT / 'tools'):
             if str(extra) not in sys.path:
@@ -677,7 +677,7 @@ PHASE_6_CELLS: list[tuple[str, str]] = [
 
         相关文件：
 
-        - 阶段设计与实施记录：docs/engineering-policy-platform/phases/phase-6-multi-agent-adapters.md
+        - 阶段设计与实施记录：docs/project/engineering-policy-platform/phases/phase-6-multi-agent-adapters.md
         - 协议与能力声明：src/adapters/models.py、src/adapters/base.py
         - 运行时与套件：src/adapters/runtime.py、src/adapters/conformance.py
         - 三种协议实现：src/adapters/dsh_adapter.py、event_adapter.py、json_adapter.py

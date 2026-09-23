@@ -1,6 +1,6 @@
 # Phase 5 语言专项规则包：PEP 8「Function and Variable Names」——参数名小写。
 #
-# 出处：docs/python-pep-code-style/pep-8-python-code/index.md（L772；首参与保留字见 L778-L782）§"Function and Variable Names"：
+# 出处：docs/mirrors/python-pep-code-style/pep-8-python-code/index.md（L772；首参与保留字见 L778-L782）§"Function and Variable Names"：
 #   "Variable names follow the same convention as function names."
 #   即 "Function names should be lowercase, with words separated by underscores as necessary to
 #    improve readability."；§"Function and Method Arguments" 进一步规定首参与保留字的写法：
@@ -34,5 +34,5 @@ rule:
 message: 参数名请用小写（Ruff N803；PEP 8「Function and Variable Names」）。首参 self/cls 与保留字尾下划线不在本条覆盖范围内。
 source:
   kind: standard
-  path: docs/python-pep-code-style/pep-8-python-code/index.md
+  path: docs/mirrors/python-pep-code-style/pep-8-python-code/index.md
   note: 参数属于变量，PEP 8 明写变量沿用函数命名约定；首参与保留字的细则在同 PEP 的 Function and Method Arguments 一节。

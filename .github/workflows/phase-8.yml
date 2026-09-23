@@ -218,15 +218,15 @@ jobs:
       - name: Learning notebook structure
         run: |
           .venv/bin/python tools/check_notebook.py \
-            docs/learning/phase-0/walkthrough.ipynb \
-            docs/learning/phase-1/walkthrough.ipynb \
-            docs/learning/phase-2/walkthrough.ipynb \
-            docs/learning/phase-3/walkthrough.ipynb \
-            docs/learning/phase-4/walkthrough.ipynb \
-            docs/learning/phase-5/walkthrough.ipynb \
-            docs/learning/phase-6/walkthrough.ipynb \
-            docs/learning/phase-7/walkthrough.ipynb \
-            docs/learning/phase-8/walkthrough.ipynb
+            docs/project/learning/phase-0/walkthrough.ipynb \
+            docs/project/learning/phase-1/walkthrough.ipynb \
+            docs/project/learning/phase-2/walkthrough.ipynb \
+            docs/project/learning/phase-3/walkthrough.ipynb \
+            docs/project/learning/phase-4/walkthrough.ipynb \
+            docs/project/learning/phase-5/walkthrough.ipynb \
+            docs/project/learning/phase-6/walkthrough.ipynb \
+            docs/project/learning/phase-7/walkthrough.ipynb \
+            docs/project/learning/phase-8/walkthrough.ipynb
 
       - name: Text conventions (UTF-8 / LF / trailing whitespace)
         run: .venv/bin/python tools/check_text_conventions.py

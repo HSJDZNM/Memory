@@ -32,5 +32,5 @@ rule:
 message: 禁止明文协议：不要用 telnetlib / ftplib，改用 SSH / SFTP / HTTPS。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/01_安全需求、架构与治理/Secure_Product_Design_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/01_安全需求、架构与治理/Secure_Product_Design_Cheat_Sheet.md
   note: § Security Focus Areas → 5. Configuration 第 6 条（Always use Secure Communications）。

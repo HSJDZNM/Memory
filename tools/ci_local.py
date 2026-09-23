@@ -119,7 +119,7 @@ CODE_PREFIXES = (
     ".github/",
 )
 RETRIEVAL_PREFIXES = ("knowledge/", "src/retrieval/", "docs/", "tools/retrieval_eval.py")
-HANDBOOK_PREFIXES = ("src/", "tools/build_learning_notebook.py", "docs/learning/")
+HANDBOOK_PREFIXES = ("src/", "tools/build_learning_notebook.py", "docs/project/learning/")
 ORCHESTRATION_PREFIXES = (
     "src/orchestration/",
     "tools/orchestration_loop.py",

@@ -33,5 +33,5 @@ rule:
 message: 外部请求必须传有效的 timeout=（timeout=None 不算；OWASP DoS Cheat Sheet：Define an absolute connection timeout）；Ruff S113 只认模块级 requests.get/post 等写法，Session / httpx / urllib / socket 不在证据范围内。
 source:
   kind: standard
-  path: docs/owasp-cheatsheets/11_业务逻辑与反自动化/Denial_of_Service_Cheat_Sheet.md
+  path: docs/mirrors/owasp-cheatsheets/11_业务逻辑与反自动化/Denial_of_Service_Cheat_Sheet.md
   note: § Network attacks → Rate limiting（清单条目 "Define an absolute connection timeout"）；Ruff S113 实测只覆盖模块级 requests.<verb>() 的缺超时（含 timeout=None），Session / httpx / urllib / socket 不在证据范围内。

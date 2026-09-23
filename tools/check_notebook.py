@@ -1,6 +1,6 @@
 """轻量校验 .ipynb 结构（不依赖 nbformat，便于在最小环境里跑 CI）。
 
-用法：python tools/check_notebook.py docs/learning/phase-0/walkthrough.ipynb
+用法：python tools/check_notebook.py docs/project/learning/phase-0/walkthrough.ipynb
 
 检查项：nbformat 版本、单元必需键、source 必须是字符串行数组、代码单元必须有 outputs，
 以及每个代码单元的源码能被 compile() 解析。

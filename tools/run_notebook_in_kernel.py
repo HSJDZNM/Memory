@@ -1,6 +1,6 @@
 """在真实 Jupyter 内核里执行 notebook，逐单元报告耗时与错误（不需要 nbformat）。
 
-用法：python tools/run_notebook_in_kernel.py docs/learning/phase-0/walkthrough.ipynb [超时秒数]
+用法：python tools/run_notebook_in_kernel.py docs/project/learning/phase-0/walkthrough.ipynb [超时秒数]
 
 用途：flat 执行（生成器里的逐单元 exec）发现不了内核特有的问题，例如单元依赖执行顺序、
 内核消息协议、magic 命令。这个脚本用真实内核跑一遍，并把每个单元的输出与耗时打印出来。
@@ -44,7 +44,7 @@ def execute(client, code: str, timeout: float) -> tuple[str, list[str], bool]:
 
 
 def main(argv: list[str]) -> int:
-    notebook_path = Path(argv[1] if len(argv) > 1 else "docs/learning/phase-0/walkthrough.ipynb")
+    notebook_path = Path(argv[1] if len(argv) > 1 else "docs/project/learning/phase-0/walkthrough.ipynb")
     timeout = float(argv[2]) if len(argv) > 2 else 30.0
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
 
