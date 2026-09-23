@@ -17,6 +17,8 @@
 
 只用标准库 + PyYAML（已在锁定依赖里）。bash-only 的步骤（heredoc、set +e、grep -q、
 cat > /tmp）在 Windows 上无法直接执行，脚本会**显式跳过并打印原因**，不假装跑过。
+workflow 里新增了步骤却没有登记进分组时，脚本**失败关闭**（退出码 1）而不是悄悄少跑——
+"这个名字我认不出来"必须是一个结论，不能是一段沉默。
 """
 from __future__ import annotations
 
@@ -44,6 +46,14 @@ PYTHON = _OVERRIDE or (str(_VENV) if _VENV.is_file() else sys.executable)
 # 这些标记说明该步骤是 bash-only（heredoc、set +e、grep -q、/tmp 路径），本机不执行。
 BASH_ONLY_MARKERS = ("<<'PY'", "<<'JSON'", "set +e", "set -e", "grep -q", "cat >", "/tmp/")
 
+# 本机不执行的步骤（登记豁免，每条都要写明原因）：它们都是"装环境"类，本机用已有的 .venv。
+# 没登记进分组、也不在本表里的步骤会被 unregistered_steps() 抓出来，main() 直接失败关闭。
+NOT_RUN_ON_HOST = {
+    "Install uv": "装 uv：本机用已有 .venv，不重复装环境",
+    "Install pinned dependencies": "装依赖：本机用已有 .venv，不重复装环境",
+    "Install external linter (ruff)": "装 ruff：本机用 validation/ruff.toml 指定的已有工具",
+}
+
 # 按改动范围分组的步骤名（前缀匹配）。名字取自 workflow 里的 name:，改 workflow 时要同步。
 ALWAYS_STEPS = (
     "Repository consistency gate",
@@ -64,8 +74,10 @@ CODE_STEPS = (
     "Validator closed loop",
     "dsh adapter contract",
     "dsh hook wiring",
+    "Real dsh sandbox loop",
     "Tool registry must match",
     "Enforcement self-check",
+    "Enforcement refuses unknown parameters",
     "Controlled execution closed loop",
     "Audit chain verification",
     "Multi-agent conformance suite",
@@ -84,6 +96,8 @@ HANDBOOK_STEPS = (
 )
 RETRIEVAL_STEPS = (
     "Retrieval corpus integrity",
+    "Retrieval index is idempotent",
+    "Retrieval refuses to answer without sources",
     "Retrieval evaluation baseline",
     "Tool registry must match",
     "Phase 8 acceptance evidence",
@@ -174,6 +188,34 @@ def _selected_names(full: bool) -> list[str]:
     return wanted
 
 
+def registered_prefixes() -> tuple[str, ...]:
+    """所有已登记分组的步骤名前缀。"""
+
+    return tuple(ALWAYS_STEPS + CODE_STEPS + HANDBOOK_STEPS + RETRIEVAL_STEPS + ORCHESTRATION_STEPS)
+
+
+def unregistered_steps() -> list[str]:
+    """workflow 里有 run 块、却既没登记进分组、也没写进 NOT_RUN_ON_HOST 的步骤名。
+
+    这类步骤在按改动范围选择时**两个桶都不会进**：既不执行，也不会被打印成"跳过"。
+    本仓库正是这样漏跑过真实检查（步骤名没同步进分组，本地永远看不见），
+    所以调用方必须失败关闭，而不是把它们当空气。
+    """
+
+    prefixes = registered_prefixes()
+    missing: list[str] = []
+    for name, _run in _steps():
+        if not name:
+            missing.append("<未命名步骤>")
+            continue
+        if name in NOT_RUN_ON_HOST:
+            continue
+        if any(name.startswith(prefix) for prefix in prefixes):
+            continue
+        missing.append(name)
+    return sorted(set(missing))
+
+
 def _local_lines(run: str) -> list[str]:
     """把 CI 的 run 块翻译成本机可执行的行；顺带做"动作词白名单"。"""
 
@@ -225,17 +267,36 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"--python 指向的文件不存在: {candidate}")
         PYTHON = str(candidate)
 
+    missing = unregistered_steps()
+    if missing:
+        print(
+            "ci_local: workflow 里有 %d 个步骤没有登记进任何分组：" % len(missing),
+            file=sys.stderr,
+        )
+        for name in missing:
+            print("  - " + name, file=sys.stderr)
+        print(
+            "ci_local: 按改动范围选择时它们既不执行、也不报告跳过。把它们登记进 "
+            "ALWAYS/CODE/HANDBOOK/RETRIEVAL/ORCHESTRATION_STEPS 之一，"
+            "或写进 NOT_RUN_ON_HOST 并写明原因。",
+            file=sys.stderr,
+        )
+        return 1
+
     wanted = _selected_names(args.full)
     changed = _changed_paths()
     plan: list[tuple[str, list[str]]] = []
     skipped: list[tuple[str, str]] = []
+    not_run: list[tuple[str, str]] = []
     for name, run in _steps():
-        if wanted and not any(name.startswith(prefix) for prefix in wanted):
+        if name in NOT_RUN_ON_HOST:
+            not_run.append((name, NOT_RUN_ON_HOST[name]))
             continue
-        if name.startswith(("Install ", "Install pinned")):
+        if wanted and not any(name.startswith(prefix) for prefix in wanted):
             continue
         lines = _local_lines(run)
         if not lines:
+            not_run.append((name, "run 块里没有本机可执行的命令"))
             continue
         if _looks_unsafe(lines):
             skipped.append((name, "bash-only（heredoc / set +e / grep / /tmp），CI 上执行"))
@@ -250,10 +311,17 @@ def main(argv: list[str] | None = None) -> int:
             print("本机跳过（CI 上仍然执行）：")
             for name, why in skipped:
                 print("  - %s：%s" % (name, why))
+        if not_run:
+            print("本机不执行（已登记豁免）：")
+            for name, why in not_run:
+                print("  - %s：%s" % (name, why))
         return 0
 
     if not args.hook:
-        print("改动文件 %d 个；执行 %d 步（本机跳过 %d 步）" % (len(changed), len(plan), len(skipped)))
+        print(
+            "改动文件 %d 个；执行 %d 步（本机跳过 %d 步，登记豁免 %d 步）"
+            % (len(changed), len(plan), len(skipped), len(not_run))
+        )
 
     failures: list[str] = []
     step_environment = _step_environment()
