@@ -77,7 +77,7 @@ __all__ = [
 # 索引结构版本：SQLite schema 或分块语义变化时必须递增，旧库直接拒绝打开。
 INDEX_SCHEMA_VERSION = "1"
 # 分块器版本：参与 document 的"是否需要重新分块"判断，改动分块语义必须递增。
-CHUNKER_VERSION = "markdown-sections-1"
+CHUNKER_VERSION = "markdown-sections-2"
 
 # 自由文本字段与结构化提示：检索查询由受控字段构造，绝不把原始用户输入直接拼进 SQL / FTS。
 DEFAULT_QUERY_TEXT_FIELDS: Tuple[str, ...] = ("task",)

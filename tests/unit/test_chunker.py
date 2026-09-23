@@ -14,7 +14,7 @@ from retrieval.chunker import (
     search_text,
     split_front_matter,
 )
-from retrieval.models import ChunkKind, document_id_for
+from retrieval.models import ChunkKind, document_id_for, sha256_text
 
 from conftest import RETRIEVAL_FIXTURES
 
@@ -240,6 +240,93 @@ def test_single_long_line_still_truncates_and_is_counted() -> None:
     assert len(chunks) >= 1
     assert chunks[0].truncated is True
     assert chunks[0].original_chars == 5000
+
+
+def test_long_line_over_budget_is_split_at_sentence_boundaries_without_loss() -> None:
+    """一行 > max_chunk_chars 但 ≤ hard_max：按句读拆成多片，全部无损（不再静默截断）。"""
+
+    line = " ".join(
+        "Rule {} requires the reviewer to record a decision before merging.".format(index)
+        for index in range(12)
+    )
+    assert len(line) > 400
+    text = "# Title" + chr(10) + chr(10) + line + chr(10)
+    _, chunks = chunk(text, max_chars=400, hard_max_chars=4000)
+    assert len(chunks) > 1
+    assert all(item.truncated is False for item in chunks)
+    assert all(item.original_chars is None for item in chunks)
+    assert all(item.oversized is False for item in chunks)
+    assert all(item.char_count == len(item.text) <= 400 for item in chunks)
+    assert all(item.text_hash == sha256_text(item.text) for item in chunks)
+    section = next(item for item in find_sections(text) if item.anchor == "title")
+    assert blocks_are_preserved(section.body, [item.text for item in chunks])
+    assert compact_text(section.body) == compact_text("".join(item.text for item in chunks))
+    # 无损是**逐字**的：片段首尾相接就是原行，既不丢字也不插字。
+    assert "".join(item.text for item in chunks) == line
+    # 切点落在句读上：除最后一片外，每片都以句末标点收尾（切点后的空白留在左片）。
+    assert all(item.text.rstrip().endswith(".") for item in chunks[:-1])
+    # 同一输入必须得到同一输出：片数、文本与哈希都不许随调用漂移。
+    _, again = chunk(text, max_chars=400, hard_max_chars=4000)
+    assert [(item.text, item.text_hash) for item in again] == [
+        (item.text, item.text_hash) for item in chunks
+    ]
+
+
+def test_unbreakable_unit_over_hard_limit_is_truncated_and_counted() -> None:
+    """没有断点可用的单元超过硬上限：恰好一片，截到硬上限并如实记账（original_chars 精确）。"""
+
+    payload = "z" * 9000
+    text = "# Title" + chr(10) + chr(10) + payload + chr(10)
+    _, chunks = chunk(text, max_chars=400, hard_max_chars=1000)
+    assert len(chunks) == 1
+    assert chunks[0].truncated is True
+    assert chunks[0].original_chars == 9000
+    assert chunks[0].char_count == 1000 == len(chunks[0].text)
+    assert chunks[0].oversized is True
+
+
+def test_cjk_long_line_is_split_at_cjk_punctuation_without_loss() -> None:
+    """中文长行（整段无换行）按 。！？； 切分：不切开汉字，也不丢字符。"""
+
+    endings = ("。", "！", "？", "；")
+    line = "".join(
+        "第{}条：评审必须记录结论{}".format(index, endings[index % len(endings)])
+        for index in range(60)
+    )
+    assert len(line) > 400
+    text = "# 标题" + chr(10) + chr(10) + line + chr(10)
+    _, chunks = chunk(text, max_chars=200, hard_max_chars=4000)
+    assert len(chunks) > 1
+    assert all(item.truncated is False for item in chunks)
+    assert all(item.char_count == len(item.text) <= 200 for item in chunks)
+    assert compact_text(line) == compact_text("".join(item.text for item in chunks))
+    assert "".join(item.text for item in chunks) == line
+    assert all(item.text.rstrip().endswith(endings) for item in chunks[:-1])
+    # 中文句读本身是断点，不需要后面的空白：每片都必须是原来的连续子串（不切开任何汉字）。
+    for item in chunks:
+        assert item.text in line
+
+
+def test_over_budget_line_inside_multi_line_paragraph_keeps_every_character() -> None:
+    """真实语料形态：多行段落里只有一行超预算——该行按句读拆开，段落整体无损。"""
+
+    long_line = " ".join(
+        "Step {} describes what the pipeline must check before release.".format(index)
+        for index in range(10)
+    )
+    text = (
+        "# Title" + chr(10) + chr(10)
+        + chr(10).join(["Short intro line.", long_line, "Short trailing line."]) + chr(10)
+    )
+    _, chunks = chunk(text, max_chars=200, hard_max_chars=4000)
+    assert len(chunks) > 1
+    assert all(item.truncated is False for item in chunks)
+    section = next(item for item in find_sections(text) if item.anchor == "title")
+    assert blocks_are_preserved(section.body, [item.text for item in chunks])
+    assert compact_text("".join(item.text for item in chunks)) == compact_text(section.body)
+    assert compact_text(long_line) in compact_text("".join(item.text for item in chunks))
+    # 每片都是原段的**连续子串**：不丢字、不插字、不改字（打包只在片与片之间重排空白）。
+    assert all(item.text in section.body for item in chunks)
 
 
 def test_chunker_rejects_contradictory_budgets() -> None:

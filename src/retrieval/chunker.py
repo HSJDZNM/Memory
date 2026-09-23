@@ -6,8 +6,9 @@
    元数据交给调用方写进 documents，不进正文；未闭合的 front matter 不删正文、只记警告；
 2. 标题路径随 chunk 保存（heading_path 是原文标题，heading_anchor 是稳定锚点）；
 3. 代码块是**原子单元**：不在中间切断，也不与其它块合并；
-4. 有明确的字符预算：段落按行边界打包，超预算的原子单元单独成 chunk 并记 oversized；
-   单个原子单元超过硬上限时截断，记 truncated + original_chars（丢了多少必须能算出来）；
+4. 有明确的字符预算：段落按行边界打包，超预算的段落再按句读边界（英文 . ? ! 后跟空白；
+   中文 。！？；…）拆开——**无损优先**，拆不动才截断：单个再也拆不开的单元超过硬上限时
+   截到硬上限，记 truncated + original_chars（丢了多少必须能算出来）；
 5. 空章节被跳过并计数；重复标题用出现序号区分（锚点稳定且互不相同）；
 6. chunk 文本是原文，不解释、不改写、不加摘要。
 
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
@@ -60,6 +62,14 @@ SLUG_RE = re.compile(r"[^0-9a-z\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u3
 CJK_RE = re.compile(
     r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]+"
 )
+
+# 句读断点：英文的 . ? ! 之后必须跟空白（避免在 "3.11"、"U.S." 这类词内点号上切）；
+# 中文的 。！？；… 本身即断点。连续的标点（"..."、"??"、"……"）算作同一个断点。
+SENTENCE_END_RE = re.compile(r"(?:[.?!](?=\s)|\u3002|\uff01|\uff1f|\uff1b|\u2026)+")
+# 断点后面的空白并入左片：片段按序拼回就是原文（一个字符都不丢），片段也不以空白开头。
+_TRAILING_BLANK = " \t"
+# 这些码位属于前一个字符的字素簇，不允许在它们之前切开（变音符号 / 变体选择符 / 零宽连接符）。
+_GRAPHEME_CONTINUATIONS = frozenset(("\u200d", "\ufe0e", "\ufe0f"))
 
 ANCHOR_PREAMBLE = "preamble"
 
@@ -453,7 +463,8 @@ def _pack(
         current_len = 0
 
     for block in blocks:
-        # 1) 超硬上限：代码块是原子单元，只能截断并记录丢弃量；段落按行边界拆开，不丢字符。
+        # 1) 超硬上限：代码块是原子单元，只能截断并记录丢弃量；
+        #    段落先按句读、再按行边界拆开，只有"拆不动的单元"才截断并记录丢弃量。
         if len(block.text) > hard_max_chars and block.kind is ChunkKind.CODE:
             flush()
             emit(
@@ -493,62 +504,131 @@ def _pack(
             current_len = len(block.text)
             continue
 
-        # 4) 单块超预算：代码块整体成一块（记 oversized）；段落按行边界拆开，不丢文本。
+        # 4) 单块超预算：代码块整体成一块（记 oversized）；段落先按句读、再按行边界拆开，
+        #    不丢文本。**截断必须与实际发生的事一致**：_split_prose 给出的 truncated/original
+        #    原样透传，绝不在这里硬写成"没截断"。
         if block.kind is ChunkKind.CODE:
             emit((block,), block.kind, truncated=False, original=None, oversized=True)
             continue
-        for text in _prose_pieces(block.text, max_chars=max_chars):
+        for text, truncated, original in _split_prose(
+            block.text, max_chars=max_chars, hard_max_chars=hard_max_chars
+        ):
             emit(
                 (Block(kind=block.kind, text=text, line_start=block.line_start, info=block.info),),
                 block.kind,
-                truncated=False,
-                original=None,
-                oversized=False,
+                truncated=truncated,
+                original=original,
+                oversized=len(text) > max_chars,
             )
     flush()
     return tuple(pieces)
 
 
+def _is_grapheme_continuation(character: str) -> bool:
+    """该码位是否属于前一个字符的字素簇（在它之前切开就会拆散一个字）。"""
+
+    return character in _GRAPHEME_CONTINUATIONS or unicodedata.combining(character) != 0
+
+
+def _sentence_cuts(line: str) -> Tuple[int, ...]:
+    """列出一行里可用的句读断点（切点右侧是下一个片段的第一个字符）。
+
+    切点落在句读之后，并把紧随其后的空白留给左片：片段按原顺序拼回去就是这一行本身，
+    一个字符都不丢；片段也不以空白开头。没有断点时返回空元组——调用方据此走
+    "拆不动"的分支（超过硬上限才截断）。同一输入永远得到同一串切点。
+    """
+
+    cuts: list[int] = []
+    position = 0
+    length = len(line)
+    while position < length:
+        match = SENTENCE_END_RE.search(line, position)
+        if match is None:
+            break
+        end = match.end()
+        if end < length and _is_grapheme_continuation(line[end]):
+            # 标点后面还挂着字素簇的后续码位：这里切开就会拆散一个字，往后找下一个断点。
+            position = end
+            continue
+        while end < length and line[end] in _TRAILING_BLANK:
+            end += 1
+        position = end
+        if end < length:
+            cuts.append(end)
+    return tuple(cuts)
+
+
+def _line_units(line: str) -> Tuple[str, ...]:
+    """把一行按句读断点切成"不可再拆的单元"；没有断点时就返回整行。"""
+
+    cuts = _sentence_cuts(line)
+    if not cuts:
+        return (line,)
+    units: list[str] = []
+    start = 0
+    for cut in cuts:
+        units.append(line[start:cut])
+        start = cut
+    units.append(line[start:])
+    return tuple(units)
+
+
 def _split_prose(
     text: str, *, max_chars: int, hard_max_chars: Optional[int] = None
 ) -> Tuple[Tuple[str, bool, Optional[int]], ...]:
-    """段落按行边界拆成不超过预算的片段：不切断行，也不丢内容。
+    """段落按行边界、行内再按句读边界拆成不超过预算的片段：不切断行，也不丢内容。
 
-    唯一会丢字符的情况是**单行**本身就超过硬上限（没有任何断点可用）：
-    这时截断并返回 (文本, True, 原始长度)，让调用方把丢弃量记清楚。
+    打包是**无损优先**的：先按句读断点切成不可再拆的单元，再把这些单元按预算攒成片段；
+    单个单元自己就装不下时它也单独成片（记 oversized），仍然不丢字符。
+    分隔符按单元来源原样回填（同一行的句读单元之间是空串，行与行之间是换行），
+    所以每个未截断的片段都是原文的**连续子串**：不丢字，也不插字。
+    唯一会丢字符的情况是**单个再也拆不开的单元**本身就超过硬上限（例如一整行 9000 字符
+    没有任何标点）：这时截到硬上限并返回 (文本, True, 原始长度)，让调用方把丢弃量记清楚。
     """
 
     limit = hard_max_chars if hard_max_chars is not None else max_chars
     pieces: list[Tuple[str, bool, Optional[int]]] = []
     buffer: list[str] = []
+    separators: list[str] = []
     length = 0
 
     def flush() -> None:
-        nonlocal buffer, length
+        nonlocal buffer, separators, length
         if buffer:
-            pieces.append((chr(10).join(buffer), False, None))
+            joined = buffer[0] + "".join(
+                separators[index] + buffer[index] for index in range(1, len(buffer))
+            )
+            pieces.append((joined, False, None))
         buffer = []
+        separators = []
         length = 0
 
+    def take(unit: str, separator: str) -> None:
+        nonlocal length
+        if len(unit) > limit:
+            # 单元超硬上限且已无断点可用：先结掉已攒的内容，再截断这一单元
+            # （丢了多少写进 original，绝不静默）。
+            flush()
+            pieces.append((unit[:limit], True, len(unit)))
+            return
+        if buffer and length + len(separator) + len(unit) > max_chars:
+            flush()
+        if not buffer:
+            separator = ""  # 片段从单元的第一个字符开始，不留悬空分隔符
+        buffer.append(unit)
+        separators.append(separator)
+        length += len(separator) + len(unit)
+
     for line in text.split(chr(10)):
-        if len(line) > limit:
-            # 单行超硬上限：先结掉已攒的内容，再把这一行截断（丢多少写进 original）。
-            flush()
-            pieces.append((line[:limit], True, len(line)))
+        if len(line) <= max_chars:
+            take(line, chr(10))
             continue
-        addition = len(line) + (1 if buffer else 0)
-        if buffer and length + addition > max_chars:
-            flush()
-        buffer.append(line)
-        length += len(line) + (1 if len(buffer) > 1 else 0)
+        separator = chr(10)
+        for unit in _line_units(line):
+            take(unit, separator)
+            separator = ""
     flush()
     return tuple(pieces)
-
-
-def _prose_pieces(text: str, *, max_chars: int) -> Tuple[str, ...]:
-    """只要文本的便捷包装（不带截断信息）。"""
-
-    return tuple(piece for piece, _, _ in _split_prose(text, max_chars=max_chars))
 
 
 def compact_text(value: str) -> str:
