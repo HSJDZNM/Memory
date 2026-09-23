@@ -71,6 +71,16 @@
    `python tools/ci_local.py --full --python <已验证解释器>` 显式覆盖；
    要让 **pre-push 钩子**也用上同一条逃生通道，设环境变量 `CI_LOCAL_PYTHON`（钩子与
    `ci_local.py` 都认它，`--python` 优先级更高）。不得为让门禁变绿而删除用户的 `.venv`。
+   **同一工作树同时只允许一个 `ci_local.py`（含 pre-push 钩子那一次）真正执行**：它和它调起的
+   编排闭环共用 `.tmp/` 下固定路径的状态（`.tmp/phase-8-orchestration/`、`.tmp/artifacts/`、
+   `.tmp/retrieval/`），并发会互相拆台、跑出"假红"（实测出现过编排闭环 5/8 场景 FAIL 而单独跑
+   全通过）。所以启动时取 `.tmp/ci-local.lock` 排他锁，抢不到的那个报出**持锁者 pid** 后
+   **直接失败退出（1）**——不等待、不设绕过开关：并发的正确处置是显式拒绝，不是静默出错。
+   锁由操作系统持有，进程一死自动释放，不留陈旧锁；`--list` 不取锁（它不写 `.tmp/`）。
+   `tools/cleanup.py` **认同一把锁**：真要删之前非阻塞取锁，抢不到就报出持锁者 pid 后退出 1、
+   一项都不删（`--dry-run` 不取锁；`.tmp/` 不存在时不取锁、也不把它建出来）。它删 `.tmp/` 下的子项时
+   **显式跳过 `ci-local.lock`**，锁文件永不删除——否则 Windows 上 `rmtree` 会在被锁字节区间上失败
+   （WinError 32），POSIX 上"删了再建"会换 inode，让两个进程各持一把锁、排他保证直接失效。
 
 ## 文本文件规范
 
