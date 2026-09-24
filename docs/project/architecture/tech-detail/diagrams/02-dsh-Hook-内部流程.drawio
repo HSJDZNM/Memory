@@ -16,7 +16,7 @@
         <mxCell id="h2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;接线自检&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;内部预算 5000ms &lt; hooks.json 超时 30s&lt;/font&gt;" vertex="1">
           <mxGeometry height="64" width="600" x="120.0" y="190" as="geometry" />
         </mxCell>
-        <mxCell id="h3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;事件映射&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;adapter.py → AgentEvent（未知一律拒绝）&lt;/font&gt;" vertex="1">
+        <mxCell id="h3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9AA0A6;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;事件映射&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;adapter.py → PolicyEvent（未知一律拒绝）&lt;/font&gt;" vertex="1">
           <mxGeometry height="64" width="600" x="120.0" y="280" as="geometry" />
         </mxCell>
         <mxCell id="h4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7DA;strokeColor=#E0B400;strokeWidth=2;fontSize=16;fontColor=#1F2328;arcSize=14;" value="&lt;b&gt;工具表白名单&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#5F6368'&gt;未登记 / mcp__ 前缀 → 阻断&lt;/font&gt;" vertex="1">

@@ -11,8 +11,8 @@
 
 用法（PNG 需要 Pillow）：
 
-    python docs/project/architecture/tech-detail/build.py            # 只写 .drawio
-    python docs/project/architecture/tech-detail/build.py --png      # 同时渲染 .png
+    python docs/project/architecture/tech-detail/diagrams/build.py            # 只写 .drawio
+    python docs/project/architecture/tech-detail/diagrams/build.py --png      # 同时渲染 .png
 
 规格里每个节点只有两行文字：短标题（≤14 字）+ 精确锚点（模块 / 函数 / 文件）。
 箭头只有一种含义：依赖或调用方向。一个节点只讲一件事。
@@ -23,6 +23,7 @@ import argparse
 import pathlib
 import xml.sax.saxutils as sax
 
+# 产物与规格源同目录：diagrams/ 下是 10 张图的 .drawio（可编辑源）与 .png（渲染图）。
 HERE = pathlib.Path(__file__).resolve().parent
 
 FONT_REG = "C:/Windows/Fonts/msyh.ttc"
@@ -374,7 +375,7 @@ def build_dsh():
     W, H = 1240, 1010
     core = spine([("h1", "dsh 调用 Hook", "PreToolUse · stdin JSON"),
                   ("h2", "接线自检", "内部预算 5000ms < hooks.json 超时 30s"),
-                  ("h3", "事件映射", "adapter.py → AgentEvent（未知一律拒绝）"),
+                  ("h3", "事件映射", "adapter.py → PolicyEvent（未知一律拒绝）"),
                   ("h4", "工具表白名单", "未登记 / mcp__ 前缀 → 阻断", "gate"),
                   ("h5", "路径范围校验", "归一化后必须落在受控项目内", "gate"),
                   ("h6", "平台判定", "policy.engine.evaluate（+ Phase 5 证据）"),
@@ -552,7 +553,7 @@ def build_one_rule():
              ("d7", "写规则文件", "policies/coding/DOC-001.yaml · severity: warning", "human"),
              ("d8", "声明证据来源", "validation/validators.yaml → py.docstring", "ext"),
              ("d9", "判定", "证据 rule_id == DOC-001 → allow_with_warnings", "core"),
-             ("d10", "溯源登记（约定，当前未做）", "rule_sources 为空 → cli rules 退出 1", "fail")]
+             ("d10", "溯源登记（约定，非强制）", "已登记 38 条；解析不到 chunk → 索引 run 失败", "note")]
     core_nodes = [Node(nid, text, sub, 300, sy(i), 700, 62, kind)
                   for i, (nid, text, sub, kind) in enumerate(items)]
     side = [Node("gap", "已知落差（如实写）",
@@ -564,8 +565,8 @@ def build_one_rule():
                    "整条链路逐段可追：文档 → 语料 → 分块 → 提炼 → checker → 规则 → 证据 → 判定",
                    core_nodes + side, edges, W, H,
                    footer="溯源登记是约定不是门禁：登记了却解析不到 chunk 会让索引 run 失败，"
-                          "不登记则没有任何报错——当前仓库就是后者。",
-                   legend=["紫 = 人工", "黄 = 判定核心", "红 = 现状落差"])
+                          "不登记则没有任何报错；仓库自 2026-09 起已把镜像规则全部登记（38 条，含 DOC-001）。",
+                   legend=["紫 = 人工", "黄 = 判定核心", "灰 = 约定与非强制项"])
 
 
 def build_rule_gate():
@@ -615,11 +616,11 @@ def main() -> int:
         drawio = HERE / (diagram.name + ".drawio")
         write_drawio(diagram, drawio)
         print("写入 %s（%d 节点 / %d 连线）"
-              % (drawio.relative_to(HERE.parent.parent), len(diagram.nodes), len(diagram.edges)))
+              % (drawio.relative_to(HERE).as_posix(), len(diagram.nodes), len(diagram.edges)))
         if args.png:
             png = HERE / (diagram.name + ".png")
             problems.extend("%s：%s" % (diagram.name, w) for w in render_png(diagram, png))
-            print("      渲染 %s" % png.relative_to(HERE.parent.parent))
+            print("      渲染 %s" % png.relative_to(HERE).as_posix())
     if problems:
         print("文字适配告警：")
         for item in problems:

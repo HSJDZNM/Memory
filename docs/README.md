@@ -42,13 +42,17 @@ docs/
 | 目录 | 内容 | 入口 |
 | --- | --- | --- |
 | project/architecture/ | 技术架构图（`.drawio` 两页 + tech-detail 十张）与说明三件套 + 术语与口径 + 规则转化覆盖报告 | [README.md](project/architecture/README.md) |
-| project/engineering-policy-platform/ | 分阶段架构、契约、数据源、测试策略、验收矩阵与复核记录 | [README.md](project/engineering-policy-platform/README.md) |
+| project/engineering-policy-platform/ | 分阶段架构、契约、数据源、测试策略、验收矩阵与复核记录；设计提案含 [平台操作系统](project/engineering-policy-platform/designs/os/README.md) 与静态操作台原型 | [README.md](project/engineering-policy-platform/README.md) |
 | project/learning/ | 面向人的学习手册，每阶段四件套（`note.md` / `walkthrough.ipynb` / `walkthrough.py` / `README.md`） | [README.md](project/learning/README.md) |
 | project/rule-effects/ | 规则效果演示与多违规案例检测报告（本地产出，非镜像） | — |
 
 其中 `project/learning/**/walkthrough.ipynb` 与 `walkthrough.py` 是**生成物**：
 改内容要改 `tools/build_learning_notebook.py`（Phase 6–8 另见 `tools/phase{6,7,8}_cells.py`），
 再运行 `python tools/build_learning_notebook.py`。手改 notebook 会在下次生成时丢失。
+
+`project/architecture/tech-detail/notebooks/*.ipynb` 与同名的 `.py` 同样是生成物（每张编号图一份讲解）：
+内容源在 `tech-detail/notebooks/nb_cells/nb<编号>.py`，由
+`python docs/project/architecture/tech-detail/notebooks/build_notebooks.py` 生成并逐单元执行校验。
 
 ## 改路径时的连带清单（迁移后最容易漏的地方）
 
@@ -69,8 +73,10 @@ docs/
 
 1. 该文档内部指向别处的相对 Markdown 链接（跨目录时层级会变）。
 2. 生成器与校验器的路径常量：`tools/build_learning_notebook.py`、`tools/phase{6,7,8}_cells.py`、
-   `tools/check_arch_canon.py`（`ARCH`）、`tools/check_arch_style.py`、`tools/check_notebook.py`、
-   `tools/run_notebook_in_kernel.py`、`tools/ci_local.py`（`HANDBOOK_PREFIXES`）。
+   `docs/project/architecture/tech-detail/notebooks/build_notebooks.py`、`tools/check_arch_canon.py`（`ARCH`）、
+   `tools/check_arch_style.py`、`tools/check_notebook.py`、
+   `tools/run_notebook_in_kernel.py`、`tools/check_repo_consistency.py`（`check_notebook_form`）、
+   `tools/ci_local.py`（`HANDBOOK_PREFIXES`）。
 3. `.github/workflows/phase-8.yml` 里的手册路径、`README.md` 的目录树、`AGENTS.md` 的约定正文。
 
 ## 维护命令
@@ -90,4 +96,9 @@ python tools/check_arch_canon.py          # docs/project/architecture 的图 / �
 # 因此这里显式列出路径（bash / CI 里可以直接写 docs/project/learning/*/walkthrough.ipynb）
 python tools/check_notebook.py (Get-ChildItem docs/project/learning/*/walkthrough.ipynb).FullName
 python tools/build_learning_notebook.py   # 重生成手册并逐单元执行校验
+# tech-detail 的讲解 notebook：生成 + 逐单元执行；--check 是 CI 门禁（比对产物 + 结构校验）
+python docs/project/architecture/tech-detail/notebooks/build_notebooks.py
+python docs/project/architecture/tech-detail/notebooks/build_notebooks.py --check
+# tech-detail 的图：重算 .drawio 与 .png（唯一规格源）
+python docs/project/architecture/tech-detail/diagrams/build.py --png
 ```
