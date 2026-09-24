@@ -216,41 +216,58 @@ def check_docs_and_config() -> list[str]:
 
 
 def check_notebook_form() -> list[str]:
-    """手册必须是生成器的规范形态。
+    """由生成器产出的 notebook 必须是规范形态（手写的不在检查范围）。
 
     在 Jupyter / VS Code 里"运行并保存"会把执行输出与 execution_count 写回 .ipynb，
     而生成器写出来的形态里这两样永远是空的，于是 CI 的"手册同步"步骤会逐字节比较失败。
     这里只做形态判断、不跑生成器（那个要几分钟），让问题在本地一秒暴露。
     """
 
+    # 两类由生成器产出的 notebook：按阶段的学习手册，与按技术的讲解 notebook。
+    # 新增第三类时加一行即可——但**必须**加：目录改层而检查器没跟着改，会让本检查"命中 0 个、
+    # 判定一致"，静默失效正是本仓库最忌讳的失败形态（所以下面显式报错，不放过空集合）。
+    groups = (
+        (
+            "docs/project/learning 下的 */walkthrough.ipynb",
+            "*/walkthrough.ipynb",
+            ROOT / "docs" / "project" / "learning",
+            "python tools/build_learning_notebook.py",
+        ),
+        (
+            "docs/project/architecture/tech-detail/notebooks 下的 *.ipynb",
+            "*.ipynb",
+            ROOT / "docs" / "project" / "architecture" / "tech-detail" / "notebooks",
+            "python docs/project/architecture/tech-detail/notebooks/build_notebooks.py",
+        ),
+    )
+
     issues: list[str] = []
-    notebooks = sorted((ROOT / "docs" / "project" / "learning").glob("*/walkthrough.ipynb"))
-    if not notebooks:
-        # 目录改层而检查器没跟着改，会让本检查"命中 0 个、判定一致"——静默失效正是本仓库最忌讳的失败形态，
-        # 所以这里显式报错，绝不把"一个都没查到"当成通过。
-        issues.append(
-            "docs/project/learning 下没有找到任何 */walkthrough.ipynb：检查器路径与实际目录不一致"
-            "（检查器不会静默通过一个空集合）"
-        )
-    for path in notebooks:
-        relative = path.relative_to(ROOT).as_posix()
-        try:
-            document = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-            issues.append("%s 不可解析：%s" % (relative, error))
+    for label, pattern, directory, regenerate in groups:
+        notebooks = sorted(directory.glob(pattern))
+        if not notebooks:
+            issues.append(
+                "%s 下没有找到任何 notebook：检查器路径与实际目录不一致（检查器不会静默通过一个空集合）"
+                % label
+            )
             continue
-        for index, cell in enumerate(document.get("cells", [])):
-            if cell.get("outputs"):
-                issues.append(
-                    "%s 第 %d 个单元带执行输出：这份文件在 Jupyter 里跑过并保存了；"
-                    "重新生成即可恢复（python tools/build_learning_notebook.py）"
-                    % (relative, index)
-                )
-            if cell.get("execution_count") is not None:
-                issues.append(
-                    "%s 第 %d 个单元的 execution_count 不为空（同样是被编辑器写回的痕迹）"
-                    % (relative, index)
-                )
+        for path in notebooks:
+            relative = path.relative_to(ROOT).as_posix()
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+                issues.append("%s 不可解析：%s" % (relative, error))
+                continue
+            for index, cell in enumerate(document.get("cells", [])):
+                if cell.get("outputs"):
+                    issues.append(
+                        "%s 第 %d 个单元带执行输出：这份文件在 Jupyter 里跑过并保存了；"
+                        "重新生成即可恢复（%s）" % (relative, index, regenerate)
+                    )
+                if cell.get("execution_count") is not None:
+                    issues.append(
+                        "%s 第 %d 个单元的 execution_count 不为空（同样是被编辑器写回的痕迹）"
+                        % (relative, index)
+                    )
     return issues
 
 

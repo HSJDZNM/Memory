@@ -104,6 +104,7 @@ CODE_STEPS = (
 HANDBOOK_STEPS = (
     "Learning notebooks are in sync",
     "Learning notebook structure",
+    "Tech-detail notebooks are in sync",
 )
 RETRIEVAL_STEPS = (
     "Retrieval corpus integrity",
@@ -130,7 +131,12 @@ CODE_PREFIXES = (
     ".github/",
 )
 RETRIEVAL_PREFIXES = ("knowledge/", "src/retrieval/", "docs/", "tools/retrieval_eval.py")
-HANDBOOK_PREFIXES = ("src/", "tools/build_learning_notebook.py", "docs/project/learning/")
+HANDBOOK_PREFIXES = (
+    "src/",
+    "tools/build_learning_notebook.py",
+    "docs/project/learning/",
+    "docs/project/architecture/tech-detail/",
+)
 ORCHESTRATION_PREFIXES = (
     "src/orchestration/",
     "tools/orchestration_loop.py",

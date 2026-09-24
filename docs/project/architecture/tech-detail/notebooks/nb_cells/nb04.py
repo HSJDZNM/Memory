@@ -1,0 +1,653 @@
+
+# -*- coding: utf-8 -*-
+"""04-受控执行：授权 → 执行 → 验证 → 审计（内容源，产物由 build_notebooks.py 生成）。"""
+from __future__ import annotations
+
+from nb_cells import NotebookSpec, code, markdown
+
+SPEC = NotebookSpec(
+    stem="04-受控执行",
+    title="受控执行：授权、执行、验证、审计链",
+    summary="动作请求 → 注册表审核 → action_hash → pre-check → 审批 → 短时效 grant → 执行一次 → 事后验证 → 审计链",
+    temp_dir=".tmp/tech-detail/04",
+    cells=(
+        markdown(
+            '''
+# 04 受控执行：授权、执行、验证、审计链
+
+这份 notebook 配合同名图 `04-受控执行.drawio`。图讲的是"一次动作从请求到终态经过哪些闸门"，
+下面把这些闸门**真的关一遍**：注册表用仓库里真实的那份，受控工作区、台账与审计链都落在本 notebook 自己的临时目录里。
+
+读完应该能回答五件事：
+
+1. 谁都"能调用"一个工具吗？注册表被改了一个字符之后会发生什么？
+2. `action_hash` 到底绑了哪些东西？为什么"换个参数继续用旧授权"做不到？
+3. 执行前检查的顺序是固定的吗？命令类工具为什么会被**结构性**阻断？
+4. 高风险动作的人工审批长什么样？授权为什么必须"短时效 + 单次使用"？
+5. 事后验证失败、审计链写不进去的时候，平台会怎么办？
+
+**预备知识**：会读 Python 函数调用就够了。本文只用仓库自带的受控执行层（标准库 + pydantic + PyYAML）。
+
+**一个约定**：受控工作区、台账、审计链全部写在 `.tmp/tech-detail/04/` 下，
+仓库里的 `registry/tool-registry.yaml` 与 `registry/tool-registry.approved.json` 只读不动。
+'''
+        ),
+        code(
+            '''
+# 先找到仓库根目录：notebook 可能从仓库根启动，也可能从本目录启动，两种都要能跑。
+import inspect
+import json
+import shutil
+import sys
+from datetime import timedelta
+from pathlib import Path
+
+
+def find_repo_root(start):
+    """往上找：同时有 pyproject.toml 与 src/policy/ 的那一层就是仓库根。"""
+    for candidate in (start, *start.parents):
+        if (candidate / "pyproject.toml").is_file() and (candidate / "src" / "policy").is_dir():
+            return candidate
+    raise SystemExit("没有找到仓库根目录（需要 pyproject.toml 与 src/policy/）")
+
+
+REPO_ROOT = find_repo_root(Path.cwd())
+for extra in (REPO_ROOT / "src", REPO_ROOT / "tools"):
+    if str(extra) not in sys.path:
+        sys.path.insert(0, str(extra))
+
+TEMP = REPO_ROOT / ".tmp" / "tech-detail" / "04"
+# 每次运行都从空目录开始：本 notebook 会被"仓库根"与"本目录"各跑一遍，
+# 台账与审计链一旦有残留，第二次就会把第一次的动作当成"重放"。
+shutil.rmtree(TEMP, ignore_errors=True)
+TEMP.mkdir(parents=True, exist_ok=True)
+
+TECH_DETAIL = REPO_ROOT / "docs" / "project" / "architecture" / "tech-detail"
+print("仓库根目录:", REPO_ROOT.name)
+print("当前工作目录:", Path.cwd().relative_to(REPO_ROOT).as_posix() or ".")
+print("讲解目录:", (TECH_DETAIL / "notebooks").relative_to(REPO_ROOT).as_posix())
+print("临时目录:", TEMP.relative_to(REPO_ROOT).as_posix())
+print("Python:", sys.version.split()[0])
+'''
+        ),
+        markdown(
+            '''
+## 1. 动作请求、注册表审核、授权指纹（图上的 e1 → e2 → e3）
+
+**动作请求**不是一句自然语言，而是一份结构化记录：工具 ID、工具 schema 版本、规范化后的参数、
+主体（谁在做）、权限、上下文摘要、工作区、时效。
+
+**注册表**（`registry/tool-registry.yaml`）是数据：风险级别、参数白名单、所需权限、
+审批门禁、事后验证器、超时与限流都写在那里，模型**不能**自己声明"我这个动作属于哪一类"。
+每个工具描述有一个 `schema_hash`，人工审核的结果存在
+`registry/tool-registry.approved.json`。两边一致，工具才可用。
+
+**授权指纹** `action_hash` 覆盖：协议版本、动作 ID、请求 ID、trace、Agent 与版本、
+工具身份与 schema 哈希、风险 / 效果 / 驱动、**规范化参数**、主体、角色、权限、上下文摘要、工作区。
+其中任何一项变一个字符，哈希就变，"旧授权继续用"在数学上不成立。
+
+下面先看真实的工具表，再故意把注册表改一个字符，看它怎么变成"不可使用"。
+'''
+        ),
+        code(
+            '''
+# ---- 1) 受控工作区 + 真实的注册表 ----
+from enforcement.action import build_action_request
+from enforcement.audit import FileAuditSink
+from enforcement.ledger import EnforcementLedger
+from enforcement.models import HIGH_RISK_LEVELS, ApprovalMode
+from enforcement.precheck import pre_execute
+from enforcement.registry import load_registry
+
+REGISTRY_PATH = REPO_ROOT / "registry" / "tool-registry.yaml"
+APPROVED_PATH = REPO_ROOT / "registry" / "tool-registry.approved.json"
+
+WORKSPACE = TEMP / "workspace"
+SOURCE_PATH = WORKSPACE / "src" / "order.py"
+SOURCE_PATH.parent.mkdir(parents=True, exist_ok=True)
+SOURCE = (
+    "from service import OrderService\\n"
+    "\\n"
+    "\\n"
+    "def create_order(payload: dict) -> dict:\\n"
+    "    return OrderService().create(payload)\\n"
+)
+SOURCE_PATH.write_text(SOURCE, encoding="utf-8", newline="")
+
+registry = load_registry(REGISTRY_PATH, approved_path=APPROVED_PATH).registry
+
+print(pad("工具 ID", 20) + pad("风险级别", 22) + pad("审批", 10) + pad("驱动", 16) + "已审核")
+print("-" * 92)
+for spec in sorted(registry.tools, key=lambda item: item.id):
+    print(
+        pad(spec.id, 20) + pad(spec.risk.value, 22) + pad(spec.approval.value, 10)
+        + pad(spec.driver.value, 16) + ("是" if registry.is_approved(spec) else "否")
+    )
+print()
+print("注册表身份:", registry.identity[:26] + "…",
+      "| 审批角色:", registry.approval_role_members(),
+      "| grant 有效期:", registry.grant_ttl_seconds, "秒（硬上限", str(registry.max_grant_ttl_seconds) + "）")
+
+# 不变量一：高风险动作必须人工审批（注册表是数据，这条由数据本身满足）。
+missing_approval = [
+    spec.id for spec in registry.tools
+    if spec.risk in HIGH_RISK_LEVELS and spec.approval is not ApprovalMode.REQUIRED
+]
+print("高风险但没要求审批的工具:", missing_approval or "（无）")
+assert not missing_approval, missing_approval
+# 不变量二：仓库自己的注册表必须每一条都已被人工审核过。
+assert all(registry.is_approved(spec) for spec in registry.tools)
+
+
+def edit_request(registry_, action_id, *, old, new, subject="local-user", context_extra=None):
+    """构造一次"字面量替换"动作请求；参数由注册表声明的参数表规范化。"""
+
+    return build_action_request(
+        registry_.tool("fs.edit"),
+        {"file_path": "src/order.py", "old_string": old, "new_string": new, "replace_all": False},
+        action_id=action_id,
+        request_id=action_id,
+        agent="dsh",
+        agent_version="0.1.5-rc.1",
+        trace_id="nb04-demo",
+        subject=subject,
+        roles=("developer",),
+        permissions=registry_.permissions_for(["developer"]),
+        workspace=WORKSPACE,
+        ttl_seconds=registry_.grant_ttl_seconds,
+        context_extra=context_extra,
+    )
+
+
+OLD = "from service import OrderService"
+NEW = "from service import OrderService\\nfrom util import clock"
+first = edit_request(registry, "nb04:edit-1", old=OLD, new=NEW)
+tweaked = edit_request(registry, "nb04:edit-1", old=OLD, new=NEW + "X")
+other_subject = edit_request(registry, "nb04:edit-1", old=OLD, new=NEW, subject="someone-else")
+
+print()
+print("action_hash:", first.action_hash[:26] + "…", "| 参数摘要:", first.param_digest[:18] + "…")
+print("  规范化参数:", [(item.name, item.display()) for item in first.params])
+print("  参数多一个字符 →", tweaked.action_hash[:26] + "…", "| 相同 =", first.action_hash == tweaked.action_hash)
+print("  换主体         →", other_subject.action_hash[:26] + "…", "| 相同 =", first.action_hash == other_subject.action_hash)
+print("  幂等键:", first.idempotency_key)
+
+assert first.action_hash != tweaked.action_hash
+assert first.action_hash != other_subject.action_hash
+assert first.tool_schema_hash == registry.tool("fs.edit").schema_hash
+assert [item.name for item in first.params] == sorted(item.name for item in first.params)
+
+# ---- 2) 注册表被改一个字符：工具立刻不可使用 ----
+drift_path = TEMP / "tool-registry.yaml"
+drift_path.write_text(
+    REGISTRY_PATH.read_text(encoding="utf-8").replace("max_chars: 20000", "max_chars: 20001"),
+    encoding="utf-8",
+    newline="\\n",
+)
+drift_registry = load_registry(drift_path, approved_path=APPROVED_PATH).registry
+drift_spec = drift_registry.tool("fs.edit")
+same_spec = registry.tool("fs.edit")
+
+print()
+print("注册表改了 max_chars 之后，fs.edit 的描述哈希变了 =", drift_spec.schema_hash != same_spec.schema_hash)
+print("  已审核 =", drift_registry.is_approved(drift_spec))
+print("  原因:", drift_registry.approval_reason(drift_spec)[:96] + "…")
+
+assert not drift_registry.is_approved(drift_spec)
+assert drift_spec.schema_hash != same_spec.schema_hash
+
+# 用没被审核过的注册表去 pre-check：直接阻断，而不只是一句提示。
+drift_pre = pre_execute(
+    edit_request(drift_registry, "nb04:edit-drift", old=OLD, new=NEW),
+    registry=drift_registry,
+    ledger=EnforcementLedger(TEMP / "drift-ledger.jsonl"),
+    sink=FileAuditSink(TEMP / "drift-audit.jsonl", workspace=WORKSPACE),
+)
+print("  用漂移的注册表 pre-check:", drift_pre.decision.decision.value, "/", drift_pre.decision.reason_code.value)
+assert drift_pre.decision.decision.value == "block"
+assert drift_pre.decision.reason_code.value == "schema_not_approved"
+'''
+        ),
+        markdown(
+            '''
+## 2. 执行前检查：顺序固定，而且默认失败关闭（图上的 e4 与左侧红色节点）
+
+`pre_execute` 把一次动作判成 allow / allow_with_warnings / block，
+检查顺序**写死在它所在模块的 docstring 里**：
+
+> `registry → action_window → principal → permissions → approval → policy → rate_limit → circuit_breaker → ledger → audit`
+
+每一项都会留下结构化的检查结论（`checks`），所以"为什么被拦"永远可解释。
+这一节做两件事：把一次正常编辑的**全部**检查项按实际顺序打出来，并与 docstring 里的顺序逐项核对；
+再拿命令类工具演示**结构性阻断**——不是"看起来危险"，而是这条命令根本不属于允许的形状。
+
+结构性阻断分两层，注册表里各有一段数据：
+
+- **组合片段**（分号 / 管道 / `&` / 反引号 / `$(` / 美元符紧跟左花括号 / 重定向 `>` 与 `<` / 换行）：
+  一条语句之外的东西一律阻断（`command_composition_blocked`）。只靠白名单正则不够——
+  一个 `( .*)?` 的尾巴就能吞掉"分号 + 任意命令"；
+- **被禁片段**（`../`、`--output`、`--ext-diff`、`--no-index` 之类）：
+  白名单正则描述的是"命令长什么样"，描述不了"这个选项会干什么"。
+  `git diff --output=<任意路径>` 完整匹配却会写文件，所以必须单独拦（`command_fragment_blocked`）。
+
+下面那个用分号拼了第二条命令的例子，白名单检查其实是**通过**的——拦住它的是组合片段检查。
+'''
+        ),
+        code(
+            '''
+# ---- 3) pre-check：全部检查项 + 顺序核对 ----
+import enforcement.precheck as precheck_module
+from enforcement.models import ReasonCode
+
+sink = FileAuditSink(TEMP / "audit.jsonl", workspace=WORKSPACE)
+ledger = EnforcementLedger(TEMP / "ledger.jsonl")
+
+allowed = pre_execute(first, registry=registry, ledger=ledger, sink=sink)
+print(pad("检查项", 20) + pad("结论", 10) + pad("原因码", 26) + "细节")
+print("-" * 100)
+for item in allowed.decision.checks:
+    print(pad(item.check, 20) + pad(item.status.value, 10) + pad(item.reason_code.value, 26) + item.detail[:40])
+print()
+print("决策:", allowed.decision.decision.value, "/", allowed.decision.reason_code.value,
+      "| 认领:", (allowed.claim_id or "<无>")[:22])
+
+DOCUMENTED_ORDER = (
+    "registry", "action_window", "principal", "permissions", "approval",
+    "policy", "rate_limit", "circuit_breaker", "ledger", "audit",
+)
+doc_text = inspect.getdoc(precheck_module)
+assert all(name in doc_text for name in DOCUMENTED_ORDER), doc_text
+observed = [item.check for item in allowed.decision.checks if item.check in DOCUMENTED_ORDER]
+assert observed == list(DOCUMENTED_ORDER), observed
+assert allowed.decision.decision.value == "allow"
+assert allowed.decision.grant is not None
+print("实际顺序与模块 docstring 写死的顺序逐项一致：")
+print("  " + " → ".join(DOCUMENTED_ORDER))
+
+# ---- 4) 结构性阻断：命令类工具的两层形状检查 ----
+def shell_request(action_id, command, roles=("owner",)):
+    return build_action_request(
+        registry.tool("exec.pwsh"),
+        {"command": command, "description": "nb04 演示"},
+        action_id=action_id,
+        request_id=action_id,
+        agent="dsh",
+        trace_id="nb04-demo",
+        subject="local-user",
+        roles=roles,
+        permissions=registry.permissions_for(roles),
+        workspace=WORKSPACE,
+        ttl_seconds=registry.grant_ttl_seconds,
+    )
+
+
+composition = pre_execute(
+    shell_request("nb04:shell-comp", "git status --short; Remove-Item -Recurse -Force ."),
+    registry=registry, ledger=ledger, sink=sink,
+)
+fragment = pre_execute(
+    shell_request("nb04:shell-frag", "git diff --no-index a b"),
+    registry=registry, ledger=ledger, sink=sink,
+)
+print()
+for label, outcome in (("组合片段", composition), ("被禁片段", fragment)):
+    failing = next(item for item in outcome.decision.checks if item.status.value == "failed")
+    print(label + ":", outcome.decision.decision.value, "/", outcome.decision.reason_code.value)
+    print("  白名单先过了吗:", outcome.decision.check("command_allowlist").status.value,
+          "| 拦下它的是:", failing.check)
+    print("  细节:", failing.detail[:88])
+
+assert composition.decision.reason_code is ReasonCode.COMMAND_COMPOSITION_BLOCKED
+assert fragment.decision.reason_code is ReasonCode.COMMAND_FRAGMENT_BLOCKED
+assert composition.decision.check("command_allowlist").status.value == "passed"
+assert fragment.decision.check("command_allowlist").status.value == "passed"
+assert ";" in composition.decision.check("command_composition").detail
+assert "--no-index" in fragment.decision.check("command_fragments").detail
+'''
+        ),
+        markdown(
+            '''
+## 3. 高风险审批与短时效授权（图上的 e5 → e6）
+
+风险级别落在 `destructive_write` / `external_side_effect` / `privileged_execution`
+三种之一时，注册表把 `approval` 标成 `required`：**没有绑定的结构化人工审批就一律阻断**。
+审批是一条记录（谁批的、批给谁、绑定哪个 `action_hash`、什么时候过期、审批人是不是真的持有审批角色），
+不是聊天里的一句"可以了"——执行器从不解析自然语言批准。
+
+审批通过之后签发的 **grant** 有三个性质，缺一不可：
+
+1. **绑定**：`action_hash` 与请求逐位相同，参数、主体、schema 有一个变了就失效；
+2. **短时效**：有效期写在注册表数据里（这里是 60 秒），执行器还会再查一次硬上限；
+3. **单次使用**：带唯一 nonce，台账记录"用过了"，第二次消费直接抛错。
+
+下面按"没有审批 → 审批绑错动作 → 审批正确 → 拿旧授权去做改过的动作"走一遍。
+'''
+        ),
+        code(
+            '''
+# ---- 5) 高风险动作：没有审批就阻断 ----
+from enforcement.approvals import ApprovalRecord, load_approval
+from enforcement.models import GrantError, utc_now
+
+plain = shell_request("nb04:shell-1", 'Write-Output "gate-ok"')
+no_approval = pre_execute(plain, registry=registry, ledger=ledger, sink=sink)
+print("没有审批:", no_approval.decision.decision.value, "/", no_approval.decision.reason_code.value,
+      "| 需要:", None if no_approval.decision.required_action is None else no_approval.decision.required_action.value)
+print("  细节:", no_approval.decision.check("approval").detail[:76])
+assert no_approval.decision.reason_code is ReasonCode.APPROVAL_REQUIRED
+assert no_approval.decision.grant is None
+
+# 审批绑的是 action_hash：随便写一个哈希，得到的是"审批无效"而不是"放行"。
+now = utc_now()
+misbound = ApprovalRecord(
+    approval_id="nb04-approval-wrong",
+    action_hash="sha256:" + "0" * 64,
+    action_id=plain.action_id,
+    tool_id=plain.tool_id,
+    subject="local-user",
+    granted_by="reviewer-1",
+    granted_by_roles=("reviewer",),
+    granted_at=now,
+    expires_at=now + timedelta(minutes=30),
+)
+wrong = pre_execute(plain, registry=registry, ledger=ledger, sink=sink, approval=misbound)
+print("审批绑错动作:", wrong.decision.decision.value, "/", wrong.decision.reason_code.value)
+print("  细节:", wrong.decision.check("approval").detail[:76])
+assert wrong.decision.reason_code is ReasonCode.APPROVAL_INVALID
+
+# 正确绑定的审批：落盘成 JSON，再由执行侧读回来（执行侧只认结构化记录）。
+approval_record = ApprovalRecord(
+    approval_id="nb04-approval-1",
+    action_hash=plain.action_hash,
+    action_id=plain.action_id,
+    tool_id=plain.tool_id,
+    subject="local-user",
+    granted_by="reviewer-1",
+    granted_by_roles=("reviewer",),
+    granted_at=now,
+    expires_at=now + timedelta(minutes=30),
+    note="演示：人工审批一次高权限动作",
+)
+APPROVAL_PATH = TEMP / "approval.json"
+APPROVAL_PATH.write_text(
+    json.dumps(json.loads(approval_record.model_dump_json()), ensure_ascii=False, indent=2) + "\\n",
+    encoding="utf-8",
+    newline="\\n",
+)
+approved = pre_execute(
+    plain, registry=registry, ledger=ledger, sink=sink, approval=load_approval(APPROVAL_PATH)
+)
+grant = approved.decision.grant
+ttl = (grant.expires_at - grant.issued_at).total_seconds()
+print()
+print("审批通过:", approved.decision.decision.value, "/", approved.decision.reason_code.value,
+      "| 审批文件:", APPROVAL_PATH.relative_to(REPO_ROOT).as_posix())
+print("  grant:", grant.grant_id[:20], "… | 绑定 action_hash 一致 =", grant.action_hash == plain.action_hash,
+      "| 有效期 %.0f 秒" % ttl, "| 单次使用 =", grant.single_use)
+
+assert approved.decision.decision.value == "allow"
+assert grant.action_hash == plain.action_hash
+assert 0 < ttl <= registry.grant_ttl_seconds
+assert grant.single_use is True
+
+# 拿这张授权去执行"参数改过一个字符"的请求：校验必须失败。
+tampered = shell_request("nb04:shell-1", 'Write-Output "gate-ok!"')
+try:
+    grant.verify(tampered, now=utc_now(), used=False, max_ttl_seconds=registry.max_grant_ttl_seconds)
+    raise AssertionError("参数改过之后旧授权仍然被接受——这是不可接受的")
+except GrantError as error:
+    print("  用旧授权执行改过参数的请求:", str(error)[:56])
+
+# 单次使用：消费一次之后，第二次消费直接抛错。
+ledger.consume_grant(grant)
+try:
+    ledger.consume_grant(grant)
+    raise AssertionError("单次授权被重复消费了")
+except GrantError as error:
+    print("  同一张授权消费两次:", str(error)[:56])
+assert ledger.grant_used(grant.grant_id)
+'''
+        ),
+        markdown(
+            '''
+## 4. 执行一次，且绝不执行第二次（图上的 e7）
+
+执行器拿到的输入只有三样：动作请求、工具描述、**执行前决策**（里面带着 grant）。
+它不解析自然语言，也不接受"模型说可以"。真正执行之前它会再核对一遍：决策是不是允许、
+grant 是不是本平台签发并登记过的、`action_hash` 对不对得上、有没有过期、是不是已经被用过。
+
+"重复 `action_id` 绝不执行第二次"由**两处**独立的记录守：
+
+- **台账**（追加写 JSONL）：`claim` 记录占用 `action_id`；同一 `action_hash` 再来得到
+  `action_replay`，同一 ID 换参数得到 `action_id_reuse`；
+- **审计链**：即使台账被换掉，链上只要有"这个 `action_id` 真的允许过 / 真的跑过"的记录，一样阻断。
+
+所以下面会把台账换成一个空文件，看它是否还拦得住。
+'''
+        ),
+        code(
+            '''
+# ---- 6) 执行一次：允许 → 驱动执行 → 事后验证 → 终态 ----
+from enforcement.drivers import drivers_for
+from enforcement.executor import ControlledExecutor
+from enforcement.models import ExecutionStatus, FinalOutcome, PostStatus
+
+executor = ControlledExecutor(
+    ledger=ledger,
+    drivers=drivers_for(registry.tools),
+    sink=sink,
+    max_grant_ttl_seconds=registry.max_grant_ttl_seconds,
+)
+outcome = executor.execute(
+    first, spec=registry.tool("fs.edit"), pre=allowed.decision, workspace=WORKSPACE
+)
+effect = None if outcome.evidence is None else outcome.evidence.file("src/order.py")
+content_after = SOURCE_PATH.read_text(encoding="utf-8")
+
+print("执行:", outcome.record.status.value, "/", outcome.record.reason_code.value,
+      "| 驱动:", outcome.record.driver.value)
+print("事后验证:", outcome.post.status.value, "/", outcome.post.reason_code.value)
+print("终态:", outcome.final.outcome.value)
+print("文件证据: 变了 =", effect.changed,
+      "| 前", (effect.sha256_before or "")[:14] + "…",
+      "| 后", (effect.sha256_after or "")[:14] + "…",
+      "| diff 摘要", (effect.diff_digest or "")[:14] + "…")
+print("落盘内容包含新行 =", "from util import clock" in content_after)
+
+assert outcome.record.status is ExecutionStatus.EXECUTED
+assert outcome.post.status is PostStatus.VALIDATED
+assert outcome.final.outcome is FinalOutcome.DELIVERED
+assert effect is not None and effect.changed
+assert effect.sha256_before != effect.sha256_after
+assert "from util import clock" in content_after
+
+# 同一个 action_id 再来一次：台账拦。
+replay = pre_execute(first, registry=registry, ledger=ledger, sink=sink)
+unchanged = SOURCE_PATH.read_text(encoding="utf-8") == content_after
+print()
+print("同 action_id 再来一次:", replay.decision.decision.value, "/", replay.decision.reason_code.value,
+      "| 文件没被再改 =", unchanged)
+assert replay.decision.reason_code is ReasonCode.ACTION_REPLAY
+assert unchanged
+
+# 把台账换成一个空文件：审计链同样拦得住（两处独立记录，删一处不够）。
+fresh_ledger = EnforcementLedger(TEMP / "fresh-ledger.jsonl")
+from_chain = pre_execute(first, registry=registry, ledger=fresh_ledger, sink=sink)
+print("台账被换空之后:", from_chain.decision.decision.value, "/", from_chain.decision.reason_code.value)
+print("  依据:", from_chain.decision.check("ledger").detail[:52])
+assert from_chain.decision.reason_code is ReasonCode.ACTION_REPLAY
+assert from_chain.decision.check("ledger").detail.startswith("该 action_id 已经判定/执行过")
+
+# 拿一个"阻断"的执行前决策去执行：执行器拒绝执行，文件一个字节都不动。
+refused = executor.execute(first, spec=registry.tool("fs.edit"), pre=replay.decision, workspace=WORKSPACE)
+print()
+print("拿阻断决策去执行:", refused.record.status.value, "/", refused.record.reason_code.value,
+      "| 产生副作用 =", refused.record.produced_effect)
+assert refused.record.status is ExecutionStatus.REFUSED
+assert refused.record.reason_code is ReasonCode.ACTION_REPLAY
+assert not refused.record.produced_effect
+assert SOURCE_PATH.read_text(encoding="utf-8") == content_after
+'''
+        ),
+        markdown(
+            '''
+## 5. 事后验证与审计链（图上的 e8 → e9，以及右侧"证据不足"节点）
+
+**事后验证**必须交证据：文件前后哈希、diff 摘要、退出码、超时；工具返回值只当**不可信数据**（只留摘要）。
+证据不足时按 `repair_required` / `inconsistent` 处理；能不能回滚由工具在注册表里声明
+（这里是 `file_snapshot`），声明不了就写 `unsupported`——绝不假装所有副作用都可撤销。
+
+**审计链**是追加写的摘要链：每条记录带 `sequence` 与 `prev_digest`，
+写入前统一脱敏（密钥、`Authorization: Bearer` 后面的 token、Windows 与 POSIX 绝对路径、控制字符），
+**单条记录超过体积上限直接失败关闭**，宁可没有这条证据，也不写一条被截断的。
+
+最后一条规矩最硬：**受治理动作在审计或台账不可写时不执行**。
+（只有注册表显式声明 `audit_failure: degrade` 的低风险工具允许降级并记警告——本仓库的工具默认是 block。）
+'''
+        ),
+        code(
+            '''
+# ---- 7) 事后验证失败 → 回滚；审计链完整性；审计不可写 → 不执行 ----
+from enforcement.audit import AuditError, redact_text
+from enforcement.models import AuditStage
+
+before_broken = SOURCE_PATH.read_text(encoding="utf-8")
+broken = edit_request(
+    registry, "nb04:edit-broken",
+    old="    return OrderService().create(payload)",
+    new="    return OrderService().create(payload",
+)
+pre_broken = pre_execute(broken, registry=registry, ledger=ledger, sink=sink)
+outcome_broken = executor.execute(
+    broken, spec=registry.tool("fs.edit"), pre=pre_broken.decision, workspace=WORKSPACE
+)
+post = outcome_broken.post
+print("语法坏掉的一次编辑:", outcome_broken.record.status.value,
+      "| 事后验证:", post.status.value, "/", post.reason_code.value)
+print("  回滚:", post.rollback.mode.value, "/", post.rollback.status,
+      "| 恢复的文件:", list(post.rollback.restored))
+print("  终态:", outcome_broken.final.outcome.value,
+      "| 文件已还原 =", SOURCE_PATH.read_text(encoding="utf-8") == before_broken)
+
+assert post.status is PostStatus.REPAIR_REQUIRED
+assert post.rollback is not None and post.rollback.status == "applied"
+assert outcome_broken.final.outcome is FinalOutcome.ROLLED_BACK
+assert SOURCE_PATH.read_text(encoding="utf-8") == before_broken
+
+# ---- 8) 审计链：sequence + prev_digest ----
+records = sink.chain_records()
+issues = sink.verify()
+print()
+print("审计记录数:", len(records), "| 链校验问题:", issues or "（无）")
+print("  阶段（前 6 条）:", [item["stage"] for item in records][:6])
+assert issues == ()
+assert [int(item["sequence"]) for item in records] == list(range(1, len(records) + 1))
+assert records[0]["prev_digest"] == ""
+assert all(
+    records[index]["prev_digest"] == records[index - 1]["digest"]
+    for index in range(1, len(records))
+)
+print("  链首 prev_digest 为空，之后每条都指向上一条的 digest —— 摘要链成立。")
+
+# 脱敏：密钥与绝对路径都不落盘（外部绝对路径换成 <abs>）。
+raw = "Authorization: Bearer sk-live-abcdefgh12345678 外部路径 " + r"C:\\Users\\someone\\notes.txt"
+masked = redact_text(raw, workspace=WORKSPACE)
+print()
+print("脱敏前:", raw)
+print("脱敏后:", masked)
+assert "sk-live-abcdefgh12345678" not in masked
+assert "<redacted-secret>" in masked and "<abs>" in masked
+
+sink.append(
+    AuditStage.EXECUTION,
+    payload={"note": raw, "detail": "演示脱敏"},
+    action_id="nb04:audit-redact",
+    request_id="nb04:audit-redact",
+    tool_id="fs.edit",
+)
+written = json.dumps(sink.chain_records()[-1], ensure_ascii=False)
+leaked_path = "someone" + chr(92) + "notes.txt"
+print("落盘的审计行里: 含密钥原文 =", "sk-live-abcdefgh12345678" in written,
+      "| 含外部绝对路径 =", leaked_path in written)
+assert "sk-live-abcdefgh12345678" not in written
+assert "<redacted-secret>" in written
+assert leaked_path not in written
+
+# 单条超限：失败关闭，而且不落盘。
+tiny_path = TEMP / "tiny-audit.jsonl"
+tiny = FileAuditSink(tiny_path, workspace=WORKSPACE, max_record_bytes=256)
+try:
+    tiny.append(AuditStage.REQUEST, payload={"blob": "x" * 600})
+    raise AssertionError("超限的审计记录必须失败关闭，而不是被截断写下去")
+except AuditError as error:
+    print()
+    print("单条超限:", str(error)[:64])
+assert not tiny_path.exists(), "超限记录不该落盘"
+
+# ---- 9) 审计 / 台账不可写 → 受治理动作不执行 ----
+audit_ledger = EnforcementLedger(TEMP / "ledger-audit.jsonl")
+no_audit_request = edit_request(registry, "nb04:edit-noaudit", old=OLD, new=NEW)
+no_audit = pre_execute(no_audit_request, registry=registry, ledger=audit_ledger, sink=None)
+released = [item for item in audit_ledger.of_kind("claim_released")]
+print()
+print("没有审计端口:", no_audit.decision.decision.value, "/", no_audit.decision.reason_code.value,
+      "| 已经释放认领 =", bool(released))
+assert no_audit.decision.reason_code is ReasonCode.AUDIT_UNAVAILABLE
+assert no_audit.decision.grant is None
+assert released and released[0]["reason"] == "audit_unavailable"
+
+no_ledger = pre_execute(
+    edit_request(registry, "nb04:edit-noledger", old=OLD, new=NEW),
+    registry=registry,
+    ledger=EnforcementLedger(WORKSPACE),
+    sink=sink,
+)
+print("台账不可用:", no_ledger.decision.decision.value, "/", no_ledger.decision.reason_code.value)
+assert no_ledger.decision.reason_code is ReasonCode.LEDGER_UNAVAILABLE
+
+stopped = executor.execute(
+    no_audit_request, spec=registry.tool("fs.edit"), pre=no_audit.decision, workspace=WORKSPACE
+)
+print("拿这两个决策去执行:", stopped.record.status.value, "/", stopped.record.reason_code.value,
+      "| 产生副作用 =", stopped.record.produced_effect)
+assert stopped.record.status is ExecutionStatus.REFUSED
+assert not stopped.record.produced_effect
+assert SOURCE_PATH.read_text(encoding="utf-8") == before_broken
+
+assert sink.verify() == ()
+print()
+print("最终审计链:", len(sink.chain_records()), "条，链校验通过，末值摘要",
+      sink.final_digest()[:18] + "…")
+print("受控工作区、台账、审计链都在", TEMP.relative_to(REPO_ROOT).as_posix(), "下；仓库文件一个都没动。")
+'''
+        ),
+        markdown(
+            '''
+## 小结
+
+- **注册表是数据，审核是门禁**：运行时描述与 `approved.json` 的哈希不一致 → 工具不可使用
+  （上面把参数上限改了一个数字，就复现了 `schema_not_approved` 阻断）；
+- **`action_hash` 绑定一切**：工具 schema 哈希 + 规范化参数 + 主体 + 权限 + 上下文摘要；
+  参数多一个字符或换一个主体，旧授权立即失效；
+- **执行前检查顺序固定**（registry → action_window → principal → permissions → approval →
+  policy → rate_limit → circuit_breaker → ledger → audit），实际检查项顺序与模块 docstring 逐项一致；
+  命令类工具另有两层形状检查：`command_composition_blocked` 与 `command_fragment_blocked`
+  （后者的例子是"白名单通过了、但选项会写文件"）；
+- **高风险必须人工审批**，审批绑 `action_hash`；授权短时效（60 秒）且单次使用，
+  重复消费抛错；重复 `action_id` **绝不执行第二次**——台账与审计链两处独立拦截，
+  把台账换空也拦得住；拿阻断决策去执行只会得到 `refused`，不会产生副作用；
+- **事后验证交证据**：前后哈希 + diff 摘要；验证失败按 `repair_required` 处理，
+  注册表声明了 `file_snapshot` 就回滚，否则写 `unsupported`；
+- **审计链是 `sequence` + `prev_digest` 的追加写摘要链**：密钥、绝对路径、控制字符脱敏，
+  单条超限失败关闭；审计或台账不可写时受治理动作**不执行**，而且会释放认领——
+  修好之后同一个 `action_id` 还能重试，失败关闭不等于死锁。
+
+需要记住的边界：审计链是**摘要链，不是防篡改日志**——删掉尾部或整链重写它发现不了，
+外部锚定与签名属于后面的 Phase；命令白名单也不是沙箱，真正的隔离在运行时的文件系统与进程沙箱里。
+
+接着往下走：`05-代码验证器.ipynb`（验证器只产证据、不判定 allow / block）、
+`08-单条规则-从文档到判定.ipynb`（一条规则怎么从原文走到判定）。
+'''
+        ),
+    ),
+)

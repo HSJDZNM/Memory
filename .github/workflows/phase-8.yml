@@ -228,6 +228,11 @@ jobs:
             docs/project/learning/phase-7/walkthrough.ipynb \
             docs/project/learning/phase-8/walkthrough.ipynb
 
+      # tech-detail 的 10 份讲解 notebook 同样"生成器是唯一真相源"：
+      # --check 比对产物与内容源，并复用 tools/check_notebook.py 做结构校验。
+      - name: Tech-detail notebooks are in sync
+        run: .venv/bin/python docs/project/architecture/tech-detail/notebooks/build_notebooks.py --check
+
       - name: Text conventions (UTF-8 / LF / trailing whitespace)
         run: .venv/bin/python tools/check_text_conventions.py
 
