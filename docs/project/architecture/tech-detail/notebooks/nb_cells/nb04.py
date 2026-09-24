@@ -550,12 +550,12 @@ assert all(
 print("  链首 prev_digest 为空，之后每条都指向上一条的 digest —— 摘要链成立。")
 
 # 脱敏：密钥与绝对路径都不落盘（外部绝对路径换成 <abs>）。
-raw = "Authorization: Bearer sk-live-abcdefgh12345678 外部路径 " + r"C:\\Users\\someone\\notes.txt"
+raw = "Authorization: Bearer sk-live-abcdefgh12345678 外部路径 " + r"C:\\Users\\someone\\notes.txt"  # secret-scan: allow（合成值：用来验证审计链把密钥换成 <redacted-secret>，不是真凭据）
 masked = redact_text(raw, workspace=WORKSPACE)
 print()
 print("脱敏前:", raw)
 print("脱敏后:", masked)
-assert "sk-live-abcdefgh12345678" not in masked
+assert "sk-live-abcdefgh12345678" not in masked  # secret-scan: allow（合成值：用来验证审计链把密钥换成 <redacted-secret>，不是真凭据）
 assert "<redacted-secret>" in masked and "<abs>" in masked
 
 sink.append(
@@ -567,9 +567,9 @@ sink.append(
 )
 written = json.dumps(sink.chain_records()[-1], ensure_ascii=False)
 leaked_path = "someone" + chr(92) + "notes.txt"
-print("落盘的审计行里: 含密钥原文 =", "sk-live-abcdefgh12345678" in written,
+print("落盘的审计行里: 含密钥原文 =", "sk-live-abcdefgh12345678" in written,  # secret-scan: allow（合成值：用来验证审计链把密钥换成 <redacted-secret>，不是真凭据）
       "| 含外部绝对路径 =", leaked_path in written)
-assert "sk-live-abcdefgh12345678" not in written
+assert "sk-live-abcdefgh12345678" not in written  # secret-scan: allow（合成值：用来验证审计链把密钥换成 <redacted-secret>，不是真凭据）
 assert "<redacted-secret>" in written
 assert leaked_path not in written
 

@@ -63,6 +63,21 @@ tech-detail/
 - **不写仓库**：每份只写自己独占的 `.tmp/tech-detail/<编号>/`，不碰 `ci_local.py` 与其他闭环共用的固定 `.tmp/` 路径；
 - **不手改产物**：`.ipynb` 与同名 `.py` 都由 `build_notebooks.py` 生成，改内容改 `nb_cells/nb<编号>.py`。
 
+### 在 Jupyter / VS Code 里跑过之后"变脏"了？这是正常的
+
+运行并保存会把每个单元的输出与执行序号写回 `.ipynb`，而生成器写出来的形态里这两样永远是空的。
+两道检查盯着这件事：`python tools/check_repo_consistency.py` 一秒内点名哪一份被写脏，
+CI 的 `build_notebooks.py --check` 做逐字节比对。恢复方式二选一：
+
+```powershell
+# 重新生成那一份（顺带逐单元执行一遍）
+python docs/project/architecture/tech-detail/notebooks/build_notebooks.py --only 03
+# 或者用 git 直接还原（如果只是带运行痕迹，内容没改）
+git checkout -- docs/project/architecture/tech-detail/notebooks/03-检索-SQLite-FTS5.ipynb
+```
+
+想彻底避开：直接跑同名的 `.py`——它与 notebook 逐字相同，却不会往仓库里写任何东西。
+
 与 `docs/project/learning/` 的分工：那边按**实施阶段**（Phase 0–8）讲一遍，这边按**技术**讲（一张图一项技术）；
 两边的代码单元都是跑得通的，只是切法不同。
 
