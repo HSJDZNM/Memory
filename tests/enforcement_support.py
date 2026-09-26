@@ -166,6 +166,17 @@ TEST_REGISTRY_TOOLS: tuple[dict[str, Any], ...] = (
         "required_permissions": ["shell.exec"],
         "approval": "required",
         "post_checks": [],
+        # 与仓库真实注册表的 exec.run_code 同形：driver=none + effect=process 的委派工具
+        # 必须显式声明第二道闸（code_check 或 ungoverned），否则加载期就报错。
+        "code_check": {
+            "kind": "python_forbidden_surface",
+            "param": "code",
+            "language": "python",
+            "forbidden_imports": ["os", "subprocess", "socket"],
+            "forbidden_calls": ["open", "exec", "eval", "__import__"],
+            "forbidden_attributes": ["os", "subprocess"],
+            "known_gaps": ["用下标 / 容器取出函数再调用（测试替身只声明最小检查面）"],
+        },
         "parameters": [
             {"name": "code", "type": "string", "required": True, "max_chars": 2000},
             {"name": "description", "type": "string", "required": True, "max_chars": 200},

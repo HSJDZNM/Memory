@@ -44,6 +44,10 @@ __all__ = [
     "ActionRequest",
     "ActionRequestError",
     "ApprovalMode",
+    "CodeCheckSpec",
+    "PathKind",
+    "SUPPORTED_CODE_CHECKS",
+    "UngovernedSpec",
     "AuditError",
     "AuditFailurePolicy",
     "AuditRecord",
@@ -124,6 +128,14 @@ SUPPORTED_POST_CHECKS = (
     "target_exists",
 )
 
+# 已实现的代码静态检查。与 SUPPORTED_POST_CHECKS 同一套做法：**封闭枚举**，
+# 注册表里出现别的名字一律在加载期报错。"声明了但没人执行"的检查等于没有门禁，
+# 而"声明了但什么都没查"更糟——它把缺口藏进了一份看起来更完整的声明里。
+SUPPORTED_CODE_CHECKS = ("python_forbidden_surface",)
+
+# 检查项名字的字符集：与参数名同一口径（稳定标识符），避免出现无法比较的写法。
+_CODE_CHECK_ENTRY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
+
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
@@ -139,7 +151,16 @@ class RegistryError(EnforcementError):
 
 
 class ActionRequestError(EnforcementError):
-    """Action Request 无法构造或不合法（参数越界、类型错误、未知参数）。"""
+    """Action Request 无法构造或不合法（参数越界、类型错误、未知参数）。
+
+    reason_code 是**结构化的**拒绝原因（ReasonCode 的值）：调用方（Hook / CLI / 编排层）
+    必须能按它分流，而不是把所有构造失败都记成一句笼统的"参数错误"——
+    "路径越界"与"这个参数不是文件"是两件事，混在一起会让正确参数被误当成写错了。
+    """
+
+    def __init__(self, message: str, *, reason_code: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 class GrantError(EnforcementError):
@@ -215,6 +236,20 @@ class ParamType(str, Enum):
     BOOLEAN = "boolean"
     PATH = "path"
     STRING_LIST = "string_list"
+
+
+class PathKind(str, Enum):
+    """path 参数指向的是什么：文件 / 目录 / 两者皆可。
+
+    存在的理由是一个真实缺陷："等于工作区根"这一个边界被写成了"路径必须指向文件"，
+    于是"工作目录 = 项目根"这种合法参数被判越界，而报错还说是参数错误。
+    **文件与目录的区别是数据，不是代码里的特判**：默认 file（大多数路径参数是编辑目标），
+    目录类参数（workdir / cwd）必须在注册表里显式声明 directory 才会接受根。
+    """
+
+    FILE = "file"
+    DIRECTORY = "directory"
+    ANY = "any"
 
 
 class ApprovalMode(str, Enum):
@@ -298,6 +333,9 @@ class ReasonCode(str, Enum):
     ACTION_REPLAY = "action_replay"
     ACTION_ID_REUSE = "action_id_reuse"
     DRIVER_UNAVAILABLE = "driver_unavailable"
+    CODE_BLOCKED = "code_blocked"
+    CODE_PARSE_FAILED = "code_parse_failed"
+    UNGOVERNED_DECLARED = "ungoverned_declared"
     COMMAND_NOT_ALLOWLISTED = "command_not_allowlisted"
     COMMAND_COMPOSITION_BLOCKED = "command_composition_blocked"
     COMMAND_FRAGMENT_BLOCKED = "command_fragment_blocked"
@@ -365,6 +403,130 @@ class RateLimit(StrictModel):
     breaker_seconds: int = Field(default=0, ge=0, description="熔断保持时间")
 
 
+class CodeCheckSpec(StrictModel):
+    """一段"代码类参数"的结构化静态检查声明（数据，不是代码里的判断）。
+
+    为什么需要它：`exec.run_code` 这类工具由 Agent 运行时执行（driver=none），平台既不能
+    执行它、也没有事后证据，唯一的门禁曾是人工审批——审批一过就是任意代码。这里把
+    "代码里不许出现的表面"写成数据，让 pre-check 能在放行之前做一次**结构性**检查。
+
+    **它不是沙箱**：静态检查看的是语法结构，绕过的写法客观存在（拼接字符串构造名字、
+    通过下标取函数、动态属性……）。known_gaps 就是把这些已知不可覆盖的形态**如实写出来**，
+    并让 pre-check 把它带进审计警告，而不是让调用方以为"查过了就等于安全"。
+    真正的隔离属于运行时的文件系统与进程沙箱，不在本阶段。
+    """
+
+    kind: str = Field(description="已实现的检查名，取值必须在 SUPPORTED_CODE_CHECKS 内")
+    param: str = Field(min_length=1, description="承载代码文本的参数名（必须是 string 参数）")
+    language: str = Field(default="python", description="代码语言；未知语言拒绝加载")
+    forbidden_imports: Tuple[str, ...] = Field(
+        default=(), description="禁止 import 的模块根名或完整点分名"
+    )
+    forbidden_calls: Tuple[str, ...] = Field(
+        default=(), description="禁止以该名字直接调用（例如 open / exec / eval）"
+    )
+    forbidden_attributes: Tuple[str, ...] = Field(
+        default=(),
+        description="禁止出现的属性链前缀（例如 os 覆盖 os.system / os.popen）",
+    )
+    known_gaps: Tuple[str, ...] = Field(
+        default=(),
+        description="已知不可覆盖的绕过形态（写进审计警告，防止把结构性检查当成沙箱）",
+    )
+
+    @field_validator("kind")
+    @classmethod
+    def _check_kind(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized not in SUPPORTED_CODE_CHECKS:
+            raise ValueError(
+                f"未知代码检查 kind {value!r}；已实现的检查为 {list(SUPPORTED_CODE_CHECKS)}。"
+                "声明一个没人实现的检查名等于给缺口换了一张更好看的封面，必须拒绝"
+            )
+        return normalized
+
+    @field_validator("language")
+    @classmethod
+    def _check_language(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized != "python":
+            raise ValueError(
+                f"未知代码语言 {value!r}：已实现的检查只解析 python（用标准库 ast），"
+                "换语言必须同时换实现"
+            )
+        return normalized
+
+    @field_validator("forbidden_imports", "forbidden_calls", "forbidden_attributes")
+    @classmethod
+    def _check_entries(cls, value: Tuple[str, ...], info: Any) -> Tuple[str, ...]:
+        normalized: list[str] = []
+        for item in value:
+            token = str(item).strip()
+            if not token:
+                raise ValueError(f"{info.field_name} 不能包含空值")
+            if _CODE_CHECK_ENTRY_RE.fullmatch(token) is None:
+                raise ValueError(
+                    f"{info.field_name} 的条目必须是模块 / 属性名（字母数字下划线点），得到 {item!r}"
+                )
+            if token in normalized:
+                continue
+            normalized.append(token)
+        return tuple(sorted(normalized))
+
+    @field_validator("known_gaps")
+    @classmethod
+    def _check_gaps(cls, value: Tuple[str, ...]) -> Tuple[str, ...]:
+        """已知绕过形态是给人读的说明文字，只要求非空、去重、顺序稳定。"""
+
+        normalized: list[str] = []
+        for item in value:
+            token = str(item).strip()
+            if not token:
+                raise ValueError("known_gaps 不能包含空条目：空条目等于没写")
+            if token in normalized:
+                continue
+            normalized.append(token)
+        return tuple(normalized)
+
+    @property
+    def has_rules(self) -> bool:
+        """是否真的声明了检查项：三个禁止面全空 = 什么都没查。"""
+
+        return bool(self.forbidden_imports or self.forbidden_calls or self.forbidden_attributes)
+
+    @model_validator(mode="after")
+    def _check_shape(self) -> "CodeCheckSpec":
+        if not self.has_rules:
+            raise ValueError(
+                "代码检查至少要声明 forbidden_imports / forbidden_calls / forbidden_attributes 之一："
+                "三个都空的检查只会解析语法，却会被当成'查过了'"
+            )
+        return self
+
+
+class UngovernedSpec(StrictModel):
+    """显式的"这条委派工具在平台上不可结构化治理"声明（降级，不是默认值，也不静默）。
+
+    driver=none 且 effect=process 的工具（平台执行不了、只能是 Agent 运行时执行）必须
+    在"结构化检查"与"这条显式降级声明"之间选一个。**没有默认值**：不写就是加载期错误，
+    因为"没声明"与"声明了不可治理"必须可区分——否则 G9 会以另一种形式复现。
+
+    声明之后并非静默通过：pre-check 会输出 governance_coverage 检查项（reason_code =
+    ungoverned_declared）、写入审计，并让决策至少是 allow_with_warnings。
+    """
+
+    reason: str = Field(min_length=1, description="为什么这条工具在平台上无法被结构化检查")
+    declared_by: str = Field(min_length=1, description="做出这个判断的人 / 角色")
+
+    @field_validator("reason", "declared_by")
+    @classmethod
+    def _check_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("不可治理声明必须写明 reason 与 declared_by")
+        return normalized
+
+
 class ParamSpec(StrictModel):
     """一个参数的允许形态。未声明的参数一律拒绝（allowlist，不是 denylist）。"""
 
@@ -379,6 +541,11 @@ class ParamSpec(StrictModel):
     enum: Tuple[str, ...] = ()
     path_scope: Optional[str] = Field(
         default=None, description="path 类型的作用域：workspace 表示必须落在工作区内"
+    )
+    path_kind: PathKind = Field(
+        default=PathKind.FILE,
+        description="path 类型指向什么：file（默认）拒绝等于工作区根的路径，"
+        "directory 把根归一化为 .，any 两者都接受",
     )
     blocked_prefixes: Tuple[str, ...] = Field(
         default=(),
@@ -443,6 +610,11 @@ class ParamSpec(StrictModel):
             raise ValueError(f"{self.name}: max_items/max_item_chars 只适用于 string_list")
         if self.type is ParamType.PATH and self.path_scope not in (None, "workspace"):
             raise ValueError(f"{self.name}: path_scope 只支持 workspace 或省略")
+        if self.type is not ParamType.PATH and self.path_kind is not PathKind.FILE:
+            raise ValueError(
+                f"{self.name}: path_kind 只适用于 path 参数；"
+                "在别的类型上声明目录语义会被静默忽略，因此直接拒绝"
+            )
         if self.blocked_prefixes and self.type is not ParamType.PATH:
             raise ValueError(f"{self.name}: blocked_prefixes 只适用于 path 参数")
         if self.escalating_values and not self.requires_permission:
@@ -470,6 +642,15 @@ class ToolSpec(StrictModel):
     required_permissions: Tuple[str, ...] = ()
     approval: ApprovalMode = ApprovalMode.NONE
     post_checks: Tuple[str, ...] = ()
+    code_check: Optional[CodeCheckSpec] = Field(
+        default=None,
+        description="代码类参数的结构化静态检查；driver=none 的进程类工具必须声明它，"
+        "或显式声明 ungoverned（二者必居其一，没有默认值）",
+    )
+    ungoverned: Optional[UngovernedSpec] = Field(
+        default=None,
+        description="显式降级声明：这条委派工具在平台上不可结构化治理（进审计，不静默）",
+    )
     timeout_ms: int = Field(default=5000, ge=1)
     rollback: RollbackMode = RollbackMode.NONE
     rate_limit: Optional[RateLimit] = None
@@ -576,6 +757,36 @@ class ToolSpec(StrictModel):
                 f"{self.id}: audit_failure=degrade 只允许只读工具使用；"
                 "任何会产生副作用的动作都必须在审计不可写时失败关闭"
             )
+        if self.code_check is not None and self.ungoverned is not None:
+            raise ValueError(
+                f"{self.id}: code_check 与 ungoverned 不得同时声明——"
+                "要么给它加检查，要么如实说它不可治理，两者都写等于自相矛盾"
+            )
+        if self.code_check is not None:
+            carrier = self.parameter(self.code_check.param)
+            if carrier is None:
+                raise ValueError(
+                    f"{self.id}: code_check.param={self.code_check.param!r} 不是已声明的参数；"
+                    "检查一个不存在的参数等于什么都没查"
+                )
+            if carrier.type is not ParamType.STRING:
+                raise ValueError(
+                    f"{self.id}: code_check.param={carrier.name!r} 必须是 string 参数，"
+                    f"得到 {carrier.type.value}：静态检查只解析文本"
+                )
+        if self.ungoverned is not None and not self.is_delegated_process:
+            raise ValueError(
+                f"{self.id}: ungoverned 只适用于 driver=none 且 effect=process 的委派工具；"
+                "平台真正执行的工具必须走驱动与 post_checks，不得用一句声明换掉门禁"
+            )
+        if self.is_delegated_process and self.code_check is None and self.ungoverned is None:
+            raise ValueError(
+                f"{self.id}: driver=none 且 effect=process 的委派工具必须**显式**声明"
+                "「结构化检查」(code_check) 或「不可治理」(ungoverned) 之一——"
+                "没有默认值：平台执行不了它、也没有事后证据，缺了这条声明就只剩审批一道门，"
+                "而审批一过就是任意代码（G9）。声明不可治理也不是静默通过：pre-check 会输出 "
+                "governance_coverage=ungoverned_declared 并写进审计"
+            )
         return self
 
     def parameter(self, name: str) -> Optional[ParamSpec]:
@@ -599,6 +810,15 @@ class ToolSpec(StrictModel):
     @property
     def is_high_risk(self) -> bool:
         return self.risk in HIGH_RISK_LEVELS
+
+    @property
+    def is_delegated_process(self) -> bool:
+        """平台不执行、但会在进程上留下效果的工具（例如 run_code / bash 类委派工具）。
+
+        它们的共同缺口是"平台既执行不了、也拿不到事后证据"，因此必须有第二道闸。
+        """
+
+        return self.driver is DriverKind.NONE and self.effect is EffectKind.PROCESS
 
 
 # --------------------------------------------------------------------------- Action Request

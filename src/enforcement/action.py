@@ -35,6 +35,7 @@ from .models import (
     ParamSpec,
     ParamType,
     ParamValue,
+    PathKind,
     ReasonCode,
     ToolSpec,
     digest_of,
@@ -55,7 +56,7 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
 def _fail(reason: ReasonCode, detail: str) -> ActionRequestError:
-    return ActionRequestError(f"[{reason.value}] {detail}")
+    return ActionRequestError(f"[{reason.value}] {detail}", reason_code=reason.value)
 
 
 def _require_identifier(value: Any, *, where: str) -> str:
@@ -70,8 +71,22 @@ def _require_identifier(value: Any, *, where: str) -> str:
     return token
 
 
-def _normalize_path(value: Any, *, name: str, workspace: Optional[Path]) -> str:
-    """路径参数统一成工作区相对路径；逃出工作区一律拒绝。"""
+def _normalize_path(
+    value: Any,
+    *,
+    name: str,
+    workspace: Optional[Path],
+    path_kind: PathKind = PathKind.FILE,
+) -> str:
+    """路径参数统一成工作区相对路径；逃出工作区一律拒绝。
+
+    两件事分开判，错误码才如实：
+
+    1. **范围**（由 repo_relative_path 负责）：逃出工作区 → PATH_OUT_OF_SCOPE；
+    2. **类型**（由参数声明的 path_kind 负责）：等于范围根的路径归一化为 "."，
+       只有 directory / any 参数接受它；file 参数拿到 "." 是"它不是文件"，
+       报 PARAM_INVALID 而不是含糊的"参数错误"，更不是"越界"。
+    """
 
     if not isinstance(value, str) or not value.strip():
         raise _fail(ReasonCode.PARAM_INVALID, f"参数 {name} 必须是路径字符串，得到 {value!r}")
@@ -85,17 +100,26 @@ def _normalize_path(value: Any, *, name: str, workspace: Optional[Path]) -> str:
                 f"参数 {name} 是绝对路径 {raw!r}，但没有声明工作区锚点，拒绝处理",
             )
         try:
-            return repo_relative_path(raw)
+            normalized = repo_relative_path(raw, allow_root=True)
         except PolicyContextError as error:
             raise _fail(ReasonCode.PATH_OUT_OF_SCOPE, str(error)) from error
+    else:
+        try:
+            normalized = repo_relative_path(raw, repo_root=workspace, allow_root=True)
+        except PolicyContextError as error:
+            raise _fail(
+                ReasonCode.PATH_OUT_OF_SCOPE,
+                f"参数 {name} 不在受控工作区 {Path(workspace).name} 内：{error}",
+            ) from error
 
-    try:
-        return repo_relative_path(raw, repo_root=workspace)
-    except PolicyContextError as error:
+    if normalized == "." and path_kind is PathKind.FILE:
         raise _fail(
-            ReasonCode.PATH_OUT_OF_SCOPE,
-            f"参数 {name} 不在受控工作区 {Path(workspace).name} 内：{error}",
-        ) from error
+            ReasonCode.PARAM_INVALID,
+            f"参数 {name} 取值 {raw!r} 等于受控范围根目录，归一化为 '.'；"
+            "该参数在注册表里声明的是文件（path_kind: file），接受目录的是 "
+            "path_kind=directory / any 的参数（例如 workdir / cwd）",
+        )
+    return normalized
 
 
 def _normalize_scalar(spec: ParamSpec, raw: Any, *, workspace: Optional[Path]) -> Any:
@@ -107,7 +131,7 @@ def _normalize_scalar(spec: ParamSpec, raw: Any, *, workspace: Optional[Path]) -
             raise _fail(ReasonCode.PARAM_INVALID, f"参数 {name} 必须是字符串，得到 {type(raw).__name__}")
         return raw
     if spec.type is ParamType.PATH:
-        return _normalize_path(raw, name=name, workspace=workspace)
+        return _normalize_path(raw, name=name, workspace=workspace, path_kind=spec.path_kind)
     if spec.type is ParamType.INTEGER:
         if isinstance(raw, bool) or not isinstance(raw, int):
             raise _fail(ReasonCode.PARAM_INVALID, f"参数 {name} 必须是整数，得到 {raw!r}")

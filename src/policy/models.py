@@ -131,13 +131,20 @@ def canonical_identifier(value: str) -> str:
     return value.strip().lower()
 
 
-def normalize_repo_path(value: str) -> str:
+def normalize_repo_path(value: str, *, allow_root: bool = False) -> str:
     """把路径规范化为仓库相对形式：反斜杠转 "/"，去掉 "./" 前缀与尾部 "/"。
 
     拒绝绝对路径、盘符前缀与 ".." 逃逸，拒绝控制字符与路径元字符（Windows 文件名里
     不允许出现的 : * ? " < > |）。**允许非 ASCII 路径段**：仓库自己的文档目录是中文名，
     镜像语料的分类目录也是中文名，规则来源与上下文文件都必须能指向它们。
     这属于 PolicyContextError（配置/执行错误），而不是模型校验错误，便于 CLI 用退出码 2 区分。
+
+    allow_root：是否接受"就是这个范围本身"的路径（. / ./ / 全空段）。
+    默认 False，因为大多数调用点要的是**文件**（上下文里的 file、规则的 source.path、
+    编辑目标）：指向目录的 "." 在那里必须继续被拒，放宽它会静默改变"在范围内"的含义。
+    只有显式声明"我要的是目录"的调用点（enforcement 注册表里的 path_kind: directory）
+    才传 True，此时根被归一化为 "." —— 这是仓库别处（_resolve_read_scope 与文档里
+    "范围等于项目根记为 ."）早就在用的口径：同一个语义不允许每个调用点各写一遍。
     """
 
     if not isinstance(value, str):
@@ -160,6 +167,8 @@ def normalize_repo_path(value: str) -> str:
         segments.append(segment)
 
     if not segments:
+        if allow_root:
+            return "."
         raise PolicyContextError(f"路径必须指向仓库内的文件: {raw!r}")
 
     normalized = "/".join(segments)

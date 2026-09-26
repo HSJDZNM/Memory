@@ -57,11 +57,19 @@ def _is_absolute_path(value: str) -> bool:
     )
 
 
-def repo_relative_path(value: Any, *, repo_root: Path | str | None = None) -> str:
+def repo_relative_path(
+    value: Any, *, repo_root: Path | str | None = None, allow_root: bool = False
+) -> str:
     """把路径规范化为仓库相对路径。
 
     相对路径直接规范化（拒绝 ".." 逃逸）；绝对路径必须落在 repo_root 之内，
     否则抛出 PolicyContextError —— 宁可拒绝，也不能把仓库外的文件当成仓库内文件。
+
+    allow_root 决定**恰好等于受控范围根**的路径怎么算：默认 False（要的是文件，
+    等于根就是"这不是文件"）；传 True 时归一化为 "."，这是仓库别处
+    （adapter 的 read 范围、文档里"范围等于项目根记为 ."）早就在用的口径。
+    两种口径的取舍由调用方的**数据**决定（enforcement 里是 ParamSpec.path_kind），
+    而不是由这一层猜——同一个"在范围内"的语义不允许每个调用点各写一遍。
     """
 
     if not isinstance(value, str):
@@ -73,7 +81,7 @@ def repo_relative_path(value: Any, *, repo_root: Path | str | None = None) -> st
 
     raw = raw.replace("\\", "/")
     if not _is_absolute_path(raw):
-        return normalize_repo_path(raw)
+        return normalize_repo_path(raw, allow_root=allow_root)
 
     if repo_root is None:
         raise PolicyContextError(f"绝对路径需要 repo_root 才能转成仓库相对路径: {raw!r}")
@@ -83,12 +91,19 @@ def repo_relative_path(value: Any, *, repo_root: Path | str | None = None) -> st
     anchor_parts = anchor.parts
     target_parts = target.parts
     head = target_parts[: len(anchor_parts)]
-    if len(target_parts) <= len(anchor_parts) or [item.lower() for item in head] != [
+    if len(target_parts) < len(anchor_parts) or [item.lower() for item in head] != [
         item.lower() for item in anchor_parts
     ]:
         raise PolicyContextError(f"路径不在仓库 {anchor} 之内，拒绝处理: {raw!r}")
 
-    return normalize_repo_path("/".join(target_parts[len(anchor_parts) :]))
+    remainder = target_parts[len(anchor_parts) :]
+    if not remainder:
+        # 恰好等于受控范围根。默认口径是"要文件"：等于根就是"这不是文件"，
+        # 而不是"越界"——把前者说成后者正是 G5 那条误报的成因。
+        if not allow_root:
+            raise PolicyContextError(f"路径等于仓库根 {anchor}：这里要的是文件，不是目录: {raw!r}")
+        return "."
+    return normalize_repo_path("/".join(remainder), allow_root=allow_root)
 
 
 def normalize_operation(value: Any) -> Optional[Operation]:

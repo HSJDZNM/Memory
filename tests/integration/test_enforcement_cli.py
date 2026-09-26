@@ -386,6 +386,128 @@ def test_approve_and_execute_agree_when_the_request_has_a_policy_context(enforce
     assert "ARCH-001@1" in executed.stdout
 
 
+def write_shell_request(paths: EnforcementPaths, name: str, *, action_id: str, command: str = "print('ok')") -> Path:
+    """命令类工具的请求（测试注册表的 exec.shell 用当前解释器执行，跨平台可跑）。"""
+
+    document = {
+        "action_id": action_id,
+        "request_id": action_id,
+        "agent": "dsh",
+        "tool_id": "exec.shell",
+        "subject": "local-user",
+        "roles": ["owner"],
+        "params": {"command": command, "description": "demo"},
+        "workspace": str(paths.workspace),
+    }
+    target = paths.root / name
+    target.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+    return target
+
+
+def test_pattern_approval_makes_a_governed_session_rerunnable(enforcement_paths):
+    """G4 的真实场景：管理员签一张"允许跑这条命令"的条子，换调用编号仍然可用。
+
+    条子绑的是"工具 + 参数模式 + 主体 + 窗口 + 次数上限"，不再绑运行期现生成的调用编号；
+    但同一个 action_id 仍然绝不会执行第二次（下一次 execute 会判 action_replay）。
+    """
+
+    approval = enforcement_paths.root / "pattern-approval.json"
+    first = write_shell_request(enforcement_paths, "shell-1.json", action_id="pat-call-1")
+    approved = run_cli(
+        "approve",
+        "--request",
+        str(first),
+        "--out",
+        str(approval),
+        "--granted-by",
+        "alice",
+        "--roles",
+        "reviewer",
+        "--binding",
+        "pattern",
+        "--max-uses",
+        "3",
+        "--param-pattern",
+        "command=^print[(]'ok'[)]$",
+        *paths_args(enforcement_paths),
+    )
+    assert approved.returncode == 0, approved.stderr
+    payload = json.loads(approval.read_text(encoding="utf-8"))
+    assert payload["binding"] == "pattern"
+    assert payload["max_uses"] == 3
+    assert payload["action_hash"] is None, "模式化审批不得绑定运行期生成的调用编号"
+    assert payload["param_patterns"] == {"command": "^print[(]'ok'[)]$"}
+
+    def execute(request_path: Path) -> subprocess.CompletedProcess[str]:
+        return run_cli(
+            "execute",
+            "--request",
+            str(request_path),
+            "--approval",
+            str(approval),
+            "--workspace",
+            str(enforcement_paths.workspace),
+            *paths_args(enforcement_paths),
+        )
+
+    # 换调用编号、命令逐字一致：执行两次都应当 delivered
+    for index in (1, 2):
+        request = write_shell_request(
+            enforcement_paths, f"shell-run-{index}.json", action_id=f"pat-call-{index}"
+        )
+        executed = execute(request)
+        assert executed.returncode == 0, executed.stdout + executed.stderr
+        assert "final: delivered" in executed.stdout
+
+    # 第一个 action_id 再来一次：重放拦截与审批档位无关（额度还剩一次，仍然必须拒）
+    replay = execute(first)
+    assert replay.returncode == 1
+    assert "final: blocked (action_replay)" in replay.stdout, replay.stdout
+
+    # 第三次（新编号）用完额度
+    third = write_shell_request(enforcement_paths, "shell-run-3.json", action_id="pat-call-3")
+    assert execute(third).returncode == 0
+
+    # 第四次：次数上限用尽
+    fourth = write_shell_request(enforcement_paths, "shell-run-4.json", action_id="pat-call-4")
+    exhausted = execute(fourth)
+    assert exhausted.returncode == 1
+    assert "approval_invalid" in exhausted.stdout
+    assert "次数上限" in exhausted.stdout
+
+
+def test_approve_refuses_contradictory_or_unknown_binding_flags(enforcement_paths):
+    request = write_shell_request(enforcement_paths, "shell-bad.json", action_id="bad-1")
+    approval = enforcement_paths.root / "bad-approval.json"
+    base = ["--request", str(request), "--out", str(approval), "--granted-by", "alice", "--roles", "reviewer"]
+
+    mixed = run_cli(
+        "approve", *base, "--param-pattern", "command=.*", *paths_args(enforcement_paths)
+    )
+    assert mixed.returncode == 2
+    assert "--binding pattern" in mixed.stderr
+
+    no_pattern = run_cli("approve", *base, "--binding", "pattern", *paths_args(enforcement_paths))
+    assert no_pattern.returncode == 2
+    assert "param-pattern" in no_pattern.stderr
+
+    misuse = run_cli("approve", *base, "--max-uses", "3", *paths_args(enforcement_paths))
+    assert misuse.returncode == 2
+    assert "max-uses" in misuse.stderr
+
+    unknown_param = run_cli(
+        "approve",
+        *base,
+        "--binding",
+        "pattern",
+        "--param-pattern",
+        "payload=.*",
+        *paths_args(enforcement_paths),
+    )
+    assert unknown_param.returncode == 2
+    assert "不是工具" in unknown_param.stderr
+
+
 def test_self_check_passes_for_the_repository_assets():
     completed = run_cli("self-check")
 

@@ -159,9 +159,13 @@ tools:
         max_chars: 400
       - name: timeoutMs
         type: integer
+      # path_kind 是**数据**，不是代码里的特判：workdir 指向目录，
+      # 因此"工作目录 = 项目根"归一化为 "." 并通过校验（G5）；
+      # 而写文件类参数保留默认 path_kind=file，传 "." 仍被拒（它不是文件）。
       - name: workdir
         type: path
         path_scope: workspace
+        path_kind: directory
       - name: run_in_background
         type: boolean
       - name: sandbox_permissions
@@ -218,9 +222,11 @@ tools:
         max_chars: 400
       - name: timeoutMs
         type: integer
+      # path_kind 是数据，不是代码里的特判（同 exec.pwsh）
       - name: workdir
         type: path
         path_scope: workspace
+        path_kind: directory
       - name: run_in_background
         type: boolean
       - name: sandbox_permissions
@@ -245,6 +251,29 @@ tools:
     post_checks: []
     timeout_ms: 120000
     rate_limit: {max_calls: 10, window_seconds: 60, max_failures: 2, breaker_seconds: 300}
+    # 第二道闸（G9）：平台执行不了这个动作（driver=none），也拿不到事后证据，
+    # 因此"人工审批"之外必须有一次**结构化静态检查**。检查项全部来自这里的数据，
+    # 代码里没有任何硬编码判断；解析不了 = 拒绝（code_parse_failed），不是跳过。
+    #
+    # **已知边界（诚实标注，别把它当沙箱）**：静态检查看的是语法结构，下面这些形态覆盖不到，
+    # 写进 known_gaps 并会带进 pre-check 的审计警告——不是被假装覆盖了：
+    #   - 用下标 / 容器取出函数再调用（__builtins__["open"]）
+    #   - 拼接字符串构造名字（"op" + "en"）
+    #   - 自定义 __getattr__ / 元类间接暴露的属性
+    # 真正的隔离属于运行时的文件系统与进程沙箱，不在本阶段（与 AGENTS.md 第 17 条同一口径）。
+    code_check:
+      kind: python_forbidden_surface
+      param: code
+      language: python
+      forbidden_imports: [os, pathlib, shutil, subprocess, socket, sys, importlib, ctypes, tempfile, glob, pickle, http, urllib, ftplib, smtplib, asyncio, multiprocessing, threading, signal, resource, builtins]
+      forbidden_calls: [open, exec, eval, compile, __import__, getattr, setattr, delattr, globals, locals, vars, input, breakpoint]
+      forbidden_attributes: [os, pathlib, shutil, subprocess, socket, sys, importlib, ctypes, builtins, __builtins__]
+      # 说明文字一律加引号：里面有 ": " 或方括号时会改变 YAML 的解析结果（实测踩过）
+      known_gaps:
+        - '用下标 / 容器取出函数再调用（例如 (lambda: 0).__globals__["__builtins__"]["open"]）'
+        - '拼接字符串构造名字（例如 "op" + "en"）'
+        - "自定义 __getattr__ 或元类间接暴露的属性"
+        - "通过不经过 Name/Attribute 链的表达式取得可调用对象（把调用藏进数据结构）"
     parameters:
       - name: code
         type: string
@@ -254,7 +283,8 @@ tools:
         type: string
         required: true
         max_chars: 400
-    notes: 平台侧 driver=none：只有 Agent 运行时能执行它，平台绝不假装执行过（driver_unavailable）
+    notes: 平台侧 driver=none：只有 Agent 运行时能执行它，平台绝不假装执行过（driver_unavailable）。
+      授权之外还有一次结构化静态检查（code_check）；它是结构性检查而非沙箱，已知绕过的形态见 known_gaps
 
   # —— Phase 8：编排层（`orchestrator`）的工具表 ——
   # 编排层自己不做授权判断：它只提出动作，判定与执行由图谱之外的受控执行链完成。

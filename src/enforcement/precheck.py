@@ -28,9 +28,10 @@ from typing import Mapping, Optional, Sequence
 from policy.models import Decision, RequiredAction, ValidationResult
 
 from .action import blocked_path_prefix, required_permissions_for
-from .approvals import ApprovalError, ApprovalRecord, verify_approval
+from .approvals import ApprovalBinding, ApprovalError, ApprovalRecord, verify_approval
 from .audit import AuditSink
-from .ledger import EnforcementLedger
+from .codecheck import check_code
+from .ledger import ApprovalUseClaim, EnforcementLedger
 from .models import (
     FORBIDDEN_COMMAND_FRAGMENTS,
     ActionRequest,
@@ -327,6 +328,36 @@ def check_list(
             _check("command_fragments", CheckStatus.SKIPPED, ReasonCode.ALLOW, "该工具不是命令类")
         )
 
+    # 4e) 委派类进程工具的第二道闸（G9）：结构化代码检查，或显式的"不可治理"声明。
+    #     这里刻意不产生"第三种状态"：要么检查跑出结论（通过 / 命中 / 解析失败），
+    #     要么把"没有覆盖面"写成显式状态并让它进审计与警告——不允许静默通过。
+    if spec.code_check is not None:
+        carrier = request.value_of(spec.code_check.param)
+        result = check_code(carrier if isinstance(carrier, str) else None, spec.code_check)
+        if result.passed:
+            checks.append(
+                _check("code_check", CheckStatus.PASSED, ReasonCode.ALLOW, result.detail)
+            )
+            if spec.code_check.known_gaps:
+                # 结构性检查不是沙箱：把这条事实带进审计警告，别让"查过了"被读成"隔离了"
+                warnings.append("code_check_structural_only")
+        else:
+            checks.append(
+                _check("code_check", CheckStatus.FAILED, result.reason_code, result.detail)
+            )
+    elif spec.ungoverned is not None:
+        checks.append(
+            _check(
+                "governance_coverage",
+                CheckStatus.SKIPPED,
+                ReasonCode.UNGOVERNED_DECLARED,
+                f"{spec.id} 由 {spec.ungoverned.declared_by} 显式声明为不可治理："
+                f"{spec.ungoverned.reason}；该声明写入审计，决策至少是 allow_with_warnings，"
+                "不是静默通过",
+            )
+        )
+        warnings.append(f"ungoverned_declared:{spec.id}")
+
     # 5) 审批：高风险动作的人工门禁。
     if spec.approval is ApprovalMode.REQUIRED:
         try:
@@ -338,6 +369,8 @@ def check_list(
                 subject=request.subject,
                 approval_roles=registry.approval_role_members(),
                 used=False if approval is None else ledger.approval_used(approval.approval_id),
+                params=None if approval is None else {item.name: item.value for item in request.params},
+                uses=0 if approval is None else ledger.approval_use_count(approval.approval_id),
                 now=moment,
             )
         except ApprovalError as error:
@@ -348,14 +381,17 @@ def check_list(
             )
             checks.append(_check("approval", CheckStatus.FAILED, code, str(error)))
         else:
-            checks.append(
-                _check(
-                    "approval",
-                    CheckStatus.PASSED,
-                    ReasonCode.ALLOW,
-                    f"approval_id={approval.approval_id} granted_by={approval.granted_by}",
-                )
+            detail = (
+                f"approval_id={approval.approval_id} granted_by={approval.granted_by} "
+                f"binding={approval.binding.value}"
             )
+            if approval.binding is ApprovalBinding.PATTERN:
+                detail += (
+                    f" max_uses={approval.max_uses}"
+                    f" used={ledger.approval_use_count(approval.approval_id)}"
+                    f" patterns={sorted(approval.param_patterns)}"
+                )
+            checks.append(_check("approval", CheckStatus.PASSED, ReasonCode.ALLOW, detail))
     else:
         checks.append(
             _check("approval", CheckStatus.SKIPPED, ReasonCode.ALLOW, "该工具不需要人工审批")
@@ -588,6 +624,58 @@ def pre_execute(
                     _check("ledger_claim", CheckStatus.PASSED, ReasonCode.ALLOW, claim.claim_id)
                 )
 
+    # 审批额度：**先原子占用，再执行**。位置在认领之后、签发授权之前——
+    # 认领失败的动作不消耗额度；额度用尽的动作也拿不到授权。
+    # 每一次占用都进审计（approval_use 检查项 + payload 里的 approval_use）。
+    approval_claim: Optional[ApprovalUseClaim] = None
+    if (
+        spec is not None
+        and decision is not Decision.BLOCK
+        and not dry_run
+        and approval is not None
+        and spec.approval is ApprovalMode.REQUIRED
+    ):
+        try:
+            use_claim = ledger.claim_approval_use(
+                approval_id=approval.approval_id,
+                action_id=request.action_id,
+                tool_id=request.tool_id,
+                action_hash=request.action_hash,
+                max_uses=approval.max_uses,
+            )
+        except LedgerError as error:
+            checks.append(
+                _check("approval_use", CheckStatus.FAILED, ReasonCode.LEDGER_UNAVAILABLE, str(error))
+            )
+            decision = Decision.BLOCK
+            reason_code = ReasonCode.LEDGER_UNAVAILABLE
+        else:
+            if not use_claim.claimed:
+                checks.append(
+                    _check(
+                        "approval_use",
+                        CheckStatus.FAILED,
+                        ReasonCode.APPROVAL_INVALID,
+                        f"审批次数上限已用尽（{use_claim.uses}/{approval.max_uses}，"
+                        f"reason={use_claim.reason}）：必须重新签发审批"
+                        if use_claim.reason == "approval_quota_exhausted"
+                        else f"审批额度无法占用（reason={use_claim.reason}）：拒绝执行",
+                    )
+                )
+                decision = Decision.BLOCK
+                reason_code = ReasonCode.APPROVAL_INVALID
+            else:
+                approval_claim = use_claim
+                checks.append(
+                    _check(
+                        "approval_use",
+                        CheckStatus.PASSED,
+                        ReasonCode.ALLOW,
+                        f"第 {use_claim.uses}/{approval.max_uses} 次"
+                        f"（binding={approval.binding.value}）：先占用后执行",
+                    )
+                )
+
     grant: Optional[AuthorizationGrant] = None
     if (
         spec is not None
@@ -632,6 +720,9 @@ def pre_execute(
                     "roles": list(request.roles),
                     "permissions": list(request.permissions),
                     "approval_id": None if approval is None else approval.approval_id,
+                    "approval_binding": None if approval is None else approval.binding.value,
+                    "approval_max_uses": None if approval is None else approval.max_uses,
+                    "approval_use": None if approval_claim is None else approval_claim.uses,
                     "grant_id": None if grant is None else grant.grant_id,
                     "dry_run": dry_run,
                     "checks": [item.model_dump(mode="json") for item in checks],
@@ -682,6 +773,32 @@ def pre_execute(
                                 CheckStatus.FAILED,
                                 ReasonCode.LEDGER_UNAVAILABLE,
                                 f"释放认领失败：{release_error}（该 action_id 需要换一个新的）",
+                            )
+                        )
+                # 额度也要还回去：动作没有执行，占着额度会让修复后的重试被误判成"用尽"
+                if approval_claim is not None:
+                    try:
+                        ledger.release_approval_use(
+                            approval_id=approval.approval_id,
+                            use_id=approval_claim.use_id,
+                            reason=ReasonCode.AUDIT_UNAVAILABLE.value,
+                        )
+                        checks.append(
+                            _check(
+                                "approval_release",
+                                CheckStatus.PASSED,
+                                ReasonCode.ALLOW,
+                                "审计不可写：已归还本次审批额度，重试不会被当成已用尽",
+                            )
+                        )
+                        approval_claim = None
+                    except LedgerError as release_error:
+                        checks.append(
+                            _check(
+                                "approval_release",
+                                CheckStatus.FAILED,
+                                ReasonCode.LEDGER_UNAVAILABLE,
+                                f"归还审批额度失败：{release_error}",
                             )
                         )
             else:

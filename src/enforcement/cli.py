@@ -7,6 +7,11 @@
     python -m enforcement.cli execute  --request examples/enforcement/edit-allow.json
     python -m enforcement.cli approve  --request <req.json> --out <approval.json> \
         --granted-by alice --roles reviewer --ttl 300
+    # 模式化审批（binding=pattern）：按"工具 + 参数模式 + 主体 + 窗口 + 次数上限"签发，
+    # 调用编号（action_id / tool_use_id）由运行期现生成，因此模式化审批不绑它。
+    python -m enforcement.cli approve  --request <req.json> --out <approval.json> \
+        --granted-by alice --roles reviewer --binding pattern --max-uses 5 \
+        --param-pattern "command=^python -m pytest( .*)?$"
     python -m enforcement.cli trace    --audit .tmp/artifacts/enforcement-audit.jsonl \
         --action-id sess-1:call-1
     python -m enforcement.cli verify
@@ -38,7 +43,7 @@ from policy.loader import LoaderError, load_rule_set
 from policy.models import Decision, PolicyContext, PolicyContextError, RuleSet, ValidationResult
 
 from . import action as action_module
-from .approvals import ApprovalRecord, approval_payload
+from .approvals import ApprovalBinding, ApprovalRecord, approval_payload
 from .audit import FileAuditSink
 from .drivers import drivers_for
 from .executor import ControlledExecutor, summarise_chain
@@ -48,6 +53,7 @@ from .models import (
     AuditStage,
     EnforcementError,
     FinalOutcome,
+    ParamType,
     ReasonCode,
     ToolSpec,
     utc_now,
@@ -70,6 +76,7 @@ __all__ = [
     "build_parser",
     "build_request_document",
     "main",
+    "parse_param_patterns",
     "resolve_tool",
 ]
 
@@ -541,6 +548,23 @@ def _execute(args: argparse.Namespace, repo: Path) -> int:
     return EXIT_ALLOWED if outcome.final.outcome in (FinalOutcome.DELIVERED,) else EXIT_BLOCKED
 
 
+def parse_param_patterns(values: Optional[Sequence[str]]) -> dict[str, str]:
+    """把 NAME=REGEX 形式的命令行参数解析成映射；格式错误直接报用法错误。"""
+
+    patterns: dict[str, str] = {}
+    for item in values or ():
+        if "=" not in item:
+            raise CliError(f"--param-pattern 必须是 NAME=REGEX 形式，得到 {item!r}")
+        name, _, pattern = item.partition("=")
+        name = name.strip()
+        if not name or not pattern.strip():
+            raise CliError(f"--param-pattern 的参数名与正则都不能为空，得到 {item!r}")
+        if name in patterns:
+            raise CliError(f"--param-pattern 里参数 {name!r} 重复声明：模式必须唯一")
+        patterns[name] = pattern.strip()
+    return patterns
+
+
 def _approve(args: argparse.Namespace, repo: Path) -> int:
     loaded = load_registry(args.registry, approved_path=args.approved)
     document = _load_document(args.request, what="请求")
@@ -554,17 +578,53 @@ def _approve(args: argparse.Namespace, repo: Path) -> int:
         workspace=workspace,
         context=context,
     )
+    spec = loaded.registry.tool(request.tool_id)
+    assert spec is not None
+    binding = ApprovalBinding(args.binding)
+    patterns = parse_param_patterns(args.param_pattern)
+    if binding is ApprovalBinding.ACTION:
+        if patterns:
+            raise CliError(
+                "--param-pattern 只适用于 --binding pattern：两种档位的字段不要混写，"
+                "否则'到底绑了什么'无法解释"
+            )
+        if args.max_uses != 1:
+            raise CliError(
+                "--max-uses 只适用于 --binding pattern：单次绑定只能用一次；"
+                "要多次使用请显式改成 --binding pattern 并写清参数模式"
+            )
+    else:
+        if not patterns:
+            raise CliError(
+                "--binding pattern 必须至少给一条 --param-pattern NAME=REGEX："
+                "没有参数模式的'一类调用'等于一张无边界通行证"
+            )
+        for name in sorted(patterns):
+            declaration = spec.parameter(name)
+            if declaration is None:
+                raise CliError(
+                    f"--param-pattern 的参数 {name!r} 不是工具 {spec.id} 声明的参数；"
+                    f"已声明的参数为 {sorted(item.name for item in spec.parameters)}"
+                )
+            if declaration.type is not ParamType.STRING:
+                raise CliError(
+                    f"--param-pattern 的参数 {name!r} 类型是 {declaration.type.value}，"
+                    "模式匹配只支持 string 参数；列表 / 路径类参数请用单次绑定"
+                )
     now = utc_now()
     record = ApprovalRecord(
         approval_id=args.approval_id or "approval-" + uuid.uuid4().hex[:12],
-        action_hash=request.action_hash,
-        action_id=request.action_id,
+        binding=binding,
+        action_hash=request.action_hash if binding is ApprovalBinding.ACTION else None,
+        action_id=request.action_id if binding is ApprovalBinding.ACTION else None,
         tool_id=request.tool_id,
         subject=args.subject or request.subject or "",
         granted_by=args.granted_by,
         granted_by_roles=tuple(args.roles),
         granted_at=now,
         expires_at=now + timedelta(seconds=args.ttl),
+        max_uses=args.max_uses,
+        param_patterns=patterns,
         note=args.note or "",
     )
     payload = approval_payload(record)
@@ -752,6 +812,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     approve_parser.add_argument("--subject", default=None, help="被授权主体（默认请求里的主体）")
     approve_parser.add_argument("--ttl", type=int, default=300, help="审批有效期（秒）")
+    approve_parser.add_argument(
+        "--binding",
+        choices=[item.value for item in ApprovalBinding],
+        default=ApprovalBinding.ACTION.value,
+        help="审批绑定档位：action（默认，单次绑定 action_hash）/ pattern（按参数模式多次）",
+    )
+    approve_parser.add_argument(
+        "--max-uses", type=int, default=1, help="最多允许几次调用（binding=pattern 才有意义）"
+    )
+    approve_parser.add_argument(
+        "--param-pattern",
+        action="append",
+        default=None,
+        dest="param_pattern",
+        help="NAME=REGEX（可重复）：模式化审批的参数模式，整串匹配规范化取值",
+    )
     approve_parser.add_argument("--approval-id", default=None, help="审批 ID（默认随机）")
     approve_parser.add_argument("--note", default=None, help="备注")
     approve_parser.add_argument("--workspace", default=None, help="受控工作区（默认仓库根目录）")
