@@ -274,6 +274,7 @@ PARITY_TEXTS: dict[str, str] = {
         "import importlib\n\n\ndef load(name):\n    return importlib.import_module(name)\n"
     ),
     "不可解析片段：def broken(:": "def broken(:\n    return 1\n",
+    "反例：from 点分路径 import": "from shop.order_repository import OrderRepository\n",
     "正例：只依赖 service": "from shop.order_service import OrderService\n",
 }
 
@@ -283,6 +284,7 @@ PARITY_EXPECTED_BLOCK: dict[str, bool] = {
     "字面量动态导入：importlib.import_module(\"repository\")": True,
     "非字面量动态导入：importlib.import_module(name)": True,
     "不可解析片段：def broken(:": True,
+    "反例：from 点分路径 import": True,
     "正例：只依赖 service": False,
 }
 
@@ -433,8 +435,16 @@ def test_event_adapter_path_registers_the_same_dependencies(
     assert context.language == "python"
 
 
+# 非 python 目标**逐个文本形态**都要过同一道门：只测一种形态（例如只测相对导入）时，
+# "语言门控没生效"只在另一种形态上暴露就测不到。判据是 PARITY_EXPECTED_BLOCK 为 True 的那些
+# 文本——它们在 python 的 controller 上必须阻断，所以"同一段文本换到 .md 上变成 allow"
+# 只能由 language 门控解释，不能由别的原因解释。
+_NON_PYTHON_LABELS = [label for label, blocked in PARITY_EXPECTED_BLOCK.items() if blocked]
+
+
+@pytest.mark.parametrize("label", _NON_PYTHON_LABELS)
 def test_non_python_target_is_not_a_silent_pass(
-    workspace: Path, adapter_config, phase6_dsh_adapter
+    workspace: Path, adapter_config, phase6_dsh_adapter, label: str
 ) -> None:
     """language != "python"：依赖集为空，但这不是"静默放行"。
 
@@ -444,10 +454,13 @@ def test_non_python_target_is_not_a_silent_pass(
     2. 依赖集为空（governed_dependencies 的 language 门控）；
     3. 规则不是"判定通过"，而是因为 scope 的 language 维度不匹配被**明确跳过**，
        原因写进 skipped_rules——决策载荷里看得见"这条规则没参与判定"。
+
+    对**每一种**必须阻断的文本形态各跑一遍：门控漏掉某个形态（例如"点分路径"或
+    "不可解析片段"）时，单形态用例不会变红。
     """
 
     md_target = "docs/README.md"  # layers: **/*.md → docs；default_language: text
-    text = PARITY_TEXTS[RELATIVE_LABEL]
+    text = PARITY_TEXTS[label]
 
     phase2_blocked, phase2_context = pre_path_verdict(
         workspace, adapter_config, text, target=md_target
