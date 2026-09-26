@@ -42,7 +42,7 @@ docs/
 | 目录 | 内容 | 入口 |
 | --- | --- | --- |
 | project/architecture/ | 技术架构图（`.drawio` 两页 + tech-detail 十张）与说明三件套 + 术语与口径 + 规则转化覆盖报告 | [README.md](project/architecture/README.md) |
-| project/engineering-policy-platform/ | 分阶段架构、契约、数据源、测试策略、验收矩阵与复核记录；设计提案含 [平台操作系统](project/engineering-policy-platform/designs/os/README.md) 与静态操作台原型 | [README.md](project/engineering-policy-platform/README.md) |
+| project/engineering-policy-platform/ | 分阶段架构、契约、数据源、测试策略、验收矩阵与复核记录；设计提案见 [设计提案索引](project/engineering-policy-platform/designs/README.md) | [README.md](project/engineering-policy-platform/README.md) |
 | project/learning/ | 面向人的学习手册，每阶段四件套（`note.md` / `walkthrough.ipynb` / `walkthrough.py` / `README.md`） | [README.md](project/learning/README.md) |
 | project/rule-effects/ | 规则效果演示与多违规案例检测报告（本地产出，非镜像） | — |
 
