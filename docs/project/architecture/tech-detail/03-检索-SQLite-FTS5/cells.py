@@ -3,7 +3,7 @@
 """03-检索-SQLite-FTS5：离线规范检索（内容源，产物由 build_notebooks.py 生成）。"""
 from __future__ import annotations
 
-from nb_cells import NotebookSpec, code, markdown
+from notebook_lib import NotebookSpec, code, markdown
 
 SPEC = NotebookSpec(
     stem="03-检索-SQLite-FTS5",
@@ -66,7 +66,7 @@ TEMP.mkdir(parents=True, exist_ok=True)
 TECH_DETAIL = REPO_ROOT / "docs" / "project" / "architecture" / "tech-detail"
 print("仓库根目录:", REPO_ROOT.name)
 print("当前工作目录:", Path.cwd().relative_to(REPO_ROOT).as_posix() or ".")
-print("讲解目录:", (TECH_DETAIL / "notebooks").relative_to(REPO_ROOT).as_posix())
+print("本章目录:", (TECH_DETAIL / "03-检索-SQLite-FTS5").relative_to(REPO_ROOT).as_posix())
 print("临时目录:", TEMP.relative_to(REPO_ROOT).as_posix())
 print("Python:", sys.version.split()[0])
 '''

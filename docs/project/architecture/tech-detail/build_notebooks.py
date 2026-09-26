@@ -2,8 +2,10 @@
 # -*- coding: utf-8 -*-
 """生成 docs/project/architecture/tech-detail/ 下的 10 份讲解 notebook（00–09）。
 
+**一章一个目录**（`00-技术总览/` … `09-能不能成为规则/`）：每一章的图规格（`diagram.py`）、
+内容源（`cells.py`）与四份产物（同名的 `.drawio` / `.png` / `.ipynb` / `.py`）都在同一个目录里。
 每个编号对应同目录同名的一张 `.drawio`：**图讲"内部怎么走"，notebook 把这套流程跑给人看**。
-内容源在 `nb_cells/nb<NN>.py`（一个编号一个文件），产物是同名的 `.ipynb` 与 `.py`。
+内容源在章节目录的 `cells.py`（一个编号一个文件），产物是同名的 `.ipynb` 与 `.py`。
 
 为什么由脚本生成而不是手写 .ipynb：手工编辑的 notebook 在 git 里是一大坨 JSON diff，
 而且"文档里写的"与"代码实际跑的"会分叉。生成时顺带做四件事：
@@ -18,11 +20,11 @@
 
 用法：
 
-    python docs/project/architecture/tech-detail/notebooks/build_notebooks.py              # 生成全部并逐单元执行
-    python docs/project/architecture/tech-detail/notebooks/build_notebooks.py --only 03    # 只处理一份（可重复）
-    python docs/project/architecture/tech-detail/notebooks/build_notebooks.py --list       # 只列清单
-    python docs/project/architecture/tech-detail/notebooks/build_notebooks.py --check      # 只比对产物与规格
-    python docs/project/architecture/tech-detail/notebooks/build_notebooks.py --no-exec    # 只写产物、不执行单元
+    python docs/project/architecture/tech-detail/build_notebooks.py              # 生成全部并逐单元执行
+    python docs/project/architecture/tech-detail/build_notebooks.py --only 03    # 只处理一份（可重复）
+    python docs/project/architecture/tech-detail/build_notebooks.py --list       # 只列清单
+    python docs/project/architecture/tech-detail/build_notebooks.py --check      # 只比对产物与规格
+    python docs/project/architecture/tech-detail/build_notebooks.py --no-exec    # 只写产物、不执行单元
 
 退出码：0 全部通过；1 有失败；2 用法或环境错误。
 """
@@ -30,7 +32,7 @@ from __future__ import annotations
 
 import argparse
 import ast
-import importlib
+import importlib.util
 import io
 import json
 import os
@@ -56,7 +58,7 @@ def find_repo_root(start: Path) -> Path:
 REPO_ROOT = find_repo_root(HERE)
 SRC_DIR = REPO_ROOT / "src"
 TOOLS_DIR = REPO_ROOT / "tools"
-CELLS_DIR = HERE / "nb_cells"
+CELLS_NAME = "cells.py"
 
 KERNELSPEC = {"display_name": "Python 3", "language": "python", "name": "python3"}
 LANGUAGE_INFO = {"name": "python", "file_extension": ".py", "mimetype": "text/x-python"}
@@ -98,21 +100,47 @@ def pad(text, width, align="left"):
 '''
 
 
+def chapter_dirs() -> dict[str, Path]:
+    """磁盘上真实存在的章节目录：名字形如 `00-技术总览`，且里面有 `cells.py`。
+
+    一章一个目录：图的规格（`diagram.py`）、讲解的内容源（`cells.py`）与四份产物都在同一章里，
+    看一章只要打开一个目录。目录名与产物名必须逐字相同（load_spec 会核）。
+    """
+
+    found = {}
+    for path in sorted(HERE.glob("[0-9][0-9]-*")):
+        if path.is_dir() and (path / CELLS_NAME).is_file():
+            found[path.name[:2]] = path
+    return found
+
+
 def available_numbers() -> list[str]:
     """磁盘上真实存在的编号，按名字排序。"""
 
-    return sorted(path.stem[2:] for path in CELLS_DIR.glob("nb[0-9][0-9].py"))
+    return sorted(chapter_dirs())
 
 
 def load_spec(number: str):
-    """按编号加载规格模块。只加载被选中的那一个，改一半的邻居不会拖累本次生成。"""
+    """按编号加载这一章的内容源模块。只加载被选中的那一个，改一半的邻居不会拖累本次生成。"""
 
+    directory = chapter_dirs().get(number)
+    if directory is None:
+        raise SystemExit(f"没有编号 {number} 的章节目录（需要 {number}-*/cells.py）")
     if str(HERE) not in sys.path:
         sys.path.insert(0, str(HERE))
-    module = importlib.import_module(f"nb_cells.nb{number}")
+    module_name = f"tech_detail_cells_{number}"
+    file_spec = importlib.util.spec_from_file_location(module_name, directory / CELLS_NAME)
+    module = importlib.util.module_from_spec(file_spec)
+    sys.modules[module_name] = module
+    file_spec.loader.exec_module(module)
     spec = getattr(module, "SPEC", None)
     if spec is None:
-        raise SystemExit(f"nb_cells/nb{number}.py 没有定义 SPEC")
+        raise SystemExit(f"{directory.name}/cells.py 没有定义 SPEC")
+    if spec.stem != directory.name:
+        raise SystemExit(
+            f"[{number}] 章节目录与产物名必须逐字相同：目录 {directory.name!r}，SPEC.stem {spec.stem!r}"
+            "：一章一个目录，产物就写在它自己那一章里"
+        )
     if spec.temp_dir != f".tmp/tech-detail/{number}":
         raise SystemExit(
             f"[{number}] temp_dir 必须是 .tmp/tech-detail/{number}，得到 {spec.temp_dir!r}"
@@ -222,16 +250,17 @@ def extract_script(spec, cells: Sequence[tuple[str, str]]) -> str:
     """把全部单元导出成纯 Python，便于阅读与 git diff。"""
 
     banner = "# " + "-" * 76
-    relative = (HERE / f"{spec.stem}.py").relative_to(REPO_ROOT).as_posix()
+    relative = (HERE / spec.stem / f"{spec.stem}.py").relative_to(REPO_ROOT).as_posix()
+    generator = (HERE / "build_notebooks.py").relative_to(REPO_ROOT).as_posix()
     parts = [
         f'"""{spec.title}：tech-detail 讲解 notebook 的纯 Python 版本。',
         "",
-        "由 docs/project/architecture/tech-detail/notebooks/build_notebooks.py 生成，内容与同名的",
+        f"由 {generator} 生成，内容与同名的",
         ".ipynb 逐字相同（那份里每段代码也是一个单元）。直接运行本文件即可复现全部输出：",
         "",
         f"    python {relative}",
         "",
-        "内容改动请修改 nb_cells/ 下对应的内容源后重新生成，不要直接编辑本文件。",
+        "内容改动请修改同目录的 cells.py 后重新生成，不要直接编辑本文件。",
         '"""',
     ]
     for kind, text in cells:
@@ -313,8 +342,10 @@ def build_one(spec, *, check_only: bool, execute: bool) -> list[str]:
     cells = notebook_cells(spec)
     code_cells = sum(1 for kind, _ in cells if kind == "code")
     markdown_cells = len(cells) - code_cells
-    notebook_path = HERE / f"{spec.stem}.ipynb"
-    script_path = HERE / f"{spec.stem}.py"
+    directory = HERE / spec.stem
+    assert directory.is_dir(), f"{spec.stem}：章节目录不存在"
+    notebook_path = directory / f"{spec.stem}.ipynb"
+    script_path = directory / f"{spec.stem}.py"
     text = dump_notebook(build_notebook(cells))
     script = extract_script(spec, cells)
     print(f"[{spec.stem}] {spec.title}：单元 {len(cells)}（代码 {code_cells} / 说明 {markdown_cells}）")

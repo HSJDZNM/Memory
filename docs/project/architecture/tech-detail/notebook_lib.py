@@ -1,10 +1,10 @@
 
 # -*- coding: utf-8 -*-
-"""tech-detail 讲解 notebook 的内容源包。
+"""tech-detail 讲解 notebook 的内容源公共词汇。
 
-每个 `nb<NN>.py` 定义一份 `SPEC`：一份 notebook 的单元序列与生成期断言。
-改内容改这里；产物（`<NN>-<名称>.ipynb` 与同名 `.py`）由 `build_notebooks.py` 重新生成——
-和同目录 `build.py` 生成的图一样：**规格是唯一真相源，产物不手改**。
+每章的 `cells.py`（一章一个目录）定义一份 `SPEC`：一份 notebook 的单元序列与生成期断言。
+改内容改 `cells.py`；产物（同目录的 `<NN>-<名称>.ipynb` 与同名 `.py`）由
+`build_notebooks.py` 重新生成——和同目录 `diagram.py` 生成的图一样：**规格是唯一真相源，产物不手改**。
 """
 from __future__ import annotations
 

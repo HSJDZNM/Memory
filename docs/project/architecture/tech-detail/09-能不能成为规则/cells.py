@@ -3,7 +3,7 @@
 """09-能不能成为规则：四条必要条件的判据（内容源）。"""
 from __future__ import annotations
 
-from nb_cells import NotebookSpec, code, markdown
+from notebook_lib import NotebookSpec, code, markdown
 
 SPEC = NotebookSpec(
     stem="09-能不能成为规则",
@@ -62,10 +62,11 @@ TEMP = REPO_ROOT / ".tmp" / "tech-detail" / "09"
 TEMP.mkdir(parents=True, exist_ok=True)
 
 # 三个环境前提钉住：路径是从 REPO_ROOT 拼出来的、临时目录真的建好了、
-# 这份 notebook 与同名的 .drawio 图一一对应（stem 必须逐字相同）。
+# 这份 notebook 与同一章目录里同名的 .drawio 图一一对应（章节目录名 = 产物名）。
 assert TEMP.is_dir() and TEMP.is_relative_to(REPO_ROOT), TEMP
 TECH_DETAIL = REPO_ROOT / "docs" / "project" / "architecture" / "tech-detail"
-assert (TECH_DETAIL / "diagrams" / "09-能不能成为规则.drawio").is_file(), "同名图不存在"
+CHAPTER = TECH_DETAIL / "09-能不能成为规则"
+assert (CHAPTER / "09-能不能成为规则.drawio").is_file(), "同名图不存在"
 
 print("仓库根目录:", REPO_ROOT.name, "（本次工作目录:", Path.cwd().name or Path.cwd(), "）")
 print("临时目录:", TEMP.relative_to(REPO_ROOT).as_posix(), "（写操作只落在它下面）")

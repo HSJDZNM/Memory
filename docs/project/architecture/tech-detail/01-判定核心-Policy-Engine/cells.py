@@ -3,7 +3,7 @@
 """01-判定核心-Policy-Engine：一次判定怎么算出来（内容源，产物由 build_notebooks.py 生成）。"""
 from __future__ import annotations
 
-from nb_cells import NotebookSpec, code, markdown
+from notebook_lib import NotebookSpec, code, markdown
 
 SPEC = NotebookSpec(
     stem="01-判定核心-Policy-Engine",

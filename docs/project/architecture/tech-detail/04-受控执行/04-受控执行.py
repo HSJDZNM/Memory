@@ -1,11 +1,11 @@
 """受控执行：授权、执行、验证、审计链：tech-detail 讲解 notebook 的纯 Python 版本。
 
-由 docs/project/architecture/tech-detail/notebooks/build_notebooks.py 生成，内容与同名的
+由 docs/project/architecture/tech-detail/build_notebooks.py 生成，内容与同名的
 .ipynb 逐字相同（那份里每段代码也是一个单元）。直接运行本文件即可复现全部输出：
 
-    python docs/project/architecture/tech-detail/notebooks/04-受控执行.py
+    python docs/project/architecture/tech-detail/04-受控执行/04-受控执行.py
 
-内容改动请修改 nb_cells/ 下对应的内容源后重新生成，不要直接编辑本文件。
+内容改动请修改同目录的 cells.py 后重新生成，不要直接编辑本文件。
 """
 
 # ----------------------------------------------------------------------------
@@ -59,7 +59,7 @@ TEMP.mkdir(parents=True, exist_ok=True)
 TECH_DETAIL = REPO_ROOT / "docs" / "project" / "architecture" / "tech-detail"
 print("仓库根目录:", REPO_ROOT.name)
 print("当前工作目录:", Path.cwd().relative_to(REPO_ROOT).as_posix() or ".")
-print("讲解目录:", (TECH_DETAIL / "notebooks").relative_to(REPO_ROOT).as_posix())
+print("本章目录:", (TECH_DETAIL / "04-受控执行").relative_to(REPO_ROOT).as_posix())
 print("临时目录:", TEMP.relative_to(REPO_ROOT).as_posix())
 print("Python:", sys.version.split()[0])
 

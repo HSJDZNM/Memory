@@ -234,10 +234,10 @@ def check_notebook_form() -> list[str]:
             "python tools/build_learning_notebook.py",
         ),
         (
-            "docs/project/architecture/tech-detail/notebooks 下的 *.ipynb",
-            "*.ipynb",
-            ROOT / "docs" / "project" / "architecture" / "tech-detail" / "notebooks",
-            "python docs/project/architecture/tech-detail/notebooks/build_notebooks.py",
+            "docs/project/architecture/tech-detail 各章节目录下的 *.ipynb",
+            "*/*.ipynb",
+            ROOT / "docs" / "project" / "architecture" / "tech-detail",
+            "python docs/project/architecture/tech-detail/build_notebooks.py",
         ),
     )
 

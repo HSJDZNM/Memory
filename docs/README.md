@@ -50,9 +50,9 @@ docs/
 改内容要改 `tools/build_learning_notebook.py`（Phase 6–8 另见 `tools/phase{6,7,8}_cells.py`），
 再运行 `python tools/build_learning_notebook.py`。手改 notebook 会在下次生成时丢失。
 
-`project/architecture/tech-detail/notebooks/*.ipynb` 与同名的 `.py` 同样是生成物（每张编号图一份讲解）：
-内容源在 `tech-detail/notebooks/nb_cells/nb<编号>.py`，由
-`python docs/project/architecture/tech-detail/notebooks/build_notebooks.py` 生成并逐单元执行校验。
+`project/architecture/tech-detail/<编号>-<名称>/*.ipynb` 与同名的 `.py` 同样是生成物——那里**一章一个目录**，
+每章一份图 + 一份同编号的讲解：内容源在同一章的 `cells.py`，由
+`python docs/project/architecture/tech-detail/build_notebooks.py` 生成并逐单元执行校验。
 
 ## 改路径时的连带清单（迁移后最容易漏的地方）
 
@@ -73,7 +73,7 @@ docs/
 
 1. 该文档内部指向别处的相对 Markdown 链接（跨目录时层级会变）。
 2. 生成器与校验器的路径常量：`tools/build_learning_notebook.py`、`tools/phase{6,7,8}_cells.py`、
-   `docs/project/architecture/tech-detail/notebooks/build_notebooks.py`、`tools/check_arch_canon.py`（`ARCH`）、
+   `docs/project/architecture/tech-detail/build_notebooks.py`、`tools/check_arch_canon.py`（`ARCH`）、
    `tools/check_arch_style.py`、`tools/check_notebook.py`、
    `tools/run_notebook_in_kernel.py`、`tools/check_repo_consistency.py`（`check_notebook_form`）、
    `tools/ci_local.py`（`HANDBOOK_PREFIXES`）。
@@ -97,8 +97,8 @@ python tools/check_arch_canon.py          # docs/project/architecture 的图 / �
 python tools/check_notebook.py (Get-ChildItem docs/project/learning/*/walkthrough.ipynb).FullName
 python tools/build_learning_notebook.py   # 重生成手册并逐单元执行校验
 # tech-detail 的讲解 notebook：生成 + 逐单元执行；--check 是 CI 门禁（比对产物 + 结构校验）
-python docs/project/architecture/tech-detail/notebooks/build_notebooks.py
-python docs/project/architecture/tech-detail/notebooks/build_notebooks.py --check
-# tech-detail 的图：重算 .drawio 与 .png（唯一规格源）
-python docs/project/architecture/tech-detail/diagrams/build.py --png
+python docs/project/architecture/tech-detail/build_notebooks.py
+python docs/project/architecture/tech-detail/build_notebooks.py --check
+# tech-detail 的图：重算 .drawio 与 .png（各章 diagram.py 是唯一规格源）
+python docs/project/architecture/tech-detail/build_diagrams.py --png
 ```

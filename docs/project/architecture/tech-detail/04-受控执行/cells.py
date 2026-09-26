@@ -3,7 +3,7 @@
 """04-受控执行：授权 → 执行 → 验证 → 审计（内容源，产物由 build_notebooks.py 生成）。"""
 from __future__ import annotations
 
-from nb_cells import NotebookSpec, code, markdown
+from notebook_lib import NotebookSpec, code, markdown
 
 SPEC = NotebookSpec(
     stem="04-受控执行",
@@ -65,7 +65,7 @@ TEMP.mkdir(parents=True, exist_ok=True)
 TECH_DETAIL = REPO_ROOT / "docs" / "project" / "architecture" / "tech-detail"
 print("仓库根目录:", REPO_ROOT.name)
 print("当前工作目录:", Path.cwd().relative_to(REPO_ROOT).as_posix() or ".")
-print("讲解目录:", (TECH_DETAIL / "notebooks").relative_to(REPO_ROOT).as_posix())
+print("本章目录:", (TECH_DETAIL / "04-受控执行").relative_to(REPO_ROOT).as_posix())
 print("临时目录:", TEMP.relative_to(REPO_ROOT).as_posix())
 print("Python:", sys.version.split()[0])
 '''

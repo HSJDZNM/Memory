@@ -1,11 +1,11 @@
 """LangGraph 编排：只回答下一步做什么：tech-detail 讲解 notebook 的纯 Python 版本。
 
-由 docs/project/architecture/tech-detail/notebooks/build_notebooks.py 生成，内容与同名的
+由 docs/project/architecture/tech-detail/build_notebooks.py 生成，内容与同名的
 .ipynb 逐字相同（那份里每段代码也是一个单元）。直接运行本文件即可复现全部输出：
 
-    python docs/project/architecture/tech-detail/notebooks/07-LangGraph-编排.py
+    python docs/project/architecture/tech-detail/07-LangGraph-编排/07-LangGraph-编排.py
 
-内容改动请修改 nb_cells/ 下对应的内容源后重新生成，不要直接编辑本文件。
+内容改动请修改同目录的 cells.py 后重新生成，不要直接编辑本文件。
 """
 
 # ----------------------------------------------------------------------------

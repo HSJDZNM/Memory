@@ -2,7 +2,7 @@
 """06-Policy-API：HTTP 边界上的守卫、认证、预算、幂等与观测（内容源，产物由 build_notebooks.py 生成）。"""
 from __future__ import annotations
 
-from nb_cells import NotebookSpec, code, markdown
+from notebook_lib import NotebookSpec, code, markdown
 
 SPEC = NotebookSpec(
     stem="06-Policy-API",

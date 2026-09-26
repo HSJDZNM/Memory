@@ -2,7 +2,7 @@
 """05-代码验证器：把变更集变成确定性证据（内容源，产物由 build_notebooks.py 生成）。"""
 from __future__ import annotations
 
-from nb_cells import NotebookSpec, code, markdown
+from notebook_lib import NotebookSpec, code, markdown
 
 SPEC = NotebookSpec(
     stem="05-代码验证器",

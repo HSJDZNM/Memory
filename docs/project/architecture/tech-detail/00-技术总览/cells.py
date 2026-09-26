@@ -3,7 +3,7 @@
 """00-技术总览：谁依赖谁（内容源，产物由 build_notebooks.py 生成）。"""
 from __future__ import annotations
 
-from nb_cells import NotebookSpec, code, markdown
+from notebook_lib import NotebookSpec, code, markdown
 
 SPEC = NotebookSpec(
     stem="00-技术总览",
@@ -48,13 +48,13 @@ for extra in (REPO_ROOT / "src", REPO_ROOT / "tools"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
 
-# 这个目录分两条产品线：diagrams/ 是图（唯一规格源 diagrams/build.py），
-# notebooks/ 是同编号的可执行讲解（唯一规格源 notebooks/build_notebooks.py）。
+# 这个目录一章一个目录：每章里有图（唯一规格源 <章>/diagram.py）与同编号的可执行讲解
+# （唯一规格源 <章>/cells.py）；规格是唯一真相源，四份产物都不手改。
 TECH_DETAIL = REPO_ROOT / "docs" / "project" / "architecture" / "tech-detail"
-DIAGRAMS = TECH_DETAIL / "diagrams"
-NOTEBOOKS = TECH_DETAIL / "notebooks"
+CHAPTERS = sorted(path for path in TECH_DETAIL.iterdir()
+                  if path.is_dir() and path.name[:2].isdigit())
 print("仓库根目录:", REPO_ROOT.name)
-print("讲解目录:", NOTEBOOKS.relative_to(REPO_ROOT).as_posix())
+print("讲解目录:", TECH_DETAIL.relative_to(REPO_ROOT).as_posix(), "（共", len(CHAPTERS), "章）")
 print("Python:", sys.version.split()[0])
 '''
         ),
@@ -254,16 +254,17 @@ print("六层与目录逐一核对通过：", len(LAYERS), "层、", sum(len(ite
             '''
 ## 4. 这个目录里还有什么：00–09 索引
 
-`tech-detail/` 分成两条产品线：`diagrams/` 放图（可编辑的 `.drawio` + 渲染图 `.png`），
-`notebooks/` 放同编号的可执行讲解（`.ipynb` + 同名 `.py`）。下面这个索引是从目录**现场读出来的**——
-不是抄来的清单；新增一张图，这里就多一行，少一份 notebook 会被明确指出来。
+`tech-detail/` **一章一个目录**（`00-技术总览/` … `09-能不能成为规则/`）：一章里有同编号的四份
+产物——图（可编辑的 `.drawio` + 渲染图 `.png`）与可执行讲解（`.ipynb` + 同名 `.py`）——以及这一章
+自己的两份规格源（`diagram.py` 是图的规格、`cells.py` 是讲解的内容源）。下面这个索引是从目录
+**现场读出来的**——不是抄来的清单；新增一章，这里就多一行，少一份 notebook 会被明确指出来。
 '''
         ),
         code(
             '''
-# 读目录得到索引：图（.drawio）与 notebook（.ipynb）按编号一一对应。
-diagrams = sorted(path.stem for path in DIAGRAMS.glob("*.drawio"))
-notebooks = {path.stem for path in NOTEBOOKS.glob("*.ipynb")}
+# 读目录得到索引：一章一个目录，章内图（.drawio）与 notebook（.ipynb）按编号一一对应。
+diagrams = sorted(path.stem for chapter in CHAPTERS for path in chapter.glob("*.drawio"))
+notebooks = {path.stem for chapter in CHAPTERS for path in chapter.glob("*.ipynb")}
 
 print(pad("编号图", 34) + "配套 notebook")
 print("-" * 60)

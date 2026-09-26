@@ -1,11 +1,11 @@
 """判定：一段文档要求能不能成为规则：tech-detail 讲解 notebook 的纯 Python 版本。
 
-由 docs/project/architecture/tech-detail/notebooks/build_notebooks.py 生成，内容与同名的
+由 docs/project/architecture/tech-detail/build_notebooks.py 生成，内容与同名的
 .ipynb 逐字相同（那份里每段代码也是一个单元）。直接运行本文件即可复现全部输出：
 
-    python docs/project/architecture/tech-detail/notebooks/09-能不能成为规则.py
+    python docs/project/architecture/tech-detail/09-能不能成为规则/09-能不能成为规则.py
 
-内容改动请修改 nb_cells/ 下对应的内容源后重新生成，不要直接编辑本文件。
+内容改动请修改同目录的 cells.py 后重新生成，不要直接编辑本文件。
 """
 
 # ----------------------------------------------------------------------------
@@ -56,10 +56,11 @@ TEMP = REPO_ROOT / ".tmp" / "tech-detail" / "09"
 TEMP.mkdir(parents=True, exist_ok=True)
 
 # 三个环境前提钉住：路径是从 REPO_ROOT 拼出来的、临时目录真的建好了、
-# 这份 notebook 与同名的 .drawio 图一一对应（stem 必须逐字相同）。
+# 这份 notebook 与同一章目录里同名的 .drawio 图一一对应（章节目录名 = 产物名）。
 assert TEMP.is_dir() and TEMP.is_relative_to(REPO_ROOT), TEMP
 TECH_DETAIL = REPO_ROOT / "docs" / "project" / "architecture" / "tech-detail"
-assert (TECH_DETAIL / "diagrams" / "09-能不能成为规则.drawio").is_file(), "同名图不存在"
+CHAPTER = TECH_DETAIL / "09-能不能成为规则"
+assert (CHAPTER / "09-能不能成为规则.drawio").is_file(), "同名图不存在"
 
 print("仓库根目录:", REPO_ROOT.name, "（本次工作目录:", Path.cwd().name or Path.cwd(), "）")
 print("临时目录:", TEMP.relative_to(REPO_ROOT).as_posix(), "（写操作只落在它下面）")
