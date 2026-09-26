@@ -13,6 +13,12 @@
 
 不删除源码、规则、文档、示例与 CI 配置；不跟随仓库外的路径。
 
+**`.venv/` 默认整体不碰**：它是用户环境而不是仓库内容（工具链只把它当解释器路径，
+`src/validators` 的扫描器也主动排除它），而本脚本的对外承诺是「只动 `.tmp/`，不碰仓库真实
+文件」。默认删它既越权，又在「多个项目共用一个 venv」或「解释器写不了字节码」的环境里把用户
+环境**不可逆地降级**。确需清它（例如某个坏掉的 `.pyc` 让 `import` 直接
+`ValueError: bad marshal data`）时用 **`--include-venv`** 显式要求。
+
 和 `ci_local.py` 共用同一把排他锁
 --------------------------------
 
@@ -56,11 +62,27 @@
 （WinError 32）——清理和持锁互相打架，而且是“先把共享状态删光、然后才失败”；POSIX 上 `flock` 认的
 是 inode，删掉再重建等于**换了一把锁**，两个进程会各持一把，排他保证直接失效。锁空闲时它是一个
 0 字节文件，留着不占地方。
+
+白名单不变式：`candidates() ⊆ is_allowed()`，计划里绝无仓库外的路径
+--------------------------------------------------------------------
+
+`rglob` **会跟着 junction / symlink 走**（对抗复核实测：Windows 上 `mklink /J` 免管理员即可把
+`.tmp` 造成指向仓库外的 junction，`.tmp` 于是进了计划而 `is_allowed(.tmp)` 为 False；`link/`
+指向仓库外时还会扫出 `link/deep/__pycache__`、`link/deep/loose.pyc` 这些仓库外路径）。后果不是
+数据丢失（`is_allowed()` 会拒掉），而是「扫出来又被白名单拒」的形态回来了——计划与结论互相矛盾。
+
+修法是**从构造上杜绝**：遍历改用 `os.scandir` 自顶向下，遇到重解析点既不进入、也不作为候选。
+Windows 的 junction 在 `lstat` 里 mode 仍是目录、`is_symlink()` 为 False，只有
+`FILE_ATTRIBUTE_REPARSE_POINT` 这一位能识别它，所以判定不能只查 `S_ISLNK`。`.tmp/` 的子项同样
+跳过链接，`_remove()` 再兜一道。于是计划里只有仓库内的真实路径，链接本身永远不会被当成可删目录
+——删它等于动它的目标。
 """
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -84,6 +106,44 @@ TOP_LEVEL_DIRS = (
 )
 CACHE_DIR_NAME = "__pycache__"
 CACHE_FILE_SUFFIXES = (".pyc", ".pyo")
+VENV_DIR_NAME = ".venv"
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """判断 `path` 自身是不是链接 / junction / 其他重解析点（**不跟随**目标）。
+
+    为什么不能只查 `S_ISLNK`：Windows 的 junction 在 `lstat` 里 mode 仍是目录
+    （实测 `0o40777`、`is_symlink()` 与 `os.path.islink()` 都是 False），只有
+    `FILE_ATTRIBUTE_REPARSE_POINT` 这一位能识别；而 `mklink /J` 免管理员即可创建，
+    正是“计划里混进仓库外路径”的入口。
+    查不到 lstat 时按“不是链接”处理：这里只回答“能不能证明它是链接”，遍历时读不到的目录由
+    `_walk_repository()` 单独跳过。
+    """
+
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    attributes = getattr(info, "st_file_attributes", 0)
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def _is_under_venv(path: Path) -> bool:
+    """路径是否落在仓库自己的 `.venv/` 里（默认不删的用户环境，见模块 docstring 的删除范围）。
+
+    `resolve()` 之后再比：`.venv` 本身或它下面某一层是链接时，字面路径与实际落点会不一致，
+    而这里要回答的是「碰不碰用户环境」，按实际落点算才对。解析失败（悬挂链接、权限）按「是」
+    处理：宁可漏删一个缓存，也不越权动用户环境。
+    """
+
+    try:
+        resolved_venv = (REPO_ROOT / VENV_DIR_NAME).resolve()
+        resolved = path.resolve()
+    except (OSError, RuntimeError):
+        return True
+    return resolved == resolved_venv or resolved_venv in resolved.parents
 
 
 def tmp_dir() -> Path:
@@ -99,22 +159,32 @@ def lock_file_name() -> str:
 
 
 def tmp_children() -> list[Path]:
-    """`.tmp/` 下要删的子项，**排除锁文件**（为什么不能整体 rmtree 见模块 docstring）。"""
+    """`.tmp/` 下要删的子项，**排除锁文件与链接**（为什么不能整体 rmtree 见模块 docstring）。
+
+    `.tmp/` 本身是链接 / junction 时直接返回空：这时它的“子项”其实在仓库外，
+    删它们等于删链接的目标（见模块 docstring 的白名单不变式）。
+    """
 
     root = tmp_dir()
-    if not root.is_dir():
+    if not root.is_dir() or _is_reparse_point(root):
         return []
     lock_name = lock_file_name()
-    return sorted((child for child in root.iterdir() if child.name != lock_name), key=str)
+    return sorted(
+        (
+            child
+            for child in root.iterdir()
+            if child.name != lock_name and not _is_reparse_point(child)
+        ),
+        key=str,
+    )
 
 
 def _touches_tmp(path: Path) -> bool:
     """这个候选是不是“共享状态”：就是 `.tmp/` 本身，或者落在它里面。
 
-    为什么不是 `path == tmp_dir()` 就够：`candidates()` 先判定顶层 `.tmp/` 是否存在、再用 `rglob`
-    走树，这两次观察之间也有一段窗口——`.tmp/` 若在其中出现，`rglob` 可能把
-    `.tmp/<x>/__pycache__` 捞进计划，而 `.tmp/` 本身不在计划里（去重只对“祖先也在计划里”的后代
-    生效）。删掉落在 `.tmp/` 里的任何东西同样属于碰共享状态，所以按**是否落在 `.tmp/` 里**判定。
+    为什么不是 `path == tmp_dir()` 就够：去重只对“祖先也在计划里”的后代生效，所以计划里完全可能
+    出现 `.tmp/<x>/__pycache__` 而没有 `.tmp/` 本身。删掉落在 `.tmp/` 里的任何东西同样属于碰共享
+    状态，所以判定按**是否落在 `.tmp/` 里**算，而不是只看它是不是 `.tmp/`。
     """
 
     root = tmp_dir()
@@ -125,7 +195,7 @@ def removal_targets(path: Path) -> list[Path]:
     """候选路径 → 实际要删的路径。
 
     只有 `.tmp/` 特殊：它是“删子项、留目录、留锁文件”，其余候选就是它自己。白名单判定仍然发生在
-    候选上（`is_allowed()` 的语义不变），所以 `.tmp/` 依旧是被认的候选。
+    候选上（而不是在展开后的删除目标上），所以 `.tmp/` 依旧是被认的候选。
     """
 
     if path == tmp_dir():
@@ -133,21 +203,80 @@ def removal_targets(path: Path) -> list[Path]:
     return [path]
 
 
-def candidates() -> list[Path]:
-    """按目录优先的顺序返回候选路径，避免先删空父目录再报子项。"""
+def _walk_repository() -> tuple[list[Path], list[Path]]:
+    """枚举仓库里**真实**的目录与文件，绝不进入链接 / junction。
 
-    found: list[Path] = [REPO_ROOT / name for name in TOP_LEVEL_DIRS if (REPO_ROOT / name).is_dir()]
-    found.extend(path for path in REPO_ROOT.rglob(CACHE_DIR_NAME) if path.is_dir())
-    for suffix in CACHE_FILE_SUFFIXES:
-        found.extend(path for path in REPO_ROOT.rglob("*" + suffix) if path.is_file())
+    为什么不用 `rglob`：它按名字走树，Windows 上会顺着 junction 进入仓库外（实测
+    `rglob("*.pyc")` 扫出过 `link/deep/loose.pyc`），计划里于是出现仓库外路径。这里改用
+    `os.scandir` 自顶向下，遇到重解析点既不进入、也不作为候选：指向仓库外的链接**本身**
+    不该被删（删它等于动它的目标）。读不到的目录直接跳过——宁可漏扫，也不猜。
+    """
+
+    directories: list[Path] = []
+    files: list[Path] = []
+    pending = [REPO_ROOT]
+    while pending:
+        current = pending.pop()
+        try:
+            with os.scandir(current) as scanner:
+                entries = sorted(scanner, key=lambda entry: entry.name)
+        except OSError:
+            continue
+        for entry in entries:
+            path = Path(entry.path)
+            if _is_reparse_point(path):
+                continue
+            try:
+                is_directory = entry.is_dir(follow_symlinks=False)
+                is_file = entry.is_file(follow_symlinks=False)
+            except OSError:
+                continue  # 连类型都拿不到就不猜：宁可漏扫，也不把它放进计划
+            if is_directory:
+                directories.append(path)
+                pending.append(path)
+            elif is_file:
+                files.append(path)
+    return directories, files
+
+
+def candidates(*, include_venv: bool = False) -> list[Path]:
+    """按目录优先的顺序返回候选路径，避免先删空父目录再报子项。
+
+    候选全部来自 `_walk_repository()` 走出的真实节点，且与 `is_allowed()` 用同一套名字判定，
+    所以 `candidates() ⊆ is_allowed()` 由构造成立，计划里也绝不会出现仓库外的路径
+    （见模块 docstring 的白名单不变式）。
+
+    `.venv/` 默认整支排除；排除发生在**候选阶段**（`is_allowed()` 用同一个开关），
+    所以这条不变式不因 `.venv` 规则而破。
+    """
+
+    directories, files = _walk_repository()
+    found: list[Path] = [
+        path for path in directories if path.parent == REPO_ROOT and path.name in TOP_LEVEL_DIRS
+    ]
+    found.extend(path for path in directories if path.name == CACHE_DIR_NAME)
+    found.extend(path for path in files if path.name.lower().endswith(CACHE_FILE_SUFFIXES))
+    if not include_venv:
+        found = [path for path in found if not _is_under_venv(path)]
 
     unique = sorted(set(found), key=lambda item: (len(item.parts), str(item)))
     return [path for path in unique if not any(parent in unique for parent in path.parents)]
 
 
-def is_allowed(path: Path) -> bool:
-    """逐条白名单判定：只有缓存目录、缓存文件与 .tmp 是临时产物。"""
+def is_allowed(path: Path, *, include_venv: bool = False) -> bool:
+    """逐条白名单判定：只有缓存目录、缓存文件与 .tmp 是临时产物。
 
+    `.venv/` 默认不在白名单里（用户环境，见模块 docstring 的删除范围），`include_venv=True`
+    时才认；`candidates()` 用同一个开关，所以不过滤与不过滤两边一致。
+
+    链接 / junction 一律不在白名单里：它指向哪里由目标决定，删它等于动它的目标，
+    而 `resolve()` 也会把它落到仓库外（见模块 docstring 的白名单不变式）。
+    """
+
+    if not include_venv and _is_under_venv(path):
+        return False
+    if _is_reparse_point(path):
+        return False
     try:
         relative = path.resolve().relative_to(REPO_ROOT)
     except ValueError:
@@ -165,8 +294,15 @@ def is_allowed(path: Path) -> bool:
 
 
 def _remove(path: Path) -> OSError | None:
-    """删掉一个路径：成功返回 None，失败把异常交回调用方计数（不抛）。"""
+    """删掉一个路径：成功返回 None，失败把异常交回调用方计数（不抛）。
 
+    链接 / junction 一律拒绝：`rmtree` 对链接的处理是实现细节（本机 Windows 3.13 实测直接抛
+    OSError），本脚本不把自己的安全建立在那个细节上——删链接从来不是它的语义，目标是仓库外的
+    目录，删它等于动它的目标。计划里本来就不该有链接，这里是同一不变式的最后一道闸。
+    """
+
+    if _is_reparse_point(path):
+        return OSError("拒绝删除链接 / junction：不跟随目标")
     try:
         if path.is_dir():
             shutil.rmtree(path)
@@ -209,7 +345,7 @@ def _report_lock_conflict(holder: dict[str, object] | None) -> None:
     )
 
 
-def _clean(dry_run: bool, plan: list[Path]) -> int:
+def _clean(dry_run: bool, plan: list[Path], *, include_venv: bool = False) -> int:
     """按白名单删除 `plan` 里的候选（`.tmp/` 只删子项）；返回退出码：有删除失败即 1。
 
     `plan` 由调用方**扫描一次**后传进来，且与“要不要上锁”的判定同源。这里绝不重新调
@@ -222,7 +358,7 @@ def _clean(dry_run: bool, plan: list[Path]) -> int:
     blocked = 0
     for path in plan:
         relative = path.relative_to(REPO_ROOT).as_posix()
-        if not is_allowed(path):
+        if not is_allowed(path, include_venv=include_venv):
             print("跳过（不在白名单）:", relative)
             skipped += 1
             continue
@@ -251,12 +387,17 @@ def _clean(dry_run: bool, plan: list[Path]) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="删除仓库内的临时产物")
     parser.add_argument("--dry-run", action="store_true", help="只列出，不删除")
+    parser.add_argument(
+        "--include-venv",
+        action="store_true",
+        help="连用户 .venv/ 里的 __pycache__ 与 *.pyc 一起删（默认不碰：那是用户环境，不是仓库内容）",
+    )
     args = parser.parse_args(argv)
 
     # 先扫一次，并且**只删这次扫描到的东西**（不变式见模块 docstring）：判定与删除必须看同一份
     # 计划，否则“判定之后、扫描之前”出现的 `.tmp/` 会被无锁删光。扫描是只读的，拿不到锁时它
     # 也就是白读一趟，没有任何副作用。
-    plan = candidates()
+    plan = candidates(include_venv=args.include_venv)
     # 只在“真的要删 `.tmp/` 里的东西”时才取锁，两条例外见模块 docstring：`--dry-run` 是只读的；
     # `.tmp/` 没扫到就没有可保护的共享状态，何况 try_acquire_lock 会连同父目录一起 mkdir——
     # 为了上锁凭空造出 `.tmp/` 是本末倒置。
@@ -282,7 +423,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     try:
-        return _clean(args.dry_run, plan)
+        return _clean(args.dry_run, plan, include_venv=args.include_venv)
     finally:
         # 正常结束、异常、提前 return 都要还锁：句柄留在进程里的话，后面的门禁会被一把
         # “没人持有却拿不到”的锁挡住。lock is None 表示这次本来就没取锁。

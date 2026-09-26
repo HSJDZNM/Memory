@@ -14,8 +14,12 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -281,12 +285,14 @@ def _install_appearing_tmp(monkeypatch, cleanup, tmp_root, names, *, before_scan
             return tmp_root / ".tmp-not-yet"
         return real_tmp_dir()
 
-    def racing_candidates():
+    def racing_candidates(*, include_venv: bool = False):
+        """替身必须收下 `include_venv`：`main()` 是这个签名调它的（口径变了就一起变）。"""
+
         if before_scan:
             materialise()  # 扫描之前它就出现了：这份计划必须把 `.tmp/` 算进去
             mark("candidates")
-            return real_candidates()
-        plan = real_candidates()  # 扫描时 `.tmp/` 还不存在
+            return real_candidates(include_venv=include_venv)
+        plan = real_candidates(include_venv=include_venv)  # 扫描时 `.tmp/` 还不存在
         mark("candidates")  # 扫描一结束它才出现——要注入的窗口正是这里
         return plan
 
@@ -407,7 +413,7 @@ def test_candidate_inside_tmp_alone_also_requires_the_lock(monkeypatch, capsys, 
     assert cleanup._touches_tmp(tmp_root / ".tmp")
     assert not cleanup._touches_tmp(tmp_root / "build" / "__pycache__")
 
-    monkeypatch.setattr(cleanup, "candidates", lambda: [leaked])  # 那条窗口产出的计划
+    monkeypatch.setattr(cleanup, "candidates", lambda *, include_venv=False: [leaked])  # 那条窗口产出的计划
     holder = cleanup.ci_local.try_acquire_lock({"pid": 424242, "started_at": "now", "argv": "p"})
     assert holder is not None
     try:
@@ -417,3 +423,177 @@ def test_candidate_inside_tmp_alone_also_requires_the_lock(monkeypatch, capsys, 
 
     assert (leaked / "module.pyc").is_file()
     assert str(cleanup.ci_local.lock_path()) in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- 链接 / junction
+#
+# 缺陷（对抗复核实测）：`candidates()` 曾用 `rglob` 走树，而 `rglob` **跟随 junction / symlink**。
+# 实测（Windows，`mklink /J` 免管理员）：
+#   - `.tmp` 指向仓库外 ⇒ 计划 `['.tmp']`，而 `is_allowed('.tmp')` 为 False；
+#   - `link/` 指向仓库外 ⇒ 计划里出现 `link/deep/__pycache__`、`link/deep/loose.pyc`（仓库外）。
+# 不是数据丢失（失败关闭），而是「扫出来又被白名单拒」：计划与结论互相矛盾。下面三条用例把这个
+# 形态钉成失败——修复前（`rglob` + `is_dir()` 跟随链接）必红，改成 `os.scandir` 不跟随重解析点
+# 后 PASS。
+
+
+def _make_directory_link(link: Path, target: Path) -> bool:
+    """把 `link` 造成指向 `target` 的目录链接，返回是否造成功。
+
+    Windows 用 `mklink /J`（junction，免管理员）；POSIX 用 `symlink_to`。环境不支持时返回
+    False，由调用方 `pytest.skip`——不能把“造不出来”记成通过。
+    """
+
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return completed.returncode == 0
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        return False
+    return True
+
+
+def _assert_plan_is_inside_and_allowed(cleanup, tmp_root: Path) -> list[Path]:
+    """计划的两条硬约束：每一项都落在 ROOT 之内，且每一项都过得了白名单。"""
+
+    plan = cleanup.candidates()
+    rejected = [str(item) for item in plan if not cleanup.is_allowed(item)]
+    assert rejected == [], "计划里出现了过不了白名单的项"
+    for item in plan:
+        assert tmp_root in item.parents, item
+    return plan
+
+
+def test_link_to_outside_is_never_scanned_or_planned(monkeypatch, tmp_root, tmp_root_factory):
+    """指向仓库外的目录链接：仓库外的内容一个都不该进计划。
+
+    修复前 `rglob` 会顺着 junction 走进去，扫出 `link/deep/__pycache__`、
+    `link/deep/loose.pyc` 这些仓库外路径——它们必然被白名单拒掉，计划与结论就此矛盾。
+    """
+
+    cleanup = _load_cleanup_with_tmp_root(monkeypatch, tmp_root)
+    outside = tmp_root_factory()
+    (outside / "deep" / "__pycache__").mkdir(parents=True)
+    (outside / "deep" / "__pycache__" / "x.pyc").write_bytes(b"")
+    (outside / "deep" / "loose.pyc").write_bytes(b"")
+    (outside / "keep.txt").write_text("keep", encoding="utf-8")
+    link = tmp_root / "link"
+    if not _make_directory_link(link, outside):
+        pytest.skip("本环境不支持创建目录链接（Windows junction / POSIX symlink）")
+
+    plan = _assert_plan_is_inside_and_allowed(cleanup, tmp_root)
+
+    assert link not in plan
+    for item in plan:
+        assert outside not in item.parents, item
+    assert plan == []  # 仓库里没有真缓存：链接不该贡献任何候选
+    # 计划外的路径一律不动
+    assert (outside / "deep" / "__pycache__" / "x.pyc").is_file()
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_tmp_as_a_link_is_left_alone_including_its_target(
+    monkeypatch, capsys, tmp_root, tmp_root_factory
+):
+    """.tmp 本身是指向仓库外的链接：不进计划、不为它上锁、更不删它下面的东西。
+
+    修复前 `(REPO_ROOT / ".tmp").is_dir()` 跟随链接返回 True：`.tmp` 进了计划而
+    `is_allowed(.tmp)` 为 False，取锁还会把 `ci-local.lock` 建到**仓库外**的目标里。
+    """
+
+    cleanup = _load_cleanup_with_tmp_root(monkeypatch, tmp_root)
+    outside = tmp_root_factory()
+    (outside / "artifacts").mkdir()
+    (outside / "artifacts" / "state.json").write_text("{}", encoding="utf-8")
+    tmp_link = tmp_root / ".tmp"
+    if not _make_directory_link(tmp_link, outside):
+        pytest.skip("本环境不支持创建目录链接（Windows junction / POSIX symlink）")
+
+    plan = _assert_plan_is_inside_and_allowed(cleanup, tmp_root)
+    assert tmp_link not in plan
+    assert plan == []
+
+    assert cleanup.main([]) == 0
+    out = capsys.readouterr().out
+    assert "artifacts" not in out
+    assert not cleanup.ci_local.lock_path().exists()  # 没扫到 .tmp：不为它上锁
+    assert (outside / "artifacts" / "state.json").is_file()  # 链接的目标一点没动
+    assert tmp_link.exists()  # 链接本身也留着：删它等于动它的目标
+
+
+def test_link_inside_tmp_is_not_a_removal_target(monkeypatch, capsys, tmp_root, tmp_root_factory):
+    """.tmp/ 里的目录链接不是删除目标：`removal_targets()` 也不能把链接交给 rmtree。
+
+    候选集干净只是第一层；`.tmp/` 是真目录时，删除目标由 `tmp_children()`（`iterdir`）产出，
+    junction 在那里同样会被列出来。修复前实测 `removal_targets(.tmp) == [.tmp/linked-cache]`、
+    `shutil.rmtree(junction)` 抛 OSError，清理于是以失败退出。
+    """
+
+    cleanup = _load_cleanup_with_tmp_root(monkeypatch, tmp_root)
+    outside = tmp_root_factory()
+    (outside / "payload").mkdir()
+    (outside / "payload" / "keep.txt").write_text("keep", encoding="utf-8")
+    shared = tmp_root / ".tmp"
+    shared.mkdir()
+    link = shared / "linked-cache"
+    if not _make_directory_link(link, outside):
+        pytest.skip("本环境不支持创建目录链接（Windows junction / POSIX symlink）")
+
+    plan = _assert_plan_is_inside_and_allowed(cleanup, tmp_root)
+    assert plan == [shared]  # `.tmp/` 是真目录：照常进计划，只删它的子项
+
+    assert cleanup.main([]) == 0
+    out = capsys.readouterr().out
+    assert "linked-cache" not in out
+    assert (outside / "payload" / "keep.txt").read_text(encoding="utf-8") == "keep"
+    assert link.exists()
+    assert cleanup.ci_local.lock_path().is_file()  # `.tmp/` 在计划里 ⇒ 照常走取锁路径
+
+def test_venv_caches_are_out_of_scope_by_default(monkeypatch, capsys, tmp_root):
+    """`.venv/` 默认整支不碰：候选、白名单、真删三处都不认它。
+
+    `.venv/` 是用户环境而不是仓库内容（工具链只把它当解释器路径，`src/validators` 的扫描器也
+    主动排除它），而本脚本的对外承诺是「只动 `.tmp/`，不碰仓库真实文件」。默认删它既越权，
+    又在「多个项目共用一个 venv」或「解释器写不了字节码」的环境里把用户环境不可逆地降级。
+    """
+
+    cleanup = _load_cleanup_with_tmp_root(monkeypatch, tmp_root)
+    venv_cache = tmp_root / ".venv" / "Lib" / "site-packages" / "__pycache__"
+    venv_cache.mkdir(parents=True)
+    (venv_cache / "mod.cpython-313.pyc").write_bytes(b"")
+    (tmp_root / ".venv" / "loose.pyo").write_bytes(b"")
+    repo_cache = tmp_root / "src" / "__pycache__"
+    repo_cache.mkdir(parents=True)
+    (repo_cache / "mod.cpython-313.pyc").write_bytes(b"")
+
+    assert [path.as_posix() for path in cleanup.candidates()] == [repo_cache.as_posix()]
+    assert cleanup.is_allowed(venv_cache) is False
+    assert cleanup.is_allowed(tmp_root / ".venv" / "loose.pyo") is False
+    assert cleanup.is_allowed(repo_cache) is True
+
+    assert cleanup.main(["--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "将删除: src/__pycache__" in out
+    assert ".venv" not in out
+
+
+def test_include_venv_is_the_explicit_escape_hatch(monkeypatch, capsys, tmp_root):
+    """只有显式 `--include-venv` 才把 `.venv/` 纳入（例如坏掉的 `.pyc` 让 import 直接失败）。"""
+
+    cleanup = _load_cleanup_with_tmp_root(monkeypatch, tmp_root)
+    venv_cache = tmp_root / ".venv" / "__pycache__"
+    venv_cache.mkdir(parents=True)
+    (venv_cache / "mod.pyc").write_bytes(b"")
+
+    assert cleanup.candidates() == []
+    assert cleanup.candidates(include_venv=True) == [venv_cache]
+    assert cleanup.is_allowed(venv_cache) is False
+    assert cleanup.is_allowed(venv_cache, include_venv=True) is True
+
+    assert cleanup.main(["--dry-run", "--include-venv"]) == 0
+    assert "将删除: .venv/__pycache__" in capsys.readouterr().out
