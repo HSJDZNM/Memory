@@ -30,13 +30,14 @@ from typing import Any, Mapping, Optional
 from policy.models import Decision, RequiredAction, ValidationResult
 
 from .base import Adapter
-from .textfacts import proposed_dependencies
-from .models import AgentEvent, AdapterEventError, parse_canonical_event
+from .models import AdapterEventError, AgentEvent, parse_canonical_event
 
 __all__ = ["JsonAdapter", "agent_response_from_decision"]
 
 
-def agent_response_from_decision(decision: Any, *, event: Optional[AgentEvent] = None) -> dict[str, Any]:
+def agent_response_from_decision(
+    decision: Any, *, event: Optional[AgentEvent] = None
+) -> dict[str, Any]:
     """把决策翻译成通用 JSON 响应（受控字段，不含内部信息）。"""
 
     if isinstance(decision, Mapping):
@@ -84,7 +85,8 @@ def agent_response_from_decision(decision: Any, *, event: Optional[AgentEvent] =
         "matched_rules": list(payload.get("matched_rules") or []),
         "violations": [dict(item) for item in violations if isinstance(item, Mapping)],
         "required_action": required,
-        "executable": payload.get("decision") in (Decision.ALLOW.value, Decision.ALLOW_WITH_WARNINGS.value),
+        "executable": payload.get("decision")
+        in (Decision.ALLOW.value, Decision.ALLOW_WITH_WARNINGS.value),
     }
 
 
@@ -92,15 +94,11 @@ class JsonAdapter(Adapter):
     """规范事件的直接消费者：第三方 Adapter 的参考实现。"""
 
     def _build_event(self, raw_event: Mapping[str, Any]) -> AgentEvent:
-        event = parse_canonical_event(raw_event, agent_id=self.agent_id)
-        # 契约：payload.text 是"本次改动引入的文本"。依赖维度由平台统一提取，
-        # 避免"同一语义的改动在不同 Adapter 里得到不同的 PolicyContext"。
-        text = event.payload.get("text")
-        if isinstance(text, str) and text and "dependencies" not in event.payload:
-            payload = dict(event.payload)
-            payload["dependencies"] = list(proposed_dependencies(text))
-            object.__setattr__(event, "payload", payload)
-        return event
+        # 契约：payload.text 是"本次改动引入的文本"。依赖维度由**公共层**统一提取
+        # （base.Adapter.to_policy_context：那里 language 已由配置声明解析出来），
+        # 而不是每个 Adapter 各自提前算一份——"同一语义的改动在不同 Adapter 里
+        # 得到不同的 PolicyContext"正是 G6 的成因。
+        return parse_canonical_event(raw_event, agent_id=self.agent_id)
 
     def validate_event(
         self, event: AgentEvent, *, workspace: Optional[Path] = None

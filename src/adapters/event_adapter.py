@@ -15,20 +15,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional
 
 from policy.models import ValidationResult
 
 from .base import Adapter
-from .textfacts import proposed_dependencies
 from .models import (
     AdapterEventError,
     AgentEvent,
     AgentResponse,
     EventType,
-    ResponseKind,
-    canonical_identifier,
     event_payload_digest,
 )
 
@@ -71,7 +67,8 @@ def hook_command_result(
         )
 
     allowed = payload.decision in (Decision.ALLOW, Decision.ALLOW_WITH_WARNINGS)
-    lines = [f"[policy] {'ALLOWED' if allowed else 'BLOCKED'} {payload.event_id} ({payload.reason_code})"]
+    verdict = "ALLOWED" if allowed else "BLOCKED"
+    lines = [f"[policy] {verdict} {payload.event_id} ({payload.reason_code})"]
     if payload.message:
         lines.append(f"detail: {payload.message}")
     for item in payload.violations:
@@ -196,11 +193,10 @@ class EventAdapter(Adapter):
             if isinstance(tool_input.get(field), str)
         )
         if proposed:
-            text = chr(10).join(proposed)
-            payload["text"] = text
-            # 依赖是核心上下文的维度，不是"dsh 的特性"：任何 Agent 的变更文本
-            # 都用同一份提取器，跨 Adapter 的等价事件才会得到等价的 PolicyContext。
-            payload["dependencies"] = list(proposed_dependencies(text))
+            # payload 只带 text：依赖是核心上下文的维度，由公共层在 language 解析出来
+            # 之后统一提取（base.Adapter.to_policy_context），跨 Adapter 的等价事件
+            # 才会得到等价的 PolicyContext。
+            payload["text"] = chr(10).join(proposed)
         return payload
 
     # ------------------------------------------------------------------ 响应

@@ -38,7 +38,6 @@ from policy.models import (
     Principal,
     RuleValidationError,
     canonical_identifier,
-    normalize_repo_path,
 )
 
 from .models import (
@@ -48,13 +47,14 @@ from .models import (
     AgentEvent,
     ApprovalCapability,
     BlockingCapability,
+    Direction,
     EnforcementLevel,
     EventType,
     ManifestError,
     ParticipantCapability,
-    Direction,
     normalize_event_path,
 )
+from .textfacts import governed_dependencies
 
 __all__ = [
     "APPROVED_SCHEMA_VERSION",
@@ -193,7 +193,10 @@ class SupportCeiling:
 
     @property
     def downgraded(self) -> bool:
-        return self.requested is not None and _CEILING_RANK[self.level] < _CEILING_RANK[self.requested]
+        return (
+            self.requested is not None
+            and _CEILING_RANK[self.level] < _CEILING_RANK[self.requested]
+        )
 
 
 def _compile_glob(pattern: str) -> "re.Pattern[str]":
@@ -384,7 +387,9 @@ class Adapter:
 
     def layer_for(self, path: str) -> Optional[str]:
         return self._match(self._layers, path) or (
-            None if self.config.default_layer is None else canonical_identifier(self.config.default_layer)
+            None
+            if self.config.default_layer is None
+            else canonical_identifier(self.config.default_layer)
         )
 
     def language_for(self, path: str) -> Optional[str]:
@@ -572,11 +577,7 @@ class Adapter:
                 f"路径 {file} 没有命中 languages 映射；请补充规则或显式声明 default_language"
             )
 
-        dependencies = event.payload.get("dependencies") or ()
-        if isinstance(dependencies, str):
-            raise AdapterEventError("payload.dependencies 必须是序列，不能是字符串")
-        if not isinstance(dependencies, (list, tuple, set, frozenset)):
-            raise AdapterEventError("payload.dependencies 必须是序列")
+        dependencies = self._dependencies_for(event, language=language)
 
         try:
             return PolicyContext(
@@ -589,7 +590,7 @@ class Adapter:
                 module=None,  # 刻意不推断：猜错模块会让规则在错误范围生效
                 layer=layer,
                 task=None,
-                dependencies=tuple(str(item) for item in dependencies),
+                dependencies=dependencies,
                 git_diff=None,
                 principal=self.principal_for(event),
                 trace_id=event.trace_id,
@@ -598,6 +599,42 @@ class Adapter:
             raise
         except Exception as error:  # pydantic ValidationError
             raise AdapterEventError(f"PolicyContext 构造失败：{error}") from error
+
+    def _dependencies_for(
+        self, event: AgentEvent, *, language: Optional[str]
+    ) -> Tuple[str, ...]:
+        """依赖维度：**显式声明优先**，没有显式声明时才按声明的语言派生。
+
+        两条分支的顺序是刻意的向后兼容：
+
+        - 载荷里**显式**给出的 `dependencies` 优先，这里只做形态校验，绝不覆盖。
+          **信任边界**：这一条只对 Adapter **内部注入**的载荷有效——外部规范事件的
+          payload 白名单是 `{"path", "params", "text", "cwd"}`（models.parse_canonical_event），
+          `dependencies` 会因为"未知或内部字段"被先一步拒绝
+          （tests/contract/test_agent_adapters.py 专门把伪造 `dependencies` 当攻击测）。
+          所以任何 Agent 都无法用载荷自带依赖集来影响判定：它是内部扩展点，不是入口。
+        - 只有在"有 text 且没有显式 dependencies"时，才用 `textfacts.governed_dependencies`
+          从变更文本派生。提取口径与 Phase 2 的 dsh 路径**完全共用同一份实现**——
+          同一个语义出现两份实现，就会在其中一份上漏判（G6 的成因）。
+
+        `language` 来自 adapter 配置声明（`languages` / `default_language`，
+        由 `language_for` 解析）：这是"这段文本能不能按 Python 的 import 语法解读"的
+        唯一依据，**绝不从文件名或路径猜**。声明不出来时 language 为 None，
+        派生结果为空——规则会在 `skipped_rules` 里说明原因，而不是假装"没有依赖"。
+        """
+
+        if "dependencies" in event.payload:
+            declared = event.payload.get("dependencies") or ()
+            if isinstance(declared, str):
+                raise AdapterEventError("payload.dependencies 必须是序列，不能是字符串")
+            if not isinstance(declared, (list, tuple, set, frozenset)):
+                raise AdapterEventError("payload.dependencies 必须是序列")
+            return tuple(str(item) for item in declared)
+
+        text = event.payload.get("text")
+        if not isinstance(text, str) or not text:
+            return ()
+        return governed_dependencies(text, language=language)
 
     def principal_for(self, event: AgentEvent) -> Optional[Principal]:
         """主体只来自 Adapter 的显式声明。

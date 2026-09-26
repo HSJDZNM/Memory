@@ -16,8 +16,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from policy.models import Operation
-
 from .base import Adapter
 from .event_adapter import hook_command_result
 from .models import (
@@ -27,7 +25,6 @@ from .models import (
     event_payload_digest,
     normalize_event_path,
 )
-from .textfacts import proposed_dependencies
 
 __all__ = ["DshAdapter", "DSH_WIRE"]
 
@@ -45,7 +42,7 @@ class DshAdapter(Adapter):
     def _build_event(
         self, raw_event: Mapping[str, Any], *, workspace: Optional[Path] = None
     ) -> AgentEvent:
-        from .dsh.adapter import HOOK_EVENT_POST_TOOL_USE, TOOL_TABLE, ToolKind
+        from .dsh.adapter import TOOL_TABLE, ToolKind
 
         event_name = _require_text(raw_event.get("hook_event_name"), where="hook_event_name")
         event_type = DSH_WIRE.get(event_name)
@@ -101,8 +98,9 @@ class DshAdapter(Adapter):
                 if isinstance(tool_input.get(field), str)
             )
             if text:
+                # payload 只带 text：依赖由公共层在 language 解析出来之后统一提取
+                # （base.Adapter.to_policy_context），三个 Adapter 不再各写一份。
                 payload["text"] = text
-                payload["dependencies"] = list(proposed_dependencies(text))
         elif spec.kind is ToolKind.READ_ONLY:
             # 只读动作降级的只是授权链路，不是范围校验：读了什么必须能被证明。
             payload["path"] = _resolve(
