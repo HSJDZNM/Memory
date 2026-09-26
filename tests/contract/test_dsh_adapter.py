@@ -19,18 +19,25 @@ from adapters.dsh.adapter import (
     DSH_AGENT_ID,
     SUPPORTED_HOOK_EVENTS,
     TOOL_TABLE,
+    UNPROVEN_CHANGED_TEXT,
+    UNPROVEN_DYNAMIC_IMPORT,
     AdapterConfig,
     DshEventError,
+    LayerResolution,
     ToolKind,
     config_from_mapping,
+    glob_match,
     load_config,
+    propose_dependencies,
     proposed_dependencies,
     to_policy_context,
     to_policy_event,
 )
-from policy.models import Operation, PolicyContext, PolicyContextError
+from policy.checkers import dependency_forbidden
+from policy.engine import evaluate
+from policy.models import Decision, Operation, PolicyContext, PolicyContextError, Severity
 
-from conftest import POLICIES_DIR, dsh_event, write_dsh_config
+from conftest import POLICIES_DIR, REPO_ROOT, dsh_event, make_context, write_dsh_config
 
 pytestmark = pytest.mark.contract
 
@@ -376,13 +383,275 @@ def test_tool_table_is_self_consistent():
             assert spec.operation is None or spec.kind is not ToolKind.NO_FILE
 
 
-# --------------------------------------------------------------------------- 依赖提取
+# --------------------------------------------------------------------------- 依赖证据（G6）
+
+# 这些写法曾经全部"结构性放行"：旧实现只抓顶层名字、只做行级正则。
+# 值 = (变更文本, 必须出现在违规证据里的依赖名)。
+ARCH_BYPASS_TEXTS: dict[str, tuple[str, str]] = {
+    "from 点分路径 import（forbidden: repository 必须命中 shop.order_repository）": (
+        "from shop.order_repository import OrderRepository\n",
+        "shop.order_repository",
+    ),
+    "from 包 import 子模块": ("from shop import order_repository\n", "shop.order_repository"),
+    "from . import 子模块（相对导入）": ("from . import repository\n", ".repository"),
+    "importlib.import_module 字面量": (
+        'import importlib\n\nimportlib.import_module("repository")\n',
+        "repository",
+    ),
+    "__import__ 字面量": ('__import__("pkg.repository")\n', "pkg.repository"),
+}
+
+ARCH_GOOD_TEXT = "from shop.order_service import OrderService\n"
 
 
-def test_proposed_dependencies_reads_only_the_changed_text():
+def edit_payload(project_root: Path, *, file_path: str, text: str) -> dict[str, object]:
+    """一条 PreToolUse/edit 载荷：old_string 空，new_string 就是"本次引入的文本"。"""
+
+    return event_for(
+        "pre-tool-use-edit-block.json",
+        project_root,
+        tool_input={"file_path": file_path, "old_string": "", "new_string": text},
+    )
+
+
+def governed_context(payload: dict[str, object], config: AdapterConfig) -> tuple:
+    """走真实映射链：载荷 → PolicyEvent → PolicyContext。"""
+
+    decision = to_policy_event(payload, config=config)
+    assert decision.event is not None, decision.reason
+    return decision.event, to_policy_context(decision.event, config=config)
+
+
+def test_proposed_dependencies_keeps_the_full_dotted_path():
     changed = "from service import OrderService\nfrom repository import OrderRepository"
 
-    assert proposed_dependencies(changed) == ("repository", "service")
+    assert proposed_dependencies(changed) == (
+        "repository",
+        "repository.orderrepository",
+        "service",
+        "service.orderservice",
+    )
+    # from X import a, b 里的 a / b 还可能是**子模块**：候选必须一起登记
+    # （AST 路径会把边落在子模块文件上；预执行路径没有模块索引，只能多登记候选）。
+    assert proposed_dependencies("from shop import order_repository\n") == (
+        "shop",
+        "shop.order_repository",
+    )
+
+
+def test_proposed_dependencies_reads_relative_and_dynamic_targets():
+    assert proposed_dependencies("    from .relative import x") == (".relative", ".relative.x")
+    assert proposed_dependencies("from ..pkg.mod import X") == ("..pkg.mod", "..pkg.mod.x")
+    assert proposed_dependencies("from . import repository") == (".repository",)
+    assert proposed_dependencies('importlib.import_module("pkg.repository")') == ("pkg.repository",)
+    assert proposed_dependencies('__import__("repository")') == ("repository",)
+    assert proposed_dependencies("import os, sys  # 行内注释") == ("os", "sys")
+    assert proposed_dependencies("# import os\nimport sys\n") == ("sys",)
+    assert proposed_dependencies("普通文本，没有 import") == ()
+
+
+def test_dynamic_import_without_a_literal_is_unproven_not_ignored():
+    proposal = propose_dependencies("importlib.import_module(name)\n")
+
+    assert proposal.names == ()
+    assert proposal.unproven_dynamic == ("import_module",)
+    assert proposal.unproven is True
+
+
+def test_unparseable_fragment_is_a_state_not_an_empty_result():
+    proposal = propose_dependencies("def broken(:\n    return 1\n")
+
+    assert proposal.parseable is False
+    assert proposal.unproven is True
+    # edit 的常态是**缩进块**：整体缩进一级后能解析的不算"解析不了"。
+    assert propose_dependencies("    def create(self):\n        return 1\n").parseable is True
+
+
+@pytest.mark.parametrize("label", sorted(ARCH_BYPASS_TEXTS))
+def test_controller_dependency_bypasses_are_not_structurally_allowed(
+    dsh_config_path, dsh_project, arch_rules, label
+):
+    """G6 完成判据：换一种写法不能再绕过 ARCH-001（bad 必须命中）。"""
+
+    config = load_config(dsh_config_path)
+    text, expected_hit = ARCH_BYPASS_TEXTS[label]
+    _, context = governed_context(
+        edit_payload(dsh_project, file_path="src/shop/order_controller.py", text=text),
+        config,
+    )
+
+    result = evaluate(arch_rules, context)
+
+    assert result.decision is Decision.BLOCK, (
+        label + " 被结构性放行了；登记到的依赖：" + repr(context.dependencies)
+    )
+    # 一个命中的依赖名产生一条违规（本次有两个候选名命中，因此是两条）；
+    # 断言的是"违规都属于 ARCH-001"与"是哪个依赖名命中的"，不假装条数恒为 1。
+    assert {item.rule_id for item in result.violations} == {"ARCH-001"}
+    assert {item.evidence.value for item in result.violations} <= set(context.dependencies)
+    assert expected_hit in {item.evidence.value for item in result.violations}
+
+
+def test_positive_example_is_not_blocked_and_not_skipped(dsh_config_path, dsh_project, arch_rules):
+    """G6 的另一半：正常的 service 依赖不许被误判（good 不命中、也不被 skipped 吞掉）。"""
+
+    config = load_config(dsh_config_path)
+    _, context = governed_context(
+        edit_payload(dsh_project, file_path="src/shop/order_controller.py", text=ARCH_GOOD_TEXT),
+        config,
+    )
+
+    result = evaluate(arch_rules, context)
+
+    assert result.decision is Decision.ALLOW
+    assert result.violations == ()
+    assert result.matched_rules == ("ARCH-001@1",)
+    assert result.skipped_rules == ()
+
+
+def test_dynamic_import_without_a_literal_fails_closed(dsh_config_path, dsh_project, arch_rules):
+    config = load_config(dsh_config_path)
+    _, context = governed_context(
+        edit_payload(
+            dsh_project,
+            file_path="src/shop/order_controller.py",
+            text="import importlib\n\n\ndef load(name):\n    return importlib.import_module(name)\n",
+        ),
+        config,
+    )
+
+    assert UNPROVEN_DYNAMIC_IMPORT in context.dependencies
+    result = evaluate(arch_rules, context)
+
+    assert result.decision is Decision.BLOCK
+    assert result.violations[0].severity is Severity.CRITICAL
+    assert "动态导入" in result.violations[0].message
+
+
+def test_unparseable_changed_text_fails_closed(dsh_config_path, dsh_project, arch_rules):
+    config = load_config(dsh_config_path)
+    _, context = governed_context(
+        edit_payload(
+            dsh_project,
+            file_path="src/shop/order_controller.py",
+            text="from shop.order_repository import OrderRepository\n\n\ndef broken(:\n    return 1\n",
+        ),
+        config,
+    )
+
+    assert UNPROVEN_CHANGED_TEXT in context.dependencies
+    result = evaluate(arch_rules, context)
+
+    assert result.decision is Decision.BLOCK
+    assert result.violations[0].severity is Severity.CRITICAL
+    assert "解析" in result.violations[0].message
+
+
+def test_unproven_dependencies_only_block_when_a_dependency_rule_is_in_scope(
+    dsh_config_path, dsh_project, arch_rules
+):
+    """「证明不了就拒绝」只对依赖类 checker、且规则 scope 命中时生效（不过度阻断）。"""
+
+    config = load_config(dsh_config_path)
+    event, context = governed_context(
+        edit_payload(
+            dsh_project,
+            file_path="src/shop/order_service.py",
+            text="import importlib\n\n\ndef load(name):\n    return importlib.import_module(name)\n",
+        ),
+        config,
+    )
+
+    assert UNPROVEN_DYNAMIC_IMPORT in event.dependencies
+    result = evaluate(arch_rules, context)
+
+    assert result.decision is Decision.ALLOW
+    assert [item.rule_id for item in result.skipped_rules] == ["ARCH-001@1"]
+
+
+def test_dependency_extraction_is_python_only(tmp_root, dsh_project):
+    """依赖维度是 Python 的事实：非 python 路径不做 import 抽取与解析性检查。"""
+
+    path = write_dsh_config(
+        tmp_root / "config" / "markdown.yaml",
+        project_root=dsh_project,
+        rules=POLICIES_DIR,
+        layers=[{"pattern": "**/*.md", "layer": "docs"}],
+        default_language="text",
+    )
+    config = load_config(path)
+    decision = to_policy_event(
+        edit_payload(
+            dsh_project, file_path="docs/notes.md", text="def broken(:\n    from . import repository\n"
+        ),
+        config=config,
+    )
+
+    assert decision.event is not None
+    assert decision.event.language == "text"
+    assert decision.event.dependencies == ()
+
+
+def test_forbidden_dependency_matches_dotted_and_underscored_components():
+    """两套写法（点分路径 / 下划线词）都落在同一个词上：这是与 AST 路径共用的比较函数。"""
+
+    assert dependency_forbidden("repository", "repository")
+    assert dependency_forbidden("repository", "shop.order_repository")
+    assert dependency_forbidden("repository", ".repository")
+    assert dependency_forbidden("pkg.repository", "pkg.repository")
+    assert not dependency_forbidden("repository", "shop.order_service")
+    # 反例（防止"按组件匹配"退化成"按子串匹配"）：service.orderservice 的组件是
+    # service / order / service，都不等于 repository，因此必须不命中。
+    assert not dependency_forbidden("repository", "service.orderservice")
+    assert not dependency_forbidden("repository", "orderservice")
+    # 复数不折叠：只认同词，不做词形猜测（repositories 组件由项目档案的路径模式覆盖）
+    assert not dependency_forbidden("repository", "repositories")
+    # 反向也要成立：规则写完整点分路径时，短名不该命中
+    assert not dependency_forbidden("shop.order_repository", "repository")
+
+
+def test_evidence_facts_match_through_the_module_path(arch_rules):
+    """AST 路径的外部包只留顶层名（pkg），点分路径在 module 里：两边都要参与匹配。"""
+
+    from policy.evidence import (
+        DependencyFact,
+        DependencyKind,
+        DependencyResolution,
+        EvidenceBundle,
+        ValidatorKind,
+        ValidatorRecord,
+        ValidatorStatus,
+    )
+
+    bundle = EvidenceBundle(
+        dependencies=(
+            DependencyFact(
+                name="pkg",
+                module="pkg.repository",
+                kind=DependencyKind.FROM_IMPORT,
+                resolution=DependencyResolution.EXTERNAL,
+                file="src/shop/order_controller.py",
+                line=3,
+                validator="py.depgraph@1.0",
+            ),
+        ),
+        validators=(
+            ValidatorRecord(
+                validator_id="py.depgraph",
+                validator_version="1.0",
+                kind=ValidatorKind.BUILTIN,
+                stage="dependency",
+                status=ValidatorStatus.OK,
+                served_checkers=("forbidden_dependency",),
+            ),
+        ),
+        served_checkers=("forbidden_dependency",),
+    )
+
+    result = evaluate(arch_rules, make_context(layer="controller", dependencies=[]), evidence=bundle)
+
+    assert result.decision is Decision.BLOCK
+    assert result.violations[0].evidence.value == "pkg"
 
 # --------------------------------------------------------------------------- 只读工具的读取范围
 
@@ -484,10 +753,6 @@ def test_read_without_a_path_or_cwd_is_refused(dsh_config_path, dsh_project):
     with pytest.raises(DshEventError):
         to_policy_event(payload, config=config)
 
-    assert proposed_dependencies("import os, sys\n") == ("os", "sys")
-    assert proposed_dependencies("普通文本，没有 import") == ()
-    assert proposed_dependencies("    from .relative import x") == ()
-
 
 # --------------------------------------------------------------------------- 配置
 
@@ -547,3 +812,238 @@ def write_raw(path: Path, document: dict) -> None:
     path.write_text(
         yaml.safe_dump(document, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
+
+
+# --------------------------------------------------------------------------- 分层命中（G7）
+
+
+def test_layer_resolution_reports_the_matched_pattern(dsh_config_path):
+    """命中某条分层规则：pattern 要一起交出来，defaulted 必须是 False。"""
+
+    config = load_config(dsh_config_path)
+    resolution = config.layer_resolution("src/shop/order_controller.py")
+
+    assert resolution == LayerResolution(
+        layer="controller", matched_pattern="**/*_controller.py", defaulted=False
+    )
+    assert config.layer_for("src/shop/order_controller.py") == "controller"
+
+
+def test_layer_resolution_marks_a_default_as_defaulted(tmp_root, dsh_project):
+    """没有规则命中、退回显式默认值：layer 有值但 matched_pattern 为空。"""
+
+    config = load_config(
+        write_dsh_config(
+            tmp_root / "config" / "default-layer.yaml",
+            project_root=dsh_project,
+            rules=POLICIES_DIR,
+            default_layer="module",
+        )
+    )
+    resolution = config.layer_resolution("scripts/tool.py")
+
+    assert resolution.layer == "module"
+    assert resolution.matched_pattern is None
+    assert resolution.defaulted is True
+    assert config.layer_for("scripts/tool.py") == "module"
+
+
+def test_layer_resolution_without_a_default_stays_unresolved(dsh_config_path):
+    """既没有规则命中、也没有默认值：layer 为 None —— 与"命中默认层"区分得开。"""
+
+    resolution = load_config(dsh_config_path).layer_resolution("scripts/tool.py")
+
+    assert resolution.layer is None
+    assert resolution.matched_pattern is None
+    assert resolution.defaulted is True
+
+
+# --------------------------------------------------------------------------- 通配符语义（G8）
+
+ADAPTER_YAML = REPO_ROOT / "adapters" / "dsh" / "adapter.yaml"
+
+# 修好零层匹配之后**新增**的命中：这些路径在旧语义（"**/" = 至少一层目录）下一条都命不中，
+# 即 adapter.yaml 里写着的 layer / language 映射对它们静默失效（配置看着对、实际漏一层）。
+ZERO_DIRECTORY_HITS: dict[str, str] = {
+    "order_controller.py": "controller",
+    "order_service.py": "service",
+    "order_repository.py": "repository",
+    "order.py": "module",
+    "README.md": "docs",
+}
+
+EXTRA_GLOB_PATTERNS: tuple[str, ...] = (
+    "**",
+    "**/*.py",
+    "*.py",
+    "src/**",
+    "src/**/*.py",
+    "src/**/",
+    "**/repository/**",
+    "a?c.py",
+    "**/*_repository.py",
+)
+
+
+def adapter_patterns() -> list[str]:
+    """adapters/dsh/adapter.yaml 里声明过的全部 pattern（layer 与 language 两段）。"""
+
+    import yaml
+
+    document = yaml.safe_load(ADAPTER_YAML.read_text(encoding="utf-8"))
+    patterns = [row["pattern"] for row in document["layers"]]
+    patterns.extend(row["pattern"] for row in document["languages"])
+    return patterns
+
+
+def pattern_samples(pattern: str) -> tuple[str, ...]:
+    """把一条 pattern 具体化成零层 / 一层 / 深层三种形态的路径样本。"""
+
+    samples: list[str] = []
+    for prefix in ("", "pkg/", "deep/nested/"):
+        candidate = pattern.replace("**/", prefix).replace("**", "deep/nested")
+        candidate = candidate.replace("*.", "sample.").replace("*", "sample").replace("?", "q")
+        samples.append(candidate)
+    return tuple(samples)
+
+
+def test_double_star_slash_matches_zero_directories():
+    """G8 的核心断言：下面每一条在旧实现（"**/" = 至少一层目录）下都是假。
+
+    旧实现把 "**" 一律翻成 ".*"，于是**前后文都要求至少一层目录**：
+    漏的不只是根目录文件，还有"带前缀的零层"（src/**/*.py 匹配不到 src/a.py）。
+    """
+
+    assert glob_match("**/*.md", "README.md")
+    assert glob_match("**/*.md", "docs/notes.md")
+    assert glob_match("**/*.py", "order.py")
+    assert glob_match("src/**/*.py", "src/a.py")
+    assert glob_match("src/**/*.py", "src/pkg/a.py")
+    assert glob_match("src/**", "src/a/b.py")
+    assert glob_match("**", "a/b/c.py")
+    assert not glob_match("**/*.md", "docs/notes.rst")
+    assert not glob_match("*.py", "pkg/a.py")
+    assert not glob_match("src/*.py", "src/pkg/a.py")
+
+
+def phase_two_config_from_real_patterns() -> AdapterConfig:
+    """把 adapters/dsh/adapter.yaml 的 layer / language 声明搬进 Phase 2 的配置形态。
+
+    为什么不能直接 load_config(adapter.yaml)：那份文件是 Phase 6 的配置，含
+    schema_version / ledger_alias / max_events_per_window / window_seconds 等 Phase 2
+    不认识的字段，Phase 2 的加载器按"未知字段一律报错"拒绝它（刻意的失败关闭）。
+    本测试要核对的是真实声明，因此只搬声明，不复制一份 pattern。
+    """
+
+    import yaml
+
+    document = yaml.safe_load(ADAPTER_YAML.read_text(encoding="utf-8"))
+    return config_from_mapping(
+        {
+            "project_root": str(REPO_ROOT),
+            "rules": [str(POLICIES_DIR)],
+            "layers": document["layers"],
+            "default_layer": document["default_layer"],
+            "languages": document["languages"],
+            "default_language": document["default_language"],
+        },
+        base_dir=REPO_ROOT,
+    )
+
+
+def test_adapter_yaml_zero_directory_hits_are_the_intended_layer_mapping():
+    """逐条核对 adapter.yaml：修好之后多出来的命中必须正好是"根目录文件"。"""
+
+    config = phase_two_config_from_real_patterns()
+    actual = {path: config.layer_for(path) for path in ZERO_DIRECTORY_HITS}
+
+    assert actual == ZERO_DIRECTORY_HITS
+    # 新增命中全部是**根目录**文件（不含 "/"）：这正是"零个目录"那一层的语义。
+    assert all("/" not in path for path in ZERO_DIRECTORY_HITS)
+    # language 同理：根目录的 .py 现在也解析成 python，而不是"没有命中映射"。
+    assert config.language_for("order.py") == "python"
+    assert config.language_for("order.py") != "text"
+
+
+def test_dsh_glob_semantics_match_the_validator_matcher():
+    """跨模块对照：同一个"在不在范围内"的语义，两份实现必须给出同一答案。
+
+    src/validators/globs.py 的 docstring 把这条一致性写成"由本测试钉住"：
+    它变红就说明两边又分叉了，而分叉正是 G8 的形态。样本来自 adapter.yaml 里的
+    真实 pattern（外加几条边界 pattern），三种目录深度各取一例。
+    """
+
+    from validators.globs import glob_match as validator_glob_match
+
+    paths = sorted(
+        {
+            "README.md",
+            "order.py",
+            "order_controller.py",
+            "docs/notes.md",
+            "docs/a/b.md",
+            "src/shop/order_controller.py",
+            "src/shop/order_repository.py",
+            "src/a.py",
+            "src/pkg/a.py",
+            "src/pkg/deep/a.py",
+            "a/b/c.py",
+            "x/y/z.bin",
+        }
+        | {sample for pattern in adapter_patterns() for sample in pattern_samples(pattern)}
+    )
+    patterns = adapter_patterns() + list(EXTRA_GLOB_PATTERNS)
+
+    mismatches = [
+        (pattern, path)
+        for pattern in patterns
+        for path in paths
+        if glob_match(pattern, path) != validator_glob_match(pattern, path)
+    ]
+
+    assert not mismatches, mismatches
+    # 对照测试必须是非空转的：至少有一条零层样本真的命中（否则两边都"全 False"也会通过）。
+    assert any(
+        glob_match(pattern, sample)
+        for pattern in adapter_patterns()
+        for sample in pattern_samples(pattern)
+    )
+
+
+# --------------------------------------------------------------------------- 工具表（G10）
+
+AGENT_TEAMS_TOOLS: tuple[str, ...] = (
+    "spawn_teammate",
+    "team_task_create",
+    "team_task_get",
+    "team_task_list",
+    "team_task_update",
+    "wait_agent",
+    "load_workspace_dependencies",
+)
+
+
+def test_agent_teams_tools_are_in_the_default_deny_table():
+    for name in AGENT_TEAMS_TOOLS:
+        assert name in TOOL_TABLE, name
+        assert TOOL_TABLE[name].kind is ToolKind.NO_FILE, name
+
+
+def test_spawn_teammate_records_that_the_child_session_is_not_observable(dsh_config_path, dsh_project):
+    """分类不得声称 spawn_teammate 已被治理：note 必须进 reason（进而进审计）。"""
+
+    config = load_config(dsh_config_path)
+    decision = to_policy_event(
+        event_for(
+            "pre-tool-use-edit-block.json",
+            dsh_project,
+            tool_name="spawn_teammate",
+            tool_input={},
+        ),
+        config=config,
+    )
+
+    assert decision.governed is False
+    assert "spawn_teammate" in decision.reason
+    assert "看不到" in decision.reason
+    assert "不声称已治理" in decision.reason

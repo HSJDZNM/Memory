@@ -6,10 +6,11 @@
 - 结尾的 "**" 匹配任意剩余路径；
 - "*" 不跨目录，"? " 匹配单个字符。
 
-与 adapters/dsh/adapter.py 里的匹配器**刻意不同**：那边把 "**/" 实现成"至少一层目录"，
-因为它只服务 Phase 2 已有的 layer/language 映射表。两者都各自有契约测试钉住行为；
-把语义改成一致会让 dsh 的既有映射表悄悄放大匹配范围（属于 Phase 2 的语义变更），
-所以这里的差异是写下来的，不是疏忽。
+历史上 adapters/dsh/adapter.py 里的匹配器把 "**/" 实现成"至少一层目录"，与本模块不一致
+——这正是治理覆盖缺口 G8：配置里写 "**/*.md" 看着覆盖所有 Markdown，实际漏掉根目录一整个层级。
+该分歧已消除：两边语义一致（"**/" = 零个或多个目录），由 tests/contract 下的跨模块对照测试钉住；
+dsh 侧 layer/language 映射表因匹配范围放大而产生的逐条影响，
+记录在 docs/project/engineering-policy-platform/reviews/governance-remediation/03-rule-fidelity.md。
 """
 
 from __future__ import annotations

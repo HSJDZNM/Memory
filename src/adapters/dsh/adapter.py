@@ -19,20 +19,36 @@
   解析基准是载荷里的 cwd（dsh 传的是 agent.session.header.cwd）；
 - 载荷里没有 layer、language、principal、依赖列表：这些字段由适配器配置显式声明，
   绝不从文件名、目录或用户消息推断；声明不出来就失败关闭。
+
+按治理缺口复核（R3 / R4-glob / R5-工具表）追加的四条约束：
+
+- 依赖证据不许只抓"顶层名字"：变更文本里的 import 提取**完整点分路径**
+  （相对导入保留前导点），动态导入取字符串字面量目标；"证明不了"的部分
+  （目标不是字面量、变更片段解析不了）留下显式标记，由依赖类 checker 失败关闭。
+  判定语义与验证器（AST / 依赖图）路径对齐，两边共用 policy.checkers 的同一个比较函数；
+- 分层命中必须可解释：layer_resolution() 同时给出命中的 pattern 与"是否走了默认值"，
+  "未命中任何分层规则"必须能与"命中某个层"区分开；
+- 通配符语义与 src/validators/globs.py 一致（"**/" = 零个或多个目录）。同一个
+  "在范围内"的语义不许有两份实现给出不同答案；
+- 工具表是默认拒绝的白名单：缺漂移检测就会退化成"接线即瘫痪"，
+  因此 tool_table_drift() 把"运行期观察到的工具"与表做差集，新增项列为**待评审**。
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import re
+import textwrap
 from dataclasses import dataclass, replace
 from enum import Enum
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Iterable, Mapping, Optional, Tuple
 
 import yaml
 
+from policy.checkers import UNPROVEN_CHANGED_TEXT, UNPROVEN_DYNAMIC_IMPORT
 from policy.context import repo_relative_path
 from policy.models import (
     Operation,
@@ -52,19 +68,25 @@ __all__ = [
     "TOOL_TABLE",
     "AdapterConfig",
     "AdapterDecision",
+    "DependencyProposal",
     "DshEventError",
     "LanguageRule",
+    "LayerResolution",
     "LayerRule",
     "PolicyEvent",
     "ToolKind",
     "ToolSpec",
+    "ToolTableDrift",
     "config_from_mapping",
     "glob_match",
     "load_config",
+    "observed_tools_from_payloads",
+    "propose_dependencies",
     "proposed_dependencies",
     "read_payload",
     "to_policy_context",
     "to_policy_event",
+    "tool_table_drift",
 ]
 
 # Agent 固定标识：审计必须能区分"决定来自哪个 Agent"；版本单独记录，不混进标识。
@@ -225,49 +247,382 @@ TOOL_TABLE: Mapping[str, ToolSpec] = {
         _spec("present", ToolKind.NO_FILE, None),
         _spec("web_search", ToolKind.NO_FILE, None),
         _spec("web_fetch", ToolKind.NO_FILE, None),
+        # —— Agent Teams 的编排类工具（G10）：白名单缺了它们，一接线就变成
+        # "新工具全部判未知而阻断"，而不是"新工具被评审过"。——
+        # 分类口径只有一条：**这个工具自己写不写仓库里的文件**。
+        # 不写 → NO_FILE（记录但不治理）；绝不因为"它可能间接导致写"就声称它已被治理。
+        _spec(
+            "spawn_teammate",
+            ToolKind.NO_FILE,
+            None,
+            note="拉起一个独立会话（teammate）：它自己不写仓库文件，但被拉起的会话是否"
+            "有检查站，本检查站**看不到**（子会话的写类动作不会经过父会话的 PreToolUse）。"
+            "因此这里只记录、不声称已治理；通道是否接线由 adapters 的接线自检负责"
+            "（AGENTS.md 第 24 条：拦不住写类动作的通道不得被标成完整 enforcement）",
+        ),
+        _spec(
+            "team_task_create",
+            ToolKind.NO_FILE,
+            None,
+            note="共享任务板：写的是协作状态（谁做什么），不是仓库文件；"
+            "任务板自身的审计由任务板负责，这里只记录该调用发生过",
+        ),
+        _spec(
+            "team_task_get",
+            ToolKind.NO_FILE,
+            None,
+            note="共享任务板：只读一次任务详情，不触碰文件系统",
+        ),
+        _spec(
+            "team_task_list",
+            ToolKind.NO_FILE,
+            None,
+            note="共享任务板：只读任务列表，不触碰文件系统",
+        ),
+        _spec(
+            "team_task_update",
+            ToolKind.NO_FILE,
+            None,
+            note="共享任务板：认领 / 完成等状态转移。它改写协作记录而不是仓库文件，"
+            "因此按「记录但不治理」处理——绝不记成「检查通过」",
+        ),
+        _spec(
+            "wait_agent",
+            ToolKind.NO_FILE,
+            None,
+            note="阻塞等待队友状态变化：不触碰文件系统；占用一次工具调用的时间预算",
+        ),
+        _spec(
+            "load_workspace_dependencies",
+            ToolKind.NO_FILE,
+            None,
+            note="返回本机解释器与依赖目录/版本；不读写仓库文件（调用方据此拼命令，"
+            "命令本身由执行类工具的受控链路治理）",
+        ),
     )
 }
 
-# 变更文本里的顶层 import。只做词法提取，不做语义推断，也不读磁盘。
+# 默认拒绝的白名单 + 没有漂移检测 = "接线即瘫痪"：Agent 一升级，新工具全部判未知而阻断，
+# 而"哪些新工具出现过"没有任何地方记录。下面这个纯函数把观察与声明做差集，
+# 新增项列为**待评审**；它不改变任何判定，只把"表落后了"变成一条可失败的检查。
+
+
+@dataclass(frozen=True)
+class ToolTableDrift:
+    """一次"运行期观察到的工具 vs TOOL_TABLE"的差集。
+
+    - unreviewed：观察到了、工具表里没有 → **待评审**（不是自动放行，也不是忽略）；
+    - absent：工具表里有、本批观察里没有 → 只是信息（白名单可以比一次观察更宽）；
+    - source：观察数据来自哪里（审计日志 / 事件 fixture / 会话工具清单快照）。
+
+    clean 为真只代表"这张表没有落后于这批观察"，不代表工具已被治理。
+    """
+
+    source: str
+    observed: Tuple[str, ...]
+    unreviewed: Tuple[str, ...]
+    absent: Tuple[str, ...]
+
+    @property
+    def clean(self) -> bool:
+        return not self.unreviewed
+
+    def to_payload(self) -> Mapping[str, Any]:
+        return {
+            "source": self.source,
+            "observed": list(self.observed),
+            "unreviewed": list(self.unreviewed),
+            "absent": list(self.absent),
+            "clean": self.clean,
+        }
+
+
+def observed_tools_from_payloads(payloads: Iterable[Any]) -> Tuple[str, ...]:
+    """从 dsh 钩子载荷里取工具名（观察数据的一种来源）。
+
+    载荷形状不是本模块说了算的：缺 tool_name、类型不对一律报错，不跳过、不补默认值 ——
+    观察数据本身不可信时，漂移检测的结论也不可信。
+    """
+
+    seen: set[str] = set()
+    for index, payload in enumerate(payloads):
+        if not isinstance(payload, Mapping):
+            raise DshEventError(f"观察载荷[{index}] 必须是映射，得到 {type(payload).__name__}")
+        name = payload.get("tool_name")
+        if not isinstance(name, str) or not name.strip():
+            raise DshEventError(
+                f"观察载荷[{index}] 缺少 tool_name：无法据此判断工具表是否漂移"
+            )
+        seen.add(name.strip())
+    return tuple(sorted(seen))
+
+
+def tool_table_drift(
+    observed: Iterable[str],
+    *,
+    source: str,
+    table: Optional[Mapping[str, ToolSpec]] = None,
+) -> ToolTableDrift:
+    """把观察到的工具名与 TOOL_TABLE 做差集（纯函数、离线、确定性）。
+
+    观察数据从哪里来（三种都要显式传 source，结论才能追到来源）：
+
+    - dsh 钩子审计 JSONL（adapter 配置 audit_log 指向的那份，字段 tool）：运行期真实调用；
+    - tests/fixtures/agent_events/dsh/*.json：committed 的真实采集样本，可离线复现；
+    - 会话工具清单快照：Agent 侧声明的工具全集，没有事件可采时的下限。
+
+    拿不到观察数据时调用方必须**报错**，不能传空集：空集会被读成"没有漂移"，
+    那正是缺口 G10 的形态。这里的做法是显式拒绝空观察集。
+    """
+
+    if not isinstance(source, str) or not source.strip():
+        raise DshEventError("漂移检测必须写明观察数据来源（source）：来源不明的差集不可复核")
+
+    cleaned: set[str] = set()
+    for name in observed:
+        if not isinstance(name, str) or not name.strip():
+            raise DshEventError(f"观察到的工具名必须是非空字符串，得到 {name!r}")
+        cleaned.add(name.strip())
+    if not cleaned:
+        raise DshEventError(
+            "观察集为空：拒绝把「没观察到」当成「没有漂移」（拿不到观察数据时请显式报错）"
+        )
+
+    known = TOOL_TABLE if table is None else table
+    if not known:
+        raise DshEventError("工具表为空：默认拒绝的白名单不该是空的，差集没有意义")
+
+    return ToolTableDrift(
+        source=source.strip(),
+        observed=tuple(sorted(cleaned)),
+        unreviewed=tuple(sorted(cleaned - set(known))),
+        absent=tuple(sorted(set(known) - cleaned)),
+    )
+
+
+# 变更文本里的 import。只做词法提取，不做语义推断，也不读磁盘。
 # from 形态与 import 形态分开匹配：import a, b as c 里的每个名字都要算上，
-# 否则 "一次改动引入多个依赖" 会被漏判（正是预执行门禁最不能漏的情况）。
+# 否则"一次改动引入多个依赖"会被漏判（正是预执行门禁最不能漏的情况）。
+#
+# from 形态允许前导点（相对导入）：from . import repository 的目标是**子模块**，
+# 只取顶层名字会让它落在 "from ." 上（没有名字），规则永远看不见它。
 _FROM_IMPORT_RE = re.compile(
-    r"^[ \t]*from[ \t]+([A-Za-z_][\w.]*)[ \t]+import\b", re.MULTILINE
+    r"^[ \t]*from[ \t]+(\.*[A-Za-z_][\w.]*|\.+)[ \t]+import[ \t]+([^\n]*)",
+    re.MULTILINE,
 )
 _PLAIN_IMPORT_RE = re.compile(r"^[ \t]*import[ \t]+([^\n]+)$", re.MULTILINE)
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][\w.]*$")
+# 点分模块路径：允许相对导入的前导点（".repository" / "..pkg.mod"）。
+_MODULE_PATH_RE = re.compile(r"^\.*[A-Za-z_][\w.]*$")
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")
+
+# 动态导入的调用点。识别口径与 AST 路径一致（src/validators/python_ast.py:252-262）：
+# 点分调用的末段是 import_module，或整个点分名在动态导入入口白名单里
+# （__import__ / importlib.import_module；from importlib import import_module 之后的
+# 本地名字按"末段是 import_module"一并覆盖，别名写法才漏不掉）。
+_DYNAMIC_CALL_RE = re.compile(
+    r"(?<![\w.])(?:[A-Za-z_][\w.]*[ \t]*\.[ \t]*)?(import_module|__import__)[ \t]*\("
+)
+# 动态导入的第一个实参是不是**单个**字符串字面量（常量）。
+# 只认 r/u 前缀：f-string 不是常量，b"" 不是 str，拼接（"a" + x）也不是常量 ——
+# 一律算"证明不了"，交给依赖类 checker 失败关闭。
+_LITERAL_ARGUMENT_RE = re.compile(
+    r"""^[ \t]*(?:[rRuU])?(?:"([^"\n]*)"|'([^'\n]*)')[ \t]*(?:,|\))"""
+)
 
 
-def proposed_dependencies(text: str) -> Tuple[str, ...]:
-    """从"本次变更引入的文本"里提取直接依赖标识，去重并稳定排序。
+@dataclass(frozen=True)
+class DependencyProposal:
+    """一次依赖提取的完整结果：证明得了的、证明不了的、以及文本能不能解析。
+
+    三类都要显式给出来，缺任何一类都会让"没查"看起来像"查过了"：
+
+    - names：能证明的直接依赖（完整点分路径，相对导入保留前导点）；
+    - unproven_dynamic：出现动态导入但目标不是字符串字面量 —— 依赖集无法静态确定；
+    - parseable：变更文本能否作为独立模块（或整体缩进一级的块）解析。
+
+    parseable 不是 None、也不是空元组，而是一个必须被显式处理的布尔值：
+    预执行路径拿到的是**变更片段**，片段解析不了很常见，但"解析不了"与"没有依赖"
+    是两件事（AGENTS.md 第 20 条），所以它只能"带着问号继续"，不能"当作没有"。
+    """
+
+    names: Tuple[str, ...] = ()
+    unproven_dynamic: Tuple[str, ...] = ()
+    parseable: bool = True
+
+    @property
+    def unproven(self) -> bool:
+        """是否存在证明不了的部分（动态导入目标不可证 / 片段解析不了）。"""
+
+        return bool(self.unproven_dynamic) or not self.parseable
+
+
+def _code_lines(text: str) -> str:
+    """去掉整行注释后再拼回：整行注释里的 import 不是依赖（行内注释仍是残余面）。"""
+
+    return "\n".join(
+        line for line in text.split("\n") if not line.lstrip(" \t").startswith("#")
+    )
+
+
+def _module_names(raw: str) -> Tuple[str, ...]:
+    """解析 import a.b as c, d 里的模块路径（去掉 as 别名与行内注释）。"""
+
+    names: list[str] = []
+    for chunk in raw.split("#")[0].split(","):
+        token = chunk.strip()
+        if not token:
+            continue
+        candidate = token.split()[0]
+        if _MODULE_PATH_RE.match(candidate):
+            names.append(canonical_identifier(candidate))
+    return tuple(names)
+
+
+def _from_targets(raw_module: str, raw_names: str) -> Tuple[str, ...]:
+    """解析 from X import a, b 的目标。
+
+    - X 本身是一个依赖（from repository import OrderRepository）；
+    - 每个被导入的名字还可能是**子模块**（from shop import order_repository）——
+      这正是"Controller 直接依赖 Repository"最常见的写法之一：AST 路径会把边落在
+      子模块文件上（src/validators/depgraph.py:360-375），预执行路径没有模块索引，
+      只能把候选全部登记。宁可多登记候选，不能漏登记：漏登记等于结构性放行。
+
+    相对导入（from . import repository）的目标是 ".repository"：前导点是"相对"这一
+    事实，不是可以丢掉的噪声。
+    """
+
+    module = canonical_identifier(raw_module)
+    targets: list[str] = []
+    if module.strip("."):
+        targets.append(module)
+    prefix = "" if module == "." else module
+    for chunk in raw_names.split("#")[0].split(","):
+        token = chunk.strip()
+        if not token or token == "*":
+            continue
+        name = token.split()[0]  # 去掉 as 别名
+        if not _IDENTIFIER_RE.match(name):
+            continue
+        targets.append(canonical_identifier(prefix + "." + name if prefix else "." + name))
+    return tuple(targets)
+
+
+def _dynamic_targets(text: str) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+    """提取动态导入：证明得了的字面量目标 + 证明不了的调用点。"""
+
+    proven: list[str] = []
+    unproven: list[str] = []
+    for match in _DYNAMIC_CALL_RE.finditer(text):
+        window = text[match.end() :]
+        stop = len(window)
+        for index, char in enumerate(window):
+            if char in ")\n":
+                stop = index
+                break
+        literal = _LITERAL_ARGUMENT_RE.match(window[:stop] + ")")
+        target = None
+        if literal is not None:
+            target = literal.group(1) if literal.group(1) is not None else literal.group(2)
+            target = (target or "").strip()
+        if target is None or not _MODULE_PATH_RE.match(target):
+            unproven.append(canonical_identifier(match.group(1)))
+            continue
+        proven.append(canonical_identifier(target))
+    return tuple(proven), tuple(unproven)
+
+
+def _is_parseable(text: str) -> bool:
+    """变更文本能否解析：先按独立模块，再按"整体缩进一级的代码块"。
+
+    第二种形态是 edit 的常态（new_string 常是被替换的缩进块，例如一个方法体），
+    因此它只证明"这段文本在语法上可能成立"，不证明它就是完整文件。
+    """
+
+    if not text.strip():
+        return True
+    try:
+        ast.parse(text)
+        return True
+    except (SyntaxError, ValueError):
+        pass
+    try:
+        ast.parse("if True:\n" + textwrap.indent(text, "    "))
+        return True
+    except (SyntaxError, ValueError):
+        return False
+
+
+def propose_dependencies(text: str) -> DependencyProposal:
+    """从"本次变更引入的文本"里提取依赖提案，去重并稳定排序。
 
     刻意只看变更片段：预执行门禁要回答的是"这次改动引入了什么"，而不是"文件里原本有什么"
     （后者属于 Phase 4 的 post-execute 与 Phase 5 的 Validator）。
-    片段通常不是完整模块（例如 edit 的 new_string），因此用行级词法提取而不是 ast.parse。
+    片段通常不是完整模块（例如 edit 的 new_string），因此主体是行级词法提取；
+    解析性只作为**一个显式状态**给出（见 DependencyProposal），不当作"没有依赖"。
     """
 
     if not isinstance(text, str):
         raise DshEventError(f"变更文本必须是字符串，得到 {type(text).__name__}")
 
+    code = _code_lines(text)
     found: set[str] = set()
-    for match in _FROM_IMPORT_RE.finditer(text):
-        found.add(canonical_identifier(match.group(1).split(".")[0]))
+    for match in _FROM_IMPORT_RE.finditer(code):
+        found.update(_from_targets(match.group(1), match.group(2)))
+    for match in _PLAIN_IMPORT_RE.finditer(code):
+        found.update(_module_names(match.group(1)))
+    dynamic, unproven = _dynamic_targets(code)
+    found.update(dynamic)
 
-    for match in _PLAIN_IMPORT_RE.finditer(text):
-        for chunk in match.group(1).split("#")[0].split(","):
-            token = chunk.strip()
-            if not token:
-                continue
-            name = token.split()[0]  # 去掉 "as 别名"
-            if not _IDENTIFIER_RE.match(name):
-                continue
-            found.add(canonical_identifier(name.split(".")[0]))
+    return DependencyProposal(
+        names=tuple(sorted(found)),
+        unproven_dynamic=tuple(sorted(set(unproven))),
+        parseable=_is_parseable(text),
+    )
 
-    return tuple(sorted(found))
+
+def proposed_dependencies(text: str) -> Tuple[str, ...]:
+    """能证明的依赖名（向后兼容的薄封装）；证明不了的部分见 propose_dependencies。"""
+
+    return propose_dependencies(text).names
+
+
+def _governed_dependencies(text: str, *, language: Optional[str]) -> Tuple[str, ...]:
+    """把依赖提案变成 PolicyContext 的 dependencies 维度。
+
+    - 能证明的依赖名照常登记（完整点分路径，"forbidden: repository" 由 checker
+      按词匹配命中 shop.order_repository 这类写法）；
+    - 证明不了的部分登记保留标记（见 policy.checkers.UNPROVEN_DEPENDENCY_TOKENS），
+      由依赖类 checker 在规则 scope 命中时失败关闭。预执行路径没有模块索引、
+      变更片段也不一定完整，因此"证明不了"必须是显式状态，不能是空元组。
+    - 依赖抽取与解析性检查只对声明为 python 的路径做：import 语法与 ast.parse 都是
+      Python 的事实，对别的语言做这件事只会制造误判（语言来自配置，不从文件名猜）。
+    """
+
+    if language != "python":
+        return ()
+    proposal = propose_dependencies(text)
+    names = set(proposal.names)
+    if proposal.unproven_dynamic:
+        names.add(UNPROVEN_DYNAMIC_IMPORT)
+    if not proposal.parseable:
+        names.add(UNPROVEN_CHANGED_TEXT)
+    return tuple(sorted(names))
 
 
 def _glob_to_regex(pattern: str) -> re.Pattern[str]:
-    """把仓库相对路径 glob 编译成正则：** 跨目录，* 不跨目录，? 单字符。"""
+    """把仓库相对路径 glob 编译成正则。
+
+    语义与 src/validators/globs.py 完全一致：
+
+    - "**/" 匹配**零个或多个**目录，即 "(?:.*/)?"（曾经实现成"至少一层目录"，
+      于是 adapter 配置里写 "**/*.md" 匹配不到根目录的 README.md：
+      配置看着对、实际漏一层，属于静默失效）；
+    - 结尾的 "**" 匹配任意剩余路径；
+    - "*" 不跨目录，"?" 匹配单个字符。
+
+    两份实现的等价性由 tests/contract/test_dsh_adapter.py 的跨模块对照测试钉住：
+    同一个"这个路径在不在范围内"的语义，不许有两份实现给出不同答案。
+    """
 
     parts: list[str] = []
     index = 0
@@ -275,6 +630,10 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
         char = pattern[index]
         if char == "*":
             if pattern[index : index + 2] == "**":
+                if pattern[index + 2 : index + 3] == "/":
+                    parts.append("(?:.*/)?")
+                    index += 3
+                    continue
                 parts.append(".*")
                 index += 2
                 continue
@@ -317,6 +676,25 @@ class LanguageRule:
 
 
 @dataclass(frozen=True)
+class LayerResolution:
+    """一次分层解析的完整结果（跨工作流冻结接口，审计侧按这三个字段落记录）。
+
+    - 命中某条 layers 规则：layer = 声明的层，matched_pattern = 命中的 pattern，
+      defaulted = False；
+    - 未命中任何分层规则：layer = default_layer（可能为 None），matched_pattern = None，
+      defaulted = True。
+
+    因此"未命中任何分层规则"（defaulted=True 且 matched_pattern=None）与
+    "命中某个层"（defaulted=False 且有 pattern）在审计里区分得开：
+    默认值不是一条分层规则，它只是"没有规则给出答案"时的显式兜底。
+    """
+
+    layer: Optional[str]
+    matched_pattern: Optional[str]
+    defaulted: bool
+
+
+@dataclass(frozen=True)
 class AdapterConfig:
     """dsh Adapter 的显式上下文来源。
 
@@ -354,13 +732,30 @@ class AdapterConfig:
 
         return self.rules_root if self.rules_root is not None else self.project_root
 
-    def layer_for(self, repo_path: str) -> Optional[str]:
-        """按声明顺序取第一个命中的 layer；没有命中就用显式声明的默认值（可能为空）。"""
+    def layer_resolution(self, repo_path: str) -> LayerResolution:
+        """解析一次分层：按声明顺序取第一个命中的规则，否则退回显式默认值。
+
+        返回值把"命中了哪条 pattern"与"是不是走了默认值"一起交出来，
+        审计因此能回答"这个 layer 是判出来的还是兜底来的"——否则
+        "未命中任何分层规则"会和"命中默认层"长得一模一样。
+        """
 
         for rule in self.layers:
             if glob_match(rule.pattern, repo_path):
-                return rule.layer
-        return self.default_layer
+                return LayerResolution(
+                    layer=rule.layer, matched_pattern=rule.pattern, defaulted=False
+                )
+        return LayerResolution(
+            layer=self.default_layer, matched_pattern=None, defaulted=True
+        )
+
+    def layer_for(self, repo_path: str) -> Optional[str]:
+        """按声明顺序取第一个命中的 layer；没有命中就用显式声明的默认值（可能为空）。
+
+        保留原签名与行为（向后兼容）：完整结果见 layer_resolution()。
+        """
+
+        return self.layer_resolution(repo_path).layer
 
     def language_for(self, repo_path: str) -> Optional[str]:
         for rule in self.languages:
@@ -754,7 +1149,9 @@ def to_policy_event(raw: Any, *, config: AdapterConfig) -> AdapterDecision:
         elif spec.kind is ToolKind.EXECUTE:
             note = "执行类工具：交给 Phase 4 受控链路（权限 / 参数与命令白名单 / 审批 / 事后验证）"
         else:
-            note = "不触碰文件系统：不治理"
+            # 工具自己声明的 note 优先：NO_FILE 不等于"没有值得记的事"，
+            # 例如 spawn_teammate 能拉起一个本检查站看不见的会话，这句话必须进审计。
+            note = spec.note or "不触碰文件系统：不治理"
         return AdapterDecision(
             governed=False,
             reason=f"tool={tool_name} kind={spec.kind.value}：{note}",
@@ -795,7 +1192,9 @@ def to_policy_event(raw: Any, *, config: AdapterConfig) -> AdapterDecision:
         file=repo_path,
         layer=layer,
         language=language,
-        dependencies=proposed_dependencies(text) if spec.proposed_fields else (),
+        dependencies=(
+            _governed_dependencies(text, language=language) if spec.proposed_fields else ()
+        ),
         payload_digest=_payload_digest(tool_input),
         payload_fields=tuple(sorted(str(key) for key in tool_input)),
         session_id=session_id,

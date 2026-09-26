@@ -2,13 +2,15 @@
   "adapters": {
     "dsh": {
       "agent_version": "0.1.5-rc.1",
-      "ceiling_reasons": [],
+      "ceiling_reasons": [
+        "manifest 与已审核哈希不一致或尚未审核：改能力声明必须重新审核（python -m adapters.cli approve --reviewer <name>）"
+      ],
       "enforcement": "full",
       "fixtures": [
         "tests/fixtures/agent_events/dsh/pre-tool-use-edit-block.json",
         "tests/fixtures/agent_events/dsh/post-tool-use-edit.json"
       ],
-      "manifest_digest": "sha256:e3adea735c738aa3f2c159a151e675574876ab74b4f2a44b0156b2facbfb9b91",
+      "manifest_digest": "sha256:5225c41a37a1383afb2ea5e636b5f154be5164d2d4a7d6c9fc0c637aac49dd90",
       "protocol": "canonical-tool-table",
       "protocol_version": "dsh-hooks-claude-code@0.1.x",
       "requested_enforcement": "full"
@@ -16,8 +18,7 @@
     "generic-json": {
       "agent_version": "third-party-0.9.0",
       "ceiling_reasons": [
-        "Adapter 主动把上限收紧到 read_only",
-        "manifest 与已审核哈希不一致或尚未审核：改能力声明必须重新审核（python -m adapters.cli approve --reviewer <name>）"
+        "Adapter 主动把上限收紧到 read_only"
       ],
       "enforcement": "read_only",
       "fixtures": [
@@ -31,8 +32,7 @@
     "legacy-post-only": {
       "agent_version": "legacy-agent-2.4.7",
       "ceiling_reasons": [
-        "没有声明执行前钩子：无法在工具执行前拒绝",
-        "manifest 与已审核哈希不一致或尚未审核：改能力声明必须重新审核（python -m adapters.cli approve --reviewer <name>）"
+        "没有声明执行前钩子：无法在工具执行前拒绝"
       ],
       "enforcement": "read_only",
       "fixtures": [
@@ -44,7 +44,7 @@
       "requested_enforcement": null
     }
   },
-  "approved_at": "2026-09-18T08:30:30.482644Z",
-  "reviewed_by": "HSJDZNM",
+  "approved_at": "2026-09-25T16:34:47.477412Z",
+  "reviewed_by": "rule-fidelity",
   "schema_version": "1.0"
 }

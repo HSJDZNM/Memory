@@ -181,3 +181,34 @@ tools:
   - name: web_fetch
     aliases: [web_fetch]
     direction: inbound
+  # —— Agent Teams 的编排类工具（G10）：与 src/adapters/dsh/adapter.py 的 TOOL_TABLE
+  # 逐项一致（AGENTS.md 第 28 条，契约测试比对名字/操作/路径字段/变更文本字段）——
+  # 分类口径只有一条：这个工具自己写不写仓库里的文件。不写 → direction: inbound
+  # （记录但不治理）。spawn_teammate 不得被读成"已治理"：它拉起的会话有自己的检查站，
+  # 本检查站看不到它（AGENTS.md 第 24 条）。
+  - name: spawn_teammate
+    aliases: [spawn_teammate]
+    direction: inbound
+    note: 拉起独立会话；本检查站看不到子会话的写类动作，只记录不声称已治理
+  - name: team_task_create
+    aliases: [team_task_create]
+    direction: inbound
+    note: 共享任务板：写协作状态而不是仓库文件
+  - name: team_task_get
+    aliases: [team_task_get]
+    direction: inbound
+  - name: team_task_list
+    aliases: [team_task_list]
+    direction: inbound
+  - name: team_task_update
+    aliases: [team_task_update]
+    direction: inbound
+    note: 共享任务板的状态转移：记录但不治理，不得记成"检查通过"
+  - name: wait_agent
+    aliases: [wait_agent]
+    direction: inbound
+    note: 阻塞等待队友状态变化；不触碰文件系统
+  - name: load_workspace_dependencies
+    aliases: [load_workspace_dependencies]
+    direction: inbound
+    note: 返回本机解释器与依赖目录/版本；命令本身由执行类工具的受控链路治理
