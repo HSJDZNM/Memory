@@ -452,7 +452,14 @@ uv run python tools/policy_bench.py --counts 10 100 1000
 
 ```powershell
 uv run python tools/phase_evidence.py            # 默认写到 .tmp/artifacts/phase-8-evidence.json
+
+# 门禁 / CI 里用它引用 pytest 步骤刚写出的 junit 报告，不再把四个套件重跑一遍：
+uv run python tools/phase_evidence.py --suite-reports .tmp/artifacts/tests-all-report.xml
 ```
+
+不带 `--suite-reports` 时它自己把四个套件跑一遍（独立使用时行为不变）；带上时要求报告**完整**
+（四个套件的用例都在）且**不早于最新的源码改动**，任何一条不成立就退回真跑一遍并写明原因——
+复用只省时间，不改变结论的依据。证据里 `test_suite_source` 写明这次是 `junit-report` 还是 `pytest`。
 
 证据包含实现版本、规则集哈希（`sha256:...`）、测试命令、用例数、失败数与 JUnit 报告路径，
 格式遵循[测试策略](docs/project/engineering-policy-platform/testing/test-strategy.md)，不记录密钥或隐私数据。

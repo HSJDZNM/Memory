@@ -11,6 +11,13 @@
     python tools/ci_local.py --list       # 只列出会跑哪些步骤，不执行
     python tools/ci_local.py --hook       # pre-push 钩子用：更简短、失败即退出码 1
     python tools/ci_local.py --full --python C:\\path\\to\\python.exe
+    python tools/ci_local.py --full --timings   # 另把每步耗时写成 .tmp/ci-local-timings.json
+
+耗时可见性：一次全量本机门禁要二十多分钟，而“为什么是二十多分钟”过去只能靠猜——步骤是串行的，
+墙钟时间就是各步之和，却没有任何一步报出自己的耗时。所以执行路径**总是**在最后打印一张按耗时降序的
+汇总表（--hook 模式不打印：钩子成功时保持安静）；--timings 再把同样的事实写成
+.tmp/ci-local-timings.json（含改动文件数、逐步耗时与退出码）。
+这一步只观察，不改变任何步骤的执行与通过条件。
 
     # 同一个覆盖，但 pre-push 钩子也用得上（钩子不接受参数）：
     $env:CI_LOCAL_PYTHON = "C:\\path\\to\\python.exe"; git push
@@ -39,6 +46,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import IO, Any, Sequence
@@ -105,19 +113,24 @@ CODE_STEPS = (
     "Policy API ASGI contract",
     "Policy API closed loop",
     "Performance baseline",
+    # 阶段验收证据与上面的 pytest 步骤**必须同组**：前者要引用后者刚写出的 junit 报告，
+    # 同组才保证"要么都跑、要么都不跑"，复用的报告永远来自本次门禁。
+    "Phase 8 acceptance evidence",
 )
 HANDBOOK_STEPS = (
     "Learning notebooks are in sync",
     "Learning notebook structure",
     "Tech-detail notebooks are in sync",
 )
+# 检索语料只在 docs/mirrors/ 下（knowledge/corpus.yaml 的每个 dataset 都指向镜像目录），
+# 所以这一组由 mirrors 与检索代码触发；本项目自产的 docs/project/** 改动与语料无关，
+# 不该顺带重建索引、跑评测基线（过去 docs/ 一改就全跑，还连带触发阶段验收证据）。
 RETRIEVAL_STEPS = (
     "Retrieval corpus integrity",
     "Retrieval index is idempotent",
     "Retrieval refuses to answer without sources",
     "Retrieval evaluation baseline",
     "Tool registry must match",
-    "Phase 8 acceptance evidence",
 )
 ORCHESTRATION_STEPS = (
     "Orchestration self-check",
@@ -135,7 +148,7 @@ CODE_PREFIXES = (
     "adapters/",
     ".github/",
 )
-RETRIEVAL_PREFIXES = ("knowledge/", "src/retrieval/", "docs/", "tools/retrieval_eval.py")
+RETRIEVAL_PREFIXES = ("knowledge/", "src/retrieval/", "docs/mirrors/", "tools/retrieval_eval.py")
 HANDBOOK_PREFIXES = (
     "src/",
     "tools/build_learning_notebook.py",
@@ -519,6 +532,64 @@ def _report_lock_conflict(holder: dict[str, Any] | None, *, hook: bool) -> None:
         print("ci_local: 阻断推送 —— 有实例在跑时不重复执行 CI 步骤。", file=sys.stderr)
 
 
+def _format_duration(seconds: float) -> str:
+    """把秒数压成“1m 02s”这种一眼能读的形态（不足 1 分钟只报秒）。"""
+
+    if seconds < 60:
+        return "%.1fs" % seconds
+    minutes, rest = divmod(seconds, 60.0)
+    return "%dm %04.1fs" % (int(minutes), rest)
+
+
+def report_timings(
+    entries: Sequence[tuple[str, str, float, int]],
+    *,
+    changed: int,
+    hook: bool,
+    write_json: bool,
+) -> Path | None:
+    """打印（并可写出）逐步耗时。只观察，不参与任何通过 / 失败的判定。
+
+    为什么默认就打印：门禁是**串行**的，墙钟时间等于各步之和；过去一次全量跑二十多分钟，
+    输出里却没有一个字说明时间花在哪，于是“为什么这么慢”只能靠猜。这里把事实摆在最后。
+    钩子模式（--hook）保持安静：它成功时不打印任何东西是既有的行为契约。
+    """
+
+    total = sum(item[2] for item in entries)
+    output: Path | None = None
+    if not hook and entries:
+        print("\n=== 执行耗时（合计 %s，%d 步）===" % (_format_duration(total), len(entries)))
+        for name, _command, seconds, returncode in sorted(entries, key=lambda item: -item[2]):
+            share = (100.0 * seconds / total) if total else 0.0
+            print("%9s  %5.1f%%  rc=%-3s %s" % (_format_duration(seconds), share, returncode, name))
+    if write_json:
+        output = Path(ROOT) / ".tmp" / "ci-local-timings.json"
+        payload = {
+            "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "changed_files": changed,
+            "steps": len(entries),
+            "total_seconds": round(total, 3),
+            "entries": [
+                {
+                    "name": name,
+                    "command": command,
+                    "seconds": round(seconds, 3),
+                    "returncode": returncode,
+                }
+                for name, command, seconds, returncode in entries
+            ],
+        }
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + chr(10),
+            encoding="utf-8",
+            newline=chr(10),
+        )
+        if not hook:
+            print("耗时明细已写入: %s" % output)
+    return output
+
+
 def main(argv: list[str] | None = None) -> int:
     global PYTHON
 
@@ -526,6 +597,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--full", action="store_true", help="跑全部能在本机跑的步骤")
     parser.add_argument("--list", action="store_true", help="只列出会跑哪些步骤")
     parser.add_argument("--hook", action="store_true", help="pre-push 钩子模式：更简短")
+    parser.add_argument(
+        "--timings",
+        action="store_true",
+        help="把每步耗时写成 .tmp/ci-local-timings.json（汇总表在非 --hook 模式下总是打印）",
+    )
     parser.add_argument(
         "--python",
         dest="python_executable",
@@ -603,10 +679,13 @@ def main(argv: list[str] | None = None) -> int:
 
         failures: list[str] = []
         step_environment = _step_environment()
+        # 逐步计时：门禁是串行的，墙钟时间 = 各步之和，所以“哪一步最贵”是可直接测量的量。
+        timings: list[tuple[str, str, float, int]] = []
         for name, lines in plan:
             for line in lines:
                 if not args.hook:
                     print("\n=== %s ===\n$ %s" % (name, line), flush=True)
+                started = time.perf_counter()
                 # shell=True 是这里唯一能表达语义的写法：`line` 来自仓库自己的
                 # .github/workflows 的 run 块，是 **shell 语法**（`-c "import x"` 的引号由 shell
                 # 解释）。改成列表参数就必须自己实现一遍引号规则：shlex 的 posix 模式会吃掉
@@ -620,6 +699,7 @@ def main(argv: list[str] | None = None) -> int:
                     env=step_environment,
                     shell=True,
                 )
+                timings.append((name, line, time.perf_counter() - started, completed.returncode))
                 if completed.returncode != 0:
                     failures.append("%s -> 退出码 %s" % (name, completed.returncode))
                     if args.hook:
@@ -630,6 +710,9 @@ def main(argv: list[str] | None = None) -> int:
                         )
                         return 1
                     break
+
+        # 无论红绿都先把耗时摆出来：红了的时候“卡在哪一步”与“哪一步最贵”同样重要。
+        report_timings(timings, changed=len(changed), hook=args.hook, write_json=args.timings)
 
         if failures:
             print("\n失败 %d 处：" % len(failures), file=sys.stderr)

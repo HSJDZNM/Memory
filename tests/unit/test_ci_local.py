@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -251,3 +251,61 @@ def test_lock_is_released_on_every_exit_path(monkeypatch, tmp_root):
     monkeypatch.setattr(ci_local, "_steps", failing_steps)
     assert ci_local.main(["--python", sys.executable]) == 1  # 步骤失败 -> 提前 return 1
     assert_free()
+
+# --------------------------------------------------------------------------- 耗时可见性
+#
+# 门禁是串行的：墙钟时间 = 各步之和，所以“为什么跑了二十分钟”是一个可直接测量的量。
+# 下面守住两件事：非钩子模式**总是**打印汇总表（红了也要打印），--timings 才写 JSON；
+# 钩子模式保持安静（它成功时不打印任何东西是既有契约）。
+
+
+def test_timings_are_printed_by_default_and_written_on_request(monkeypatch, capsys, tmp_root):
+    ci_local = _load_ci_local()
+    monkeypatch.setattr(ci_local, "ROOT", tmp_root)
+    entries = [
+        ("Slow step", "python slow.py", 3.5, 0),
+        ("Quick step", "python quick.py", 0.25, 1),
+    ]
+
+    output = ci_local.report_timings(entries, changed=2, hook=False, write_json=True)
+
+    printed = capsys.readouterr().out
+    assert "执行耗时" in printed
+    # 按耗时降序：最贵的那步在最上面，读的人不必自己排。
+    assert printed.index("Slow step") < printed.index("Quick step")
+    assert output is not None and output.is_file()
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["changed_files"] == 2
+    assert [item["name"] for item in payload["entries"]] == ["Slow step", "Quick step"]
+    assert payload["entries"][1]["returncode"] == 1
+    assert payload["total_seconds"] == 3.75
+
+
+def test_hook_mode_stays_quiet_and_writes_nothing(monkeypatch, capsys, tmp_root):
+    ci_local = _load_ci_local()
+    monkeypatch.setattr(ci_local, "ROOT", tmp_root)
+    entries = [("Slow step", "python slow.py", 3.5, 0)]
+
+    assert ci_local.report_timings(entries, changed=0, hook=True, write_json=False) is None
+    assert capsys.readouterr().out == ""
+    assert not (tmp_root / ".tmp" / "ci-local-timings.json").exists()
+
+
+def test_timings_summary_survives_a_red_run(monkeypatch, capsys, tmp_root):
+    """步骤失败时也要打印耗时：卡在哪一步与哪一步最贵，是同一个问题的两面。"""
+
+    ci_local = _load_ci_local()
+    monkeypatch.setattr(ci_local, "ROOT", tmp_root)
+    monkeypatch.setattr(
+        ci_local,
+        "_steps",
+        lambda: [("Module import probe", '.venv/bin/python -c "raise SystemExit(3)"')],
+    )
+    monkeypatch.setattr(ci_local, "_selected_names", lambda full: [])
+    monkeypatch.setattr(ci_local, "_changed_paths", lambda: [])
+    monkeypatch.setattr(ci_local, "unregistered_steps", lambda: [])
+
+    assert ci_local.main(["--full", "--python", sys.executable]) == 1
+    printed = capsys.readouterr().out
+    assert "执行耗时" in printed
+    assert "Module import probe" in printed

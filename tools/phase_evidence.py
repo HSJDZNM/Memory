@@ -5,6 +5,12 @@
     python tools/phase_evidence.py                       # 写到 .tmp/artifacts/phase-<当前阶段>-evidence.json
                                                          # （文件名跟随 CURRENT_PHASE，不要在这里写死某个阶段）
     python tools/phase_evidence.py --out .tmp/artifacts/custom.json
+    python tools/phase_evidence.py --suite-reports .tmp/artifacts/tests-all-report.xml
+
+测试结果的两个来源：不带 --suite-reports 时自己把四个套件跑一遍（独立使用时行为不变）；
+带上时引用已有 junit 报告——门禁 / CI 的 pytest 步骤刚跑过同一批测试，再跑一遍纯属重复。
+复用要求报告**完整**（四个套件的用例都在、没有归属不出去的用例）且**不早于最新的测试输入**，
+任何一条不成立都退回真跑并写明原因；结论依据记在 test_suite_source（junit-report / pytest）。
 
 本脚本只记录可重放的元数据：版本、规则集哈希、测试命令与结果、性能基线，
 不记录密钥、完整 Prompt、隐私数据或未脱敏的工具参数。
@@ -22,6 +28,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as elementtree
 from pathlib import Path
+from typing import Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
@@ -33,6 +40,16 @@ for directory in (SRC_DIR, TOOLS_DIR):
 CURRENT_PHASE = 8
 SUITES = ("tests/unit", "tests/contract", "tests/integration", "tests/security")
 POLICIES = ("policies",)
+
+# 测试输入：这些目录 / 文件一改，"上一次的测试结论"就不再代表当前代码。
+# 扫描时跳过 __pycache__ 与 *.pyc——字节码缓存是本进程 import 的副产物，不是输入；
+# 把它算进来会让"刚写出的报告"在下一步立刻判成陈旧，复用永远不成立。
+TEST_INPUT_ROOTS = (
+    "src", "tests", "tools", "policies", "validation", "registry", "adapters",
+    "knowledge", ".github",
+)
+TEST_INPUT_FILES = ("pyproject.toml", "pytest.ini", "requirements.lock", "requirements.in")
+FRESHNESS_TOLERANCE_SECONDS = 1.0  # 时间戳粒度容差：报告与输入同秒写入不算陈旧
 ARTIFACT_DIR = REPO_ROOT / ".tmp" / "artifacts"
 SANDBOX_RESULT = ARTIFACT_DIR / "phase-2-sandbox-result.json"
 RETRIEVAL_BASELINE = ARTIFACT_DIR / "phase-3-retrieval-baseline.json"
@@ -725,18 +742,195 @@ def _environment() -> dict[str, str]:
     return env
 
 
-def _cases_from_report(report: Path) -> tuple[int, int]:
+def resolve_suites(
+    items: Sequence[str] | None,
+) -> tuple[dict[str, dict[str, object]], str, list[str]]:
+    """测试结果从哪来：复用 junit 报告，还是真跑一遍。返回 (suites, 来源, 报告路径)。
+
+    复用的前提是三条**同时**成立：报告存在、四个套件的用例都在、报告不早于最新的测试输入。
+    任何一条不成立都退回真跑一遍并写明原因——复用只省时间，不改变结论的依据。
+    门禁的 pytest 步骤与本步骤同属一组（CODE_STEPS），所以自动选择下两者要么都跑、要么都不跑，
+    报告不可能来自上一次门禁。
+    """
+
+    reports = report_paths(items)
+    if items and not reports:
+        print('提示：--suite-reports 没有指向任何 XML 文件，改为真跑测试套件', file=sys.stderr)
+    elif reports:
+        reason = stale_reason(reports)
+        if reason:
+            print('提示：junit 报告不可复用（%s），改为真跑测试套件' % reason, file=sys.stderr)
+        else:
+            try:
+                suites = suites_from_reports(reports)
+            except SuiteReportError as error:
+                print('提示：junit 报告不可复用（%s），改为真跑测试套件' % error, file=sys.stderr)
+            else:
+                relative = [_display_path(path) for path in reports]
+                print('测试结果取自 junit 报告（未重跑）：%s' % ', '.join(relative))
+                return suites, 'junit-report', relative
+    return {name: run_suite(name) for name in SUITES}, 'pytest', []
+
+
+def _cases_from_report(report: Path) -> tuple[int, int, int]:
     if not report.is_file():
-        return 0, 0
+        return 0, 0, 0
     root = elementtree.parse(report).getroot()
     suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
     if not suites:
-        return 0, 0
+        return 0, 0, 0
     cases = sum(int(suite.get("tests", "0")) for suite in suites)
     failures = sum(
         int(suite.get("failures", "0")) + int(suite.get("errors", "0")) for suite in suites
     )
-    return cases, failures
+    skipped = sum(int(suite.get("skipped", "0")) for suite in suites)
+    return cases, failures, skipped
+
+
+class SuiteReportError(ValueError):
+    """junit 报告不可用：缺失、不完整、读不出、或者有无法归属的用例。
+
+    复用报告必须**要么完整、要么不用**：宁可退回真跑一遍，也不许拿着半份报告
+    拼出“通过”的证据（本仓库对“看起来查过了”的容忍度是零）。
+    """
+
+
+def _display_path(path: Path) -> str:
+    """仓库内就报仓库相对路径，仓库外（例如 pytest 的绝对临时目录）报绝对路径。
+
+    不用 Path.relative_to 直接算：调用方给的路径可能是相对的、也可能在仓库外，
+    两者都会抛 ValueError——证据要写下来，不能因为一个显示问题把整个脚本打挂。
+    """
+
+    try:
+        return path.resolve().relative_to(REPO_ROOT).as_posix()
+    except (OSError, ValueError):
+        return str(path)
+
+
+def report_paths(items: Sequence[str] | None) -> list[Path]:
+    """把命令行给的 --suite-reports 解析成已存在的 XML 文件清单（可重复给多份）。
+
+    只认**显式文件**：唯一的真实调用方（workflow 的 pytest 步骤）写的就是一个固定路径，
+    目录展开没有调用方——需要多份时把 --suite-reports 多写几次即可。
+    """
+
+    found: list[Path] = []
+    for item in items or ():
+        candidate = (REPO_ROOT / item) if not Path(item).is_absolute() else Path(item)
+        if candidate.is_file():
+            found.append(candidate)
+    return found
+
+
+def newest_test_input() -> tuple[float, str] | None:
+    """测试输入里最新的那个文件（mtime, 仓库相对路径）；没有可算的输入就返回 None。"""
+
+    newest: tuple[float, str] | None = None
+    candidates = [REPO_ROOT / name for name in TEST_INPUT_ROOTS] + [
+        REPO_ROOT / name for name in TEST_INPUT_FILES
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            files = [candidate]
+        elif candidate.is_dir():
+            files = [item for item in candidate.rglob('*') if item.is_file()]
+        else:
+            continue
+        for path in files:
+            if '__pycache__' in path.parts or path.suffix == '.pyc':
+                continue
+            try:
+                stamp = path.stat().st_mtime
+            except OSError:
+                continue
+            if newest is None or stamp > newest[0]:
+                newest = (stamp, path.relative_to(REPO_ROOT).as_posix())
+    return newest
+
+
+def stale_reason(reports: Sequence[Path]) -> str | None:
+    """报告落后于源码就返回原因（调用方据此真跑一遍），新鲜返回 None。"""
+
+    if not reports:
+        return '没有给出任何 junit 报告'
+    newest = newest_test_input()
+    if newest is None:
+        return None
+    oldest = min(reports, key=lambda path: path.stat().st_mtime)
+    stamp = oldest.stat().st_mtime
+    if stamp + FRESHNESS_TOLERANCE_SECONDS < newest[0]:
+        return '%s 早于最新的测试输入 %s（报告 %s，输入 %s）' % (
+            _display_path(oldest),
+            newest[1],
+            clock.datetime.fromtimestamp(stamp).isoformat(timespec='seconds'),
+            clock.datetime.fromtimestamp(newest[0]).isoformat(timespec='seconds'),
+        )
+    return None
+
+
+def _suite_of_testcase(case: elementtree.Element) -> str | None:
+    """用例属于哪个测试目录：按 junit 的 file（退回 classname 点号路径）前两段判断。"""
+
+    raw = case.get('file') or ''
+    if not raw:
+        raw = '/'.join((case.get('classname') or '').split('.'))
+    normalized = raw.replace(chr(92), '/').lstrip('./')
+    for name in SUITES:
+        if normalized.startswith(name + '/'):
+            return name
+    return None
+
+
+def suites_from_reports(reports: Sequence[Path]) -> dict[str, dict[str, object]]:
+    """从 junit XML 还原四个套件的用例数 / 失败数与结论；不重跑任何测试。
+
+    一次 pytest 会话写一份报告（testsuites 下只有一个 testsuite），所以按**用例**的
+    file / classname 归属到目录，而不是按 suite 元素切分。有归属不出去的用例就抛错：
+    那说明报告不完整或来自别的测试布局，不能拿它当“这四个套件都跑过了”。
+    """
+
+    buckets: dict[str, dict[str, int]] = {
+        name: {'cases': 0, 'failures': 0, 'skipped': 0} for name in SUITES
+    }
+    unknown: list[str] = []
+    for report in reports:
+        try:
+            root = elementtree.parse(report).getroot()
+        except (OSError, elementtree.ParseError) as error:
+            raise SuiteReportError('报告 %s 读不出：%s' % (report, error)) from error
+        for case in root.iter('testcase'):
+            name = _suite_of_testcase(case)
+            if name is None:
+                unknown.append('%s::%s' % (case.get('classname'), case.get('name')))
+                continue
+            buckets[name]['cases'] += 1
+            if case.find('skipped') is not None:
+                buckets[name]['skipped'] += 1
+            if case.find('failure') is not None or case.find('error') is not None:
+                buckets[name]['failures'] += 1
+    if unknown:
+        raise SuiteReportError(
+            '报告里有 %d 个用例不属于 %s：%s' % (len(unknown), list(SUITES), '; '.join(unknown[:3]))
+        )
+    missing = [name for name in SUITES if buckets[name]['cases'] == 0]
+    if missing:
+        raise SuiteReportError('报告里没有这些套件的用例：%s' % missing)
+    payload: dict[str, dict[str, object]] = {}
+    for name in SUITES:
+        entry = buckets[name]
+        failures = entry['failures']
+        payload[name] = {
+            'command': 'python -m pytest %s -q（结果取自本次运行的 junit 报告）' % name,
+            'source': 'junit-report',
+            'result': 'pass' if failures == 0 else 'fail',
+            'exit_code': 0 if failures == 0 else 1,
+            'cases': entry['cases'],
+            'failures': failures,
+            'skipped': entry['skipped'],
+                    'artifacts': [_display_path(report) for report in reports],
+        }
+    return payload
 
 
 def run_suite(path: str) -> dict[str, object]:
@@ -763,13 +957,15 @@ def run_suite(path: str) -> dict[str, object]:
         env=_environment(),
         check=False,
     )
-    cases, failures = _cases_from_report(report)
+    cases, failures, skipped = _cases_from_report(report)
     return {
         "command": " ".join(["python", "-m", "pytest", path, "-q"]),
+        "source": "pytest",
         "result": "pass" if completed.returncode == 0 else "fail",
         "exit_code": completed.returncode,
         "cases": cases,
         "failures": failures,
+        "skipped": skipped,
         "artifacts": [report.relative_to(REPO_ROOT).as_posix()],
     }
 
@@ -786,10 +982,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="跳过性能基线（基线需要额外数秒）",
     )
+    parser.add_argument(
+        "--suite-reports",
+        action="append",
+        default=None,
+        metavar="PATH",
+        help="复用已有 junit XML（可重复给多份，合并计数）里的测试结果，不重跑测试套件："
+             "门禁 / CI 的 pytest 步骤刚跑过同一批测试，再跑一遍纯属重复。"
+             "报告缺失、缺套件或早于最新源码改动时自动退回真跑一遍（不静默）",
+    )
     args = parser.parse_args(argv)
 
     identity, sources = rule_set_identity()
-    suites = {name: run_suite(name) for name in SUITES}
+    suites, suite_source, suite_reports = resolve_suites(args.suite_reports)
     cases = sum(int(item["cases"]) for item in suites.values())
     failures = sum(int(item["failures"]) for item in suites.values())
     artifacts = sorted(
@@ -813,6 +1018,9 @@ def main(argv: list[str] | None = None) -> int:
         "orchestration": orchestration(),
         "test_suite": " + ".join(SUITES),
         "suites": suites,
+        # 结论的依据写清楚：本次真跑的，还是引用了本次门禁里 pytest 步骤刚写出的报告。
+        "test_suite_source": suite_source,
+        "suite_reports": suite_reports,
         "result": "pass" if failures == 0 else "fail",
         "cases": cases,
         "failures": failures,

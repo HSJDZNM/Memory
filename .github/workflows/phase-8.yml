@@ -43,8 +43,11 @@ jobs:
       - name: Secret scan gate
         run: .venv/bin/python tools/secret_scan.py
 
+      # --junit-xml：把本次测试结果落成一份报告，供最后的"阶段验收证据"步骤直接引用。
+      # 证据步骤过去会把这四个套件**再跑一遍**（只为了数用例数），在门禁里就是纯重复。
+      # 报告由本步骤写出，证据步骤只读它；报告缺失 / 缺套件 / 早于最新改动时证据步骤会退回真跑。
       - name: Unit, contract, integration and security tests
-        run: .venv/bin/python -m pytest tests/unit tests/contract tests/integration tests/security -q
+        run: .venv/bin/python -m pytest tests/unit tests/contract tests/integration tests/security -q --junit-xml=.tmp/artifacts/tests-all-report.xml
 
       - name: Rule set self-check
         run: .venv/bin/python -m policy.check --check-rules
@@ -324,5 +327,7 @@ jobs:
       - name: Orchestration closed loop
         run: .venv/bin/python tools/orchestration_loop.py
 
+      # 复用上面那一步写出的 junit 报告，不重跑测试：证据里的用例数 / 失败数还是同一批测试的，
+      # 只是不再跑第二遍（全量门禁里这一步过去要花 5 分钟左右）。
       - name: Phase 8 acceptance evidence
-        run: .venv/bin/python tools/phase_evidence.py
+        run: .venv/bin/python tools/phase_evidence.py --suite-reports .tmp/artifacts/tests-all-report.xml
