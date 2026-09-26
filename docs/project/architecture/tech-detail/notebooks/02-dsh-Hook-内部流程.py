@@ -244,7 +244,16 @@ for name, source, value in rows:
 assert admission.governed is True and mapped.kind == "tool.pre_execute"
 assert mapped.agent == DSH_AGENT_ID == "dsh"
 assert mapped.file == "src/shop/order_controller.py" and mapped.layer == "controller"
-assert mapped.dependencies == ("repository", "service"), mapped.dependencies
+# 依赖登记的是**完整点分路径**，不是只留顶层名字：`from shop.order_repository import X` 只留 `shop`
+# 就等于结构性放行（那正是 G6 的绕过写法）。预执行路径拿到的是变更片段、没有模块索引，
+# 分不清"被导入的名字是子模块还是类/函数"，所以候选一起登记 —— 方向是失败关闭：
+# 多登记只可能更早阻断，漏登记才是放行。
+assert mapped.dependencies == (
+    "repository",
+    "repository.orderrepository",
+    "service",
+    "service.orderservice",
+), mapped.dependencies
 assert mapped_context.principal is not None and mapped_context.principal.subject == "local-user"
 assert mapped_context.module is None
 assert mapped.payload_digest.startswith("sha256:")
@@ -542,16 +551,40 @@ self_check_ok = run_hook_cli(
 self_check_bad = run_hook_cli(
     ["--config", str(CONFIG_PATH), "--hooks-config", str(BAD_TIMEOUT), "--self-check"], ""
 )
+# `--hooks-config` 不是可选项：接线自检缺席 = 没有证据可查，按失败关闭一律 exit 2
+# （宁可每次调用都被拦住，也不接受"以为接上了其实没接"）。
 cli_block = run_hook_cli(
-    ["--config", str(CONFIG_PATH), "--audit", str(fresh(TEMP / "cli-block.jsonl"))],
+    [
+        "--config",
+        str(CONFIG_PATH),
+        "--hooks-config",
+        str(GOOD),
+        "--audit",
+        str(fresh(TEMP / "cli-block.jsonl")),
+    ],
     json.dumps(event("pre-tool-use-edit-block.json")),
 )
 cli_allow = run_hook_cli(
-    ["--config", str(CONFIG_PATH), "--audit", str(fresh(TEMP / "cli-allow.jsonl"))],
+    [
+        "--config",
+        str(CONFIG_PATH),
+        "--hooks-config",
+        str(GOOD),
+        "--audit",
+        str(fresh(TEMP / "cli-allow.jsonl")),
+    ],
     json.dumps(event("pre-tool-use-edit-allow.json")),
 )
 cli_bad_stdin = run_hook_cli(
-    ["--config", str(CONFIG_PATH), "--audit", str(fresh(TEMP / "cli-bad.jsonl"))], "{ not json"
+    [
+        "--config",
+        str(CONFIG_PATH),
+        "--hooks-config",
+        str(GOOD),
+        "--audit",
+        str(fresh(TEMP / "cli-bad.jsonl")),
+    ],
+    "{ not json",
 )
 
 print()
@@ -694,8 +727,30 @@ post_lines = POST_AUDIT.read_text(encoding="utf-8").splitlines()
 assert previous is not None and previous["reason_code"] == "allow"
 assert sum(1 for line in post_lines if "call-post-valid" in line) >= 2
 assert sum(1 for line in post_lines if "call-post-repair" in line) >= 2
-assert sum(1 for line in post_lines if "audit_schema_version" in line) == 4
-print("审计文件里的记录条数:", len(post_lines), "（两次调用各落 pre 与 post 两条 Phase 2 记录）")
+# G2 的成对契约要按**语义**断言，不能数记录条数：同一次调用在审计里除了 Phase 2 的
+# PreToolUse / PostToolUse 两条，还会落 Phase 4 的 pre_state / post_evidence / final_decision 等阶段，
+# 会话起点另有一条 G11 的上下文留痕（reason_code=context_injection）。数条数会随不相干的
+# 记录增减而变红（或者更糟：被放宽成 >= 之后再也测不到"少了一段"）。
+# 真正要守住的是：**每一次调用恰好一条 PreToolUse、恰好一条 PostToolUse**。
+# 断言"成对"而不是"条数"：同一次调用在 Phase 2 与 Phase 4 各落一条 pre、各落一条 post，
+# 加上会话级的 G11 上下文留痕，条数会随实现阶段变化；而"这次调用有没有事后记录"才是 G2 要守的。
+for _call_id in ("call-post-valid", "call-post-repair"):
+    _events = [
+        json.loads(line).get("hook_event")
+        for line in post_lines
+        if _call_id in line
+    ]
+    assert "PreToolUse" in _events, (_call_id, _events)
+    assert "PostToolUse" in _events, (_call_id, _events)
+    print(
+        pad(_call_id, 22) + pad(len(_events), 5) + "条记录："
+        + str(sorted({item for item in _events if item}))
+    )
+print(
+    "审计文件里的记录条数:",
+    len(post_lines),
+    "（两次调用各恰好一条 PreToolUse 与一条 PostToolUse，其余是 Phase 4 阶段记录与会话级留痕）",
+)
 
 # ----------------------------------------------------------------------------
 # ## 小结

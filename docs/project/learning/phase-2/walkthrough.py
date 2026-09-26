@@ -332,7 +332,37 @@ def write_adapter_config(path, **overrides):
     return path
 
 
+def write_hooks_config(path, *, timeout_seconds=30):
+    # CLI 的接线自检要它才能通过：G12 之后"接线自检缺席"是失败关闭，
+    # 而 dsh 自己的行为又是"hooks.json 读不到就不注册任何 hook 且不报错"，
+    # 所以调用方必须像真实接线那样把这份文件指出来。
+    document = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": (
+                                "python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml "
+                                "--hooks-config .policy/hooks.json"
+                            ),
+                            "timeout": timeout_seconds,
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(document, ensure_ascii=False, indent=2) + chr(10), encoding="utf-8"
+    )
+    return path
+
+
 CONFIG_PATH = write_adapter_config(TMP_ROOT / "config" / "dsh-adapter.yaml")
+HOOKS_CONFIG_PATH = write_hooks_config(TMP_ROOT / "config" / "hooks.json")
 CONFIG = load_config(CONFIG_PATH)
 # rules_root 是规则来源的锚点：规则库与被治理项目常常不在同一个仓库。
 RULES = load_rule_set(CONFIG.rule_dirs, repo_root=CONFIG.rule_anchor)
@@ -955,7 +985,10 @@ print("超时路径的执行器调用", len(slow_executor.calls), "次：超预�
 #
 # dsh 最终执行的是一行命令，所以接线的最后一环是 CLI：
 #
-#     python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml
+#     python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml --hooks-config .policy/hooks.json
+#
+# （--hooks-config 不是可选项：少了它，接线自检就"没有证据可查"，按失败关闭一律 exit 2——
+# 宁可每次调用都被拦住，也不接受"以为接上了其实没接"。）
 #
 # | 退出码 | dsh 的语义 | 本 Hook 什么时候用它 |
 # | --- | --- | --- |
@@ -996,14 +1029,17 @@ def run_hook_cli(arguments, stdin_text):
 
 cli_results = {
     "block": run_hook_cli(
-        ["--config", str(CONFIG_PATH)], json.dumps(event("pre-tool-use-edit-block.json"))
+        ["--config", str(CONFIG_PATH), "--hooks-config", str(HOOKS_CONFIG_PATH)],
+        json.dumps(event("pre-tool-use-edit-block.json")),
     ),
     "allow": run_hook_cli(
-        ["--config", str(CONFIG_PATH)], json.dumps(event("pre-tool-use-edit-allow.json"))
+        ["--config", str(CONFIG_PATH), "--hooks-config", str(HOOKS_CONFIG_PATH)],
+        json.dumps(event("pre-tool-use-edit-allow.json")),
     ),
     # 执行类工具：工具表认识它，但配置声明的主体没有 shell.exec —— 由 Phase 4 门禁阻断。
     "governed_execute": run_hook_cli(
-        ["--config", str(CONFIG_PATH)], json.dumps(event("pre-tool-use-pwsh-execute.json"))
+        ["--config", str(CONFIG_PATH), "--hooks-config", str(HOOKS_CONFIG_PATH)],
+        json.dumps(event("pre-tool-use-pwsh-execute.json")),
     ),
     "bad_stdin": run_hook_cli(["--config", str(CONFIG_PATH)], "{ not json"),
 }
