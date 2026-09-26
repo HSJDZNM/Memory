@@ -158,7 +158,6 @@ def is_allowed(path: Path) -> bool:
         return True
     if path.is_dir() and path.name == CACHE_DIR_NAME:
         return True
-    return False
     return path.is_file() and path.suffix in CACHE_FILE_SUFFIXES
 
 

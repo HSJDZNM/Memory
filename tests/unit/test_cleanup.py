@@ -146,6 +146,34 @@ def test_missing_tmp_is_not_created_and_needs_no_lock(monkeypatch, capsys, tmp_r
     assert not cleanup.ci_local.lock_path().exists()
 
 
+def test_loose_cache_files_are_deleted_not_silently_skipped(monkeypatch, capsys, tmp_root):
+    """白名单对 `*.pyc / *.pyo` 的承诺必须真的兑现，而不是只删 `__pycache__` 目录。
+
+    `is_allowed()` 曾经在 `return path.is_file() and path.suffix in CACHE_FILE_SUFFIXES` 之前就
+    `return False`（不可达代码），于是散落的 `.pyc` 会被扫进计划、又被判成「不在白名单」——
+    清理看起来跑过（退出码 0），实际什么都没收走，报告却会把 `.tmp/` 说成干净。这条用例把
+    「候选被自己扫出来、又被白名单拒绝」钉成失败：只要它成立，`--dry-run` 的清单就不可信。
+    """
+
+    cleanup = _load_cleanup_with_tmp_root(monkeypatch, tmp_root)
+    loose_pyc = tmp_root / "generated.pyc"
+    loose_pyc.write_bytes(b"")
+    loose_pyo = tmp_root / "legacy.pyo"
+    loose_pyo.write_bytes(b"")
+    kept = tmp_root / "notes.txt"
+    kept.write_text("keep me", encoding="utf-8")
+
+    assert cleanup.main([]) == 0
+    out = capsys.readouterr().out
+
+    assert "已删除: generated.pyc" in out
+    assert "已删除: legacy.pyo" in out
+    assert "跳过（不在白名单）" not in out  # 扫描出来的候选不该被白名单反过来拒绝
+    assert not loose_pyc.exists()
+    assert not loose_pyo.exists()
+    assert kept.read_text(encoding="utf-8") == "keep me"  # 白名单照旧不碰非缓存文件
+
+
 def test_lock_is_held_during_deletion_and_released_afterwards(monkeypatch, capsys, tmp_root):
     """删除发生在持锁期间；清理跑完能立刻再取到锁（finally 不放锁会挡住后续门禁）。"""
 
