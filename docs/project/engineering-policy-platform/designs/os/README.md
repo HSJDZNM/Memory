@@ -18,7 +18,18 @@
 | 2 | [02-操作流程](02-操作流程.md) | A–H 八条端到端流程：命令、退出码、失败状态、谁判定 |
 | 3 | [03-页面布局](03-页面布局.md) | 信息架构、逐页线框、首屏、失败语义、验收条目 |
 | 4 | [05-待决问题与路线](05-待决问题与路线.md) | 9 个未收敛问题、五期路线、风险登记册、一页速查 |
-| 5 | [meeting/](meeting/) | 会议原始记录：`r0` 事实基线、`r1` 五份提案、`r2` 五份评审、`r3` 复核 |
+| 5 | [meeting/](meeting/) | 会议原始记录：`r0` 事实基线、`r1` 五份提案、`r2` 五份评审、`r3` 终稿复核、`r4` 修复复核 |
+| 6 | [06-操作台可用性评审与新一轮建议](06-操作台可用性评审与新一轮建议.md) | **第 5 轮（2026-09-25）**：用户视角的操作台评审——功能重要度与信息传达 / 布局与层级 / 新手与专家双适配；含必须先修的 5 项、V28–V36 与 O10–O13 |
+| 7 | [07-项目对标、价值完成度与 GUI 就绪度评估](07-项目对标、价值完成度与 GUI 就绪度评估.md) | **第 6 轮（2026-09-25）**：三问三答——GitHub 对标与诚实定位、转化率五口径与"能否 100% 遵守执行"（≈30% / ≈12%，估）、GUI 就绪度（conditional-go，N=8/M=3 与 G-1…G-5） |
+
+## 相关设计资产
+
+| 资产 | 入口 | 关系 |
+| --- | --- | --- |
+| 设计提案总索引 | [../README.md](../README.md) | 本目录与文档转规则、后端契约、前端交互和评审意见的总导航 |
+| 静态操作台原型 | [../console/README.md](../console/README.md) | S9 的 6 页只读原型；不是生产服务，也不产生 Decision |
+| 文档转规则提案 | [../文档转规则操作平台-可行性评估.md](../文档转规则操作平台-可行性评估.md) | 本设计的流程 C，覆盖台阶 1–7 |
+| 当前实现架构 | [../../../architecture/README.md](../../../architecture/README.md) | 只描述代码已经做到的能力，不把本提案当成已实现功能 |
 
 ## 一页速览
 
@@ -56,8 +67,9 @@
 | [meeting/r1-flows.md](meeting/r1-flows.md) | flow-analyst | A–H 八条流程 + 「今天走不通」清单 |
 | [meeting/r1-layouts.md](meeting/r1-layouts.md) | ui-architect | 信息架构、逐页线框、失败语义表 |
 | [meeting/r1-constraints.md](meeting/r1-constraints.md) | red-team | OS 宪法 C1–C15、攻击 A1–A14、验收 V1–V22 |
-| [meeting/r2-review-*.md](meeting/) | 全体 | 交叉评审、对抗评审、提案事实核验（含各自的自我推翻） |
-| [meeting/r3-fact-check.md](meeting/) · [r3-adversarial.md](meeting/) | verifier · red-team | 对三份终稿的逐条核验与最后攻击 |
+| [meeting/r2-review-flows.md](meeting/r2-review-flows.md)、[r2-review-kernel.md](meeting/r2-review-kernel.md)、[r2-review-redteam.md](meeting/r2-review-redteam.md)、[r2-review-ui.md](meeting/r2-review-ui.md)、[r2-verify-proposals.md](meeting/r2-verify-proposals.md) | 全体 | 交叉评审、对抗评审与提案事实核验 |
+| [meeting/r3-fact-check.md](meeting/r3-fact-check.md)、[meeting/r3-adversarial.md](meeting/r3-adversarial.md) | verifier · red-team | 对三份终稿的逐条核验与最后攻击 |
+| [meeting/r4-remediation-verification.md](meeting/r4-remediation-verification.md) | Lead | B1/B2/B3 与前端第二判定的修复复核 |
 
 ## 维护方式
 
@@ -79,4 +91,5 @@ git ls-files policies                       # 受跟踪基线（与上面不同�
 - **不写代码**：本文只做板块、流程与页面的设计，不新增路由、不改判定内核、不动注册表；
 - **不给数字结论**：凡是会随工作树变化的计数与哈希，本文只给命令与口径；
 - **不承诺「操作台已上线」**：S9 仍没有服务端挂载；P-1 修复状态与复核证据见 `meeting/r4-remediation-verification.md`；
+- **第 5 轮（`06`）只做评审与建议**：它给修订清单与验收条目，不替代 `03` 的页面定稿，也不改 `05` 的路线；其中 F1–F3（生成器不失败关闭）被判定为 P0 的前置条件；
 - **不替仓库所有者裁决**：O1–O9 见 [05](05-待决问题与路线.md) §1。

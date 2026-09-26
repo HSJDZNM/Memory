@@ -43,7 +43,7 @@ python -m http.server 8099 --directory docs/project/engineering-policy-platform/
 | --- | --- |
 | 规则集 / rule_set_hash | `policy.loader.load_rule_set([policies/])` |
 | 数据集 | `knowledge/corpus.yaml` |
-| 镜像清单 | `docs/*/manifest.json` |
+| 镜像清单 | `docs/mirrors/*/manifest.json` |
 | 验证器覆盖 | `validation/validators.yaml` + `policy.checkers.SUPPORTED_CHECKERS` |
 | chunk 列表 | `.tmp/retrieval/index.sqlite3`（构建产物；缺索引时页面会标注） |
 | 路由 | `policy_api.runtime.ROUTES` + 实测路径 |

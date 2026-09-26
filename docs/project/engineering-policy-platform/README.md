@@ -33,14 +33,16 @@
 5. 按顺序完成 `phases/` 中 Phase 0 至 Phase 8
 6. 全程使用 [测试策略](testing/test-strategy.md)，并用 [阶段验收矩阵](testing/acceptance-matrix.md) 决定是否进入下一阶段
 7. 已交付部分的独立复核与加固记录见 [reviews/](reviews/post-phase-4-hardening.md)（Post-Phase-4 复核）、
-   [reviews/post-phase-5-review.md](reviews/post-phase-5-review.md)（Post-Phase-5 复核）与
-   [reviews/post-phase-8-review.md](reviews/post-phase-8-review.md)（Post-Phase-8 验收与修复）
-8. **尚未实现**的提案与评估见 [designs/](designs/文档转规则操作平台-可行性评估.md)：
+   [reviews/post-phase-5-review.md](reviews/post-phase-5-review.md)（Post-Phase-5 复核）、
+   [reviews/post-phase-8-review.md](reviews/post-phase-8-review.md)（Post-Phase-8 验收与修复）与
+   [reviews/governance-coverage-gaps.md](reviews/governance-coverage-gaps.md)（治理覆盖缺口实测清单：
+   13 项缺口、级别与复现命令，来自一次受治理会话与未治理通道的对照实验）
+8. **尚未实现**的提案与评估见 [设计提案索引](designs/README.md)：
    "文档 → 规则"能否做成用户可操作的控制台、前后端连接实测（无 CORS、只能同源）、
    前端操作逻辑与失败语义、以及评审给出的两条**必须先修**的阻塞项
    （新建规则文件绕过审批、HTTP 面漂移静默）。提案与阶段记录分开放：阶段记录在 `phases/`，
    提案在 `designs/`，两者不得互相冒充。提案有一个**可点开的静态原型**：
-   [designs/console/](designs/console/index.html)（6 个页面，按台阶分层合并；原生 JS 零构建，数据取自仓库真实数据）
+   [designs/console/](designs/console/index.html)（6 个页面，按台阶分层合并；原生 JS 零构建，数据取自仓库真实数据）。
 9. **平台操作系统的总体设计**见 [designs/os/](designs/os/README.md)：把仓库拆成 9 个板块、8 条端到端操作流程与 8 个页面，
    并记录三轮多成员讨论（提案 / 交叉与对抗评审 / 定稿复核）、Lead 裁决 D1–D15 与五期落地路线。
    它把第 8 条那份「文档 → 规则」控制台收作**其中一个板块（S9）的一条流程（C）**，不重复、不替代；
