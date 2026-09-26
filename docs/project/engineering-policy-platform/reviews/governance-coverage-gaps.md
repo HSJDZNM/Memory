@@ -9,6 +9,19 @@
 > 证据文件与实验脚本在 `.tmp/governance-observation/`（`.tmp/` 是构建产物，可随时重建，
 > 不提交）；第 5 节给出完整复现命令。
 
+> **后续轮次（先读这段，别把这篇文章当成当前状态）**：本文是 2026-09-25 的**冻结观察记录**，
+> 它描述的是当时的真实状态，**不是**现在的状态。此后已经走过两轮：
+>
+> | 轮次 | 做了什么 | 记录 |
+> | --- | --- | --- |
+> | 修复轮（2026-09-26） | 把 13 项现象归并成 5 个机制性根因并修：**FIXED 9 · PARTIAL 4 · NOT FIXED 0** | [00 根因与修复计划](governance-remediation/00-remediation-plan.md) · [05 独立验收](governance-remediation/05-verification.md) |
+> | **能力实测轮（2026-09-26）** | 把治理**真正接上线**，开子会话在治理下做多文件开发，用五种写法的违规探针 + 反向对照 + 独立验收去压它；又显现 9 项新问题 | [00 能力报告](governance-capability/00-capability-report.md) · [**05 新显现的问题**](governance-capability/05-emergent-issues.md) |
+>
+> 状态有变化的旧条目（**G2 事后核对已 FIXED**、G6 在真实会话确认、G10 端到端确认、
+> G4 的审批那一半 FIXED 但被新问题 N16 挡住、G1 部分关闭）见
+> [05 §3](governance-capability/05-emergent-issues.md)。**G3 仍然成立**：会话内那条路径上
+> 真正参与判定的规则仍然只有 1 条。
+
 ## 0. 一句话结论
 
 **治理在被接线的通道上确实能工作**：真实子会话的每一次写类调用都走了

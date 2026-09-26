@@ -171,12 +171,62 @@
 | N8 | `src/adapters/cli.py` 有 8 处 HEAD 就存在的 ruff 违规；`tests/integration/test_dsh_hook.py` / `src/adapters/dsh/hooks.py` 等亦有既有违规 | 见 `02-channel-inventory.md` §9.1 | **已清理（2026-09-26）**：范围见 [07-ruff-cleanup-and-n1.md](07-ruff-cleanup-and-n1.md) §2（用户裁决 = 本轮改动集的 `src/` + `tests/` + 手写 `tools/`，清到 0 且**新增 0 条 noqa**）；边界外的 notebook 生成链与 `docs/` 计数不变，由独立验收逐文件核对 | 登记时的理由是"改动聚焦"，本轮由用户明确要求清理，因此不再成立 |
 | N9 | **全量门禁抓出的连带破坏**：把"接线自检缺席 = 失败关闭"落到 CLI 后，凡是**直接调 CLI 的调用方**都要补 `--hooks-config`。T1 改了插件与 CLI，只改了 `tests/integration/test_dsh_hook.py` 之外的一个调用方；实际还有 **两个文档生成器**（`tools/build_learning_notebook.py`、`docs/project/architecture/tech-detail/notebooks/nb_cells/nb02.py`）与它们生成的 20 份 notebook | `ci_local` 的 "Learning notebooks are in sync" / "Tech-detail notebooks are in sync" | **已修（Lead）**：补 `write_hooks_config()` 与 3 处调用；并按"生成器是唯一真相源"重新生成产物 | 属于本轮。教训写在这里：**改一处契约要 grep 全部调用方**，只跑相关单测抓不到生成器 |
 | N10 | 生成器里的**文档断言**随行为变化失效：依赖清单（G6 点分路径）、pre_decision 审计载荷键名（G4 新增三键）、post 审计记录条数（G11 多一条留痕） | 见上两处生成器 | **已修（Lead）**：更新为新的正确值；其中"数记录条数 == 4"改成了**语义断言**（每次调用有没有 pre 与 post）。理由是：计数会随不相干的记录增减而变红，或者更糟——被放宽成 `>=` 之后再也测不到"少了一段" | 属于本轮 |
-| N11 | `docs/.../designs/os/06-*.md`（会话开始前就存在的未跟踪文档）引用合成演示令牌 `local-dev-token`，触发凭据扫描 | `secret_scan.py` | **已修（Lead）**：按仓库既有约定在**命中行本身**加 `secret-scan: allow` 注释并写明理由（与 `api/README.md:50` 同值，仓库历史上处理过同类问题两次） | 属于本轮：不修则本机门禁永红 |
+| N11 | `docs/.../designs/os/06-*.md`（会话开始前就存在的未跟踪文档）引用合成演示令牌 `local-dev-token`，触发凭据扫描 | `secret_scan.py` | **已修（Lead）**：按仓库既有约定在**命中行本身**加 `secret-scan: allow` 注释并写明理由（与 `api/README.md:50` 同值，仓库历史上处理过同类问题两次）。**注（2026-09-26）**：该文件已随 OS 设计撤销，本条只作历史记录 | 属于本轮：不修则本机门禁永红 |
 | N12 | `tools/dsh_sandbox_loop.py` 只有"没有 dsh / Hook 起不来"两条环境跳过；本机默认 `DSH_HOME` 下 dsh **自身**因写 profile 被拒而起不来，会被判 fail | 见 N7 | **已修（Lead）**：新增 `dsh_could_not_start()` 与 `dsh_startup_denied` 状态 | 属于本轮，因为它是 CI 步骤 "Real dsh sandbox loop" 的假红来源 |
 | N13 | **缺口探针自己有缺口**：`tools/governance_gap_probe.py` 的 G06 只驱动 Phase 2 的 `python -m adapters.dsh.hooks`，**从不走 Phase 6**。实测（V1）：拿它对**修前快照**跑 `--phase after`，仍然 **13/13、exit 0** —— 也就是说这个探针**看不到 N1**，不能用它当 N1 的验收证据 | `tools/governance_gap_probe.py` 的 `check_g06`（全文 grep `JsonAdapter` / `to_policy_context` **零命中**；`Env` 只有 Phase 2 的 `hook()`） | **本轮已做**：在 `check_g06` 加**显式范围声明**（只覆盖 Phase 2 路径）+ 指向真正覆盖 Phase 6 的检查；Phase 6 的四条路径由 `tests/integration/test_dependency_path_consistency.py`、`tests/contract/test_dependency_extraction_parity.py` 与 V1 的 `.tmp/verifier-n1/probe_n1.py` 覆盖。**下一轮的验收输入已不受 `.tmp/` 清理影响**：变异规格与四路径期望矩阵留档在 [09-instrument-migration-assessment.md](09-instrument-migration-assessment.md) §9，`修前的红` 可由当前树重建 | **登记为下一轮候选**：给 G06 增加一组走 generic-json 规范事件的用例。**不在本轮做的技术理由**：探针完全没有驱动 Phase 6 的机器，新增检查会把 gaps 从 13 变成 14、改掉 `--phase after` 的期望表，属于**新仪器**而不是补注释；而 [08-n1-independent-verification.md](08-n1-independent-verification.md) 是在"13 条检查、行为未变"的前提下出具的——在半验证状态下改仪器，就是又做一台假绿仪器。下一轮的验收口径应当是"**它对修前快照必须变红**" |
 
 | N14 | **依赖规则的"跳过"仍可能不可见**：`language` 声明不出来（`None`）时依赖集是 `()`，依赖类 checker 于是 allow——而 allow 的**理由**（"语言不知道"）没有任何地方写下来。今天没有洞，靠的是**规则作者的纪律**（43 条规则里只有 ARCH-001 用 `forbidden_dependency`，而它 scope 里声明了 `language=python`），不是代码保证 | `src/adapters/base.py` 的 `language` 解析 + `src/policy/checkers.py` 的 `dependency_forbidden` scope 匹配 | **登记为下一轮候选**：在**规则加载期**拒绝"使用 `forbidden_dependency` 却没有声明 language 维度"的规则——把"规则作者的纪律"变成**会失败的检查**，而不是靠人记得。由 T2 在写跨路径测试时发现并如实上报（不是实现缺陷，是**覆盖缺口**） | 属于"规则作者纪律 vs 代码保证"的口径问题，要改 `policy.loader` 的加载期校验与既有 43 条规则的 scope，是独立变更 |
 | N15 | **没有"重构有没有改语义"的可执行工具**：全仓 `ast.dump` **零命中**，所以"这次改动只换了行、没改语义"每次都要现写脚本（本轮就是 V1 现写的 `ast_equal.py`/`assert_diff.py`） | 无（能力缺口，非缺陷） | **登记为下一轮候选**：`tools/ast_unchanged.py`（`--path` / `--before <file\|git-ref>`，`ast.dump` 比对 + 断言/常量计数）。规格与 9 条验收条件见 [09-instrument-migration-assessment.md](09-instrument-migration-assessment.md) §10.5 | **本轮裁决不做**：收益是间歇性的（下次机械重构才用），成本是永久的（`tools/README.md` 登记 + 单测 + 任何 `tools/**` 改动都进 32 步门禁）。方法已留档，真要用时按当时接口现写约 80 行 |
+
+### 5.1 后续轮次补登：N16–N24（治理能力实测轮，2026-09-26）→ **已在同日修复轮处置，见 §5.2**
+
+上面 N1–N15 是**修复轮**执行期内发现的。此后又跑了一轮**能力实测**（把治理真正接上线，
+开子会话在治理下做多文件开发，用五种写法的违规探针 + 反向对照 + 独立验收去压它），
+又显现 9 项。**完整场景与细节见
+[治理能力实测 · 05 新显现的问题](../governance-capability/05-emergent-issues.md)**；
+这里只登记编号与一句话，保持"遗留问题只有一处可查"。
+
+| 编号 | 一句话 | 类别 | 详见 |
+| --- | --- | --- | --- |
+| **N16** | 委派执行路径上 `exit_code_zero` **不可能通过**：`src/enforcement/postcheck.py:420-430` 要 `process.exit_code`，而 `src/adapters/dsh/enforcement.py:309-325` 重建 `ExecutionRecord` 时不带它（`models.py:1150` 有该字段但默认 `None`）→ 命令真的执行了，**输出回不到模型**。这是"受治理会话跑不了测试"的真正机制，比 G4 记的审批绑定更深一层 | **产品缺陷（阻断级）** | [05 §2.1](../governance-capability/05-emergent-issues.md) |
+| **N17** | 语法错误文件上 39 条 `style_lint` 是**空判定**：ruff 0.14 只报无归属的 `invalid-syntax`（旧版 E999）→ `unmapped_findings=1`，但账本记成"已判定/未发现"。整份文件仍 block，靠的是 `py.ast` 失败关闭。**G3"跳过≠通过"的下沉形态** | 产品缺陷（口径） | [05 §2.2](../governance-capability/05-emergent-issues.md) |
+| **N18** | `exit 2` 契约在 dsh 侧**走不到**：Hook 直调确为 2，但 dsh 侧读成 1 → 实际生效的是"其余非 0 → 失败关闭"兜底。安全性不变，可诊断性打折；`src/adapters/dsh/README.md` §2.3 的退出码表对 `2` 这一行**缺少实测支持**。机制 **UNPROVEN** | 契约与实现不一致 | [05 §2.3](../governance-capability/05-emergent-issues.md) |
+| **N19** | 「拦住」与「没人尝试」在**哈希上长得一样**：模型自审拒绝时文件也没变，但审计里没有任何 `policy_block`。判据必须加入"有没有带判定字段的写类记录" | **方法学缺口** | [05 §2.4](../governance-capability/05-emergent-issues.md) |
+| **N20** | `wired` 是"接线 + 审计新鲜度"的**联合属性**：同一份逐字节相同的 patch，审计被 reset 后同一命令报 fail，一次真实会话建出审计后立刻报 WIRED | 口径缺口 | [05 §2.5](../governance-capability/05-emergent-issues.md) |
+| **N21** | 台账文件名被运行期改写：配置写 `enforcement-ledger.jsonl`，实际落在 `audit.enforcement-ledger.jsonl`（`src/adapters/dsh/hooks.py:1155-1164` 由 `--audit` 派生）。按配置名去数会得 0 条并误判"事后核对没跑" | 读数陷阱 | [05 §2.6](../governance-capability/05-emergent-issues.md) |
+| **N22** | 只读工具的范围阻断会**打断探索**：`glob` 仓库根被 `context_error` 拦（方向正确，`path_scope` 不因只读降级），代价是一次工具调用白走 | 设计取舍的代价 | [05 §2.7](../governance-capability/05-emergent-issues.md) |
+| **N23** | 受治理会话里 `bash` / `run_code` **根本发不出来**（只有 `pwsh`）→ 那两条工具的结论只覆盖 Hook 层。与 N6 一起才解释"跑不了测试" | 装配事实 | [05 §2.8](../governance-capability/05-emergent-issues.md) |
+| **N24** | `binding=action` 在会话里**永远过不去**（重试换 `tool_use_id` 即失配）；一个 `approval.json` 只解析一个对象，一次只能授权一个执行工具 | 设计取舍的边界 | [05 §2.9](../governance-capability/05-emergent-issues.md) |
+
+同一轮还**关闭/确认**了若干旧条目（G2 FIXED、G6 在真实会话确认、G10 端到端确认、
+G4 的审批那一半 FIXED、G1 部分关闭），对照表见
+[05 §3](../governance-capability/05-emergent-issues.md)。
+
+### 5.2 修复轮：N16–N24 的处置（2026-09-26）
+
+上表的 9 项在**同日修复轮**被处置：**6 项产品/口径缺陷已修**（N16 / N17 / N18 / N20 / N21 / N22）、
+**1 项换了形态**（N19：从文档里的判据变成仓库里可执行、可被测试钉死的模块与 CLI）、
+**2 项按各自的处置建议写清**（N23 / N24 是"装配事实"与"设计取舍的边界"，本来就不该改成代码）。
+每一处都配了一条**修复前会红**的检查，而不是一句"已修复"。
+完整机制、修复前后对照、验证矩阵与边界见
+[11-n16-n24-fix-round.md](11-n16-n24-fix-round.md)；独立验收见
+[10-n16-n17-n20-verification.md](10-n16-n17-n20-verification.md)。
+
+| 编号 | 本轮处置 | 落点 |
+| --- | --- | --- |
+| **N16** | **已修**：退出事实从 dsh 规范化结果 `result.value` 转发 → 严格解析 → `ExecutionRecord.exit_code` → 审计 `post_evidence.payload.process` 落盘 | `src/adapters/dsh/policy-hook.plugin.mjs`、`enforcement.py` |
+| **N17** | **已修**：`validation/validators.yaml` 声明 `analysis_failure_codes`，命中即失败关闭；`served_checkers` 不再记"已判定"；报告新增显式 `judgements` | `validation/`、`src/validators/` |
+| **N18** | **已修**：根因定位为**执行器回退到 Windows PowerShell 5.1**（其 `-Command` 压平原生命令退出码）；判定行改由 Hook 自写，插件据此分类，**任何非 0 仍一律拒绝** | `src/adapters/dsh/hooks.py`、插件、README §2.3.1 |
+| **N19** | **换形态**：`src/enforcement/verdict.py` + `python -m enforcement.cli verdict`，把"拦住 / 没人尝试 / 证明不了"变成带 A/B/C 证据等级的显式结论 | `src/enforcement/verdict.py`、`cli.py` |
+| **N20** | **已修**：`wired` 拆成 `wiring_status` / `freshness_status` 两根独立轴；schema `1.0` → `1.1` 并有版本钉 | `src/adapters/wiring.py`、`cli.py` |
+| **N21** | **已修**：`derived_ledger_path()` + `effective_paths()` 一等输出 + 每会话一条 `ledger_path_overridden` 审计记录 | `src/adapters/dsh/hooks.py`、README §8.1 |
+| **N22** | **已修**：越界理由给出可用替代（项目根记为 `.`），范围校验未放松 | `src/adapters/dsh/adapter.py` |
+| **N23** | **已写清**：受治理会话只装配 `pwsh`；结论只覆盖 Hook 层 | `src/adapters/dsh/README.md` §11 |
+| **N24** | **已写清**：`binding=action` 必然失配；一个 `approval.json` 只放一条记录 | 同上 |
+
+同一轮还新显现 4 项（**N25** 受限沙箱里 Hook `spawn EPERM`、**N26** ACL 沙箱把 `0o700` 目录锁死、
+**N27** `exit_code_zero` 把"证据充分"与"命令成功"合成一条判定、**N28** 门禁对工作树之外的动作不免疫），
+登记与处置见 [11 §3](11-n16-n24-fix-round.md)。
 
 ## 6. 最终状态（集成收口）
 

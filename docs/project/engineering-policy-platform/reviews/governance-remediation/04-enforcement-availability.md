@@ -192,6 +192,19 @@ G04 的实测事实（探针自己打印的）：`pattern_mode_supported=true`�
 | `ungoverned` 声明的现实使用者 | 无 | 目前 10 个工具都走了检查或既有门禁；该档位是为"确实不可治理"的委派工具准备的显式出口，且必须带 reason + declared_by，并在 pre-check / 审计里显形 |
 | Hook 层把范围问题包成 `enforcement_param_error` | **未改** | `src/adapters/dsh/hooks.py:669` 是 T1 的写域。底层现在给了结构化 `ActionRequestError.reason_code`，T1 可以直接采用；本轮未越界修改 |
 
+### 7.1 后续轮次的更新（治理能力实测轮，2026-09-26）
+
+这一节的两行结论在后续的**能力实测轮**里被推进了，就地更新，避免读者停在旧口径上：
+
+| 上面那一行 | 后续轮次的实测结果 |
+| --- | --- |
+| `"受治理会话能跑 pytest"` **未证明** | **仍然未证明，但现在知道了更深的机制**：模式化审批（§3）实测**确实可用**——平台自己的 `enforcement.cli approve --binding pattern` 签出的条子让同一条 `python -m pytest -q` 从 `approval_required`(exit 2) 变成 `allow_delegated`(exit 0)。**但审批过了也没用**：注册表为 `exec.pwsh` 声明的 `exit_code_zero` 事后核实在"由 Agent 运行时执行"这条委派路径上**不可能通过**——`src/enforcement/postcheck.py:420-430` 要 `process.exit_code`，而 `src/adapters/dsh/enforcement.py:309-325` 重建 `ExecutionRecord` 时不带它 → `repair_required` → 失败关闭 → **dsh 用策略错误替换掉工具输出**。命令真的执行了（用 `__pycache__` 里 pytest 字节码的 mtime 反证），模型却拿不到 stdout |
+| `run_code` **的事后证据仍缺** | 仍然缺。另外补两条同类边界：`binding=action` 在会话里**永远过不去**（重试换 `tool_use_id` 即 `action_hash` 失配），所以会话里实际只有模式化审批可用；一个 `approval.json` 只解析一个 JSON 对象，**一次只能授权一个执行工具** |
+
+登记编号 **N16 / N24**，完整场景、证据与建议修法见
+[治理能力实测 · 05 新显现的问题](../governance-capability/05-emergent-issues.md) §2.1 / §2.9；
+本轮逐条判定见 [04 独立验收](../governance-capability/04-independent-verification.md)。
+
 ## 8. 参考
 
 - 根因与验收口径：`docs/project/engineering-policy-platform/reviews/governance-remediation/00-remediation-plan.md`
