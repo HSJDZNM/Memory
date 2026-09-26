@@ -23,6 +23,10 @@
 （.tmp/phase-8-orchestration/、.tmp/artifacts/、.tmp/retrieval/），并行会互相拆台——
 实测出现过"编排闭环 5/8 场景 FAIL"的假红，而单独跑一律通过。
 
+每个步骤子进程还拿到 TMPDIR/TEMP/TMP = 仓库内 .tmp/tmp/（按需创建）：临时目录不可写时
+Python 的 tempfile 会回退到 os.getcwd()，0 字节的 tmpXXXXXXXX 会落进仓库根、把 git status
+弄脏（见 temp_root() 的说明）。
+
 只用标准库 + PyYAML（已在锁定依赖里）。bash-only 的步骤（heredoc、set +e、grep -q、
 cat > /tmp）在 Windows 上无法直接执行，脚本会**显式跳过并打印原因**，不假装跑过。
 workflow 里新增了步骤却没有登记进分组时，脚本**失败关闭**（退出码 1）而不是悄悄少跑——
@@ -259,9 +263,40 @@ def _looks_unsafe(lines: list[str]) -> bool:
     return any(not line.startswith(PYTHON) for line in lines)
 
 
+def temp_root() -> Path:
+    """门禁及其子进程共用的临时根：仓库内 .tmp/tmp/（按需创建）。
+
+    为什么必须显式给：TMPDIR/TEMP/TMP 都不可写时，Python 的 tempfile 会**回退到 os.getcwd()**
+    （_candidate_tempdir_list 的最后一站就是 cwd），于是临时文件落进仓库根。实测（受限沙箱里
+    %TEMP% 的写入被拒/不存在）pytest 的全局捕获会在会话一开始就往仓库根丢两个 0 字节的
+    tmpXXXXXXXX：它们被活进程独占、活到会话结束，期间 git status 变脏，文本约定检查还会在
+    「先列出来、后读不到」的窗口里读到已经不存在的文件。给一个可写的临时根把这条回退路堵死。
+
+    ROOT 取**调用时刻**的模块属性，不在导入时固化——单测会把它 monkeypatch 到临时目录。
+    """
+
+    directory = Path(ROOT) / ".tmp" / "tmp"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        # 建不出可写的临时根就没有回退可言：失败关闭，而不是让子进程把临时文件丢进仓库根。
+        raise SystemExit("ci_local: 无法创建临时根 %s：%s" % (directory, error)) from error
+    return directory
+
+
 def _step_environment() -> dict[str, str]:
+    """每个步骤子进程的环境：换掉 PYTHONPATH，并把临时根钉在仓库内 .tmp/tmp/。
+
+    三个变量都设：tempfile 依次看 TMPDIR / TEMP / TMP，少设一个就可能在别的平台上又回退；
+    子进程（pytest、外部工具、闭环脚本）无论怎么再派生，都拿得到这个可写目录。
+    """
+
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(ROOT / "src")
+    root = str(temp_root())
+    environment["TMPDIR"] = root
+    environment["TEMP"] = root
+    environment["TMP"] = root
     return environment
 
 

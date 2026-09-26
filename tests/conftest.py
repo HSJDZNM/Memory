@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import shutil
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,54 @@ SRC_DIR = REPO_ROOT / "src"
 collect_ignore_glob = ["fixtures/validators/project/tests/*"]
 TOOLS_DIR = REPO_ROOT / "tools"
 TMP_ROOT = REPO_ROOT / ".tmp" / "tests"
+
+# 本会话的临时根：仓库内 .tmp/tmp/，按需创建。
+#
+# 为什么必须显式给：TMPDIR/TEMP/TMP 都不可写时，Python 的 tempfile 会**回退到 os.getcwd()**
+# （_candidate_tempdir_list 的最后一站就是 cwd），临时文件于是落进 cwd，通常就是仓库根。
+# 实测（受限沙箱里 %TEMP% 的写入被拒）：pytest 的全局捕获在会话一开始就往仓库根丢两个
+# 0 字节的 tmpXXXXXXXX，它们被活进程独占、活到会话结束——期间 git status 变脏，
+# tools/check_text_conventions.py 还会在「先列出来、后读不到」的窗口里读到不存在的文件。
+SESSION_TEMP_ROOT = REPO_ROOT / ".tmp" / "tmp"
+
+
+def _install_session_temp_root() -> bool:
+    """把会话的临时根固定到仓库内 .tmp/tmp/；返回「此前 tempfile 是否已回退到 cwd」。
+
+    返回值有用：捕获插件在 conftest 被导入之前就建好了捕获用的临时文件，只有当回退真的发生
+    过（那两个文件已经躺在 cwd，通常是仓库根）时才需要重启捕获（见 pytest_configure）；
+    正常机器上 tempfile 本来就能解析到可写目录，不做多余动作。
+    """
+
+    fallen_back = os.path.realpath(tempfile.gettempdir()) == os.path.realpath(os.getcwd())
+    SESSION_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    # 三个变量都设：tempfile 依次看 TMPDIR / TEMP / TMP，少设一个就可能在别的平台上又回退。
+    for name in ("TMPDIR", "TEMP", "TMP"):
+        os.environ[name] = str(SESSION_TEMP_ROOT)
+    # 丢掉缓存：此刻它可能正是那个「回退到 cwd」的值。
+    tempfile.tempdir = None
+    return fallen_back
+
+
+_TEMP_ROOT_HAD_FALLEN_BACK = _install_session_temp_root()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """把已经建在 cwd（通常是仓库根）的捕获临时文件改到 .tmp/tmp/ 重建。
+
+    pytest 的 FDCapture 用 TemporaryFile 承接 stdout/stderr，它建在「临时根」上；而捕获在
+    conftest 被导入之前就启动了，所以上面改环境变量救不了那两个已经建好的文件。仅在回退确实
+    发生过时重启一次全局捕获（禁用捕获插件或 --capture=no 时没有捕获文件，直接跳过）。
+    """
+
+    if not _TEMP_ROOT_HAD_FALLEN_BACK:
+        return
+    manager = config.pluginmanager.getplugin("capturemanager")
+    if manager is None or not manager.is_globally_capturing():
+        return
+    manager.stop_global_capturing()
+    manager.start_global_capturing()
+
 
 # 允许在未安装项目时直接运行测试（uv sync 之后这一行只是幂等的保险）。
 # tools/ 也加进来：性能基线生成器（tools/policy_bench.py）由测试与阶段证据共用同一份实现。
