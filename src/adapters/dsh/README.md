@@ -27,7 +27,7 @@ Claude Code 方言（dsh-hooks-claude-code：src/index.ts 的 CLAUDE_EVENTS）�
     SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop,
     SubagentStart, SubagentStop
 
-Codex 方言少 SubagentStart / SubagentStop。Phase 2 只接入 PreToolUse。
+Codex 方言少 SubagentStart / SubagentStop。Phase 2 只接入 PreToolUse；G2 修复后 PreToolUse 与 PostToolUse 都接入（见第 9.1 节）。
 
 ### 2.2 事件在参数确定前还是执行后触发
 
@@ -123,7 +123,7 @@ dsh 的放行语义（第 2.3、2.5 节）不能提供任何保证，所以本 A
    而被杀等于放行。--hooks-config 会让运行期检查这条不等式，不满足直接阻断。
 2. **任何异常都转成 exit 2**：进程入口捕获所有异常，绝不让解释器以退出码 1 结束。
 3. **接线上线自检**：hooks.json 不存在 / 不可解析 / 没有指向 adapters.dsh.hooks /
-   超时不等式不满足，都按阻断处理并给出可诊断信息（python -m adapters.dsh.hooks --self-check）。
+   超时不等式不满足，都按阻断处理；**没有 --hooks-config 也算失败**（G12，见第 9.4 节），--self-check 是它的显式入口。
 
 另有两条同源的规则：
 
@@ -252,7 +252,98 @@ Phase 4 之后，受控工具（写类 + 高权限执行类）在 Hook 里多走
 - **PostToolUse 不再是"未支持事件"**：它成为事后验证入口，退出码 2 表示"这次执行的结果不可信、
   需要修复"（副作用无法撤销，dsh 只能把工具结果标成错误）。
 
-## 9. 复现命令
+## 9. 治理覆盖缺口修复（G2 / G3 / G11 / G12）
+
+本轮修复的出发点是实测缺口清单（`docs/project/engineering-policy-platform/reviews/governance-coverage-gaps.md`）
+与根因分析（同目录 `governance-remediation/00-remediation-plan.md` 的 R1）。四条都长在"两层之间有没有接上"
+这条接缝上，因此每条都配了**会失败的检查**，而不是只改代码。
+
+### 9.1 G2 · 事后钩子成对注册（R1）
+
+**修前**：进程内插件只注册 `tools/pre-execute`，于是工具注册表为每个工具声明的 `post_checks`
+从来没有被执行过（实测 26 次受治理动作的事后台账 0 条）。Python 侧其实是完整的
+（hooks.py 的 `post_execute_outcome`、enforcement.py 的 `post`、postcheck 的逐项验证）——
+缺的就是那一行注册，而且它不会让任何单侧测试变红。
+
+**修后**：`policy-hook.plugin.mjs` 同时注册两个事件。真实 API 签名（已核对本机 dsh 0.1.6-alpha.2 的
+`@deepseek-ai/dsh-hooks-claude-code/lib/index.js:251-294`）：
+
+    ctx.on('tools/pre-execute',  async (exec, next) => …)           // 返回 {kind:'deny', reason}
+    ctx.on('tools/post-execute', async (exec, result, next) => …)   // 返回 {kind:'block', feedback:[{type:'text',text}]}
+
+- pre 阶段：exit 2 → `{kind:'deny'}`，工具不执行；
+- post 阶段：副作用已经发生，只能用 `{kind:'block', feedback}` 把这次工具结果**标成错误**，
+  语义是"结果不可信 / 需要修复"，与 hooks.py 的 exit 2 语义一致，绝不假装回滚；
+- post 载荷带 `tool_response`（content blocks 折叠成文本，超过 4000 字符截断并在文本里标注）
+  与 `tool_use_id`，字段口径与 Python 侧 `enforcement.post_event_fields()` 一致；
+- 审计与台账里，每次调用都带 `hook_event`（PreToolUse / PostToolUse）与 `action_id`，
+  于是"成对"这件事可以在一份产物上直接判定。
+
+**会失败的检查**：
+
+- `tests/contract/test_policy_hook_chain.py::test_the_plugin_registers_pre_and_post_together`
+  （源码级成对断言）与 `::test_the_plugin_forwards_post_execute_with_the_tool_response`
+  （真实 node + 可注入的假 ctx，观察注册表与转发载荷）；
+- `::test_an_allowed_governed_edit_leaves_both_pre_and_post_stages`：跑真实 pre + post 两段，
+  在 audit.jsonl 与 enforcement-ledger.jsonl 上断言**任一放行的受治理动作必须同时有 pre 与 post**，
+  且 post 必须走到 `post_validated` 终态；`::test_the_pairing_check_itself_can_fail`
+  证明这条检查本身会红（只有 pre、没有 post 的动作会被点出来）。
+
+### 9.2 G3 · 跳过可见性（只标注，不接 Phase 5 流水线）
+
+受治理动作的审计记录（**只增不改**）新增：
+
+| 字段 | 含义 |
+| --- | --- |
+| `effective_rule_count` | 本次**真的参与判定**的规则数（总规则数 - 跳过数） |
+| `skipped_rule_count` | 被跳过的规则数（**跳过 ≠ 通过**） |
+| `skipped_reason` | 跳过原因按 checker 归类，例如 `{"style_lint": 39}` |
+| `checker_scope` / `checker_scope_note` | pre-execute 路径只做文本类 checker（`policy.checkers.CONTEXT_CHECKERS`） |
+| `skipped_rule_ids_unknown` | 跳过名单里出现"规则集里没有"的 rule_id（不能静默消失） |
+
+没有文件维度的受控动作（pwsh / run_code 等）写 `effective_rule_count: 0` +
+`skipped_reason: {"phase1_not_applicable": N}`：Phase 1 一条规则都没跑，不留空让人误读成"查过了"。
+既有字段（`matched_rules` / `skipped_rules` / …）与 `AUDIT_SCHEMA_VERSION = "1.0"` 一律不动。
+
+**会失败的检查**：`tests/unit/test_hook_skip_visibility.py`（确定性单测 + 真实产物的字段断言，
+含"既有字段只增不改"的清单与 `skipped_reason` 归类）。
+
+### 9.3 G11 · 注入留痕（如实标注为近似）
+
+会进入 AI 上下文的项目约定文档（`CONTEXT_DOCUMENTS = ("AGENTS.md", "CLAUDE.md")`）的来源路径 +
+sha256，在**会话内第一次 Hook 调用**时写一条 `reason_code: "context_injection"` 的记录
+（每会话一次，靠 `AuditLedger.has_record` 去重；它追加在判定记录之后，因此"首行 = 本次判定"
+这条既有约定不变）。
+
+- 只按显式声明的文件名在项目根查找：不扫目录，也不从内容推断"它算不算项目约定"；
+- 读不到的文档显式写 `present: false`——"没有这个文件"同样是一条要写下来的结论；
+- 记录里 `approximate: true` + note 明说：dsh 的 SessionStart 没有接到本 Hook，
+  这是"本会话第一次工具调用"这个时刻，**不是真实注入时刻**；本轮也不做注入内容的策略校验
+  （载荷里没有"注入了什么"的事实，猜一份再判它等于把推断当证据）。
+
+**会失败的检查**：`test_the_session_records_which_context_documents_are_in_play`（哈希、present
+与"排在判定之后"的断言）与 `test_the_injection_record_is_written_once_per_session`。
+
+### 9.4 G12 · 接线自检缺席 = 失败关闭
+
+`check_wiring()` 在 `hooks_config_path is None` 时**返回错误**（修前返回空串 = 通过）。
+CLI 是生产入口，`main()` 默认 `allow_unverified_wiring=False`：缺 `--hooks-config`
+的 Hook 命令会被判 `wiring_error` 并以退出码 2 阻断每一次工具调用，而不是静默放行。
+唯一的出路是显式命名的 `--allow-unverified-wiring`（默认关闭；用它本身应当在证据里写明）。
+
+库内调用 `run_hook(..., allow_unverified_wiring=True)` 是**显式的**默认宽松：它服务于集成测试、
+学习手册与探针（它们不是"由 Agent 运行时启动的 Hook 进程"），生产入口不宽松。这条不对称是刻意的，
+理由与代价写在 `hooks.py::run_hook` 的 docstring 里。
+
+插件侧的同一契约：exit 非 0 非 2 一律拒绝；`ctx.shell` 抛错（起不来 / 被杀 / 被沙箱拒）也一律拒绝。
+
+**会失败的检查**：`test_self_check_without_hooks_config_is_fail_closed`、
+`test_the_only_way_out_is_the_named_waiver`、
+`test_a_hook_call_without_hooks_config_blocks_instead_of_allowing`、
+`test_the_plugin_denies_every_non_zero_non_two_exit_code_and_every_spawn_failure`
+（均在 `tests/contract/test_policy_hook_chain.py`）。
+
+## 10. 复现命令
 
     # 契约测试（fixture → PolicyContext）
     python -m pytest tests/contract/test_dsh_adapter.py -q
@@ -267,7 +358,17 @@ Phase 4 之后，受控工具（写类 + 高权限执行类）在 Hook 里多走
     # Phase 4：受控执行链路（注册表 / 授权 / 台账 / 审计 / 事后验证）
     python -m pytest tests/integration/test_dsh_enforcement.py -q
 
+    # G2 / G12：成对契约（真插件 + 假 ctx、真实产物、CLI 失败关闭）
+    python -m pytest tests/contract/test_policy_hook_chain.py -q
+
+    # G3 / G11：跳过可见性与注入留痕的审计字段
+    python -m pytest tests/unit/test_hook_skip_visibility.py -q
+
+    # 审计里必须能看到成对阶段（hook_event）与"查了几条规则"
+    python -c "import json,pathlib; [print(r.get('hook_event'), r.get('reason_code'), r.get('effective_rule_count'), r.get('skipped_rule_count')) for r in map(json.loads, pathlib.Path('.policy/audit.jsonl').read_text(encoding='utf-8').splitlines())]"
+
     # 真实沙箱闭环（受控临时项目，不连接生产仓库与真实凭据）
+    python tools/dsh_sandbox_loop.py
     dsh --profile headless --patch <patch.yml> "用 edit 工具修改 src/shop/order_controller.py"
 
 沙箱闭环的完整步骤、断言与观测结果见 docs/project/engineering-policy-platform/phases/phase-2-dsh-adapter.md
