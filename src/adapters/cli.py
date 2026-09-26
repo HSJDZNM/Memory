@@ -7,8 +7,10 @@
     python -m adapters.cli check --json               # 一致性套件（多 Agent 同一套语义）
     python -m adapters.cli check --agent dsh --agent generic-json
     python -m adapters.cli inspect --event event.json --agent generic-json
+    python -m adapters.cli wiring [--json] [--check]   # 本机 Agent 通道清点（接线 + 留痕）
 
-退出码：0 = 通过；1 = 检查失败（漂移 / 能力不足 / 一致性失败）；2 = 用法或配置错误。
+退出码：0 = 通过（或环境跳过）；1 = 检查失败（漂移 / 能力不足 / 一致性失败 / 通道未接线）；
+2 = 用法或配置错误。
 "与 Phase 4 的注册表审核同一条思路"：能力声明是数据，改声明必须重新审核。
 """
 
@@ -38,12 +40,19 @@ from adapters.loader import (
 )
 from adapters.models import AdapterManifest, AgentEvent, EnforcementLevel, EventType
 from adapters.runtime import AgentRuntime
+from adapters.wiring import (
+    DEFAULT_OBSERVED_SESSIONS,
+    DEFAULT_STALE_AFTER_SECONDS,
+    WiringError,
+    WiringReport,
+    probe_wiring,
+)
 from policy.engine import evaluate
 from policy.loader import LoaderError, load_rule_set
 
 from adapters.json_adapter import agent_response_from_decision
 
-__all__ = ["build_parser", "main", "run_approve", "run_check", "run_matrix"]
+__all__ = ["build_parser", "main", "run_approve", "run_check", "run_matrix", "run_wiring"]
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -387,10 +396,104 @@ def run_events(args: argparse.Namespace) -> int:
     return EXIT_OK if not missing else EXIT_FAILED
 
 
+def _print_wiring(report: WiringReport) -> None:
+    """人类可读的通道清点：每个通道一行状态 + 理由，失败项写 stderr。"""
+
+    print(
+        "Agent 通道清点：dsh 配置根 = " + report.dsh_home_label
+        + "（来源 " + report.dsh_home_source + "）"
+    )
+    print("  探测状态：" + report.probe_status + "；通道 " + str(len(report.channels)) + " 个")
+    for channel in report.channels:
+        mark = "WIRED" if channel.ok else channel.status.value
+        print("  " + channel.channel_id + "  [" + mark + "]")
+        print("      " + channel.detail)
+        if channel.audit_path is not None:
+            print(
+                "      留痕：" + channel.audit_path
+                + "（记录 " + str(channel.audit_records) + " 条，最后一条 "
+                + str(channel.last_record_at) + "）"
+            )
+        if channel.bundles:
+            print("      bundles：" + ", ".join(channel.bundles))
+        for warning in channel.warnings:
+            print("      警告：" + warning, file=sys.stderr)
+    for note in report.notes:
+        print("  说明：" + note)
+    tools = report.tools
+    print("工具漂移（只报告，本轮不作为阻断项）：")
+    print("  声明源：" + tools.declaration_source + "（" + str(len(tools.declared)) + " 项）")
+    print("  观察源：" + str(tools.observation_source) + "；" + tools.observation_detail)
+    if tools.declaration_error is not None:
+        print("  声明读不到：" + tools.declaration_error, file=sys.stderr)
+    else:
+        print(
+            "  运行期出现过但不在表里："
+            + (", ".join(tools.observed_not_in_table) if tools.observed_not_in_table else "无")
+        )
+        print(
+            "  表里有但本轮没观察到："
+            + (", ".join(tools.table_not_observed) if tools.table_not_observed else "无")
+        )
+    if report.skipped:
+        # 跳过必须可判定：它既不是 pass 也不是 fail，原因与复现命令都写出来。
+        print("结果：skipped（环境跳过：本机没有可发现的 Agent 运行时——不是通过）", file=sys.stderr)
+        print("  原因：" + str(report.skip_reason), file=sys.stderr)
+        print("  复现：" + str(report.reproduce), file=sys.stderr)
+        return
+    if report.ok:
+        print("结果：pass（" + str(len(report.channels)) + " 个通道全部接线且有新鲜留痕）")
+        return
+    print("结果：fail（未接线 / 无留痕 " + str(len(report.failures)) + " 个通道）", file=sys.stderr)
+    for failure in report.failures:
+        print("  FAIL " + failure, file=sys.stderr)
+    print("加 --check 可以让它成为门禁（退出码 1）", file=sys.stderr)
+
+
+def run_wiring(args: argparse.Namespace) -> int:
+    """通道清点（R2 / G13 / G1）：把「没接线」变成可观测、可失败的显式状态。
+
+    不带 --check 时它是一份报告（退出码 0）；带 --check 时任一通道未接线 / 无留痕即退出 1。
+    ``不接线`` 本身不是异常，因此它必须是**状态**，而不是崩溃或者静默通过。
+    """
+
+    now = None
+    if args.now:
+        try:
+            now = clock.datetime.fromisoformat(str(args.now).replace("Z", "+00:00"))
+        except ValueError:
+            print("[adapters] --now 不是 ISO8601 时间：" + str(args.now), file=sys.stderr)
+            return EXIT_USAGE
+    try:
+        report = probe_wiring(
+            dsh_home=args.dsh_home,
+            project_root=args.project_root,
+            stale_after_seconds=args.stale_after,
+            observed_sessions=args.observe_sessions,
+            now=now,
+        )
+    except WiringError as error:
+        print("[adapters] 通道清点无法进行：" + str(error), file=sys.stderr)
+        return EXIT_USAGE
+
+    payload = report.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        _print_wiring(report)
+    if args.require_runtime and report.skipped:
+        # 与 tools/dsh_sandbox_loop.py 的 --require-dsh 同一条思路：
+        # 这个开关问的是"本机真的有运行时吗"，环境跳过必须能让它变红。
+        return EXIT_FAILED
+    if args.check and report.result == "fail":
+        return EXIT_FAILED
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m adapters.cli",
-        description="多 Agent 适配层：支持矩阵、能力声明审核、一致性套件与事件检查。",
+        description="多 Agent 适配层：支持矩阵、能力声明审核、一致性套件、事件检查与通道清点。",
     )
     parser.add_argument("--root", default=None, help="仓库根目录（默认自动定位）")
     parser.add_argument(
@@ -444,6 +547,49 @@ def build_parser() -> argparse.ArgumentParser:
 
     events = _with_json(sub.add_parser("events", help="列出各 Agent 的最小真实事件 fixture"))
     events.set_defaults(func=run_events)
+
+    wiring = _with_json(
+        sub.add_parser("wiring", help="清点本机 Agent 通道：接线状态与留痕状态（未接线即失败）")
+    )
+    wiring.add_argument(
+        "--check",
+        action="store_true",
+        help="有任一通道未接线 / 无留痕时退出 1（默认只报告，退出 0）",
+    )
+    wiring.add_argument(
+        "--require-runtime",
+        action="store_true",
+        help="环境跳过（本机没有可发现的 Agent 运行时）也退出 1：跳过不能被读成通过",
+    )
+    wiring.add_argument(
+        "--dsh-home",
+        default=None,
+        help="dsh 配置根（默认 $DSH_HOME，其次 ~/.dsh 等等价位置）",
+    )
+    wiring.add_argument(
+        "--project-root",
+        default=None,
+        help="钩子命令里相对路径的解析基准（默认用桥声明的 projectDir，其次 profile 目录）",
+    )
+    wiring.add_argument(
+        "--stale-after",
+        type=float,
+        default=DEFAULT_STALE_AFTER_SECONDS,
+        help=f"留痕陈旧阈值（秒，默认 {DEFAULT_STALE_AFTER_SECONDS} = 7 天）",
+    )
+    wiring.add_argument(
+        "--observe-sessions",
+        type=int,
+        default=DEFAULT_OBSERVED_SESSIONS,
+        help=f"工具漂移最多扫描最近 N 份 dsh 会话记录"
+        f"（默认 {DEFAULT_OBSERVED_SESSIONS}；0 = 不观察）",
+    )
+    wiring.add_argument(
+        "--now",
+        default=None,
+        help="覆盖当前时间（ISO8601，仅用于可复现的报告；不写进输出）",
+    )
+    wiring.set_defaults(func=run_wiring)
     return parser
 
 
@@ -462,6 +608,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.json = bool(getattr(args, "json", False))
     args.approved = getattr(args, "approved", None)
     args.allow_unapproved = bool(getattr(args, "allow_unapproved", False))
+    args.now = getattr(args, "now", None)
+    args.require_runtime = bool(getattr(args, "require_runtime", False))
     args.root = str(Path(args.root).resolve()) if args.root else str(repo_root())
     return int(args.func(args))
 

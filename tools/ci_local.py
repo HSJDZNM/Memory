@@ -94,6 +94,7 @@ CODE_STEPS = (
     "Multi-agent conformance suite",
     "Adapter support matrix is approved",
     "Adapter event fixtures exist",
+    "Agent channel wiring inventory",
     "Multi-agent closed loop",
     "Policy API self-check",
     "Policy API contract snapshot",

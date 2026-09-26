@@ -279,6 +279,9 @@ uv run python -m adapters.cli approve --reviewer <name>           # 审核能力
 uv run python -m adapters.cli check                               # 一致性套件：所有 Adapter 对同一组语义事件给同一套结论
 uv run python -m adapters.cli events                              # 每个 Agent 的兼容性 fixture 是否存在
 uv run python -m adapters.cli inspect --agent dsh --event e.json  # 看一条事件被翻译成了什么
+uv run python -m adapters.cli wiring                              # 通道清点：本机每个 Agent 运行时的接线与留痕状态（报告模式）
+uv run python -m adapters.cli wiring --check                      # 同上，但未接线 / 无留痕 / 预算不等式不成立即退出 1
+uv run python -m adapters.cli wiring --check --require-runtime    # 连"本机没有 Agent 运行时"也算失败（跳过不等于通过）
 uv run python tools/agent_loop.py                                 # 多 Agent 闭环（等价结论 / 执行一次 / 隔离 / trace / 熔断）
 ```
 
