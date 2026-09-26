@@ -145,7 +145,8 @@ _HOOKS_TEMPLATE = """{{
         "hooks": [
           {{
             "type": "command",
-            "command": "python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml --hooks-config .policy/hooks.json --audit .policy/audit.jsonl",
+            "command": "python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml \
+--hooks-config .policy/hooks.json --audit .policy/audit.jsonl",
             "timeout": 30
           }}
         ]
@@ -443,9 +444,10 @@ def _wiring_argv(env: Env, shape: tuple[str, tuple[str, ...], tuple[str, ...]], 
     return argv
 
 
-def _wiring_command(env: Env, *, check: bool, dsh_home: Optional[Path] = None,
-                    use_flag: bool = False, extra: Sequence[str] = (),
-                    ) -> tuple[Optional[Run], str, Optional[tuple[str, tuple[str, ...], tuple[str, ...]]]]:
+def _wiring_command(
+    env: Env, *, check: bool, dsh_home: Optional[Path] = None,
+    use_flag: bool = False, extra: Sequence[str] = (),
+) -> tuple[Optional[Run], str, Optional[tuple[str, tuple[str, ...], tuple[str, ...]]]]:
     """发现可用的接线清点入口（T2 的 CLI 名字不是冻结接口，因此按候选逐个试）。"""
 
     for shape in _WIRING_SHAPES:
@@ -517,7 +519,9 @@ def check_g01(env: Env) -> Check:
     )
     run, command, _shape = _wiring_command(env, check=False)
     if run is None:
-        check.evidence.append("没有可用的接线清点入口（候选：adapters.cli wiring / adapters.wiring）")
+        check.evidence.append(
+            "没有可用的接线清点入口（候选：adapters.cli wiring / adapters.wiring）"
+        )
         check.facts.update({"wiring_entrypoint_available": False, "channels_listed": False,
                             "unwired_channel_explicit": False, "entrypoint": ""})
         return check
@@ -1180,9 +1184,11 @@ def check_g04(env: Env) -> Check:
     )
     check.facts["replay_first_exit"] = first.exit
     check.facts["platform_driver_available"] = shutil.which("pwsh") is not None
-    check.evidence.append(f"{first.command} -> exit={first.exit} "
-                          f"execution={None if not isinstance(execution, Mapping) else execution.get('status')}"
-                          f"（本机 pwsh 是否在 PATH：{check.facts['platform_driver_available']}）")
+    check.evidence.append(
+        f"{first.command} -> exit={first.exit} "
+        f"execution={None if not isinstance(execution, Mapping) else execution.get('status')}"
+        f"（本机 pwsh 是否在 PATH：{check.facts['platform_driver_available']}）"
+    )
     replay = env.enforcement(["execute", "--request", str(replay_req), "--approval",
                               str(replay_approval), "--workspace", str(env.project)],
                              name="g04-replay")
@@ -1353,7 +1359,8 @@ def check_g05(env: Env) -> Check:
     outside_run = _workdir_hook(env, name="outside", workdir=env.work.as_posix())
     check.facts["outside_detail_snippet"] = " ".join(outside_run.stderr.split())[:300]
     check.facts["outside_still_rejected"] = all(
-        reasons.get(name, "") not in {"", "allow", "allow_delegated"} for name in ("outside", "dotdot")
+        reasons.get(name, "") not in {"", "allow", "allow_delegated"}
+        for name in ("outside", "dotdot")
     ) and all(
         ("out_of_scope" in reasons.get(name, "") or "param_error" in reasons.get(name, ""))
         for name in ("outside", "dotdot")
@@ -1366,9 +1373,12 @@ def check_g05(env: Env) -> Check:
     check.facts["fallback_reason_without_structured_code"] = (
         payload.get("reason_code") if isinstance(payload, Mapping) else None
     )
-    check.facts["fallback_exit_code"] = payload.get("exit_code") if isinstance(payload, Mapping) else None
+    check.facts["fallback_exit_code"] = (
+        payload.get("exit_code") if isinstance(payload, Mapping) else None
+    )
     check.evidence.append(
-        f"注入一个没有 reason_code 的桥异常 -> reason={check.facts['fallback_reason_without_structured_code']} "
+        f"注入一个没有 reason_code 的桥异常 -> "
+        f"reason={check.facts['fallback_reason_without_structured_code']} "
         f"exit={check.facts['fallback_exit_code']}"
     )
     if not check.facts["fallback_probe_ok"]:
@@ -1382,13 +1392,31 @@ def check_g05(env: Env) -> Check:
                  call_id="probe-g05-file-dot", project=env.project),
         audit="g05-file-dot",
     )
-    check.evidence.append(f"edit file_path='.' -> exit={file_run.exit} reason={_hook_reason(file_run)}")
+    check.evidence.append(
+        f"edit file_path='.' -> exit={file_run.exit} reason={_hook_reason(file_run)}"
+    )
     check.facts["file_param_dot_blocked"] = file_run.exit != 0
     check.facts["file_param_dot_reason"] = _hook_reason(file_run)
     return check
 
 
 # ---------------------------------------------------------------------------- G06
+# 范围声明（留着，别删）：
+#   G06 **只驱动 Phase 2 的 `python -m adapters.dsh.hooks`**——它证明的是"钩子那条路径没有回退"，
+#   它**不覆盖 Phase 6 的多 Agent 路径**。G6 曾经在那条路径上独立地成立过一轮：同一段变更文本，
+#   走 dsh 钩子被拦、走多 Agent 路径**静默放行**；而在那棵树上跑本探针，G06 照样报 13/13。
+#   所以**不要把这里的全绿当成"依赖规则在所有入口都生效"**。
+#
+#   覆盖 Phase 6 的是（git 跟踪，随代码一起演进）：
+#     tests/integration/test_dependency_path_consistency.py
+#     tests/contract/test_dependency_extraction_parity.py
+#   本轮独立验收另有探针在 .tmp/verifier-n1/probe_n1.py（构建产物，cleanup 会删、可重建；
+#   复现命令见本轮独立验收报告 08-n1-independent-verification.md 的 §7.2，
+#   与 07-ruff-cleanup-and-n1.md、00-remediation-plan.md 同在
+#   docs/project/engineering-policy-platform/reviews/governance-remediation/ 下。）
+#
+#   待办 N13（00-remediation-plan.md §5）：给 G06 补一组走 generic-json 规范事件的用例。
+#   它的验收判据是"**对修前快照必须变红**"——否则就是又做了一台假绿仪器。
 _G06_CASES: dict[str, str] = {
     "literal_from": "from repository import Repository\n",
     "plain_import": "import repository\n",
@@ -1484,7 +1512,9 @@ if out["has_layer_resolution"]:
         "pattern": fallback.matched_pattern,
         "defaulted": fallback.defaulted,
     }
-    out["layer_for_backward_compatible"] = config.layer_for("src/inventory_controller.py") == matched.layer
+    out["layer_for_backward_compatible"] = (
+        config.layer_for("src/inventory_controller.py") == matched.layer
+    )
 print(json.dumps(out))
 '''
 
@@ -1543,7 +1573,9 @@ def check_g07(env: Env) -> Check:
             and fallback.get("pattern") is None
             and fallback.get("defaulted") is True
         )
-        check.facts["layer_for_backward_compatible"] = bool(data.get("layer_for_backward_compatible"))
+        check.facts["layer_for_backward_compatible"] = bool(
+            data.get("layer_for_backward_compatible")
+        )
         check.evidence.append(f"layer_resolution 接口：{json.dumps(data, ensure_ascii=False)}")
     else:
         check.facts["matched_resolution_correct"] = False
@@ -1573,7 +1605,8 @@ def check_g07(env: Env) -> Check:
         "default_defaulted": second.get("layer_defaulted"),
     })
     check.facts["matched_has_pattern"] = (
-        first.get("layer_defaulted") is False and first.get("layer_matched_pattern") == "**/*_controller.py"
+        first.get("layer_defaulted") is False
+        and first.get("layer_matched_pattern") == "**/*_controller.py"
     )
     check.facts["defaulted_is_marked"] = (
         second.get("layer_defaulted") is True and second.get("layer_matched_pattern") is None
@@ -1650,7 +1683,10 @@ def check_g08(env: Env) -> Check:
         )
         matched = env.py_json(code2)
         check.facts["amplified_matches"] = sorted(matched) if isinstance(matched, list) else []
-        check.evidence.append(f"adapter.yaml 现有 pattern 的命中集合（{len(check.facts['amplified_matches'])} 项）")
+        check.evidence.append(
+            f"adapter.yaml 现有 pattern 的命中集合"
+            f"（{len(check.facts['amplified_matches'])} 项）"
+        )
     return check
 
 
@@ -1816,7 +1852,10 @@ def check_g11(env: Env) -> Check:
     check.facts["injection_trace_in_audit"] = bool(markers)
     check.facts["injection_markers"] = sorted(set(markers))
     check.facts["audit_record_keys"] = sorted({key for record in records for key in record})
-    check.evidence.append(f"审计记录 {len(records)} 条；命中注入留痕的记录：{check.facts['injection_markers']}")
+    check.evidence.append(
+        f"审计记录 {len(records)} 条；命中注入留痕的记录："
+        f"{check.facts['injection_markers']}"
+    )
 
     # 另一条可能的落点：接线自检（T1 被要求"找不到注入事件来源时在接线自检记录一次"）。
     self_check = env.py(["-m", "adapters.dsh.hooks", "--config", ".policy/dsh-adapter.yaml",
@@ -1840,7 +1879,10 @@ def check_g11(env: Env) -> Check:
         "print(json.dumps(sorted(hits), ensure_ascii=False))\n"
     )])
     check.facts["source_files_mentioning_injection"] = grep.json() or []
-    check.evidence.append(f"src/ 下提到 injection/注入 的文件：{check.facts['source_files_mentioning_injection']}")
+    check.evidence.append(
+        f"src/ 下提到 injection/注入 的文件："
+        f"{check.facts['source_files_mentioning_injection']}"
+    )
     return check
 
 
@@ -1941,7 +1983,8 @@ def check_g12(env: Env) -> Check:
             check.facts[fact] = False
         check.facts[f"library_{label}_outcome"] = payload_data
         check.evidence.append(
-            f"库内调用 hooks.run_hook(hooks_config_path=None{'' if not expect_refusal else ', allow_unverified_wiring=False'})"
+            f"库内调用 hooks.run_hook(hooks_config_path=None"
+            f"{'' if not expect_refusal else ', allow_unverified_wiring=False'})"
             f" -> {payload_data}"
         )
         if not isinstance(payload_data, Mapping):
@@ -1968,7 +2011,10 @@ def _render(report: Mapping[str, Any]) -> str:
             lines.append(f"        探针自身异常: {item['error']}")
         for line in item["mismatches"]:
             lines.append(f"        不一致: {line}")
-        lines.append(f"        实测: {json.dumps(item['facts'], ensure_ascii=False, sort_keys=True)}")
+        lines.append(
+            f"        实测: "
+            f"{json.dumps(item['facts'], ensure_ascii=False, sort_keys=True)}"
+        )
     failed = [item["id"] for item in report["checks"] if not item["ok"]]
     lines.append("")
     lines.append(f"结论: {len(report['checks']) - len(failed)}/{len(report['checks'])} 与"
@@ -2067,7 +2113,10 @@ def compare_runs(runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                     for key in keys
                     if left.get(key) != right.get(key)
                 ]
-                differences.append(f"{left['id']} 在 run#0 与 run#{index} 之间不同：" + "；".join(detail))
+                differences.append(
+                    f"{left['id']} 在 run#0 与 run#{index} 之间不同："
+                    + "；".join(detail)
+                )
     return {
         "runs": [str(item.get("run_id")) for item in runs],
         "consistent": not differences,
