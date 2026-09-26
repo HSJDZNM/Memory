@@ -209,6 +209,13 @@ def dsh_argv() -> list[str] | None:
 # catch 分支）。它出现的唯一含义是"Hook 进程起不来"，与策略判定无关。
 SPAWN_DENIED_MARKERS = ("spawn EPERM", "Hook 无法执行")
 
+# dsh **自己**还没起来就被环境挡住时的原文：受限沙箱不允许写 $DSH_HOME 下的 profile。
+# 与 SPAWN_DENIED_MARKERS 是两件事：那边是"dsh 起来了、Hook 起不来"，这边是
+# "dsh 连 profile 都写不进去、进程直接退出"。两者都属于环境限制，不是策略判定结果；
+# 区别在于诊断要说清是"哪一层没起来"，否则会把 dsh 装不起来误读成治理失效。
+DSH_STARTUP_DENIED_MARKERS = ("EPERM: ", "EACCES: ", "WinError 5")
+DSH_HOME_MARKERS = ("profiles", "cordis", ".dsh", "dsh-home")
+
 
 def run_dsh(prompt: str, log_name: str) -> int:
     argv = dsh_argv()
@@ -249,6 +256,29 @@ def hook_could_not_spawn() -> bool:
         except OSError:
             continue
         if any(marker in text for marker in SPAWN_DENIED_MARKERS):
+            return True
+    return False
+
+
+def dsh_could_not_start() -> bool:
+    """判断"审计为空"是不是因为 dsh 自己都没起来（受限沙箱不许它写 $DSH_HOME 下的 profile）。
+
+    本机实测：默认 DSH_HOME 下 dsh 以退出码 1 结束，日志里是
+    `EPERM: C:\\Users\\ZNM\\.dsh\\profiles\\headless\\cordis.yml`——连启动都没完成。
+    这与"被规则阻断""Hook 起不来"都是不同的结论，所以诊断必须分开写。
+
+    判据刻意收紧：既要出现权限被拒的原文，又要同时指向 dsh 自己的配置路径，
+    避免把日志里其它无关的 EPERM 误判成环境跳过（误判会把真失败洗成 skipped）。
+    """
+
+    for log in sorted(LOGS.glob("*.txt")):
+        try:
+            text = log.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not any(marker in text for marker in DSH_STARTUP_DENIED_MARKERS):
+            continue
+        if any(token in text for token in DSH_HOME_MARKERS):
             return True
     return False
 
@@ -418,6 +448,20 @@ def main(argv: list[str] | None = None) -> int:
                 "dsh --profile headless --patch .policy/patch.yml "
                 "\"用 edit 工具在 src/shop/order_controller.py 的 import 区加一行 "
                 "'from repository import OrderRepository'，然后一句话报告结果。\""
+            )
+        elif dsh_could_not_start():
+            payload["result"] = "skipped"
+            payload["environment_skipped"] = True
+            payload["reason"] = (
+                "dsh 自身起不来（写 profile 被环境拒绝）：受限沙箱不允许写 $DSH_HOME 下的 "
+                "profiles/*.yml，dsh 在注册任何 Hook 之前就退出了。这是环境限制，"
+                "不是策略判定，也不是本仓库的缺陷——但它与「Hook 起不来」是两层不同的失败，"
+                "所以单独一个状态与理由。"
+            )
+            payload["dsh_startup_denied"] = True
+            payload["reproduce"] = (
+                "在不受限的 shell 里（或先把 DSH_HOME 指到工作区内）执行："
+                "python tools/dsh_sandbox_loop.py --require-dsh"
             )
     write(ARTIFACT, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + chr(10))
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
