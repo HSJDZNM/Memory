@@ -52,6 +52,9 @@ target-version = "py311"
 #             OWASP 原文不是同一件事，实测还会把硬编码命令判成违规（仓库自己的门禁脚本）
 #     S612 -> SEC-022  S701 -> SEC-012
 #   LOG015 / TRY400 -> SEC-017 / SEC-018  根 logger / 记录异常而非消息（OWASP Logging）
+#   invalid-syntax  -> 不是可 select 的 lint 码，而是"ruff 没能分析这个文件"的信号：它在
+#                       validation/validators.yaml 的 tool.ruff.analysis_failure_codes 里声明，
+#                       命中即失败关闭（既不进下面的 select 表，也不对应任何规则）
 #
 # 刻意**没有** select 的码（有过候选规则，但镜像原文撑不起它实际判定的范围，宁可不要这条规则）：
 #   S101 assert        —— 唯一谈到 assert 的镜像段落（C-Based Toolchain Hardening §ASSERT）鼓励相反做法；

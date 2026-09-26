@@ -908,9 +908,16 @@ def _resolve_read_scope(
     if len(target.parts) <= len(anchor.parts) or [item.lower() for item in head] != [
         item.lower() for item in anchor.parts
     ]:
+        # N22：拒绝方向不变（只读同样受 path_scope=workspace 约束），但理由要能一次改对。
+        # 实测代价：模型拿 glob 去摸仓库根时被拦，理由只说"越界一律拒绝"，它只能白试一次。
+        # 这里给出**可用的替代**：受控项目根本身是合法目标（记为 "."），项目内的路径要写成
+        # 仓库相对路径。不写绝对路径、也不写项目外的目录名，避免泄露本机布局。
         raise DshEventError(
             f"{tool} 的目标 {raw_path if raw_path else cwd!r} 不在受控项目 {anchor.name} 内："
-            "只读动作同样受 path_scope=workspace 约束，越界一律拒绝"
+            "只读动作同样受 path_scope=workspace 约束，越界一律拒绝。"
+            "可用的替代：把目标改成受控项目以内的**仓库相对路径**"
+            f"（例如 src/shop/order_service.py；受控项目根 {anchor.name} 本身记为 `.`），"
+            "不要用项目外的绝对路径，也不要用 .. 往项目外走"
         )
     return normalize_repo_path("/".join(target.parts[len(anchor.parts) :]))
 

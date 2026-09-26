@@ -42,6 +42,7 @@ from adapters.runtime import AgentRuntime
 from adapters.wiring import (
     DEFAULT_OBSERVED_SESSIONS,
     DEFAULT_STALE_AFTER_SECONDS,
+    READING_GUIDE,
     WiringError,
     WiringReport,
     probe_wiring,
@@ -395,16 +396,31 @@ def run_events(args: argparse.Namespace) -> int:
 
 
 def _print_wiring(report: WiringReport) -> None:
-    """人类可读的通道清点：每个通道一行状态 + 理由，失败项写 stderr。"""
+    """人类可读的通道清点：每个通道先给**两根各自独立的事实轴**，再给理由，失败项写 stderr。
+
+    N20：以前只有一行 `[WIRED]`/"audit_never_written"，读者没法区分"接线在、但没有留痕"
+    与"接线根本不在"。现在接线事实与留痕事实分行打印，谁坏了就写在谁那一行。
+    """
 
     print(
         "Agent 通道清点：dsh 配置根 = " + report.dsh_home_label
         + "（来源 " + report.dsh_home_source + "）"
     )
     print("  探测状态：" + report.probe_status + "；通道 " + str(len(report.channels)) + " 个")
+    # 口径写在最前面：一次 WIRED 是"此刻两根轴都成立"的快照，不是治理已开启的长期证据。
+    print("  口径：" + READING_GUIDE)
+    total = len(report.channels)
+    wiring_ok = sum(1 for channel in report.channels if channel.wiring_status.is_wired)
+    freshness_ok = sum(1 for channel in report.channels if channel.freshness_status.is_fresh)
+    print(
+        "  事实合计：接线成立 " + str(wiring_ok) + "/" + str(total)
+        + "；留痕新鲜 " + str(freshness_ok) + "/" + str(total)
+    )
     for channel in report.channels:
         mark = "WIRED" if channel.ok else channel.status.value
         print("  " + channel.channel_id + "  [" + mark + "]")
+        print("      接线事实：" + channel.wiring_status.value)
+        print("      留痕事实：" + channel.freshness_status.value)
         print("      " + channel.detail)
         if channel.audit_path is not None:
             print(

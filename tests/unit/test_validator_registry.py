@@ -154,6 +154,47 @@ def test_missing_tool_config_is_rejected(tmp_root: Path) -> None:
     assert "配置不存在" in str(error.value)
 
 
+def test_analysis_failure_codes_are_declared_as_data() -> None:
+    """"哪些码意味着本次分析不成立"是注册表数据，不是代码里的码表。"""
+
+    registry = load_config(root=REPO_ROOT).registry
+    ruff = registry.spec("tool.ruff")
+    mypy = registry.spec("tool.mypy")
+
+    assert ruff is not None and ruff.tool is not None
+    assert ruff.tool.analysis_failure_codes == ("invalid-syntax",)
+    # 没有声明的工具保持空元组：默认不把任何码当"分析不成立"
+    assert mypy is not None and mypy.tool is not None
+    assert mypy.tool.analysis_failure_codes == ()
+
+
+def test_analysis_failure_codes_are_rejected_where_nobody_reads_them(tmp_root: Path) -> None:
+    """数据声明的能力必须有实现承接，否则又是"看起来在管、实际什么都没查"。"""
+
+    document = registry_document()
+    for item in document["validators"]:
+        if item["id"] == "tool.mypy":
+            item["tool"]["analysis_failure_codes"] = ["syntax"]
+
+    with pytest.raises(RegistryError) as error:
+        _load(document, tmp_root)
+
+    assert "analysis_failure_codes" in str(error.value)
+    assert "tool.mypy" in str(error.value)
+
+
+def test_analysis_failure_codes_reject_duplicates_and_blanks(tmp_root: Path) -> None:
+    document = registry_document()
+    for item in document["validators"]:
+        if item["id"] == "tool.ruff":
+            item["tool"]["analysis_failure_codes"] = ["invalid-syntax", "INVALID-SYNTAX"]
+
+    with pytest.raises(RegistryError) as error:
+        _load(document, tmp_root)
+
+    assert "重复码" in str(error.value)
+
+
 def test_unknown_placeholder_is_rejected(tmp_root: Path) -> None:
     document = registry_document()
     for item in document["validators"]:

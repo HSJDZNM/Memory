@@ -55,9 +55,13 @@ from .registry import ValidationConfig, RegistryError, config_digest
 from .source import SourceError, SourceFile, read_source
 
 __all__ = [
+    "JUDGEMENT_EMPTY",
+    "JUDGEMENT_OUTCOMES",
+    "JUDGEMENT_UNANALYZED",
     "KNOWN_VALIDATOR_IDS",
     "PIPELINE_SCHEMA_VERSION",
     "BuiltinError",
+    "CheckerJudgement",
     "PipelineReport",
     "PipelineRequest",
     "render_report",
@@ -65,6 +69,14 @@ __all__ = [
 ]
 
 PIPELINE_SCHEMA_VERSION = "1.0"
+
+# checker 的"非判定"口径（PipelineReport.judgements 的 outcome）：
+#   empty      —— 验证器跑成了，但本次一条诊断都没归到任何规则（只计数、不判定）；
+#   unanalyzed —— 验证器没能分析本次目标（命中注册表声明的"分析不成立"码，失败关闭）。
+# "判定过、未发现"**不在这里**：它是 served_checkers 的成员，不需要再写一遍。
+JUDGEMENT_EMPTY = "empty"
+JUDGEMENT_UNANALYZED = "unanalyzed"
+JUDGEMENT_OUTCOMES: Tuple[str, ...] = (JUDGEMENT_EMPTY, JUDGEMENT_UNANALYZED)
 
 # 显式依赖（CLI --dependencies）在证据里的验证器身份：它也是一种证据来源，不是"没有证据"。
 EXPLICIT_VALIDATOR_ID = "cli.explicit"
@@ -114,6 +126,39 @@ class ValidatorOutput:
     unmapped: int = 0
     payload: Mapping[str, Any] = field(default_factory=dict)
     served: Tuple[str, ...] = ()
+    analysis_failure: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CheckerJudgement:
+    """一个 checker 的"非判定"口径：为什么它没被判定，或为什么它只是跑过。
+
+    存在这条记录的理由是 N17：修复前，ruff 在语法错误的文件上"没能分析"却记为 ok，
+    39 条 style_lint 于是被记成"已判定 / 未发现"——账本要靠**缺席**才能表达"没查成"，
+    而缺席与"判定过、未发现"长得一样。把两种非判定情形写成显式状态后，两者可区分。
+
+    它**不是**判定结果，也不改变判定：allow / block 仍只由 Policy Engine 决定。
+    """
+
+    checker: str
+    outcome: str
+    validators: Tuple[str, ...] = ()
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        if self.outcome not in JUDGEMENT_OUTCOMES:
+            raise ValueError(
+                "未知的判定口径 " + repr(self.outcome)
+                + "；允许的取值只有 " + repr(list(JUDGEMENT_OUTCOMES))
+            )
+
+    def to_payload(self) -> Mapping[str, Any]:
+        return {
+            "checker": self.checker,
+            "outcome": self.outcome,
+            "validators": list(self.validators),
+            "detail": self.detail,
+        }
 
 
 @dataclass(frozen=True)
@@ -130,6 +175,7 @@ class PipelineReport:
     evidence: Tuple[ValidationEvidence, ...] = ()
     served_checkers: Tuple[str, ...] = ()
     unmapped_findings: int = 0
+    judgements: Tuple[CheckerJudgement, ...] = ()
     truncated_evidence: int = 0
     selection: Mapping[str, Any] = field(default_factory=dict)
     environment: Mapping[str, str] = field(default_factory=dict)
@@ -173,6 +219,7 @@ class PipelineReport:
             "evidence": [item.to_payload() for item in self.evidence],
             "served_checkers": list(self.served_checkers),
             "unmapped_findings": self.unmapped_findings,
+            "judgements": [item.to_payload() for item in self.judgements],
             "truncated_evidence": self.truncated_evidence,
             "selection": dict(self.selection),
             "environment": dict(self.environment),
@@ -197,6 +244,13 @@ def render_report(report: PipelineReport) -> str:
         for blocker in report.blockers:
             lines.append(
                 "  - " + blocker.validator + " " + blocker.status.value + "：" + blocker.reason
+            )
+    if report.judgements:
+        lines.append("judgements (非判定口径，不是\"判定过、未发现\"):")
+        for note in report.judgements:
+            lines.append(
+                "  - " + note.checker + " " + note.outcome
+                + "（" + ", ".join(note.validators) + "）：" + note.detail
             )
     if report.dependencies:
         lines.append("dependencies:")
@@ -339,6 +393,7 @@ def run_pipeline(
     dependency_facts: list[DependencyFact] = []
     evidence: list[ValidationEvidence] = []
     served: set[str] = set()
+    judgements: list[CheckerJudgement] = []
     unmapped = 0
     selection: Mapping[str, Any] = {}
 
@@ -347,6 +402,22 @@ def run_pipeline(
     for spec in sorted(selected_specs, key=lambda item: item.id):
         output = outputs[spec.id]
         checkers = output.served or spec.checkers
+        # 判定口径只记"需要判定的 checker"（report.checks），避免把没规则用到的 checker
+        # 也写成一条噪音记录。
+        judged = tuple(sorted(checker for checker in checkers if checker in needed))
+        validator = spec.id + "@" + spec.version
+        if output.analysis_failure:
+            # 工具说"这个文件我分析不了"：没有可判定的结果，必须显式写下来，
+            # 不能靠"它不在 served_checkers 里"来表达（那与"判定过、未发现"长得一样）
+            judgements.extend(
+                CheckerJudgement(
+                    checker=checker,
+                    outcome=JUDGEMENT_UNANALYZED,
+                    validators=(validator,),
+                    detail=output.reason or "验证器未能分析本次目标",
+                )
+                for checker in judged
+            )
         kept = output.evidence[:evidence_limit]
         dropped = len(output.evidence) - len(kept)
         truncated_evidence += dropped
@@ -377,6 +448,19 @@ def run_pipeline(
             selection = output.payload["selection"]
         if output.status in SUCCESS_STATUSES:
             served.update(checkers)
+            if not kept and output.unmapped and judged:
+                # 跑过、但一条诊断都没归到规则：诊断只计数、不判定（AGENTS 第 22 条），
+                # 所以这一条必须显式写下来，否则它看起来就和"判定过、未发现"一样。
+                judgements.extend(
+                    CheckerJudgement(
+                        checker=checker,
+                        outcome=JUDGEMENT_EMPTY,
+                        validators=(validator,),
+                        detail="本次 " + str(output.unmapped)
+                        + " 条诊断都没有规则归属（只计数、不判定）",
+                    )
+                    for checker in judged
+                )
             continue
         if spec.critical and output.status in FAIL_CLOSED_STATUSES:
             blocked.append(
@@ -432,6 +516,9 @@ def run_pipeline(
         evidence=tuple(sorted(evidence, key=lambda item: item.sort_key)),
         served_checkers=tuple(sorted(served)),
         unmapped_findings=unmapped,
+        judgements=tuple(
+            sorted(judgements, key=lambda item: (item.checker, item.outcome, item.validators))
+        ),
         truncated_evidence=truncated_evidence,
         selection=selection,
         environment={
@@ -883,4 +970,5 @@ def _from_adapter(result: AdapterResult, *, spec: ValidatorSpec) -> ValidatorOut
         unmapped=result.unmapped,
         payload=result.payload,
         served=spec.checkers,
+        analysis_failure=result.analysis_failure,
     )

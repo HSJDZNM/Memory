@@ -82,7 +82,7 @@ validators:
     critical: true
     requires: [py.source]
     timeout_ms: 30000
-    description: Ruff（外部 Linter）；诊断码归属哪个规则由规则数据决定，不由工具决定
+    description: Ruff（外部 Linter）；诊断码归属哪个规则由规则数据决定，分析不成立的码由 analysis_failure_codes 声明
     tool:
       command: [ruff]
       version_args: [--version]
@@ -90,6 +90,18 @@ validators:
       version_requirement: ">=0.6,<1"
       argv: ["check", "--output-format=json", "--no-cache", "--config", "{config}", "{paths}"]
       config: validation/ruff.toml
+      # "本次分析不成立"码：命中即失败关闭（不是 OK、也不是 FINDINGS），并且**不得**把本验证器
+      # 声明的 checker 记进 served —— 否则"没查成的"会被记成"查过了"（N17：语法错误文件上
+      # 39 条 style_lint 曾是空判定）。它与 unmapped_findings 是两件事：后者是"跑成了、
+      # 但诊断没有规则归属"，仍然只计数、不判定。
+      # 口径：**按码声明**，不按"没有规则归属"判定——后者会把 F811 / F841 / W291 这类
+      # "跑成了、只是没有归属"的诊断一起升级成失败关闭，违反 AGENTS 第 22 条（只计数、不判定）。
+      # "本次分析不成立"是工具诊断词汇里的性质，只有数据能表达它；名单还必须与规则归属、
+      # select 表互不相交（tests/contract/test_validator_protocol.py 双向钉住）。
+      # invalid-syntax 是 ruff 对"无法解析这个文件"的诊断码（本仓库实测 0.14.13）：它不在
+      # validation/ruff.toml 的 select 里，也不对应任何项目规则，只会掉进 unmapped_findings，
+      # 因此"靠 select 表管住它"做不到。
+      analysis_failure_codes: ["invalid-syntax"]
 
   - id: tool.mypy
     version: "1.0"

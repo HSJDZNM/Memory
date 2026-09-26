@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,10 @@ from adapters.wiring import (
     FAILURE_STATUSES,
     WIRING_SCHEMA_VERSION,
     ChannelStatus,
+    FreshnessStatus,
+    WiringStatus,
     probe_wiring,
+    split_status,
 )
 
 pytestmark = pytest.mark.contract
@@ -85,7 +89,9 @@ def add_profile(home: Path, name: str, patch: str, *, hooks: Any = "good") -> Pa
     return profile
 
 
-def wired_home(tmp_root: Path) -> Path:
+def wired_home_without_audit(tmp_root: Path) -> tuple[Path, Path]:
+    """接线齐全、审计目标不存在：N20 的正例（接线事实在、留痕事实没有）。"""
+
     home = make_home(tmp_root)
     profile = home / "profiles" / "desktop"
     profile.mkdir(parents=True, exist_ok=True)
@@ -93,11 +99,35 @@ def wired_home(tmp_root: Path) -> Path:
     _write(profile / "cordis.patch.yml", profile_patch(profile))
     _write(profile / ".policy" / "hooks.json", json.dumps(hooks_document()))
     _write(profile / ".policy" / "dsh-adapter.yaml", ADAPTER_CONFIG)
+    return home, profile
+
+
+def wired_home(tmp_root: Path) -> Path:
+    home, profile = wired_home_without_audit(tmp_root)
     _write(
         profile / ".policy" / "audit.jsonl",
         json.dumps({"timestamp": "2026-09-25T11:59:00Z"}) + "\n",
     )
     return home
+
+
+# N20 的 CLI 级复现固定用 --now：留痕的新鲜度不该由跑测试那天的墙钟决定。
+WIRING_ARGV: tuple[str, ...] = (
+    "--root",
+    str(REPO_ROOT),
+    "--json",
+    "wiring",
+    "--now",
+    "2026-09-25T12:00:00Z",
+    "--observe-sessions",
+    "0",
+    "--check",
+)
+
+
+def run_wiring_json(home: Path, capsys: Any) -> tuple[int, dict[str, Any]]:
+    code, out, _ = run_cli([*WIRING_ARGV, "--dsh-home", str(home)], capsys)
+    return code, json.loads(out)
 
 
 def run_cli(argv: list[str], capsys: Any) -> tuple[int, str, str]:
@@ -245,10 +275,15 @@ def test_wiring_json_contract(tmp_root: Path, capsys: Any) -> None:
         "notes",
     }
     assert payload["counts"] == {"total": 1, "wired": 1, "failed": 0}
+    assert payload["fact_counts"] == {"total": 1, "wiring_ok": 1, "freshness_ok": 1}
     assert payload["failures"] == []
     assert payload["result"] == "pass"
     assert payload["tools"]["report_only"] is True
     assert payload["channels"][0]["status"] == ChannelStatus.WIRED.value
+    # 两根轴各自是协议字段（N20）：不再是"wired 一个字段扛两件事"。
+    assert payload["channels"][0]["wiring_status"] == WiringStatus.WIRED.value
+    assert payload["channels"][0]["freshness_status"] == FreshnessStatus.FRESH.value
+    assert "不再是" in payload["reading_guide"]
 
 
 def test_wiring_json_exposes_required_channel_statuses() -> None:
@@ -270,6 +305,46 @@ def test_wiring_json_exposes_required_channel_statuses() -> None:
         "timeout_budget_unknown",
     }
     assert set(FAILURE_STATUSES) == set(ChannelStatus) - {ChannelStatus.WIRED}
+
+
+def test_axis_enums_are_part_of_the_protocol() -> None:
+    """两根轴的取值也是协议：删一个、改一个名字都必须是一次显式的契约变更。"""
+
+    assert {status.value for status in WiringStatus} == {
+        "wired",
+        "not_wired",
+        "hooks_config_missing",
+        "hooks_config_unparsable",
+        "hooks_config_unreadable",
+        "profile_unreadable",
+        "timeout_budget_violated",
+        "timeout_budget_unknown",
+    }
+    assert {status.value for status in FreshnessStatus} == {
+        "fresh",
+        "no_audit_target",
+        "never_written",
+        "stale",
+        "unreadable",
+        "unparsable",
+        "unevaluated",
+    }
+    # 每一个总判定状态都必须能被拆到两根轴上：没有"未归类"的漏网（漏一个就是静默放行）。
+    for status in ChannelStatus:
+        wiring, freshness = split_status(status)
+        assert wiring in WiringStatus
+        assert freshness in FreshnessStatus
+
+
+def test_wiring_schema_version_is_pinned_to_a_literal() -> None:
+    """协议版本必须是**字面量**钉住的：只改常量不能悄悄过去（改版本 = 显式契约变更）。
+
+    1.0 -> 1.1：新增 wiring_status / freshness_status 两个事实轴字段 + reading_guide /
+    fact_counts，并且"wired 是接线 + 留痕的联合属性"这一旧读法不再被支持（N20）。
+    另一条用例 `test_wiring_json_contract` 只比常量与载荷是否一致，钉不住"版本号本身变了"。
+    """
+
+    assert WIRING_SCHEMA_VERSION == "1.1"
 
 
 def test_missing_dsh_home_fails_the_check_and_says_so(tmp_root: Path, capsys: Any) -> None:
@@ -348,6 +423,128 @@ def test_wiring_output_contains_no_absolute_paths(tmp_root: Path, capsys: Any) -
     combined = out + err
     assert str(tmp_root) not in combined
     assert tmp_root.as_posix() not in combined
+
+
+# --------------------------------------------------------------------------- 两根事实轴（N20）
+
+
+def test_wired_is_not_a_joint_property_of_wiring_and_freshness(
+    tmp_root: Path, capsys: Any
+) -> None:
+    """N20 完成判据：patch 逐字节相同，审计"无 -> 有 -> 无"只改留痕那一根轴。
+
+    修前这一步的对照是：同一个 status 字段从 audit_never_written 翻成 wired（退出码 1 -> 0），
+    于是"接线在、但没有留痕"与"接线根本不在"在输出里长得一模一样。
+    """
+
+    home, profile = wired_home_without_audit(tmp_root)
+    patch = profile / "cordis.patch.yml"
+    digest = hashlib.sha256(patch.read_bytes()).hexdigest()
+
+    code, payload = run_wiring_json(home, capsys)
+    missing = payload["channels"][0]
+    assert code == 1
+    assert payload["result"] == "fail"
+    assert missing["wiring_status"] == WiringStatus.WIRED.value
+    assert missing["freshness_status"] == FreshnessStatus.NEVER_WRITTEN.value
+    assert missing["wired"] is False
+    assert payload["fact_counts"] == {"total": 1, "wiring_ok": 1, "freshness_ok": 0}
+
+    _write(
+        profile / ".policy" / "audit.jsonl",
+        json.dumps({"timestamp": "2026-09-25T11:59:00Z"}) + "\n",
+    )
+    code, payload = run_wiring_json(home, capsys)
+    fresh = payload["channels"][0]
+    assert code == 0
+    assert payload["result"] == "pass"
+    assert fresh["freshness_status"] == FreshnessStatus.FRESH.value
+    assert fresh["wired"] is True
+    # 接线事实两次相同：patch 逐字节没变，命令摘要也没变。
+    assert fresh["wiring_status"] == missing["wiring_status"]
+    assert fresh["hook_command_digest"] == missing["hook_command_digest"]
+    assert fresh["patch"] == missing["patch"]
+    assert hashlib.sha256(patch.read_bytes()).hexdigest() == digest
+
+    (profile / ".policy" / "audit.jsonl").unlink()
+    code, payload = run_wiring_json(home, capsys)
+    reset = payload["channels"][0]
+    assert code == 1
+    assert payload["result"] == "fail"
+    assert reset["wiring_status"] == WiringStatus.WIRED.value
+    assert reset["freshness_status"] == FreshnessStatus.NEVER_WRITTEN.value
+    assert hashlib.sha256(patch.read_bytes()).hexdigest() == digest
+
+
+def test_check_still_fails_when_only_the_wiring_axis_is_broken(
+    tmp_root: Path, capsys: Any
+) -> None:
+    """失败关闭没有放松：接线坏了（留痕甚至没被评估）一样退出 1。"""
+
+    home = wired_home(tmp_root)
+    profile = home / "profiles" / "desktop"
+    _write(profile / "cordis.patch.yml", "[]\n")  # 桥不在 patch 里了
+
+    code, payload = run_wiring_json(home, capsys)
+    channel = payload["channels"][0]
+
+    assert code == 1
+    assert payload["result"] == "fail"
+    assert channel["wiring_status"] == WiringStatus.NOT_WIRED.value
+    assert channel["freshness_status"] == FreshnessStatus.UNEVALUATED.value
+    assert channel["wired"] is False
+    # 审计文件其实在磁盘上：留痕是"没评估"（接线先坏），不是"fresh"。
+    assert (profile / ".policy" / "audit.jsonl").is_file()
+
+
+def test_freshness_axis_separates_stale_from_never_written(tmp_root: Path, capsys: Any) -> None:
+    """留痕那一根轴自己也有多种失败态：过期的留痕不等于没有留痕。"""
+
+    home = wired_home(tmp_root)
+    profile = home / "profiles" / "desktop"
+    _write(
+        profile / ".policy" / "audit.jsonl",
+        json.dumps({"timestamp": "2026-09-01T00:00:00Z"}) + "\n",
+    )
+
+    code, payload = run_wiring_json(home, capsys)
+    channel = payload["channels"][0]
+
+    assert code == 1
+    assert channel["wiring_status"] == WiringStatus.WIRED.value
+    assert channel["freshness_status"] == FreshnessStatus.STALE.value
+    assert channel["status"] == ChannelStatus.STALE.value
+
+
+def test_human_output_prints_both_facts_separately(tmp_root: Path, capsys: Any) -> None:
+    """人眼也要能分开读：接线在而没留痕，与接线不在，是两行不同的事实。"""
+
+    home, _ = wired_home_without_audit(tmp_root)
+
+    code, out, err = run_cli(
+        [
+            "--root",
+            str(REPO_ROOT),
+            "wiring",
+            "--dsh-home",
+            str(home),
+            "--now",
+            "2026-09-25T12:00:00Z",
+            "--observe-sessions",
+            "0",
+            "--check",
+        ],
+        capsys,
+    )
+
+    assert code == 1
+    assert "接线事实：wired" in out
+    assert "留痕事实：never_written" in out
+    # 口径：输出里必须写明 wired 不再是"接线 + 留痕"的联合属性（N20 的文档要求）。
+    assert "口径：" in out
+    assert "不再是" in out
+    assert "事实合计：接线成立 1/1；留痕新鲜 0/1" in out
+    assert "fail" in err
 
 
 # --------------------------------------------------------------------------- 与运行期自检互相验证

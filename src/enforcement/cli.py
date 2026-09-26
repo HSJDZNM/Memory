@@ -16,11 +16,13 @@
         --action-id sess-1:call-1
     python -m enforcement.cli verify
     python -m enforcement.cli self-check
+    # N19 判据：把"这次动作到底发生了什么"读成带证据等级的结论（拦住 / 没尝试 / 证明不了）
+    python -m enforcement.cli verdict --audit .policy/audit.jsonl --action-id sess-1:call-1
 
 退出码：
 
-    0 = 允许 / 验证通过（allow、allow_with_warnings、validated、delivered）
-    1 = 阻断 / 需要修复（block、repair_required、inconsistent、rolled_back）
+    0 = 允许 / 验证通过（allow、allow_with_warnings、validated、delivered）；`verdict` 也用它表示"拿到了结论"
+    1 = 阻断 / 需要修复（block、repair_required、inconsistent、rolled_back）；`verdict` 用它表示"证明不了"
     2 = 配置或执行错误（注册表不合规、未审核、请求文件不合法、审计链损坏、CLI 用法错误）
 """
 
@@ -68,6 +70,7 @@ from .registry import (
     write_approved,
 )
 from .trace import explain, load_trace
+from .verdict import AttemptOutcome, grade_attempt, load_audit
 
 __all__ = [
     "EXIT_ALLOWED",
@@ -730,6 +733,46 @@ def _verify(args: argparse.Namespace, repo: Path) -> int:
     return EXIT_ALLOWED if not issues else EXIT_ERROR
 
 
+def _verdict(args: argparse.Namespace, _repo: Path) -> int:
+    """N19 判据：`拦住` 与 `没人尝试` 在文件哈希上同形，只有判定记录能把它们分开。
+
+    读不出来的行**不跳过**：把"产物坏了"读成"没人尝试"正是这条判据要防的错误。
+    """
+
+    path = Path(args.audit)
+    if not path.is_file():
+        raise CliError(f"审计文件不存在：{args.audit}")
+    records, bad = load_audit(path)
+    if bad:
+        shown = ", ".join(str(item) for item in bad[:5])
+        raise CliError(
+            f"审计文件有 {len(bad)} 行无法解析（行号 {shown}）：先修产物，再下结论"
+        )
+    verdict = grade_attempt(
+        records,
+        action_id=args.action_id,
+        tool=args.tool,
+        artifact_changed=bool(args.artifact_changed),
+    )
+    payload = verdict.to_dict()
+    payload["audit_records"] = len(records)
+    payload["unparsable_lines"] = 0
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(
+            "[verdict] " + verdict.outcome.value + "（证据等级 " + verdict.grade.value + "）"
+            + "：" + verdict.detail
+        )
+        if verdict.outcome is AttemptOutcome.UNPROVEN:
+            print(
+                "  证明不了：既不是通过，也不是被拦住。要下\u300c拦住了\u300d的结论，"
+                "必须有一条带判定字段的事前记录。",
+                file=sys.stderr,
+            )
+    return EXIT_ALLOWED if verdict.outcome.is_conclusive else EXIT_BLOCKED
+
+
 def _self_check(args: argparse.Namespace, repo: Path) -> int:
     """上线自检：注册表可加载、每个工具都已审核、审计与台账可写、驱动齐备。"""
 
@@ -877,6 +920,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="同时校验注册表审核状态",
     )
 
+    verdict_parser = subparsers.add_parser(
+        "verdict",
+        parents=[common],
+        help="N19 判据：把一次动作读成 拦住 / 没尝试 / 证明不了（只看哈希会误判）",
+    )
+    verdict_parser.add_argument("--action-id", default=None, help="只看这个动作的记录")
+    verdict_parser.add_argument("--tool", default=None, help="按工具聚合（不给 action-id 时用）")
+    verdict_parser.add_argument(
+        "--artifact-changed",
+        action="store_true",
+        help="调用方自己测出来的事实：目标产物真的变了（本命令不去猜）",
+    )
+
     subparsers.add_parser(
         "self-check", parents=[common], help="上线自检：注册表 / 审核 / 审计 / 台账 / 驱动"
     )
@@ -911,6 +967,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _trace(args, repo)
         if args.command == "verify":
             return _verify(args, repo)
+        if args.command == "verdict":
+            return _verdict(args, repo)
         if args.command == "self-check":
             return _self_check(args, repo)
     except CliError as error:

@@ -154,6 +154,27 @@ def test_tool_output_cannot_invent_rule_ids(tmp_root: Path) -> None:
     assert report.unmapped_findings >= 1  # W291 没有规则归属，只能计数
 
 
+def test_tool_cannot_turn_a_failed_analysis_into_a_pass(tmp_root: Path) -> None:
+    """工具说"我没法分析这个文件"时，账本不得把它记成"查过了、没问题"。
+
+    假工具在**能解析**的文件上复刻 ruff 的 invalid-syntax：py.ast 是成功的，
+    因此这里排除了"靠 py.ast 失败关闭兜住"的解释——拦住 style_lint 的必须是 ruff 自己。
+    """
+
+    config = adversarial_config(tmp_root, "syntax")
+
+    report = run_for("src/shop/order_controller.py", config=config)
+
+    assert [item.status for item in report.blockers] == [ValidatorStatus.FAILED]
+    assert report.blockers[0].checkers == ("style_lint",)
+    assert "style_lint" not in report.served_checkers
+    ast_record = report.record("py.ast")
+    assert ast_record is not None and ast_record.status is ValidatorStatus.OK
+    assert [item.outcome for item in report.judgements] == ["unanalyzed"]
+    assert report.judgements[0].validators == ("tool.ruff@1.0",)
+    assert "未能分析" in report.judgements[0].detail
+
+
 def test_crashed_tool_fails_closed(tmp_root: Path) -> None:
     config = adversarial_config(tmp_root, "crash")
 

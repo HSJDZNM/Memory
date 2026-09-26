@@ -57,17 +57,83 @@ class EnforcementUnavailable(DshEventError):
 
 @dataclass(frozen=True)
 class PostEvent:
-    """PostToolUse 的关键字段：工具、不可信答复的摘要与调用标识。"""
+    """PostToolUse 的关键字段：工具、不可信答复的摘要、调用标识与执行事实。
+
+    退出事实（exit_code / timed_out / aborted / signal / result_kind）来自 dsh 规范化
+    工具结果的 value（N16）。字段默认 None = "载荷里没有这条事实"，与修前完全一致，
+    事后核对因此按失败关闭处理；只有真的拿到退出码，exit_code_zero 才可能判真。
+    """
 
     event_id: str
     tool: str
     response_digest: str
     response_excerpt: str
     session_id: str
+    exit_code: Optional[int] = None
+    timed_out: Optional[bool] = None
+    aborted: Optional[bool] = None
+    signal: Optional[str] = None
+    result_kind: Optional[str] = None
+
+
+def _exit_code_fact(raw: Mapping[str, Any], key: str) -> Optional[int]:
+    """解析退出码；null 表示"这次执行没有退出码"，其余不合法形状一律拒绝。
+
+    bool 是 int 的子类（True == 1）、负数与小数都不是 dsh 契约里的退出码：把它们当成
+    "没有退出码"会让账本上多一条看起来合规、实际什么都没证明的记录，因此显式拒绝。
+    """
+
+    if key not in raw or raw[key] is None:
+        return None
+    value = raw[key]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise DshEventError(
+            f"PostToolUse 载荷的 {key} 必须是 >= 0 的整数或 null（dsh 的退出码契约），"
+            f"得到 {value!r}：形状不认的退出事实不得被忽略，它决定 exit_code_zero 的结论"
+        )
+    return value
+
+
+def _boolean_fact(raw: Mapping[str, Any], key: str) -> Optional[bool]:
+    """解析布尔执行事实；null 表示"没有这条事实"，其余形状一律拒绝。"""
+
+    if key not in raw or raw[key] is None:
+        return None
+    value = raw[key]
+    if not isinstance(value, bool):
+        raise DshEventError(f"PostToolUse 载荷的 {key} 必须是布尔值或 null，得到 {value!r}")
+    return value
+
+
+def _text_fact(raw: Mapping[str, Any], key: str) -> Optional[str]:
+    """解析文本执行事实（信号名 / 结果种类）；空串与 null 都表示"没有这条事实"。"""
+
+    if key not in raw or raw[key] is None:
+        return None
+    value = raw[key]
+    if not isinstance(value, str) or not value.strip():
+        raise DshEventError(f"PostToolUse 载荷的 {key} 必须是非空字符串或 null，得到 {value!r}")
+    return value.strip()
 
 
 def post_event_fields(raw: Mapping[str, Any]) -> PostEvent:
-    """从 PostToolUse 载荷里取出事后验证需要的字段；其余内容一律丢弃。"""
+    """从 PostToolUse 载荷里取出事后验证需要的字段；其余内容一律丢弃。
+
+    字段口径（只增不改）：
+
+    | 键 | 取值 | 含义 |
+    | --- | --- | --- |
+    | tool_exit_code | >= 0 的整数 / null | dsh 规范化工具结果里的退出码 |
+    | tool_timed_out | bool / null | 命令是否因超时被终止 |
+    | tool_aborted | bool / null | 命令是否被取消 |
+    | tool_signal | 非空字符串 / null | 终止信号名 |
+    | tool_result_kind | 非空字符串 / null | 结果种类（foreground / background） |
+
+    未知键继续显式丢弃：dsh 的载荷本来就有 transcript_path / cwd / hook_event_name /
+    tool_input 等本层不用的字段，逐个报错等于把适配器绑死在 dsh 的载荷形状上。
+    但**认得出来的键一旦出现就必须是合法取值**——退出码是安全关键字段，
+    "形状不认识就当成没有"会让 exit_code_zero 的结论建立在被误解的载荷上。
+    """
 
     session_id = str(raw.get("session_id", "")).strip()
     tool_use_id = str(raw.get("tool_use_id", "")).strip()
@@ -95,6 +161,11 @@ def post_event_fields(raw: Mapping[str, Any]) -> PostEvent:
         response_digest=text,
         response_excerpt=excerpt,
         session_id=session_id,
+        exit_code=_exit_code_fact(raw, "tool_exit_code"),
+        timed_out=_boolean_fact(raw, "tool_timed_out"),
+        aborted=_boolean_fact(raw, "tool_aborted"),
+        signal=_text_fact(raw, "tool_signal"),
+        result_kind=_text_fact(raw, "tool_result_kind"),
     )
 
 
@@ -306,6 +377,10 @@ class EnforcementBridge:
             )
             return None
 
+        # N16：执行是**委派**给 Agent 运行时的，退出码只能来自 PostToolUse 载荷里插件转发
+        # 的退出事实。修前这里不传 exit_code，而字段默认 None 不会报错——于是注册表声明了
+        # post_checks=[exit_code_zero] 的工具在这条路径上永远到不了 validated，命令输出被
+        # 策略错误替换。拿不到（None）时的结论与修前一致：事后核对判"没有退出码"→ 需修复。
         record = ExecutionRecord(
             action_id=request.action_id,
             request_id=request.request_id,
@@ -317,6 +392,8 @@ class EnforcementBridge:
             status=ExecutionStatus.DELEGATED,
             reason_code=ReasonCode.ALLOW,
             driver=spec.driver,
+            exit_code=event.exit_code,
+            timed_out=bool(event.timed_out),
             duration_ms=0,
             structured_digest=event.response_digest,
             detail="由 Agent 运行时执行（dsh）；证据来自 PostToolUse 与执行前基线",
@@ -352,6 +429,11 @@ class EnforcementBridge:
                     for item in evidence.files
                 ],
                 "untrusted_result_digest": evidence.untrusted_result_digest,
+                # 进程证据与文件证据一样要落盘：exit_code_zero 的结论完全建立在这上面，
+                # 只在内存里的退出码等于没有证据（N16 的复现就是靠"审计里看不到退出码"）。
+                "process": (
+                    None if evidence.process is None else evidence.process.model_dump(mode="json")
+                ),
             },
             trace_id=request.trace_id,
             action_id=request.action_id,

@@ -5,6 +5,9 @@
 - 参数与配置来自注册表（validation/validators.yaml + validation/ruff.toml）；
 - "哪条诊断归属于哪个规则"由**规则数据**决定（policies/coding/*.yaml 里的 codes），
   不由工具决定；没有归属的诊断计入 unmapped，出现在报告里但不参与判定；
+- **"本次分析不成立"也是数据**：哪些码表示 ruff 没能分析这个文件，写在注册表的
+  tool.analysis_failure_codes 里（例如 invalid-syntax —— ruff 对无法解析的文件只报它）。
+  命中即失败关闭，绝不因为"evidence 为空"就当成 OK：那会把"没查成的"记成"查过了"；
 - 工具缺失 / 版本不符 / 超时 / 崩溃 / 输出非法一律失败关闭，绝不当作"没有风格问题"。
 """
 
@@ -30,7 +33,7 @@ from .base import (
     tool_label,
 )
 
-__all__ = ["run_ruff", "map_diagnostics"]
+__all__ = ["analysis_failure_codes", "map_diagnostics", "run_ruff"]
 
 _DIAGNOSTIC_STATUS = ValidatorStatus.FINDINGS
 
@@ -97,6 +100,24 @@ def run_ruff(
             reason="Ruff 的 JSON 输出不是列表",
         )
 
+    failure = analysis_failure_codes(document, declared=spec.tool.analysis_failure_codes)
+    if failure:
+        # 工具自己说"这个文件我分析不了"：没有可判定的结果，按失败关闭。
+        # 这里**不产出证据**（本次没有判定），但诊断仍然计数，账本不静默。
+        label = tool_label(spec.tool)
+        return AdapterResult(
+            status=ValidatorStatus.FAILED,
+            tool=invocation,
+            unmapped=len(document),
+            findings=len(document),
+            analysis_failure=failure,
+            reason=(
+                label + " 未能分析该文件：诊断 " + ", ".join(failure)
+                + " 表示本次分析不成立（" + str(len(document))
+                + " 条诊断里没有可判定的 lint 结果，按失败关闭处理）"
+            ),
+        )
+
     evidence, unmapped = map_diagnostics(
         document,
         rules=rules,
@@ -113,6 +134,32 @@ def run_ruff(
         findings=len(document),
         reason=None if document else "没有诊断",
     )
+
+
+def analysis_failure_codes(
+    document: Sequence[Any], *, declared: Sequence[str]
+) -> Tuple[str, ...]:
+    """诊断里命中「本次分析不成立」名单的码（大小写不敏感、去重、稳定排序）。
+
+    名单来自注册表数据（`validation/validators.yaml` 的 `tool.analysis_failure_codes`），
+    不在代码里硬编码：ruff 对无法解析的文件只报 `invalid-syntax`，它不对应任何项目规则，
+    只会计入 unmapped —— 若再按"没有证据 = OK"处理，账本就会把"没查成的"记成"查过了"。
+    没有声明名单时恒为空：适配器只执行数据，不替数据做判断。
+
+    返回的码保留**工具自己的拼写**（证据里引用的是工具说的话），排序按大写形式。
+    """
+
+    wanted = {str(code).strip().upper() for code in declared if str(code).strip()}
+    if not wanted:
+        return ()
+    hit: dict[str, str] = {}
+    for item in document:
+        if not isinstance(item, Mapping):
+            continue
+        raw = str(item.get("code") or "").strip()
+        if raw and raw.upper() in wanted:
+            hit.setdefault(raw.upper(), raw)
+    return tuple(hit[key] for key in sorted(hit))
 
 
 def map_diagnostics(

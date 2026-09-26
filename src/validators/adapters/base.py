@@ -128,7 +128,13 @@ class ToolRun:
 
 @dataclass(frozen=True)
 class AdapterResult:
-    """适配器的统一返回值：状态 + 证据 + 工具事实 + 未映射诊断数。"""
+    """适配器的统一返回值：状态 + 证据 + 工具事实 + 未映射诊断数。
+
+    analysis_failure 是注册表声明的「本次分析不成立」码（ToolSpec.analysis_failure_codes）：
+    非空表示这次运行**没有可判定的结果**（状态必须是失败关闭），流水线据此写进
+    PipelineReport 的显式判定口径，而不是让它长得像「判定过、未发现」。
+    它与 unmapped 是两件事：unmapped 是"跑成了、但诊断没有规则归属"（只计数、不判定）。
+    """
 
     status: ValidatorStatus
     evidence: Tuple[ValidationEvidence, ...] = ()
@@ -137,6 +143,7 @@ class AdapterResult:
     unmapped: int = 0
     findings: int = 0
     payload: Mapping[str, Any] = field(default_factory=dict)
+    analysis_failure: Tuple[str, ...] = ()
 
 
 def sanitize_text(text: str, *, workspace: Optional[Path | str] = None, limit: int = 2000) -> str:

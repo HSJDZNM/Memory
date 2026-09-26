@@ -318,6 +318,28 @@ def test_unknown_tool_blocks(dsh_config_path, dsh_project):
     assert executor.count == 0
 
 
+def test_an_out_of_scope_read_blocks_with_an_actionable_reason(dsh_config_path, dsh_project):
+    """N22：面向模型的理由里要有可用替代；只读越界仍然一律阻断。"""
+
+    executor = RecordingExecutor()
+    hook = build_hook(dsh_config_path, executor=executor)
+
+    outcome = hook.handle(
+        payload(
+            "pre-tool-use-read-not-governed.json",
+            dsh_project,
+            tool_name="glob",
+            tool_input={"pattern": "**/*.py", "path": str(dsh_project.parent)},
+        )
+    )
+
+    assert outcome.exit_code == EXIT_BLOCK
+    assert outcome.reason_code == "context_error"
+    assert "仓库相对路径" in outcome.stderr
+    assert "path_scope=workspace" in outcome.stderr
+    assert executor.count == 0
+
+
 def test_unsupported_event_blocks(dsh_config_path, dsh_project):
     executor = RecordingExecutor()
     hook = build_hook(dsh_config_path, executor=executor)
@@ -597,3 +619,122 @@ def test_cli_self_check_reports_wiring_errors(dsh_config_path, dsh_project, tmp_
     assert "self-check ok" in ok.stderr
     assert bad.returncode == EXIT_BLOCK
     assert "wiring error" in bad.stderr
+
+# --------------------------------------------------------------------------- 台账路径（N21）
+
+
+def audit_records(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_the_derived_ledger_path_is_a_first_class_fact(tmp_root, dsh_project):
+    """N21：带 --audit 时台账路径被派生改写，这个事实必须读得到、有显式警告。
+
+    修前：配置里声明了 enforcement_ledger，带 --audit 跑时它被静默覆盖，
+    按配置名去数台账得到 0 条 —— 会被读成"事后核对从来没跑过"。
+    派生本身保留（两份 JSONL 协议不能混写），改的是"这件事没人读得到"。
+    """
+
+    from adapters.dsh.hooks import EFFECTIVE_PATHS_PREFIX
+
+    declared = tmp_root / "config" / "declared-ledger.jsonl"
+    config_path = write_dsh_config(
+        tmp_root / "config" / "override.yaml",
+        project_root=dsh_project,
+        rules=POLICIES_DIR,
+        enforcement_ledger=str(declared),
+    )
+    state = dsh_project.parent / "state"
+    audit = state / "audit.jsonl"
+
+    # 1) 自检把"真正生效的路径"写成一行一等输出，并显式指出配置声明被覆盖
+    checked = run_cli(
+        [
+            "--config", str(config_path),
+            "--audit", str(audit),
+            "--hooks-config", str(HOOKS_CONFIG),
+            "--self-check",
+        ],
+        "",
+    )
+    assert checked.returncode == EXIT_ALLOW, checked.stderr
+    prefix = EFFECTIVE_PATHS_PREFIX
+    lines = [item for item in checked.stderr.splitlines() if item.startswith(prefix)]
+    assert len(lines) == 1, checked.stderr
+    report = json.loads(lines[0][len(prefix):])
+    assert report["ledger_source"] == "derived_from_audit"
+    assert report["ledger_overridden"] is True
+    assert report["ledger"].endswith("audit.enforcement-ledger.jsonl")
+    assert report["ledger_declared"].endswith("declared-ledger.jsonl")
+    assert "派生" in report["ledger_override_note"]
+
+    # 2) 台账真的写在派生路径上；配置声明的那份根本没有被创建
+    pre = run_hook(
+        payload("pre-tool-use-edit-allow.json", dsh_project),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert pre.exit_code == EXIT_ALLOW, pre.stderr
+    derived = state / "audit.enforcement-ledger.jsonl"
+    assert derived.is_file(), "台账必须落在派生路径上"
+    assert not declared.exists(), "配置声明的那份不该被写"
+
+    # 3) 审计里有一条写明两个路径的警告记录（元信息：不带 hook_event / action_id）
+    overrides = [
+        item for item in audit_records(audit) if item.get("reason_code") == "ledger_path_overridden"
+    ]
+    assert len(overrides) == 1, overrides
+    warning = overrides[0]["ledger_path"]
+    assert warning["effective"].endswith("audit.enforcement-ledger.jsonl")
+    assert warning["declared"].endswith("declared-ledger.jsonl")
+    assert warning["source"] == "derived_from_audit"
+    assert "hook_event" not in overrides[0]
+    assert "action_id" not in overrides[0]
+
+    # 4) 每会话只记一次：同一次运行里的第二次判定不再重复写
+    again = run_hook(
+        payload("pre-tool-use-edit-allow.json", dsh_project, tool_use_id="call-edit-allow-2"),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert again.exit_code == EXIT_ALLOW, again.stderr
+    overrides = [
+        item for item in audit_records(audit) if item.get("reason_code") == "ledger_path_overridden"
+    ]
+    assert len(overrides) == 1
+
+
+def test_without_the_audit_override_the_declared_ledger_path_is_the_effective_one(
+    tmp_root, dsh_project
+):
+    """反向对照：不带 --audit 时没有"被改写"这回事，也就不该有警告。"""
+
+    from adapters.dsh.hooks import EFFECTIVE_PATHS_PREFIX
+
+    declared = tmp_root / "config" / "declared-ledger.jsonl"
+    config_path = write_dsh_config(
+        tmp_root / "config" / "declared.yaml",
+        project_root=dsh_project,
+        rules=POLICIES_DIR,
+        enforcement_ledger=str(declared),
+    )
+
+    checked = run_cli(
+        ["--config", str(config_path), "--hooks-config", str(HOOKS_CONFIG), "--self-check"],
+        "",
+    )
+
+    assert checked.returncode == EXIT_ALLOW, checked.stderr
+    prefix = EFFECTIVE_PATHS_PREFIX
+    lines = [item for item in checked.stderr.splitlines() if item.startswith(prefix)]
+    report = json.loads(lines[0][len(prefix):])
+    assert report["ledger_source"] == "configured"
+    assert report["ledger_overridden"] is False
+    assert report["ledger_override_note"] is None
+    assert report["ledger"] == report["ledger_declared"]

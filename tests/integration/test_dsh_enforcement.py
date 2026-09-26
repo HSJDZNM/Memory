@@ -322,3 +322,214 @@ def test_bridge_can_be_built_directly_from_a_config(dsh_config_path, dsh_project
     assert bridge.spec_for("edit").id == "fs.edit"
     assert bridge.spec_for("nope") is None
     assert bridge.sink.path != bridge.ledger.path
+
+
+# --------------------------------------------------------------------------- N16：委派路径的退出码
+#
+# 修前的机制（05-emergent-issues.md §2.1）：注册表给 exec.pwsh / exec.bash 声明了
+# post_checks=[exit_code_zero]，但"由 Agent 运行时执行"这条委派路径上，退出码从来没有进过
+# ExecutionRecord —— 插件只转发 result.content 的文本，post_event_fields 只取四个字段，
+# 于是 exit_code_zero 必然判 False（"命令没有退出码"）→ repair_required → dsh 用策略错误
+# 替换掉工具输出。下面四条用例走的是**真实桥接**（插件的 PostToolUse 载荷形状 →
+# DshPreExecuteHook.post_execute → 审计），而不是手工构造一个带退出码的 record。
+
+
+def write_pattern_approval(
+    path: Path,
+    *,
+    tool_id: str,
+    subject: str,
+    command_pattern: str,
+    max_uses: int = 5,
+) -> Path:
+    """写一张模式化审批（binding=pattern）。
+
+    会话里 action_id / tool_use_id 每次都现生成（N24），单次绑定必然失配，
+    因此只有 pattern 档能让测试真的走到"放行 → 事后核对"这一段。
+    """
+
+    from datetime import timedelta
+
+    from enforcement.approvals import ApprovalRecord
+    from enforcement.models import utc_now
+
+    now = utc_now()
+    record = ApprovalRecord(
+        approval_id="approval-n16-pwsh",
+        binding="pattern",
+        tool_id=tool_id,
+        subject=subject,
+        granted_by="alice",
+        granted_by_roles=("reviewer",),
+        granted_at=now - timedelta(seconds=1),
+        expires_at=now + timedelta(seconds=300),
+        max_uses=max_uses,
+        param_patterns={"command": command_pattern},
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(record.model_dump_json() + chr(10), encoding="utf-8", newline="")
+    return path
+
+
+def pwsh_config(tmp_root: Path, dsh_project: Path, *, name: str) -> Path:
+    """owner 角色 + 模式化审批：让 pwsh 的 pre-check 真的放行一次。"""
+
+    approval = write_pattern_approval(
+        tmp_root / "config" / f"{name}-approval.json",
+        tool_id="exec.pwsh",
+        subject="local-user",
+        command_pattern="^python -m pytest( .*)?$",
+    )
+    return write_dsh_config(
+        tmp_root / "config" / f"{name}.yaml",
+        project_root=dsh_project,
+        rules=REPO_ROOT / "policies",
+        principal={"subject": "local-user", "roles": ["owner"]},
+        approval_file=str(approval),
+    )
+
+
+def pwsh_post(
+    project_root: Path,
+    *,
+    exit_code: object = None,
+    tool_use_id: str = "call-pwsh",
+    **extra: object,
+) -> dict[str, object]:
+    """按插件的转发形状构造 PostToolUse 载荷。
+
+    退出事实来自 dsh 规范化工具结果的 result.value
+    （{kind, exitCode, signal, timedOut, aborted, timeoutMs, stdout, stderr}）。
+    这里手工拼形状而不是加 fixture 文件：这些字段是插件转发的运行期事实，
+    不是 dsh 原始载荷里的字段（原始载荷里没有它们）。
+    """
+
+    fields: dict[str, object] = {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "pwsh",
+        "tool_input": {"command": "python -m pytest tests/unit -q", "description": "run tests"},
+        "tool_use_id": tool_use_id,
+        "tool_response": "3 passed in 0.42s",
+        "tool_result_kind": "foreground",
+        "tool_timed_out": False,
+        "tool_aborted": False,
+    }
+    if exit_code is not None:
+        fields["tool_exit_code"] = exit_code
+    fields.update(extra)
+    return dsh_event("post-tool-use-edit.json", cwd=str(project_root), **fields)
+
+
+def post_evidence_records(audit: Path) -> list[dict]:
+    return [
+        item
+        for item in records(audit)
+        if item.get("stage") == "post_evidence" and "payload" in item
+    ]
+
+
+def test_delegated_pwsh_with_exit_zero_is_validated_through_the_real_bridge(tmp_root, dsh_project):
+    """N16 的核心判据：exit 0 → validated，且工具输出不被策略错误替换。
+
+    "输出不被替换"在本层是机器可判的：Hook 退出码 0 且 stderr 为空，
+    插件就会把 dsh 的原始结果原样交给模型（返回 next()）。
+    """
+
+    config_path = pwsh_config(tmp_root, dsh_project, name="pwsh-owner")
+    audit = dsh_project.parent / "audit.jsonl"
+
+    pre = run_hook(
+        payload("pre-tool-use-pwsh-execute.json", dsh_project),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert pre.exit_code == EXIT_ALLOW, pre.stderr
+
+    post = run_hook(
+        pwsh_post(dsh_project, exit_code=0),
+        config_path=config_path,
+        audit_path=audit,
+    )
+
+    assert post.exit_code == EXIT_ALLOW, post.stderr
+    assert post.reason_code == "post_validated"
+    assert post.stderr == ""
+
+    evidence = post_evidence_records(audit)[-1]
+    assert evidence["payload"]["process"]["exit_code"] == 0, evidence
+    final = [item for item in records(audit) if item.get("stage") == "final_decision"][-1]
+    assert final["payload"]["outcome"] == "delivered"
+
+
+def test_delegated_pwsh_with_a_non_zero_exit_reports_the_real_code(tmp_root, dsh_project):
+    """exit 非 0 → repair_required，且理由里带**真实退出码**（不是"不可判定"）。"""
+
+    config_path = pwsh_config(tmp_root, dsh_project, name="pwsh-owner")
+    audit = dsh_project.parent / "audit.jsonl"
+
+    pre = run_hook(
+        payload("pre-tool-use-pwsh-execute.json", dsh_project),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert pre.exit_code == EXIT_ALLOW, pre.stderr
+
+    post = run_hook(
+        pwsh_post(dsh_project, exit_code=1),
+        config_path=config_path,
+        audit_path=audit,
+    )
+
+    assert post.exit_code == EXIT_BLOCK
+    assert post.reason_code == "post_repair_required"
+    assert "退出码 1" in post.stderr, post.stderr
+    evidence = post_evidence_records(audit)[-1]
+    assert evidence["payload"]["process"]["exit_code"] == 1, evidence
+
+
+def test_delegated_pwsh_without_exit_facts_still_needs_repair(tmp_root, dsh_project):
+    """失败关闭不得放松：拿不到退出码时的结论必须与修前一致（repair_required）。"""
+
+    config_path = pwsh_config(tmp_root, dsh_project, name="pwsh-owner")
+    audit = dsh_project.parent / "audit.jsonl"
+
+    pre = run_hook(
+        payload("pre-tool-use-pwsh-execute.json", dsh_project),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert pre.exit_code == EXIT_ALLOW, pre.stderr
+
+    post = run_hook(pwsh_post(dsh_project), config_path=config_path, audit_path=audit)
+
+    assert post.exit_code == EXIT_BLOCK
+    assert post.reason_code == "post_repair_required"
+    assert "没有退出码" in post.stderr, post.stderr
+
+
+def test_a_malformed_exit_fact_is_refused_instead_of_silently_dropped(tmp_root, dsh_project):
+    """形状不认的退出事实不得被静默忽略：显式拒绝并写明是哪个字段。
+
+    bool 是 int 的子类（True == 1），负数与小数也不是 dsh 契约里的退出码；
+    把它们当成"没有退出码"会让账本上多一条看起来合规的记录。
+    """
+
+    config_path = pwsh_config(tmp_root, dsh_project, name="pwsh-owner")
+    audit = dsh_project.parent / "audit.jsonl"
+
+    pre = run_hook(
+        payload("pre-tool-use-pwsh-execute.json", dsh_project),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert pre.exit_code == EXIT_ALLOW, pre.stderr
+
+    for bad in (True, "0", -1, 1.5):
+        post = run_hook(
+            pwsh_post(dsh_project, exit_code=bad),
+            config_path=config_path,
+            audit_path=audit,
+        )
+        assert post.exit_code == EXIT_BLOCK, bad
+        assert post.reason_code == "post_error", (bad, post.reason_code)
+        assert "tool_exit_code" in post.stderr, (bad, post.stderr)

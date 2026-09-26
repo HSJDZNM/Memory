@@ -72,6 +72,8 @@ __all__ = [
     "EXIT_ALLOW",
     "EXIT_BLOCK",
     "AUDIT_SCHEMA_VERSION",
+    "VERDICT_PREFIX",
+    "VERDICT_SCHEMA_VERSION",
     "AuditLedger",
     "ControlledExecutor",
     "DshPreExecuteHook",
@@ -83,8 +85,12 @@ __all__ = [
     "enforcement_feedback",
     "feedback_text",
     "main",
+    "EFFECTIVE_PATHS_PREFIX",
+    "effective_paths",
+    "effective_paths_line",
     "run_hook",
     "sanitize",
+    "verdict_line",
 ]
 
 # dsh 协议：0 = 放行；2 = 阻断（stderr 即阻断理由）。没有第三种"警告"出口。
@@ -95,6 +101,27 @@ AUDIT_SCHEMA_VERSION = "1.0"
 
 # 反馈文本长度上限：阻断理由会进入模型上下文，必须足够短且不含敏感内容。
 FEEDBACK_MAX_CHARS = 4000
+
+# N18：阻断判定行的机读协议。
+#
+# 为什么需要它：dsh 在本机把 Hook 的非 0 退出码压成 1（机制与最小复现见 README §2.3），
+# 于是"exit 2 = 策略阻断"这条契约在真实会话里读不到，插件的理由分类退化成"未知状态"。
+# 退出码是**传输事实**，判定是**策略事实**：把判定单独写成一行，理由分类就不再依赖
+# 退出码保真。这一行只影响"为什么被拒"的措辞，**不影响是否拒绝**：任何非 0 退出仍然
+# 一律阻断，解析失败也一样（没有判定行 = 未知状态 = 失败关闭）。
+VERDICT_SCHEMA_VERSION = "1.0"
+VERDICT_PREFIX = "[policy] VERDICT "
+
+# N21：带 --audit 时台账路径由审计路径派生，adapter 配置里的 enforcement_ledger 被覆盖。
+# 派生本身是对的（Phase 2 的记录与 Phase 4 的链要落在同一份证据里，两种 JSONL 协议不能
+# 混写），但它让"按配置名去数台账"的人得到 0 条，于是误判"事后核对从来没跑过"。
+# 处置：把生效路径变成一等输出（自检行 + 审计记录），不一致时显式警告。
+EFFECTIVE_PATHS_PREFIX = "[policy] effective-paths "
+
+LEDGER_OVERRIDE_NOTE = (
+    "--audit 派生优先：Phase 2 的审计记录与 Phase 4 的台账是两份不同的 JSONL 协议，"
+    "不能混写；按配置声明的 enforcement_ledger 去数台账会得到 0 条"
+)
 
 _ABS_PATH_RE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)[^\s'\"]+")
 _SECRET_RE = re.compile(
@@ -1152,16 +1179,19 @@ def run_hook(
         except EnforcementUnavailable:
             bridge = None
 
+    effective_ledger: Optional[Path] = None
+    audit_file_path: Optional[Path] = None
     if bridge is not None and audit_path is not None:
         # --audit 是"本次会话的审计文件"：Phase 2 的记录与 Phase 4 的链落在同一份证据里。
         # 幂等/授权状态使用独立台账；两种 JSONL 协议不能混写，否则严格读取无法区分
         # "合法的外来审计行"与"丢失 schema 的损坏台账行"。
         audit_file = Path(audit_path)
-        state_file = audit_file.with_name(
-            f"{audit_file.stem}.enforcement-ledger{audit_file.suffix}"
-        )
+        state_file = derived_ledger_path(audit_file)
         bridge.sink = FileAuditSink(audit_file, workspace=config.project_root)
         bridge.ledger = EnforcementLedger(state_file)
+        # N21：这条派生改写了一个被声明出来的配置字段，事实必须能被读到（见函数实现）。
+        effective_ledger = state_file
+        audit_file_path = audit_file
 
     kwargs: dict[str, Any] = {
         "config": config,
@@ -1185,16 +1215,152 @@ def run_hook(
         outcome = hook._fail(  # noqa: SLF001 - 接线错误必须走同一条失败关闭路径
             "wiring_error", report, started=hook.clock(), base_record={}
         )
-        return outcome
-
-    if (
+    elif (
         isinstance(raw_payload, Mapping)
         and raw_payload.get("hook_event_name") == HOOK_EVENT_POST_TOOL_USE
     ):
-        return post_execute_outcome(
+        outcome = post_execute_outcome(
             raw_payload, bridge=bridge, config=config, hook=hook, started=hook.clock()
         )
-    return hook.handle(raw_payload)
+    else:
+        outcome = hook.handle(raw_payload)
+
+    # N21：写在本次判定**之后**——既有消费方按"首行 = 本次判定"读审计，元信息不许插队。
+    if effective_ledger is not None and audit_file_path is not None:
+        record_ledger_derivation(
+            hook,
+            audit_path=audit_file_path,
+            declared=config.enforcement_ledger,
+            effective=effective_ledger,
+            raw_payload=raw_payload,
+        )
+    return outcome
+
+
+def display_path(path: Path | str, *, project_root: Path | str) -> str:
+    """把路径渲染成可以写进证据的形式。
+
+    受控项目内记仓库相对路径（POSIX 分隔符）；项目外一律先把目录脱敏，只保留文件名——
+    文件名正是 N21 那个读数陷阱的关键（"按配置名去数是 0 条"），而绝对路径不得进证据。
+    """
+
+    candidate = Path(path)
+    try:
+        relative = candidate.resolve().relative_to(Path(project_root).resolve())
+    except (OSError, ValueError):
+        return sanitize(str(candidate.parent)) + "/" + candidate.name
+    return relative.as_posix()
+
+
+def derived_ledger_path(audit_path: Path | str) -> Path:
+    """由审计路径派生台账路径（N21 的派生规则，只有这一处实现）。
+
+    .policy/audit.jsonl  ->  .policy/audit.enforcement-ledger.jsonl
+    """
+
+    audit_file = Path(audit_path)
+    return audit_file.with_name(
+        f"{audit_file.stem}.enforcement-ledger{audit_file.suffix}"
+    )
+
+
+def effective_paths(
+    config: AdapterConfig, *, audit_path: Optional[Path | str] = None
+) -> dict[str, Any]:
+    """本次运行真正会写的审计 / 台账路径：启动自检的一等输出（N21）。
+
+    三种来源必须能被区分，否则读者只能靠猜：
+
+    - derived_from_audit：带了 --audit，台账按派生规则改写（配置声明被覆盖）；
+    - configured：没有 --audit，用配置声明的 enforcement_ledger；
+    - default：两者都没有，落到 <project_root>/.policy/enforcement-ledger.jsonl。
+    """
+
+    declared = config.enforcement_ledger
+    if audit_path is not None:
+        ledger = derived_ledger_path(audit_path)
+        source = "derived_from_audit"
+    elif declared is not None:
+        ledger = Path(declared)
+        source = "configured"
+    else:
+        ledger = config.project_root / ".policy" / "enforcement-ledger.jsonl"
+        source = "default"
+
+    audit = Path(audit_path) if audit_path is not None else config.audit_log
+    overridden = (
+        source == "derived_from_audit" and declared is not None and Path(declared) != ledger
+    )
+    return {
+        "audit": None if audit is None else display_path(audit, project_root=config.project_root),
+        "ledger": display_path(ledger, project_root=config.project_root),
+        "ledger_source": source,
+        "ledger_declared": (
+            None if declared is None else display_path(declared, project_root=config.project_root)
+        ),
+        "ledger_overridden": overridden,
+        "ledger_override_note": LEDGER_OVERRIDE_NOTE if overridden else None,
+    }
+
+
+def effective_paths_line(
+    config: AdapterConfig, *, audit_path: Optional[Path | str] = None
+) -> str:
+    """自检用的机读生效路径行（N21）：一行 JSON，不猜、不省略。"""
+
+    return EFFECTIVE_PATHS_PREFIX + json.dumps(
+        effective_paths(config, audit_path=audit_path), ensure_ascii=False, sort_keys=True
+    )
+
+
+def record_ledger_derivation(
+    hook: "DshPreExecuteHook",
+    *,
+    audit_path: Path,
+    declared: Optional[Path],
+    effective: Path,
+    raw_payload: Any,
+) -> bool:
+    """把"台账路径被 --audit 派生改写"写进审计（每会话一次），返回是否写了。
+
+    为什么要有这条记录：配置里的 enforcement_ledger 被静默覆盖，按它去数台账会得到 0 条，
+    然后被读成"事后核对从来没跑过"。记录里写明配置声明的路径与真正生效的路径，
+    谁读审计谁就能找到台账。
+
+    为什么可以不记：没有声明 enforcement_ledger（没有"被改写"这回事）、两者本来就一致、
+    或者已经记过一次。记录**不带 hook_event / action_id**：它是元信息，不得参与
+    "pre / post 成对"这类按动作聚合的判定。
+    """
+
+    if declared is None or Path(declared) == Path(effective) or hook.ledger is None:
+        return False
+    session_id = raw_payload.get("session_id") if isinstance(raw_payload, Mapping) else None
+    try:
+        already = hook.ledger.has_record(
+            reason_code="ledger_path_overridden",
+            session_id=session_id if isinstance(session_id, str) and session_id else None,
+        )
+    except Exception:  # noqa: BLE001 - 读不到审计就不能当作"已经记过"
+        already = False
+    if already:
+        return False
+
+    report = effective_paths(hook.config, audit_path=audit_path)
+    hook._audit(  # noqa: SLF001 - 与判定记录走同一条审计写入路径
+        {
+            "session_id": session_id,
+            "ledger_path": {
+                "declared": report["ledger_declared"],
+                "effective": report["ledger"],
+                "source": report["ledger_source"],
+                "note": LEDGER_OVERRIDE_NOTE,
+            },
+        },
+        outcome=HookOutcome(
+            exit_code=EXIT_ALLOW, reason_code="ledger_path_overridden", elapsed_ms=0
+        ),
+    )
+    return True
 
 
 def check_wiring(
@@ -1266,6 +1432,39 @@ def check_wiring(
     return ""
 
 
+def verdict_line(
+    *, reason_code: str, exit_code: int = EXIT_BLOCK, hook_event: Optional[str] = None
+) -> str:
+    """阻断时写给上层（进程内插件 / 命令桥）的机读判定行（N18）。
+
+    形状固定，消费方按 schema_version + reason_code 读：
+
+        [policy] VERDICT {"exit_code": 2, "reason_code": "policy_block", "schema_version": "1.0"}
+
+    它只描述"Hook 判了什么"，不是第二份判定：没有这一行时上层必须按未知状态失败关闭，
+    有这一行也不会把任何非 0 退出变成放行。
+    """
+
+    payload: dict[str, Any] = {
+        "schema_version": VERDICT_SCHEMA_VERSION,
+        "reason_code": reason_code,
+        "exit_code": exit_code,
+    }
+    if hook_event:
+        payload["hook_event"] = hook_event
+    return VERDICT_PREFIX + json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def hook_event_of(payload: Any) -> Optional[str]:
+    """从 Hook 载荷里取事件名；取不到就返回 None（判定行里不写这一项，不猜）。"""
+
+    if isinstance(payload, Mapping):
+        name = payload.get("hook_event_name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m adapters.dsh.hooks",
@@ -1307,6 +1506,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     契约：stdout 在放行时保持为空（dsh 只在 exit 0 且 stdout 以 { 开头时才解析 JSON，
     提前写入文本会被误当成结构化输出）；所有诊断写 stderr。
+
+    退出码契约（README §2.3）：放行 = 0，阻断 = 2。本机实测 dsh 会把非 0 退出码压成 1，
+    因此阻断时**额外**写一行机读判定（verdict_line，N18），供插件把"策略阻断 + 原因码"
+    与"未知状态"分开；退出码本身仍然是唯一的放行/拒绝信号。
     """
 
     for stream in (sys.stdout, sys.stderr):
@@ -1318,6 +1521,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 pass
 
     args = build_parser().parse_args(argv)
+    # N18：判定行里带事件名，便于读者区分 pre / post；读不到就不写这一项。
+    hook_event: Optional[str] = None
 
     try:
         if args.self_check:
@@ -1330,13 +1535,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             if report:
                 print(f"[policy] wiring error: {report}", file=sys.stderr)
+                print(verdict_line(reason_code="wiring_error"), file=sys.stderr)
                 return EXIT_BLOCK
+            # N21：把本次运行真正会写的审计 / 台账路径写成一行一等输出。
+            # 少了它，读者只能按配置名去数台账，而那个名字在带 --audit 时已被派生覆盖。
+            print(effective_paths_line(config, audit_path=args.audit), file=sys.stderr)
             print("[policy] self-check ok", file=sys.stderr)
             return EXIT_ALLOW
 
         payload = json.loads(sys.stdin.read() or "null")
+        hook_event = hook_event_of(payload)
     except (DshEventError, LoaderError, OSError, ValueError) as error:
         print(f"[policy] BLOCKED (startup_error) detail: {error}", file=sys.stderr)
+        print(verdict_line(reason_code="startup_error"), file=sys.stderr)
         return EXIT_BLOCK
 
     try:
@@ -1354,6 +1565,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"[policy] BLOCKED (startup_error) detail: {type(error).__name__}: {error}",
             file=sys.stderr,
         )
+        print(verdict_line(reason_code="startup_error", hook_event=hook_event), file=sys.stderr)
         return EXIT_BLOCK
 
     if outcome.stderr:
@@ -1362,6 +1574,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_ALLOW
     if not outcome.stderr:
         print(f"[policy] BLOCKED ({outcome.reason_code})", file=sys.stderr)
+    print(
+        verdict_line(reason_code=outcome.reason_code, hook_event=hook_event), file=sys.stderr
+    )
     return EXIT_BLOCK
 
 

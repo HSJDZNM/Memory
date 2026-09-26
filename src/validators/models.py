@@ -80,6 +80,13 @@ class ToolSpec(StrictModel):
     version_requirement: str = Field(default="", description='例如 ">=0.6,<1"；空表示不限制')
     argv: Tuple[str, ...] = Field(default=(), description="除基础命令外的固定参数（可含占位符）")
     config: Optional[str] = Field(default=None, description="配置文件（仓库相对路径，必须存在）")
+    analysis_failure_codes: Tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "工具诊断里表示「本次分析不成立」的码；命中即失败关闭（不是「没有发现问题」）。"
+            "码表是数据：换工具版本、换码都改这里，不在适配器里硬编码"
+        ),
+    )
     description: str = ""
 
     @field_validator("command")
@@ -106,6 +113,24 @@ class ToolSpec(StrictModel):
         if compiled.groups < 1:
             raise ValueError("tool.version_pattern 必须包含一个捕获组，用于取出工具版本")
         return value
+
+    @field_validator("analysis_failure_codes")
+    @classmethod
+    def _check_analysis_failure_codes(cls, values: Tuple[str, ...]) -> Tuple[str, ...]:
+        """名单本身也要合法：空码与重复码（大小写不敏感）都是配置错误。"""
+
+        seen: set[str] = set()
+        for item in values:
+            token = str(item).strip()
+            if not token:
+                raise ValueError("tool.analysis_failure_codes 里不能有空码")
+            key = token.upper()
+            if key in seen:
+                raise ValueError(
+                    "tool.analysis_failure_codes 出现重复码 " + token + "（比较时大小写不敏感）"
+                )
+            seen.add(key)
+        return values
 
     @field_validator("config")
     @classmethod

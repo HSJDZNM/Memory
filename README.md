@@ -182,7 +182,13 @@ uv run python -m enforcement.cli verify --audit .tmp/artifacts/enforcement-audit
 # 6) 上线自检：注册表 / 审核 / 审计 / 台账 / 驱动
 uv run python -m enforcement.cli self-check
 
-# 7) 受控执行闭环（允许一次 / 重放阻断 / 失败回滚 / 高风险阻断 / trace 可重放）
+# 7) 把一次动作读成结论：拦住 / 放行 / 记录不拦 / 真的执行过 / **证明不了**
+#    只看目标文件的哈希时，"真被治理拦住"与"没人尝试"完全同形——所以"被拦住"这个结论
+#    当且仅当审计里存在该动作的拒绝记录。退出码 0 = 拿到结论，1 = 证明不了。
+uv run python -m enforcement.cli verdict --audit .tmp/artifacts/enforcement-audit.jsonl --action-id <id>
+uv run python -m enforcement.cli verdict --audit .tmp/artifacts/enforcement-audit.jsonl --tool pwsh --json
+
+# 8) 受控执行闭环（允许一次 / 重放阻断 / 失败回滚 / 高风险阻断 / trace 可重放）
 uv run python tools/enforcement_loop.py
 ```
 

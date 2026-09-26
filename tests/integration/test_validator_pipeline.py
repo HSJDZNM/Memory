@@ -23,6 +23,7 @@ from conftest import (
     write_validation_config,
 )
 from policy.check import EXIT_ALLOWED, EXIT_ERROR, EXIT_VIOLATION
+from policy.engine import evaluate
 from policy.evidence import ValidatorStatus
 from policy.loader import load_rule_set
 from validators.adapters.base import probe_tool
@@ -256,6 +257,107 @@ def test_wrong_tool_version_blocks(tmp_root: Path) -> None:
     assert verdict(report) == "block"
     blocker = [item for item in report.blockers if item.validator_id == "tool.ruff"][0]
     assert blocker.status is ValidatorStatus.VERSION_MISMATCH
+
+
+# ------------------------------------- 分析不成立（N17）与"无归属诊断"的区别
+
+
+BROKEN_SYNTAX = "src/shop/broken_syntax.py"
+UNOWNED_LINT = "src/shop/unowned_lint_code.py"
+
+
+def require_ruff() -> None:
+    probe = ruff_probe()
+    if not probe.ok:
+        pytest.skip("本机没有可用的 Ruff（" + probe.reason + "）；CI 会装一份再跑")
+
+
+def style_lint_rules() -> tuple[str, ...]:
+    return tuple(
+        sorted(rule.id for rule in RULES.rules if rule.enforcement.checker == "style_lint")
+    )
+
+
+def test_syntax_error_keeps_ruff_out_of_the_ledger() -> None:
+    """N17：ruff 没能分析这个文件时，账本不许声称它查过了。
+
+    修复前的实测：`served_checkers == ("style_lint",)`、`tool.ruff` 记成 ok —— 39 条
+    style_lint 因而被记成"已判定 / 未发现"，而真正拦住文件的是 py.ast 的失败关闭。
+    """
+
+    require_ruff()
+    report = run_pipeline_for(BROKEN_SYNTAX)
+
+    record = report.record("tool.ruff")
+    assert record is not None
+    assert record.status is ValidatorStatus.FAILED
+    assert "未能分析" in (record.reason or "")
+    assert record.evidence_count == 0
+
+    # (a) 那 39 条 style_lint 不再被记成已判定；这个文件上没有任何 checker 被判定过
+    assert "style_lint" not in report.served_checkers
+    assert report.served_checkers == ()
+
+    # (b) 显式状态：分析不成立（而不是"判定过、未发现"）
+    notes = [item for item in report.judgements if item.checker == "style_lint"]
+    assert [(item.outcome, item.validators) for item in notes] == [
+        ("unanalyzed", ("tool.ruff@1.0",))
+    ]
+    assert "未能分析" in notes[0].detail
+
+    # 诊断仍然计数（不静默），只是不参与判定
+    assert report.unmapped_findings >= 1
+
+    # 失败关闭传到规则层：39 条 style_lint 规则全部以 critical 记失败关闭
+    context = make_context(file=BROKEN_SYNTAX, language="python", layer="controller")
+    result = evaluate(RULES, context, evidence=report.bundle)
+    assert result.decision.value == "block"
+    blocked = {
+        item.rule_id
+        for item in result.violations
+        if item.severity.value == "critical" and "关键验证器不可用" in item.message
+    }
+    assert len(style_lint_rules()) == 39
+    assert set(style_lint_rules()) <= blocked
+
+    # 相同输入两次运行的载荷逐字节一致：新字段也必须是确定的
+    again = run_pipeline_for(BROKEN_SYNTAX)
+    assert json.dumps(report.to_payload(), sort_keys=True) == json.dumps(
+        again.to_payload(), sort_keys=True
+    )
+
+
+def test_unowned_lint_codes_are_counted_and_do_not_block() -> None:
+    """真正的无归属 lint 码（F841）仍只计数、不判定：不得被误升级成失败关闭。"""
+
+    require_ruff()
+    report = run_pipeline_for(UNOWNED_LINT)
+
+    record = report.record("tool.ruff")
+    assert record is not None
+    assert record.status is ValidatorStatus.OK, record.reason
+    assert report.unmapped_findings == 1
+    assert "style_lint" in report.served_checkers
+    assert report.blockers == ()
+    assert verdict(report) == "allow"
+
+    # 跑过但一条都没归上：显式口径，别让它长得像"判定过、未发现"
+    notes = [item for item in report.judgements if item.checker == "style_lint"]
+    assert [(item.outcome, item.validators) for item in notes] == [("empty", ("tool.ruff@1.0",))]
+    assert "没有规则归属" in notes[0].detail
+
+
+def test_every_needed_checker_is_served_or_explained() -> None:
+    """账本里没有第三种含糊说法：需要判定的 checker 要么被判定，要么被显式解释。"""
+
+    require_ruff()
+    report = run_pipeline_for(BROKEN_SYNTAX)
+
+    blocked = {checker for blocker in report.blockers for checker in blocker.checkers}
+    explained = set(report.served_checkers) | blocked
+
+    assert set(report.checks) <= explained
+    assert not (set(report.served_checkers) & blocked)
 
 
 # ------------------------------------------------------------------ 测试验证器

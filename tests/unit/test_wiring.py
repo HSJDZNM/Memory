@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import datetime as clock
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -19,11 +20,16 @@ from adapters.wiring import (
     DEFAULT_INTERNAL_BUDGET_MS,
     FAILURE_STATUSES,
     IN_PROCESS_DEFAULT_TIMEOUT_MS,
+    ChannelReport,
     ChannelStatus,
+    FreshnessStatus,
     ToolObservationStatus,
     WiringError,
+    WiringStatus,
+    combine_status,
     declared_tool_table,
     probe_wiring,
+    split_status,
 )
 
 NOW = clock.datetime(2026, 9, 25, 12, 0, tzinfo=clock.timezone.utc)
@@ -1091,3 +1097,175 @@ def test_in_process_default_timeout_matches_the_plugin_source() -> None:
 
     assert match is not None, "插件源码里找不到 DEFAULT_TIMEOUT_MS"
     assert int(match.group(1)) == IN_PROCESS_DEFAULT_TIMEOUT_MS
+
+
+# --------------------------------------------------------------------- 两根事实轴（N20）
+
+
+def _patch_digest(profile: Path) -> str:
+    return hashlib.sha256((profile / "cordis.patch.yml").read_bytes()).hexdigest()
+
+
+def test_wiring_and_freshness_are_two_independent_facts(tmp_root: Path) -> None:
+    """N20：同一份逐字节相同的 patch，留痕的有无只改留痕那一根轴。
+
+    修前只有一个状态字段：`audit_never_written` 与 `wired` 互相翻转，读者看不出
+    "接线在、但没有留痕"与"接线根本不在"是两件事，于是把一次 WIRED 当成了长期证据。
+    """
+
+    home = make_home(tmp_root)
+    profile = wired_profile(home, audit=None)
+    digest = _patch_digest(profile)
+
+    missing_report = probe(home)
+    missing = missing_report.channels[0]
+    assert missing.wiring_status is WiringStatus.WIRED
+    assert missing.freshness_status is FreshnessStatus.NEVER_WRITTEN
+    assert missing.status is ChannelStatus.AUDIT_NEVER_WRITTEN
+    assert missing.ok is False
+    assert missing_report.result == "fail"
+
+    _write(profile / ".policy" / "audit.jsonl", audit_line("2026-09-25T11:59:00Z"))
+    fresh_report = probe(home)
+    fresh = fresh_report.channels[0]
+    # 接线事实两次相同：patch 逐字节没变，命令摘要与预算读数也一并相同。
+    assert _patch_digest(profile) == digest
+    assert fresh.wiring_status is missing.wiring_status
+    assert fresh.hook_command_digest == missing.hook_command_digest
+    assert fresh.timeout_budget == missing.timeout_budget
+    assert fresh.freshness_status is FreshnessStatus.FRESH
+    assert fresh.ok is True
+    assert fresh_report.result == "pass"
+
+    # 审计被 reset（.tmp/ 清理、scaffold --reset-audit）：只有留痕那一根轴翻回去。
+    (profile / ".policy" / "audit.jsonl").unlink()
+    reset_report = probe(home)
+    reset = reset_report.channels[0]
+    assert _patch_digest(profile) == digest
+    assert reset.wiring_status is WiringStatus.WIRED
+    assert reset.freshness_status is FreshnessStatus.NEVER_WRITTEN
+    assert reset.ok is False
+    assert reset_report.result == "fail"
+
+
+def test_both_axis_fields_are_serialized_and_readable(tmp_root: Path) -> None:
+    """"两个字段各自可读"是完成判据：JSON 里必须能分别读到，且不靠 `status` 反推。"""
+
+    home = make_home(tmp_root)
+    wired_profile(home, audit=None)
+
+    payload = probe(home).to_dict()
+    channel = payload["channels"][0]
+
+    assert channel["status"] == ChannelStatus.AUDIT_NEVER_WRITTEN.value
+    assert channel["wired"] is False
+    assert channel["wiring_status"] == WiringStatus.WIRED.value
+    assert channel["freshness_status"] == FreshnessStatus.NEVER_WRITTEN.value
+    # 口径声明随报告一起出去：不能只靠读者记得"wired 曾经是联合属性"。
+    assert "不再是" in payload["reading_guide"]
+    assert payload["fact_counts"] == {"total": 1, "wiring_ok": 1, "freshness_ok": 0}
+
+
+def test_failure_summary_names_both_axes(tmp_root: Path) -> None:
+    home = make_home(tmp_root)
+    wired_profile(home, audit=None)
+
+    failures = probe(home).failures
+
+    assert len(failures) == 1
+    assert "接线=wired" in failures[0]
+    assert "留痕=never_written" in failures[0]
+
+
+def test_freshness_survives_an_unprovable_wiring_fact(tmp_root: Path) -> None:
+    """两个字段各自独立：预算证明不了时留痕照旧要读出来——说"没评估"就是假话。"""
+
+    home = make_home(tmp_root)
+    profile = wired_profile(home)
+    (profile / ".policy" / "dsh-adapter.yaml").unlink()
+
+    channel = probe(home).channels[0]
+
+    assert channel.wiring_status is WiringStatus.TIMEOUT_BUDGET_UNKNOWN
+    assert channel.freshness_status is FreshnessStatus.FRESH
+    assert channel.status is ChannelStatus.TIMEOUT_BUDGET_UNKNOWN
+    assert channel.ok is False
+
+
+def test_freshness_is_unevaluated_when_the_wiring_fact_fails_first(tmp_root: Path) -> None:
+    """"没评估"是显式状态：桥没挂上时连审计目标都无从谈起，不许写成 fresh。"""
+
+    home = make_home(tmp_root)
+    _write(make_profile(home, "desktop") / "cordis.patch.yml", "[]\n")
+
+    channel = probe(home).channels[0]
+
+    assert channel.wiring_status is WiringStatus.NOT_WIRED
+    assert channel.freshness_status is FreshnessStatus.UNEVALUATED
+    assert channel.freshness_status.is_fresh is False
+    assert channel.status is ChannelStatus.NOT_WIRED
+    assert channel.ok is False
+
+
+@pytest.mark.parametrize("status", list(ChannelStatus))
+def test_every_status_is_classified_into_exactly_one_axis(status: ChannelStatus) -> None:
+    """归类必须全覆盖且可逆：漏一个就等于它会静默变成"两根都成立"。"""
+
+    wiring, freshness = split_status(status)
+
+    if status is ChannelStatus.WIRED:
+        assert wiring is WiringStatus.WIRED
+        assert freshness is FreshnessStatus.FRESH
+    else:
+        # 除 wired 外，每个状态都恰好说明"哪一边坏了"，另一根不许跟着一起坏。
+        assert not (wiring.is_wired and freshness.is_fresh)
+        if wiring.is_wired:
+            assert freshness.is_fresh is False
+        else:
+            assert freshness is FreshnessStatus.UNEVALUATED
+    # 总判定必须能从两根轴合回来（拆分不是单向的展示）。
+    assert combine_status(wiring, freshness) is status
+
+
+def test_a_command_that_cannot_start_is_warned_about_but_does_not_change_the_verdict(
+    tmp_root: Path,
+) -> None:
+    """N20 附带观测（verify-bc）：桥挂上了、声明也在，但命令里的解释器不存在。
+
+    静态清点**证明不了"拦得住"**（那要运行期证据），所以判定仍是"声明在、没有留痕"；
+    但"这次起不来"必须被说出来——否则读者会把"从没留痕"当成唯一的解释。
+    """
+
+    home = make_home(tmp_root)
+    command = (
+        "C:/nowhere/does-not-exist-python.exe -m adapters.dsh.hooks "
+        "--config .policy/dsh-adapter.yaml --hooks-config .policy/hooks.json "
+        "--audit .policy/audit.jsonl"
+    )
+    profile = make_profile(home, "desktop")
+    _write(profile / "cordis.patch.yml", in_process_patch(profile, command=command))
+    _write(profile / ".policy" / "hooks.json", json.dumps(policy_hooks(command)))
+    _write(profile / ".policy" / "dsh-adapter.yaml", ADAPTER_CONFIG)
+
+    channel = probe(home).channels[0]
+
+    assert channel.wiring_status is WiringStatus.WIRED
+    assert channel.freshness_status is FreshnessStatus.NEVER_WRITTEN
+    assert channel.status is ChannelStatus.AUDIT_NEVER_WRITTEN
+    assert channel.ok is False
+    assert any("可执行文件不存在" in warning for warning in channel.warnings), channel.warnings
+    # 报告里不出现绝对路径（AGENTS.md 第 19 条）：警告里也只给相对探测根的写法。
+    assert "<external>/does-not-exist-python.exe" in " ".join(channel.warnings)
+
+
+def test_an_impossible_axis_combination_is_rejected() -> None:
+    """组合不可能时必须报错，不许静默折叠：接线成立而"留痕没评估"会掩盖一整类失效。"""
+
+    with pytest.raises(WiringError):
+        ChannelReport(
+            channel_id="dsh:impossible",
+            kind="dsh-profile",
+            wiring_status=WiringStatus.WIRED,
+            freshness_status=FreshnessStatus.UNEVALUATED,
+            detail="不可能的组合",
+        )

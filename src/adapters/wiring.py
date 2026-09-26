@@ -10,8 +10,13 @@
 本模块只做一件事：把"接线"当成一个**可观测、可失败的输出**，逐通道给出显式状态。
 设计约束（每条都对应一个测试）：
 
-1. **只有 `wired` 算通过**：`wired` = 桥挂上了 + hooks 配置里有指向 `adapters.dsh.hooks` 的命令
-   + 审计目标存在且有新鲜留痕。"读不到 / 解析失败 / 路径不存在"一律是显式失败态，绝不折叠成"正常"；
+1. **两根事实轴各自独立、各自可读**（N20）：`wiring_status`（接线事实：桥挂上了 +
+   hooks 配置里有指向 `adapters.dsh.hooks` 的命令 + 超时预算不等式成立）与
+   `freshness_status`（留痕事实：审计目标存在 + 记录数 > 0 + 最后一条足够新）是两个字段，
+   谁都不推导谁、谁都不覆盖谁。`status` / `ok` / `result` 只是两者的**合取**：
+   任一边坏了都是失败态，一次 `wired` 不能当"治理已开启"的长期证据
+   （`.tmp/` 清理或 `--reset-audit` 会把留痕那一边打回 fail，而接线事实不变）。
+   "读不到 / 解析失败 / 路径不存在"一律是显式失败态，绝不折叠成"正常"；
 2. **确定性排序**：通道按 `channel_id` 排序，墙钟时间不参与排序；
    相同输入 + 相同 `now` 得到逐字节相同的 JSON；
 3. **报告里不出现绝对路径**（AGENTS.md 第 19 条）：路径一律相对探测根渲染，
@@ -49,21 +54,40 @@ import yaml
 
 __all__ = [
     "FAILURE_STATUSES",
+    "READING_GUIDE",
     "ChannelReport",
     "ChannelStatus",
     "DEFAULT_OBSERVED_SESSIONS",
     "DEFAULT_STALE_AFTER_SECONDS",
+    "FreshnessStatus",
     "ToolDriftReport",
     "ToolObservationStatus",
     "WIRING_SCHEMA_VERSION",
     "WiringError",
     "WiringReport",
+    "WiringStatus",
+    "combine_status",
     "declared_tool_table",
     "probe_wiring",
+    "split_status",
 ]
 
+# 清点输出里的口径声明（N20）：一次 `wired` 是"此刻两根轴都成立"的**快照**，
+# 不是"治理已开启"的长期证据——它就是这句话的可读版本，出现在 JSON 与人类可读输出里。
+READING_GUIDE = (
+    "wired 不再是「接线 + 留痕」的联合属性：每个通道给两个各自独立的字段——"
+    "wiring_status（接线事实：桥挂上了、钩子命令解析得出、超时预算不等式成立）与 "
+    "freshness_status（留痕事实：审计目标存在、有可解析记录、最后一条未过期）。"
+    "status / wired / ok / result 只是两者的合取：任一边坏了都是 fail。"
+    "一次 wired 只说明此刻两根轴都成立，不能当治理已开启的长期证据——"
+    "审计被 reset（.tmp/ 清理、--reset-audit）就会翻回 fail，而接线事实不变。"
+)
+
 # 输出协议版本：消费方看不懂必须拒绝（与 audit_schema_version 同一条思路）。
-WIRING_SCHEMA_VERSION = "1.0"
+# 1.1：每个通道新增 wiring_status / freshness_status 两个事实轴字段，报告新增 reading_guide
+#      与 fact_counts（N20）。字段是**新增**的，但"wired 是联合属性"这一旧读法不再被支持——
+#      要分别读的两件事必须能被分别断言，因此这是一次显式的协议版本变更。
+WIRING_SCHEMA_VERSION = "1.1"
 
 DEFAULT_STALE_AFTER_SECONDS = 7 * 24 * 3600
 DEFAULT_OBSERVED_SESSIONS = 8
@@ -109,7 +133,12 @@ class WiringError(RuntimeError):
 
 
 class ChannelStatus(str, Enum):
-    """通道状态。除 `WIRED` 外全部是失败态（`--check` 一律退出非 0）。"""
+    """**总判定**状态。除 `WIRED` 外全部是失败态（`--check` 一律退出非 0）。
+
+    它不再是"接线 + 留痕"的联合属性（N20）：`WIRED` 只在两根事实轴都成立时出现，
+    而每根轴各自有可读字段（`ChannelReport.wiring_status` / `freshness_status`）。
+    本枚举的取值全部保留——它们既表达"哪一边坏了"，也继续作为协议里的 `status` 字段。
+    """
 
     WIRED = "wired"
     NOT_WIRED = "not_wired"
@@ -141,6 +170,120 @@ class ChannelStatus(str, Enum):
 FAILURE_STATUSES: tuple[ChannelStatus, ...] = tuple(
     status for status in ChannelStatus if not status.is_wired
 )
+
+
+class WiringStatus(str, Enum):
+    """接线事实（第一根轴）：桥挂上了、钩子命令解析得出、超时预算不等式成立。
+
+    N20 的教训：以前 `ChannelStatus.WIRED` 一个值同时承担"接线成立"与"留痕新鲜"两件事，
+    于是一次 WIRED 输出被读成"治理已开启"的长期证据。现在两根轴各有字段：
+    本枚举只回答"接线在不在"，留痕由 `FreshnessStatus` 回答。
+    """
+
+    WIRED = "wired"
+    NOT_WIRED = "not_wired"
+    HOOKS_CONFIG_MISSING = "hooks_config_missing"
+    HOOKS_CONFIG_UNPARSABLE = "hooks_config_unparsable"
+    HOOKS_CONFIG_UNREADABLE = "hooks_config_unreadable"
+    PROFILE_UNREADABLE = "profile_unreadable"
+    TIMEOUT_BUDGET_VIOLATED = "timeout_budget_violated"
+    TIMEOUT_BUDGET_UNKNOWN = "timeout_budget_unknown"
+
+    @property
+    def is_wired(self) -> bool:
+        return self is WiringStatus.WIRED
+
+
+class FreshnessStatus(str, Enum):
+    """留痕事实（第二根轴）：审计目标在、有可解析记录、最后一条足够新。
+
+    与接线事实**互相独立**：接线在而留痕没有时这里是 `never_written`，总判定仍是 fail——
+    "这台机器上还没人用过"与"治理开着"不是一回事。
+    """
+
+    FRESH = "fresh"
+    NO_AUDIT_TARGET = "no_audit_target"
+    NEVER_WRITTEN = "never_written"
+    STALE = "stale"
+    UNREADABLE = "unreadable"
+    UNPARSABLE = "unparsable"
+    # 接线事实先坏了（配置读不到 / 桥没挂上），留痕**没有被评估**：这是显式状态，
+    # 不是 fresh，也不许被读成"留痕正常"。
+    UNEVALUATED = "unevaluated"
+
+    @property
+    def is_fresh(self) -> bool:
+        return self is FreshnessStatus.FRESH
+
+
+# `ChannelStatus` → 两根轴的显式归类。**每个状态都必须落在某一根上**（下表由
+# `split_status` 兜底校验：没归类的一律报错，不猜、也不默认放行）。
+_WIRING_AXIS: Mapping[ChannelStatus, WiringStatus] = {
+    ChannelStatus.NOT_WIRED: WiringStatus.NOT_WIRED,
+    ChannelStatus.HOOKS_CONFIG_MISSING: WiringStatus.HOOKS_CONFIG_MISSING,
+    ChannelStatus.HOOKS_CONFIG_UNPARSABLE: WiringStatus.HOOKS_CONFIG_UNPARSABLE,
+    ChannelStatus.HOOKS_CONFIG_UNREADABLE: WiringStatus.HOOKS_CONFIG_UNREADABLE,
+    ChannelStatus.PROFILE_UNREADABLE: WiringStatus.PROFILE_UNREADABLE,
+    ChannelStatus.TIMEOUT_BUDGET_VIOLATED: WiringStatus.TIMEOUT_BUDGET_VIOLATED,
+    ChannelStatus.TIMEOUT_BUDGET_UNKNOWN: WiringStatus.TIMEOUT_BUDGET_UNKNOWN,
+}
+_FRESHNESS_AXIS: Mapping[ChannelStatus, FreshnessStatus] = {
+    ChannelStatus.NO_AUDIT_TARGET: FreshnessStatus.NO_AUDIT_TARGET,
+    ChannelStatus.AUDIT_NEVER_WRITTEN: FreshnessStatus.NEVER_WRITTEN,
+    ChannelStatus.STALE: FreshnessStatus.STALE,
+    ChannelStatus.AUDIT_UNREADABLE: FreshnessStatus.UNREADABLE,
+    ChannelStatus.AUDIT_UNPARSABLE: FreshnessStatus.UNPARSABLE,
+}
+# 反向表：把一根轴的事实合回总判定。两根轴的"好"值（`WIRED` / `FRESH`）不在表里，
+# 它们的合取由 `combine_status` 单独处理。
+_WIRING_TO_STATUS: Mapping[WiringStatus, ChannelStatus] = {
+    value: key for key, value in _WIRING_AXIS.items()
+}
+_FRESHNESS_TO_STATUS: Mapping[FreshnessStatus, ChannelStatus] = {
+    value: key for key, value in _FRESHNESS_AXIS.items()
+}
+
+
+def _freshness_of(status: ChannelStatus) -> FreshnessStatus:
+    """只接受留痕轴的状态：别的轴传进来就是程序错误（不得静默折叠）。"""
+
+    if status is ChannelStatus.WIRED:
+        return FreshnessStatus.FRESH
+    freshness = _FRESHNESS_AXIS.get(status)
+    if freshness is None:
+        raise WiringError("留痕事实收到不属于留痕轴的状态：" + status.value)
+    return freshness
+
+
+def split_status(status: ChannelStatus) -> tuple[WiringStatus, FreshnessStatus]:
+    """把一个总体状态拆成（接线事实，留痕事实）——这是**唯一**的拆分口径。
+
+    接线事实坏了时留痕是显式的 `unevaluated`：那时连钩子命令都解析不出来，
+    审计目标无从谈起，评估留痕本身就不可能。反过来（留痕坏了、接线成立）是常见情形，
+    也是 N20 的正例：接线事实必须照旧读成 `wired`。
+    """
+
+    if status is ChannelStatus.WIRED:
+        return WiringStatus.WIRED, FreshnessStatus.FRESH
+    wiring = _WIRING_AXIS.get(status)
+    if wiring is not None:
+        return wiring, FreshnessStatus.UNEVALUATED
+    return WiringStatus.WIRED, _freshness_of(status)
+
+
+def combine_status(wiring: WiringStatus, freshness: FreshnessStatus) -> ChannelStatus:
+    """把两根事实轴合回总判定：`WIRED` 只在两根都成立时出现（失败关闭）。"""
+
+    if not wiring.is_wired:
+        return _WIRING_TO_STATUS[wiring]
+    if freshness is FreshnessStatus.FRESH:
+        return ChannelStatus.WIRED
+    if freshness is FreshnessStatus.UNEVALUATED:
+        raise WiringError(
+            "接线成立却说留痕没有被评估：留痕要么被读过，要么因为接线不成立而没读，"
+            "这个组合不可能（不得静默折叠成通过）"
+        )
+    return _FRESHNESS_TO_STATUS[freshness]
 
 
 class ToolObservationStatus(str, Enum):
@@ -181,11 +324,18 @@ class _PathRenderer:
 
 @dataclass(frozen=True)
 class ChannelReport:
-    """一个 Agent 运行时通道的接线事实与留痕事实。"""
+    """一个 Agent 运行时通道的两根**独立**事实轴：接线事实 + 留痕事实。
+
+    `wiring_status` 回答"桥挂上了吗、钩子命令解析得出吗、超时预算不等式成立吗"；
+    `freshness_status` 回答"审计目标在不在、有没有可解析记录、最后一条够不够新"。
+    N20：两者互不推导、互不覆盖；`status` / `ok` 只是它们的合取，
+    所以"接线在、没有留痕"是一个能被单独读出来的状态，而不是另一种"没接线"。
+    """
 
     channel_id: str
     kind: str
-    status: ChannelStatus
+    wiring_status: WiringStatus
+    freshness_status: FreshnessStatus
     detail: str
     profile: Optional[str] = None
     profile_dir: Optional[str] = None
@@ -205,19 +355,41 @@ class ChannelReport:
     timeout_budget: Mapping[str, Any] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        # 失败关闭的不变量：接线不成立才"没得评估留痕"，反过来是不可能的组合。
+        if self.wiring_status.is_wired and self.freshness_status is FreshnessStatus.UNEVALUATED:
+            raise WiringError(
+                "接线事实成立却声称留痕没有被评估：这个组合不可能（不得静默折叠）"
+            )
+
+    @property
+    def status(self) -> ChannelStatus:
+        """总判定（协议里的 `status` 字段）：两根事实轴的合取，不是第三份事实。"""
+
+        return combine_status(self.wiring_status, self.freshness_status)
+
     @property
     def ok(self) -> bool:
-        return self.status.is_wired
+        """两根轴都成立才算通过；任一边坏了都失败（`--check` 的判据）。"""
+
+        return self.wiring_status.is_wired and self.freshness_status.is_fresh
 
     def summary(self) -> str:
-        return f"{self.channel_id}: {self.status.value} — {self.detail}"
+        return (
+            f"{self.channel_id}: {self.status.value}"
+            f"（接线={self.wiring_status.value}，留痕={self.freshness_status.value}）"
+            f" — {self.detail}"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "channel_id": self.channel_id,
             "kind": self.kind,
             "status": self.status.value,
-            "wired": self.status.is_wired,
+            "wired": self.ok,
+            # 两根轴各自的事实（N20）：不再只有一个"联合属性"字段。
+            "wiring_status": self.wiring_status.value,
+            "freshness_status": self.freshness_status.value,
             "detail": self.detail,
             "profile": self.profile,
             "profile_dir": self.profile_dir,
@@ -276,7 +448,7 @@ class ToolDriftReport:
 
 @dataclass(frozen=True)
 class WiringReport:
-    """整份清点结果。`ok` 只在"至少一个通道，且每个通道都 wired"时为真。"""
+    """整份清点结果。`ok` 只在"至少一个通道，且每个通道的**两根事实轴都成立**"时为真。"""
 
     dsh_home_label: str
     dsh_home_source: str
@@ -334,11 +506,22 @@ class WiringReport:
                 "stale_after_seconds": self.stale_after_seconds,
                 "notes": list(self.notes),
             },
+            # 口径声明（N20）：不写在这里的话，"wired 是联合属性"这件事会继续靠读者的印象传播。
+            "reading_guide": READING_GUIDE,
             "channels": [channel.to_dict() for channel in self.channels],
             "counts": {
                 "total": len(self.channels),
                 "wired": sum(1 for channel in self.channels if channel.ok),
                 "failed": len(self.failures),
+            },
+            # 两根轴各自的分母：接线成立几个、留痕新鲜几个。`wired` 是它们的合取，
+            # 所以这两个数可以直接暴露"有多少通道是接线在而没有留痕"。
+            "fact_counts": {
+                "total": len(self.channels),
+                "wiring_ok": sum(1 for channel in self.channels if channel.wiring_status.is_wired),
+                "freshness_ok": sum(
+                    1 for channel in self.channels if channel.freshness_status.is_fresh
+                ),
             },
             "failures": list(self.failures),
             "tools": self.tools.to_dict(),
@@ -393,6 +576,22 @@ def _string_flag(command: str, flag: str) -> Optional[str]:
     if match is None:
         return None
     return match.group(1).strip().strip('"').strip("'")
+
+
+def _command_executable(command: str) -> Optional[str]:
+    """取命令的第一个词（可执行文件/解释器），只为一句警告服务。
+
+    刻意不做 shell 语义解析：这里要回答的是"这条命令打算调用哪个程序"，
+    不是"这条命令安全吗"（那是注册表与 pre-check 的事）。
+    """
+
+    text = command.strip()
+    if not text:
+        return None
+    if text[0] in "\"'":
+        end = text.find(text[0], 1)
+        return text[1:end] if end > 0 else None
+    return text.split(None, 1)[0]
 
 
 def _command_digest(command: str) -> str:
@@ -720,7 +919,9 @@ def tool_drift(*, sessions_dir: Optional[Path], limit: int) -> ToolDriftReport:
 
 @dataclass(frozen=True)
 class _AuditFacts:
-    status: ChannelStatus
+    """留痕事实（第二根轴）的读数。**这里没有接线事实**——那是 `_probe_channel` 的事。"""
+
+    freshness: FreshnessStatus
     detail: str
     records: int
     bad_lines: int
@@ -736,7 +937,7 @@ def _audit_facts(
     now: clock.datetime,
     stale_after_seconds: float,
 ) -> _AuditFacts:
-    """读审计 JSONL，返回"留痕状态"。
+    """读审计 JSONL，只返回**留痕事实**（接线事实由调用方另行判定）。
 
     ""没有目标"" / ""目标不存在"" / ""读不到"" / ""一行都解析不出来"" / ""有记录但太旧""
     是五个不同的事实，
@@ -745,7 +946,7 @@ def _audit_facts(
 
     if audit_path is None:
         return _AuditFacts(
-            ChannelStatus.NO_AUDIT_TARGET,
+            FreshnessStatus.NO_AUDIT_TARGET,
             "接线里没有声明审计目标（命令没有 --audit，adapter 配置也没有 audit_log）："
             "留痕无从证明",
             0,
@@ -757,7 +958,7 @@ def _audit_facts(
     rendered = renderer.render(audit_path)
     if audit_path.is_dir():
         return _AuditFacts(
-            ChannelStatus.AUDIT_UNREADABLE,
+            FreshnessStatus.UNREADABLE,
             "审计目标是一个目录（不是 JSONL 文件）：" + str(rendered),
             0,
             0,
@@ -767,7 +968,7 @@ def _audit_facts(
         )
     if not audit_path.exists():
         return _AuditFacts(
-            ChannelStatus.AUDIT_NEVER_WRITTEN,
+            FreshnessStatus.NEVER_WRITTEN,
             "审计目标不存在：" + str(rendered) + "（该通道从未留痕）",
             0,
             0,
@@ -780,7 +981,7 @@ def _audit_facts(
             lines = handle.read().splitlines()
     except (OSError, UnicodeDecodeError) as error:
         return _AuditFacts(
-            ChannelStatus.AUDIT_UNREADABLE,
+            FreshnessStatus.UNREADABLE,
             "审计文件读不到（" + type(error).__name__ + "）：" + str(rendered),
             0,
             0,
@@ -823,7 +1024,7 @@ def _audit_facts(
         detail = "审计文件存在但没有任何可解析的记录：" + str(rendered)
         detail += "（" + str(bad_lines) + " 行不可解析）" if bad_lines else "（文件为空）"
         return _AuditFacts(
-            ChannelStatus.AUDIT_UNPARSABLE if bad_lines else ChannelStatus.AUDIT_NEVER_WRITTEN,
+            FreshnessStatus.UNPARSABLE if bad_lines else FreshnessStatus.NEVER_WRITTEN,
             detail,
             0,
             bad_lines,
@@ -845,7 +1046,7 @@ def _audit_facts(
         age = 0
     if age > stale_after_seconds:
         return _AuditFacts(
-            ChannelStatus.STALE,
+            FreshnessStatus.STALE,
             "最后一条留痕 " + str(last_text) + " 距现在 " + str(age) + "s，超过阈值 "
             + format(stale_after_seconds, "g") + "s：" + str(rendered),
             records,
@@ -854,9 +1055,11 @@ def _audit_facts(
             age,
             tuple(warnings),
         )
+    # 这里只说留痕那一根轴：接线事实有没有成立由 `wiring_status` 单独说
+    # （这句以前写的是"接线成立且留痕新鲜"，等于让留痕读数替接线事实背书）。
     return _AuditFacts(
-        ChannelStatus.WIRED,
-        "接线成立且留痕新鲜：最后一条 " + str(last_text) + "（" + str(age) + "s 前）",
+        FreshnessStatus.FRESH,
+        "留痕新鲜：最后一条 " + str(last_text) + "（" + str(age) + "s 前）",
         records,
         bad_lines,
         last_text,
@@ -1071,14 +1274,32 @@ def _probe_channel(
         "stale_after_seconds": stale_after_seconds,
     }
 
-    def make(status: ChannelStatus, detail: str, **extra: Any) -> ChannelReport:
+    def build(
+        wiring_status: WiringStatus,
+        freshness_status: FreshnessStatus,
+        detail: str,
+        **extra: Any,
+    ) -> ChannelReport:
+        """按**两根轴各自的事实**构造报告：总判定由它们合出来，不手写第三份结论。"""
+
         extra_warnings = tuple(extra.pop("warnings", ()))
         return ChannelReport(
-            status=status,
+            wiring_status=wiring_status,
+            freshness_status=freshness_status,
             detail=detail,
             warnings=tuple(notes) + extra_warnings,
             **{**base_kwargs, **extra},
         )
+
+    def make(status: ChannelStatus, detail: str, **extra: Any) -> ChannelReport:
+        """由总体状态推出两根轴的构造入口（接线阶段先坏时用）：
+
+        接线事实坏了 -> 留痕是显式的 `unevaluated`（那时连钩子命令都解析不出来）；
+        未归类的状态由 `split_status` 直接报错，不猜。
+        """
+
+        wiring_status, freshness_status = split_status(status)
+        return build(wiring_status, freshness_status, detail, **extra)
 
     if patch.exists() and not patch.is_file():
         return make(
@@ -1251,6 +1472,18 @@ def _probe_channel(
         if value:
             flags[flag] = _render_flag_value(renderer, value)
 
+    # 附带观测（N20）：`verify-bc` 那类通道"桥挂上了、声明也在"，但命令里的解释器在这台
+    # 机器上根本不存在——dsh 侧 spawn 失败等于放行。静态清点**证明不了"拦得住"**，
+    # 但能把这条事实说出来。它只做警告、不改判定：判定只回答"声明在不在 + 有没有留痕"，
+    # 真正的"拦得住"要运行期证据（hooks.check_wiring + 真实会话）。
+    executable = _command_executable(policy_command)
+    if executable is not None and Path(executable).is_absolute() and not Path(executable).exists():
+        notes.append(
+            "桥的命令以绝对路径开头，但那个可执行文件不存在："
+            + str(renderer.render(executable))
+            + "（声明在、这次却起不来——dsh 侧 spawn 失败等于放行；这条不改判定）"
+        )
+
     # 内部预算：要么从 adapter 配置读到，要么按运行期默认值
     # （adapter.py 的 load_config 缺省 5000ms）。
     # 读不到 / 解析失败 / 非法值 => budget_input_error，最后按"证明不了不等式"处理（失败态）。
@@ -1354,17 +1587,20 @@ def _probe_channel(
     ):
         budget_fact["ok"] = dsh_side_timeout_ms > internal_budget_ms
 
-    status = facts.status
+    # 两根轴各自的事实：留痕已经在上面读出来了（facts），接线结论在这里定。
+    # 注意预算失败时**不覆盖**留痕事实：那时审计确实被读过了，说"没评估"就是假话。
+    freshness_status = facts.freshness
+    wiring_status = WiringStatus.WIRED
     detail = facts.detail
     if budget_input_error is not None:
         # 读不到 = 证明不了这个不等式成立。按"证明不了就拒绝"处理：失败态，绝不是 wired。
-        status = ChannelStatus.TIMEOUT_BUDGET_UNKNOWN
+        wiring_status = WiringStatus.TIMEOUT_BUDGET_UNKNOWN
         detail = (
             "证明不了“内部预算 < dsh 侧超时”：" + budget_input_error
             + "——读不到不等于不等式成立（AGENTS.md 第 10 条）；留痕状态：" + facts.detail
         )
     elif dsh_side_timeout_ms is None:
-        status = ChannelStatus.TIMEOUT_BUDGET_UNKNOWN
+        wiring_status = WiringStatus.TIMEOUT_BUDGET_UNKNOWN
         unreadable_reason = (
             "dsh 侧超时是表达式（" + str(bridge.dsh_side_timeout_source) + "），本模块不求值"
             if bridge.timeout_unreadable
@@ -1381,15 +1617,16 @@ def _probe_channel(
         # 而"被杀"在 dsh 协议里等于放行（AGENTS.md 第 10 条）。
         # 运行期自检（hooks.check_wiring）把这一条当错误返回，静态清点必须同结论：
         # 运行期判错、清点判过 = 两套口径，正是本轮要消灭的东西。
-        status = ChannelStatus.TIMEOUT_BUDGET_VIOLATED
+        wiring_status = WiringStatus.TIMEOUT_BUDGET_VIOLATED
         detail = (
             "dsh 侧 timeout=" + format(dsh_side_timeout_ms, "g") + "ms 不大于内部预算 "
             + str(internal_budget_ms) + "ms：dsh 会先杀掉 Hook，而被杀等于放行"
             "（AGENTS.md 第 10 条）；留痕状态：" + facts.detail
         )
 
-    return make(
-        status,
+    return build(
+        wiring_status,
+        freshness_status,
         detail,
         bridge=bridge_fact,
         hooks_config=hooks_rel,

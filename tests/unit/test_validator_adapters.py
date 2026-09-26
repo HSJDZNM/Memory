@@ -268,8 +268,9 @@ def test_timeout_kills_the_whole_process_tree(tmp_root: Path) -> None:
 # ------------------------------------------------------------------ 适配器映射
 
 
-def run_adapter(name: str, behaviour: str, tmp_root: Path, *, rules=None):
-    spec = fake_tool_spec(name, behaviour)
+def run_adapter(name: str, behaviour: str, tmp_root: Path, *, rules=None, spec=None):
+    if spec is None:
+        spec = fake_tool_spec(name, behaviour)
     result = probe(spec, tmp_root)
     assert result.ok, result.reason
     arguments = dict(
@@ -303,6 +304,73 @@ def test_ruff_maps_only_diagnostics_owned_by_rules(tmp_root: Path) -> None:
     assert owners["STYLE-001"].tool is not None
     assert owners["STYLE-001"].tool.version == "0.14.13"
     assert owners["STYLE-001"].tool.exit_code == 1
+
+
+def declared_failures(spec, codes):
+    """给假工具的 spec 补上注册表里声明的"分析不成立"名单。
+
+    真实注册表里这份名单属于 `tool.ruff`（`validation/validators.yaml` 的
+    `tool.analysis_failure_codes`）；适配器只读数据，不在代码里硬编码码表。
+    """
+
+    return spec.model_copy(
+        update={"tool": spec.tool.model_copy(update={"analysis_failure_codes": codes})}
+    )
+
+
+def test_ruff_fails_closed_when_the_analysis_does_not_hold(tmp_root: Path) -> None:
+    """诊断命中"分析不成立"名单：状态是失败关闭，既不是 OK 也不是 FINDINGS。"""
+
+    spec = declared_failures(fake_tool_spec("ruff", "syntax"), ("invalid-syntax",))
+    result = run_adapter("ruff", "syntax", tmp_root, spec=spec)
+
+    assert result.status is ValidatorStatus.FAILED
+    assert result.evidence == ()
+    assert result.analysis_failure == ("invalid-syntax",)  # 保留工具自己的拼写
+    assert result.unmapped == 2  # 仍然计数，不静默
+    assert "未能分析" in (result.reason or "")
+    assert result.tool is not None and result.tool.exit_code == 1
+
+
+def test_ruff_analysis_failure_is_data_driven_not_hardcoded(tmp_root: Path) -> None:
+    """同一份工具输出：注册表没声明名单时行为不变（无归属诊断只计数）。
+
+    这条是"码表没有硬编码进代码"的对照：如果适配器自己内置了 invalid-syntax，
+    下面就会变成 FAILED —— 但它的职责是执行数据，不是替数据做判断。
+    """
+
+    result = run_adapter("ruff", "syntax", tmp_root)
+
+    assert result.status is ValidatorStatus.OK
+    assert result.analysis_failure == ()
+    assert result.unmapped == 2
+
+
+def test_ruff_keeps_unowned_lint_codes_out_of_the_failure_path(tmp_root: Path) -> None:
+    """真正的"没归属的 lint 码"（W291）仍只计数，不得被一起升级成失败关闭。"""
+
+    spec = declared_failures(fake_tool_spec("ruff", "findings"), ("invalid-syntax",))
+    result = run_adapter("ruff", "findings", tmp_root, spec=spec)
+
+    assert result.status is ValidatorStatus.FINDINGS
+    assert result.analysis_failure == ()
+    assert result.unmapped == 1
+    assert {item.rule_id for item in result.evidence} == {"STYLE-001", "STYLE-002"}
+
+
+def test_analysis_failure_codes_ignores_case_and_non_mapping_entries() -> None:
+    from validators.adapters.ruff import analysis_failure_codes
+
+    document = [
+        {"code": "Invalid-Syntax"},
+        "not-a-mapping",
+        {"code": None},
+        {"code": "invalid-syntax"},
+    ]
+
+    # 大小写不敏感、按码去重；报出来的是工具自己的拼写（证据引用的是工具说的话）
+    assert analysis_failure_codes(document, declared=("invalid-syntax",)) == ("Invalid-Syntax",)
+    assert analysis_failure_codes(document, declared=()) == ()
 
 
 def test_ruff_reports_output_invalid_for_empty_or_broken_json(tmp_root: Path) -> None:

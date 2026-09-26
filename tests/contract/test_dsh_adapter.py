@@ -706,6 +706,33 @@ def test_read_traversal_is_refused(dsh_config_path, dsh_project):
         to_policy_event(payload, config=config)
 
 
+def test_an_out_of_scope_read_is_refused_with_a_usable_alternative(dsh_config_path, dsh_project):
+    """N22：越界拒绝要能一次改对（给出可用替代），范围校验一条都不放松。
+
+    修前理由只有一句"越界一律拒绝"：模型不知道受控项目根本身是合法的、也不知道要写
+    仓库相对路径，只能白试一次。这条用例只钉"理由里有没有可用替代"，
+    拒绝本身由上面几条用例继续钉着。
+    """
+
+    config = load_config(dsh_config_path)
+    payload = event_for(
+        "pre-tool-use-read-not-governed.json",
+        dsh_project,
+        tool_name="glob",
+        tool_input={"pattern": "**/*.py", "path": str(dsh_project.parent)},
+    )
+
+    with pytest.raises(DshEventError) as error:
+        to_policy_event(payload, config=config)
+
+    message = str(error.value)
+    assert "仓库相对路径" in message
+    assert "src/shop/order_service.py" in message
+    assert "`.`" in message
+    # 可用替代不能靠泄露本机布局来"讲清楚"：受控项目只出现名字
+    assert str(dsh_project.parent) not in message
+
+
 def test_read_image_outside_the_project_is_refused(dsh_config_path, dsh_project):
     config = load_config(dsh_config_path)
     payload = event_for(

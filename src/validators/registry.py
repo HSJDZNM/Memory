@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, FrozenSet, Mapping, Optional
 
 import yaml
 from pydantic import ValidationError
@@ -25,6 +25,7 @@ from policy.models import RuleValidationError
 from .models import ProjectProfile, Registry, TestLayout, ValidatorSpec
 
 __all__ = [
+    "ANALYSIS_FAILURE_AWARE_VALIDATORS",
     "DEFAULT_PROJECT",
     "DEFAULT_REGISTRY",
     "DEFAULT_TEST_LAYOUT",
@@ -41,6 +42,11 @@ __all__ = [
 DEFAULT_REGISTRY = "validation/validators.yaml"
 DEFAULT_PROJECT = "validation/project.yaml"
 DEFAULT_TEST_LAYOUT = "validation/test-layout.yaml"
+
+# 能声明 tool.analysis_failure_codes 的验证器：实现里真的会读这份名单的那些。
+# **数据声明的能力必须有实现承接**——否则某个工具写上一串"本次分析不成立"的码却没人读，
+# 就又造出一个"看起来在管、实际什么都没查"。新增一个工具支持它时，同时改这里与对应适配器。
+ANALYSIS_FAILURE_AWARE_VALIDATORS: FrozenSet[str] = frozenset({"tool.ruff"})
 
 
 class RegistryError(Exception):
@@ -142,6 +148,16 @@ def _check_registry(registry: Registry, *, path: Path, root: Path) -> None:
                     f"{path}: {spec.id} 声明的工具配置不存在：{spec.tool.config}"
                     "（配置读不到属于配置错误，不允许静默用默认配置跑）"
                 )
+        if (
+            spec.tool is not None
+            and spec.tool.analysis_failure_codes
+            and spec.id not in ANALYSIS_FAILURE_AWARE_VALIDATORS
+        ):
+            raise RegistryError(
+                f"{path}: {spec.id} 声明了 tool.analysis_failure_codes，但实现里没有适配器读它"
+                f"（目前支持：{sorted(ANALYSIS_FAILURE_AWARE_VALIDATORS)}）；"
+                "要么实现检测，要么别声明——声明了没人读的名单等于没查"
+            )
         if spec.tool is not None and not spec.tool.argv and spec.tool.version_args:
             raise RegistryError(
                 f"{path}: {spec.id} 的外部工具没有声明 argv；参数必须来自 allowlist，不能自由拼"

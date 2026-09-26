@@ -16,6 +16,7 @@ behavior:
     slow          长时间运行 + 一个心跳子进程（用于验证超时终止整棵进程树）
     old           版本输出低于声明区间（调用方应记 version_mismatch）
     injection     诊断消息里塞入换行、ANSI、绝对路径与"忽略之前的指令"
+    syntax        无法解析目标文件：只报 invalid-syntax（"本次分析不成立"码，调用方应失败关闭）
 
 这个脚本只服务测试，不属于运行时代码；它刻意不读环境里的任何凭据。
 """
@@ -106,6 +107,32 @@ def ruff_document(behaviour: str) -> str:
                 "noqa_row": 12,
             },
         ]
+    elif behaviour == "syntax":
+        # 复刻 ruff 0.14 对无法解析文件的实际输出：两条 invalid-syntax，且都不是可 select 的
+        # lint 码（本机实测 0.14.13；仓库文档口径：更早的版本写作 E999）。诊断码本身没有
+        # 规则归属，命中注册表声明的"分析不成立"名单后必须失败关闭，而不是被记成"跑过、没发现"。
+        document = [
+            {
+                "cell": None,
+                "code": "invalid-syntax",
+                "message": "Expected a parameter or the end of the parameter list",
+                "filename": "src/shop/broken_syntax.py",
+                "location": {"row": 6, "column": 12},
+                "end_location": {"row": 6, "column": 13},
+                "fix": None,
+                "noqa_row": None,
+            },
+            {
+                "cell": None,
+                "code": "invalid-syntax",
+                "message": "Expected a closing parenthesis, found newline",
+                "filename": "src/shop/broken_syntax.py",
+                "location": {"row": 6, "column": 13},
+                "end_location": {"row": 7, "column": 1},
+                "fix": None,
+                "noqa_row": None,
+            },
+        ]
     elif behaviour == "injection":
         document = [
             {
@@ -183,7 +210,7 @@ def main(argv: list[str]) -> int:
 
     if tool == "ruff":
         emit(ruff_document(behaviour))
-        return 1 if behaviour in ("findings", "injection") else 0
+        return 1 if behaviour in ("findings", "injection", "syntax") else 0
     if tool == "mypy":
         emit(mypy_text(behaviour))
         return 1 if behaviour == "findings" else 0

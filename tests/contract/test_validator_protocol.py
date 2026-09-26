@@ -124,6 +124,53 @@ def test_ruff_codes_are_declared_and_selected_in_both_directions() -> None:
     )
 
 
+def analysis_failure_codes_by_validator() -> dict[str, tuple[str, ...]]:
+    """注册表里声明的"本次分析不成立"码（按验证器分组）。"""
+
+    return {
+        spec.id: spec.tool.analysis_failure_codes
+        for spec in CONFIG.registry.validators
+        if spec.tool is not None and spec.tool.analysis_failure_codes
+    }
+
+
+def test_analysis_failure_codes_are_disjoint_from_governed_codes() -> None:
+    """一个码不可能既"可判定的规则码"、又"本次分析不成立"。
+
+    两个方向都必须是空集：与 `validation/ruff.toml` 的 `select` 交集（select 里的码是
+    "工具会报、规则会判"的码），与规则声明的码交集（否则那条规则要么永远拿不到证据，
+    要么在"分析不成立"时被当成命中）。这是数据自洽性检查：它保证 N17 的修复名单
+    不会退化成另一张"没人读的码表"。
+    """
+
+    declared = analysis_failure_codes_by_validator()
+    # 名单为空 = 修复被撤销（回到"没查成的被记成查过了"），所以这条断言本身就是门禁
+    assert declared, "tool.ruff 必须声明「分析不成立」码（N17 的修复依赖它）"
+
+    selected = {item.upper() for item in ruff_select()}
+    owned: set[str] = set()
+    for rule in load_rule_set([POLICIES_DIR], repo_root=REPO_ROOT).rules:
+        body = getattr(rule.rule, "style_lint", None)
+        if body is not None:
+            owned.update(code.upper() for code in body.codes)
+
+    conflicts = [
+        (validator_id, code)
+        for validator_id, codes in declared.items()
+        for code in codes
+        if code.upper() in selected
+    ]
+    assert conflicts == [], "分析不成立码不能同时是 select 里的可判定码：" + repr(conflicts)
+
+    collisions = [
+        (validator_id, code)
+        for validator_id, codes in declared.items()
+        for code in codes
+        if code.upper() in owned
+    ]
+    assert collisions == [], "分析不成立码不能同时有规则归属：" + repr(collisions)
+
+
 def test_rule_packs_only_reference_validators_of_their_language() -> None:
     for pack in CONFIG.registry.rule_packs:
         for name in pack.validators:
