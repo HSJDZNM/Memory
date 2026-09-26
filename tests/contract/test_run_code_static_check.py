@@ -17,6 +17,23 @@ import copy
 import json
 
 import pytest
+from enforcement_support import (
+    ENFORCEMENT_APPROVED,
+    ENFORCEMENT_REGISTRY,
+    TEST_REGISTRY_TOOLS,
+    EnforcementPaths,
+    approval_for,
+    enforcement_paths,
+    make_action,
+    registry_document,
+    write_registry,
+)
+
+# pytest 按测试模块命名空间里的**属性名**注册 fixture（没写 name= 时取的就是它），
+# 所以这里必须用原名导入：它正是测试函数形参 `enforcement_paths` 要解析到的名字。
+# `__all__` 声明这是一次刻意的再导出，不是未使用的导入（F401/F811 对它是误报）；
+# 删掉这个导入 = 26 个用例在 setup 期报 `fixture 'enforcement_paths' not found`。
+__all__ = ["enforcement_paths"]
 
 from enforcement.audit import FileAuditSink
 from enforcement.codecheck import check_code
@@ -30,18 +47,6 @@ from enforcement.models import (
 )
 from enforcement.precheck import check_list, pre_execute
 from enforcement.registry import load_registry, registry_document_from_mapping
-
-from enforcement_support import (
-    ENFORCEMENT_APPROVED,
-    ENFORCEMENT_REGISTRY,
-    TEST_REGISTRY_TOOLS,
-    EnforcementPaths,
-    approval_for,
-    enforcement_paths,
-    make_action,
-    registry_document,
-    write_registry,
-)
 
 pytestmark = pytest.mark.contract
 
@@ -326,7 +331,9 @@ def test_ungoverned_and_code_check_cannot_coexist(tmp_root):
 
 
 def test_ungoverned_only_applies_to_delegated_process_tools(tmp_root):
-    tool = copy.deepcopy(dict(next(item for item in TEST_REGISTRY_TOOLS if item["id"] == "fs.read")))
+    tool = copy.deepcopy(
+        dict(next(item for item in TEST_REGISTRY_TOOLS if item["id"] == "fs.read"))
+    )
     tool["ungoverned"] = {"reason": "随便声明一下", "declared_by": "someone"}
 
     with pytest.raises(Exception) as error:

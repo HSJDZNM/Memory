@@ -572,7 +572,14 @@ def main(argv: list[str] | None = None) -> int:
             for line in lines:
                 if not args.hook:
                     print("\n=== %s ===\n$ %s" % (name, line), flush=True)
-                completed = subprocess.run(
+                # shell=True 是这里唯一能表达语义的写法：`line` 来自仓库自己的
+                # .github/workflows 的 run 块，是 **shell 语法**（`-c "import x"` 的引号由 shell
+                # 解释）。改成列表参数就必须自己实现一遍引号规则：shlex 的 posix 模式会吃掉
+                # Windows 路径里的反斜杠，posix=False 又会把引号留在参数里；
+                # tests/unit/test_ci_local.py 正好用 `-c "import ci_local_probe"` 钉住了这个形态。
+                # 注入面已经关闭：_looks_unsafe 要求每一行都必须以本项目解释器开头，
+                # 且不含 BASH_ONLY_MARKERS（heredoc / set +e / grep -q / cat > / /tmp）。
+                completed = subprocess.run(  # noqa: S602 - 见上：命令来自仓库 workflow，非外部输入
                     line,
                     cwd=str(ROOT),
                     env=step_environment,

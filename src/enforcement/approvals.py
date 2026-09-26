@@ -232,7 +232,8 @@ def verify_approval(
     if not granted_roles & allowed_roles:
         raise ApprovalError(
             "审批人没有审批权：授予者角色 "
-            f"{sorted(granted_roles) or ['<none>']} 与具备审批权的角色 {sorted(allowed_roles)} 无交集"
+            f"{sorted(granted_roles) or ['<none>']} 与具备审批权的角色 "
+            f"{sorted(allowed_roles)} 无交集"
         )
 
     if record.binding is ApprovalBinding.ACTION:

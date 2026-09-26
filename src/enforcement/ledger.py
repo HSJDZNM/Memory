@@ -4,7 +4,8 @@
 这些状态必须落在文件上。台账是追加写的 JSONL，读取时按类型归类：
 
     {"kind": "claim",        "action_key": ..., "claim_id": ...}
-    {"kind": "pre_decision", "action_id": ..., "action_hash": ..., "decision": ..., "risk": ..., "subject": ..., "tool_id": ...}
+    {"kind": "pre_decision", "action_id": ..., "action_hash": ..., "decision": ...,
+     "risk": ..., "subject": ..., "tool_id": ...}
     {"kind": "grant_used",   "grant_id": ...}
     {"kind": "execution",    "action_id": ..., "status": ..., "ok": true/false}
     {"kind": "approval_used","approval_id": ...}
@@ -16,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -31,6 +33,7 @@ from .models import (
 
 __all__ = [
     "LEDGER_SCHEMA_VERSION",
+    "ApprovalUseClaim",
     "EnforcementLedger",
     "LedgerClaim",
 ]
@@ -44,6 +47,20 @@ class LedgerClaim:
 
     claimed: bool
     claim_id: str
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class ApprovalUseClaim:
+    """一次审批额度的原子占用结果。
+
+    claimed=False 时 reason 说明为什么没占到（例如 approval_quota_exhausted）；
+    uses 是占用后该审批生效的消费次数（含自己），用于审计与拒绝原因。
+    """
+
+    claimed: bool
+    uses: int
+    use_id: str
     reason: str = ""
 
 
@@ -85,7 +102,10 @@ class EnforcementLedger:
 
     # ------------------------------------------------------------------ 写
     def append(self, record: Mapping[str, Any]) -> None:
-        payload = {"ledger_schema_version": LEDGER_SCHEMA_VERSION, "recorded_at": to_timestamp(utc_now())}
+        payload = {
+            "ledger_schema_version": LEDGER_SCHEMA_VERSION,
+            "recorded_at": to_timestamp(utc_now()),
+        }
         payload.update({key: value for key, value in record.items() if value is not None})
         line = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
         try:
@@ -108,7 +128,9 @@ class EnforcementLedger:
             if item.get("action_key") == key and item.get("claim_id") not in released
         )
 
-    def claim(self, *, action_id: str, tool_id: str, action_hash: str, claim_id: str) -> LedgerClaim:
+    def claim(
+        self, *, action_id: str, tool_id: str, action_hash: str, claim_id: str
+    ) -> LedgerClaim:
         """认领一次 action。已经认领过的 action 不再认领（调用方据此拒绝重复执行）。"""
 
         key = f"{tool_id}:{action_id}"
@@ -187,18 +209,118 @@ class EnforcementLedger:
             raise GrantError("授权已被使用：单次授权不得重复消费")
         claim_id = f"{grant.grant_id}:{to_timestamp(now or utc_now())}"
         self.append({"kind": "grant_used", "grant_id": grant.grant_id, "claim_id": claim_id})
-        winner = [item for item in self.of_kind("grant_used") if item.get("grant_id") == grant.grant_id][0]
+        winner = [
+            item for item in self.of_kind("grant_used") if item.get("grant_id") == grant.grant_id
+        ][0]
         if winner.get("claim_id") != claim_id:
             raise GrantError("授权已被其他执行抢占：拒绝并发重复执行同一个动作")
 
-    def record_approval_use(self, approval_id: str, *, action_hash: str) -> None:
+    def record_approval_use(
+        self,
+        approval_id: str,
+        *,
+        action_hash: str,
+        use_id: Optional[str] = None,
+        action_id: Optional[str] = None,
+        tool_id: Optional[str] = None,
+        max_uses: Optional[int] = None,
+    ) -> str:
+        """登记一次审批消费并返回 use_id。
+
+        生产路径走 claim_approval_use（先占用后执行 + 并发复核）；本方法是它的
+        最小构件，测试与工具直接用它来构造"这条审批已经被用过"的台账状态。
+        """
+
+        token = use_id or "approval-use-" + uuid.uuid4().hex[:16]
         self.append(
-            {"kind": "approval_used", "approval_id": approval_id, "action_hash": action_hash}
+            {
+                "kind": "approval_used",
+                "approval_id": approval_id,
+                "use_id": token,
+                "action_hash": action_hash,
+                "action_id": action_id,
+                "tool_id": tool_id,
+                "max_uses": max_uses,
+            }
+        )
+        return token
+
+    def approval_uses(self, approval_id: str) -> tuple[Mapping[str, Any], ...]:
+        """仍然生效的审批消费记录：被 release_approval_use 归还过的不算。
+
+        "归还"存在的理由与 claim_released 相同：失败关闭不能变成死锁。审计不可写导致
+        动作没有执行时，额度必须还回去，否则修好审计之后重试会被误判成"次数用尽"。
+        """
+
+        released = {item.get("use_id") for item in self.of_kind("approval_use_released")}
+        return tuple(
+            item
+            for item in self.of_kind("approval_used")
+            if item.get("approval_id") == approval_id and item.get("use_id") not in released
         )
 
+    def approval_use_count(self, approval_id: str) -> int:
+        return len(self.approval_uses(approval_id))
+
     def approval_used(self, approval_id: str) -> bool:
-        return any(
-            item.get("approval_id") == approval_id for item in self.of_kind("approval_used")
+        return bool(self.approval_uses(approval_id))
+
+    def claim_approval_use(
+        self,
+        *,
+        approval_id: str,
+        action_id: str,
+        tool_id: str,
+        action_hash: str,
+        max_uses: int,
+    ) -> ApprovalUseClaim:
+        """原子占用一次审批额度：先追加、再复核，抢输了或超限一律不认领。
+
+        与 claim() 同一套并发口径（跨进程靠"先追加再复核"）：两个进程同时用第 N 次额度时，
+        只有序号更小的那条算数，另一个按超限拒绝——失败关闭，绝不放行第二次。
+        """
+
+        if max_uses < 1:
+            raise LedgerError(f"审批次数上限必须是正整数，得到 {max_uses}")
+        existing = self.approval_uses(approval_id)
+        if len(existing) >= max_uses:
+            return ApprovalUseClaim(
+                claimed=False,
+                uses=len(existing),
+                use_id="",
+                reason="approval_quota_exhausted",
+            )
+        token = self.record_approval_use(
+            approval_id,
+            action_hash=action_hash,
+            action_id=action_id,
+            tool_id=tool_id,
+            max_uses=max_uses,
+        )
+        rows = self.approval_uses(approval_id)
+        index = next(
+            (position for position, item in enumerate(rows) if item.get("use_id") == token), None
+        )
+        if index is None:
+            raise LedgerError(
+                "审批消费记录写入后读不回来：台账状态不可信，拒绝继续执行"
+            )
+        if index >= max_uses:
+            return ApprovalUseClaim(
+                claimed=False, uses=index + 1, use_id=token, reason="approval_quota_exhausted"
+            )
+        return ApprovalUseClaim(claimed=True, uses=index + 1, use_id=token)
+
+    def release_approval_use(self, *, approval_id: str, use_id: str, reason: str) -> None:
+        """归还一次审批额度（只用于"还没执行就失败"的路径，例如审计不可写导致阻断）。"""
+
+        self.append(
+            {
+                "kind": "approval_use_released",
+                "approval_id": approval_id,
+                "use_id": use_id,
+                "reason": reason,
+            }
         )
 
     # ------------------------------------------------------------------ 限流 / 熔断

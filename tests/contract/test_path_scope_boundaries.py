@@ -19,13 +19,12 @@
 from __future__ import annotations
 
 import pytest
+from enforcement_support import ENFORCEMENT_APPROVED, ENFORCEMENT_REGISTRY
 from pydantic import ValidationError
 
 from enforcement.action import ActionRequestError, build_action_request, normalize_params
 from enforcement.models import ParamSpec, ParamType, PathKind, ReasonCode, ToolSpec
 from enforcement.registry import load_registry
-
-from enforcement_support import ENFORCEMENT_APPROVED, ENFORCEMENT_REGISTRY
 
 pytestmark = pytest.mark.contract
 

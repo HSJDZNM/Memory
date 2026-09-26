@@ -275,7 +275,8 @@ def _render_decision(payload: Mapping[str, Any]) -> str:
     lines: list[str] = []
     pre = payload.get("pre") or {}
     lines.append(
-        f"pre-decision: {pre.get('decision')} ({pre.get('reason_code')}) tool={payload.get('tool_id')}"
+        f"pre-decision: {pre.get('decision')} ({pre.get('reason_code')}) "
+        f"tool={payload.get('tool_id')}"
     )
     for check in payload.get("checks", []):
         lines.append(
@@ -292,7 +293,12 @@ def _render_decision(payload: Mapping[str, Any]) -> str:
         post = payload["post"]
         lines.append(f"post-check: {post.get('status')} ({post.get('reason_code')})")
         for check in post.get("checks", []):
-            lines.append(f"  [{check.get('status'):<7}] {check.get('check'):<18} {check.get('detail') or ''}".rstrip())
+            lines.append(
+                (
+                    f"  [{check.get('status'):<7}] {check.get('check'):<18} "
+                    f"{check.get('detail') or ''}"
+                ).rstrip()
+            )
     if payload.get("final"):
         final = payload["final"]
         lines.append(f"final: {final.get('outcome')} ({final.get('reason_code')})")
@@ -376,7 +382,10 @@ def _registry(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
-        print(f"registry: {registry.path}（version={registry.version}，{len(registry.tools)} 个工具）")
+        print(
+            f"registry: {registry.path}（version={registry.version}，"
+            f"{len(registry.tools)} 个工具）"
+        )
         for item in payload["tools"]:
             mark = "ok " if item["approved"] else "!! "
             print(
@@ -437,7 +446,10 @@ def _prepare(args: argparse.Namespace, repo: Path):
         from .approvals import load_approval
 
         approval = load_approval(args.approval)
-    return loaded.registry, request, spec, decision, error, detail, skipped, audit, ledger, approval, workspace
+    return (
+        loaded.registry, request, spec, decision, error, detail,
+        skipped, audit, ledger, approval, workspace,
+    )
 
 
 def _precheck(args: argparse.Namespace, repo: Path) -> int:
@@ -477,7 +489,11 @@ def _precheck(args: argparse.Namespace, repo: Path) -> int:
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
-        print(_render_decision({"pre": payload["pre"], "checks": payload["checks"], "tool_id": request.tool_id}))
+        print(
+            _render_decision(
+                {"pre": payload["pre"], "checks": payload["checks"], "tool_id": request.tool_id}
+            )
+        )
     return EXIT_ALLOWED if pre.decision is not Decision.BLOCK else EXIT_BLOCKED
 
 
@@ -524,7 +540,9 @@ def _execute(args: argparse.Namespace, repo: Path) -> int:
         "pre": json.loads(outcome.pre.model_dump_json()),
         "checks": [item.model_dump(mode="json") for item in outcome.pre.checks],
         "execution": json.loads(outcome.record.model_dump_json()),
-        "evidence": None if outcome.evidence is None else json.loads(outcome.evidence.model_dump_json()),
+        "evidence": (
+            None if outcome.evidence is None else json.loads(outcome.evidence.model_dump_json())
+        ),
         "post": None if outcome.post is None else json.loads(outcome.post.model_dump_json()),
         "final": json.loads(outcome.final.model_dump_json()),
         "notes": outcome.notes,
@@ -635,7 +653,11 @@ def _approve(args: argparse.Namespace, repo: Path) -> int:
         encoding="utf-8",
         newline="\n",
     )
-    print(json.dumps({"approval": str(target), **payload}, ensure_ascii=False, indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            {"approval": str(target), **payload}, ensure_ascii=False, indent=2, sort_keys=True
+        )
+    )
     return EXIT_ALLOWED
 
 
@@ -697,7 +719,10 @@ def _verify(args: argparse.Namespace, repo: Path) -> int:
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
-        print(f"audit: {payload['audit']} 链记录={payload['chained_records']} 外来行={payload['foreign_records']}")
+        print(
+            f"audit: {payload['audit']} 链记录={payload['chained_records']} "
+            f"外来行={payload['foreign_records']}"
+        )
         for issue in issues:
             print(f"issue: {issue}")
         if not issues:
@@ -846,7 +871,10 @@ def build_parser() -> argparse.ArgumentParser:
         "verify", parents=[common], help="校验审计链完整性与注册表审核状态"
     )
     verify_parser.add_argument(
-        "--check-registry", dest="verify_registry", action="store_true", help="同时校验注册表审核状态"
+        "--check-registry",
+        dest="verify_registry",
+        action="store_true",
+        help="同时校验注册表审核状态",
     )
 
     subparsers.add_parser(

@@ -15,14 +15,16 @@ import uuid
 from pathlib import Path
 
 import pytest
-
 from enforcement_support import (
-    ENFORCEMENT_APPROVED,
-    ENFORCEMENT_REGISTRY,
     EnforcementPaths,
     enforcement_paths,
-    write_registry,
 )
+
+# pytest 按测试模块命名空间里的**属性名**注册 fixture（没写 name= 时取的就是它），
+# 所以这里必须用原名导入：它正是测试函数形参 `enforcement_paths` 要解析到的名字。
+# `__all__` 声明这是一次刻意的再导出，不是未使用的导入（F401/F811 对它是误报）；
+# 删掉这个导入 = 26 个用例在 setup 期报 `fixture 'enforcement_paths' not found`。
+__all__ = ["enforcement_paths"]
 
 pytestmark = pytest.mark.integration
 
@@ -89,7 +91,13 @@ def write_request(paths: EnforcementPaths, name: str, **overrides) -> Path:
 def seed(paths: EnforcementPaths) -> None:
     paths.file(
         "src/shop/order_controller.py",
-        "from service import OrderService\n\n\ndef create_order(payload):\n    return OrderService().create(payload)\n",
+        (
+            "from service import OrderService\n"
+            "\n"
+            "\n"
+            "def create_order(payload):\n"
+            "    return OrderService().create(payload)\n"
+        ),
     )
 
 
@@ -107,7 +115,13 @@ def test_tampered_registry_is_reported(tmp_root):
     paths = EnforcementPaths(tmp_root)
     document = json.loads(
         subprocess.run(
-            [sys.executable, "-c", "import sys,yaml,json;print(json.dumps(yaml.safe_load(open(sys.argv[1],encoding='utf-8'))))", str(paths.registry)],
+            [
+                sys.executable,
+                "-c",
+                "import sys,yaml,json;print(json.dumps(yaml.safe_load("
+                "open(sys.argv[1],encoding='utf-8'))))",
+                str(paths.registry),
+            ],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -142,7 +156,12 @@ def test_precheck_allows_and_blocks_with_the_documented_exit_codes(enforcement_p
     seed(enforcement_paths)
     allowed = write_request(enforcement_paths, "allow.json")
 
-    completed = run_cli("precheck", "--request", str(allowed), "--workspace", str(enforcement_paths.workspace), *paths_args(enforcement_paths))
+    completed = run_cli(
+        "precheck",
+        "--request", str(allowed),
+        "--workspace", str(enforcement_paths.workspace),
+        *paths_args(enforcement_paths),
+    )
     assert completed.returncode == 0, completed.stderr
     assert "pre-decision: allow" in completed.stdout
     # 只做决策，不执行：文件必须没变
@@ -157,7 +176,10 @@ def test_precheck_allows_and_blocks_with_the_documented_exit_codes(enforcement_p
         params={"argv": ["python", "-c", "print(1)"], "description": "demo"},
     )
     completed = run_cli(
-        "precheck", "--request", str(blocked), "--workspace", str(enforcement_paths.workspace), *paths_args(enforcement_paths)
+        "precheck",
+        "--request", str(blocked),
+        "--workspace", str(enforcement_paths.workspace),
+        *paths_args(enforcement_paths),
     )
     assert completed.returncode == 1
     assert "permission_denied" in completed.stdout
@@ -181,7 +203,10 @@ def test_precheck_is_a_dry_run_and_does_not_block_the_real_execution(enforcement
     payload = json.loads(run_cli("precheck", "--json", *arguments).stdout)
     assert payload["pre"]["dry_run"] is True
     assert payload["grant"] is None
-    assert not enforcement_paths.ledger.exists() or "claim" not in enforcement_paths.ledger.read_text(encoding="utf-8")
+    assert (
+        not enforcement_paths.ledger.exists()
+        or "claim" not in enforcement_paths.ledger.read_text(encoding="utf-8")
+    )
 
     executed = run_cli("execute", *arguments)
     assert executed.returncode == 0, executed.stderr + executed.stdout
@@ -209,7 +234,10 @@ def test_execute_changes_the_file_and_leaves_a_replayable_trace(enforcement_path
     request = write_request(enforcement_paths, "execute.json")
 
     completed = run_cli(
-        "execute", "--request", str(request), "--workspace", str(enforcement_paths.workspace), *paths_args(enforcement_paths)
+        "execute",
+        "--request", str(request),
+        "--workspace", str(enforcement_paths.workspace),
+        *paths_args(enforcement_paths),
     )
     assert completed.returncode == 0, completed.stderr + completed.stdout
     assert "final: delivered" in completed.stdout
@@ -230,13 +258,19 @@ def test_replaying_an_executed_action_exits_1_and_never_touches_the_file(enforce
     request = write_request(enforcement_paths, "replay.json")
 
     first = run_cli(
-        "execute", "--request", str(request), "--workspace", str(enforcement_paths.workspace), *paths_args(enforcement_paths)
+        "execute",
+        "--request", str(request),
+        "--workspace", str(enforcement_paths.workspace),
+        *paths_args(enforcement_paths),
     )
     assert first.returncode == 0
     content = enforcement_paths.read("src/shop/order_controller.py")
 
     second = run_cli(
-        "execute", "--request", str(request), "--workspace", str(enforcement_paths.workspace), *paths_args(enforcement_paths)
+        "execute",
+        "--request", str(request),
+        "--workspace", str(enforcement_paths.workspace),
+        *paths_args(enforcement_paths),
     )
     assert second.returncode == 1
     assert "action_replay" in second.stdout
@@ -245,7 +279,9 @@ def test_replaying_an_executed_action_exits_1_and_never_touches_the_file(enforce
 
 def test_missing_trace_reports_an_error(enforcement_paths):
     seed(enforcement_paths)
-    completed = run_cli("trace", "--action-id", "never-happened", "--audit", str(enforcement_paths.audit))
+    completed = run_cli(
+        "trace", "--action-id", "never-happened", "--audit", str(enforcement_paths.audit)
+    )
     assert completed.returncode == 2
     assert "没有本层的链式记录" in completed.stdout or "没有匹配" in completed.stdout
 
@@ -260,7 +296,10 @@ def test_high_risk_tool_needs_an_approval_file_and_then_executes(enforcement_pat
         params={"argv": ["python", "-c", "print('cli-ok')"], "description": "demo"},
     )
     without = run_cli(
-        "execute", "--request", str(request), "--workspace", str(enforcement_paths.workspace), *paths_args(enforcement_paths)
+        "execute",
+        "--request", str(request),
+        "--workspace", str(enforcement_paths.workspace),
+        *paths_args(enforcement_paths),
     )
     assert without.returncode == 1
     assert "approval_required" in without.stdout
@@ -324,8 +363,8 @@ def test_documented_example_requests_are_runnable(enforcement_paths):
 
     example = REPO_ROOT / "examples" / "enforcement" / "edit-allow-request.json"
     document = json.loads(example.read_text(encoding="utf-8"))
-    # 示例用的是仓库默认台账（.tmp/artifacts/enforcement-ledger.jsonl），因此 action_id 必须每次唯一，
-    # 否则第二次运行会正确地判成重放。示例表达的是同一条请求形状。
+    # 示例用的是仓库默认台账（.tmp/artifacts/enforcement-ledger.jsonl），因此 action_id
+    # 必须每次唯一，否则第二次运行会正确地判成重放。示例表达的是同一条请求形状。
     unique = "example:call-edit-" + uuid.uuid4().hex[:8]
     document["action_id"] = unique
     document["request_id"] = unique
@@ -386,7 +425,9 @@ def test_approve_and_execute_agree_when_the_request_has_a_policy_context(enforce
     assert "ARCH-001@1" in executed.stdout
 
 
-def write_shell_request(paths: EnforcementPaths, name: str, *, action_id: str, command: str = "print('ok')") -> Path:
+def write_shell_request(
+    paths: EnforcementPaths, name: str, *, action_id: str, command: str = "print('ok')"
+) -> Path:
     """命令类工具的请求（测试注册表的 exec.shell 用当前解释器执行，跨平台可跑）。"""
 
     document = {
@@ -479,7 +520,12 @@ def test_pattern_approval_makes_a_governed_session_rerunnable(enforcement_paths)
 def test_approve_refuses_contradictory_or_unknown_binding_flags(enforcement_paths):
     request = write_shell_request(enforcement_paths, "shell-bad.json", action_id="bad-1")
     approval = enforcement_paths.root / "bad-approval.json"
-    base = ["--request", str(request), "--out", str(approval), "--granted-by", "alice", "--roles", "reviewer"]
+    base = [
+        "--request", str(request),
+        "--out", str(approval),
+        "--granted-by", "alice",
+        "--roles", "reviewer",
+    ]
 
     mixed = run_cli(
         "approve", *base, "--param-pattern", "command=.*", *paths_args(enforcement_paths)
@@ -520,7 +566,11 @@ def test_json_output_is_machine_readable(enforcement_paths):
     request = write_request(enforcement_paths, "json.json")
 
     completed = run_cli(
-        "execute", "--json", "--request", str(request), "--workspace", str(enforcement_paths.workspace), *paths_args(enforcement_paths)
+        "execute",
+        "--json",
+        "--request", str(request),
+        "--workspace", str(enforcement_paths.workspace),
+        *paths_args(enforcement_paths),
     )
     payload = json.loads(completed.stdout)
 

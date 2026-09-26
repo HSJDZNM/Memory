@@ -42,11 +42,11 @@ from .models import (
     AuthorizationGrant,
     CheckResult,
     CheckStatus,
+    EnforcementError,
     LedgerError,
     PolicySummary,
     PreDecision,
     ReasonCode,
-    EnforcementError,
     ToolSpec,
     utc_now,
 )
@@ -159,7 +159,9 @@ def check_list(
             _check("registry", CheckStatus.FAILED, ReasonCode.SCHEMA_NOT_APPROVED, approval_reason)
         )
         return checks, spec, ()
-    checks.append(_check("registry", CheckStatus.PASSED, ReasonCode.ALLOW, f"{spec.id} 已注册且已审核"))
+    checks.append(
+        _check("registry", CheckStatus.PASSED, ReasonCode.ALLOW, f"{spec.id} 已注册且已审核")
+    )
 
     # 2) 动作自身的时效：过期请求不得执行。
     if request.expires_at is not None and moment >= request.expires_at:
@@ -208,7 +210,12 @@ def check_list(
         )
     else:
         checks.append(
-            _check("permissions", CheckStatus.PASSED, ReasonCode.ALLOW, f"required={list(required)}")
+            _check(
+                "permissions",
+                CheckStatus.PASSED,
+                ReasonCode.ALLOW,
+                f"required={list(required)}",
+            )
         )
 
     # 4a) 受保护路径：普通写工具不能触达注册表声明的信任根。
@@ -230,7 +237,12 @@ def check_list(
         )
     else:
         checks.append(
-            _check("path_prefixes", CheckStatus.SKIPPED, ReasonCode.ALLOW, "该工具未声明禁止路径前缀")
+            _check(
+                "path_prefixes",
+                CheckStatus.SKIPPED,
+                ReasonCode.ALLOW,
+                "该工具未声明禁止路径前缀",
+            )
         )
 
     # 4b) 命令白名单：完整匹配，不允许前缀绕过。
@@ -369,7 +381,11 @@ def check_list(
                 subject=request.subject,
                 approval_roles=registry.approval_role_members(),
                 used=False if approval is None else ledger.approval_used(approval.approval_id),
-                params=None if approval is None else {item.name: item.value for item in request.params},
+                params=(
+                    None
+                    if approval is None
+                    else {item.name: item.value for item in request.params}
+                ),
                 uses=0 if approval is None else ledger.approval_use_count(approval.approval_id),
                 now=moment,
             )
@@ -488,7 +504,9 @@ def check_list(
             )
     else:
         checks.append(_check("rate_limit", CheckStatus.SKIPPED, ReasonCode.ALLOW, "未配置限流"))
-        checks.append(_check("circuit_breaker", CheckStatus.SKIPPED, ReasonCode.ALLOW, "未配置熔断"))
+        checks.append(
+            _check("circuit_breaker", CheckStatus.SKIPPED, ReasonCode.ALLOW, "未配置熔断")
+        )
 
     # 8) 重放 / 复用：台账 + 审计链两处都要看。
     #    只看台账的话，删掉台账文件就能让同一个 action 再执行一次；审计链是追加写的独立证据，
@@ -599,7 +617,12 @@ def pre_execute(
             )
         except LedgerError as error:
             checks.append(
-                _check("ledger_claim", CheckStatus.FAILED, ReasonCode.LEDGER_UNAVAILABLE, str(error))
+                _check(
+                    "ledger_claim",
+                    CheckStatus.FAILED,
+                    ReasonCode.LEDGER_UNAVAILABLE,
+                    str(error),
+                )
             )
             decision = Decision.BLOCK
             reason_code = ReasonCode.LEDGER_UNAVAILABLE
@@ -645,7 +668,12 @@ def pre_execute(
             )
         except LedgerError as error:
             checks.append(
-                _check("approval_use", CheckStatus.FAILED, ReasonCode.LEDGER_UNAVAILABLE, str(error))
+                _check(
+                    "approval_use",
+                    CheckStatus.FAILED,
+                    ReasonCode.LEDGER_UNAVAILABLE,
+                    str(error),
+                )
             )
             decision = Decision.BLOCK
             reason_code = ReasonCode.LEDGER_UNAVAILABLE

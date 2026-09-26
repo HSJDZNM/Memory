@@ -13,8 +13,10 @@ python -m enforcement.cli / python -m adapters.cli / 插件源码静态事实 / 
 
 探针工作目录固定在 .tmp/verifier/probe/（构建产物，可随时重建），但**每次运行都有唯一的
 run-<run_id> 子目录**：上次运行的 audit/台账不得成为本次运行的输入（否则 event_id 会命中幂等台账，
-探针会因错误原因变红或变绿）。`test_probe_is_deterministic_across_runs` 连续跑两遍并比对逐项结论与 facts。
-不要在测试之外对同一个 --work 目录并发跑探针（并发只影响磁盘占用，不影响结论：目录是按 run 隔离的）。
+探针会因错误原因变红或变绿）。`test_probe_is_deterministic_across_runs` 连续跑两遍并比对逐项
+结论与 facts。
+不要在测试之外对同一个 --work 目录并发跑探针（并发只影响磁盘占用，不影响结论：目录是按 run
+隔离的）。
 """
 
 from __future__ import annotations

@@ -18,15 +18,14 @@ from __future__ import annotations
 import json
 
 import pytest
+from conftest import DSH_EVENT_FIXTURES
 
 from adapters.dsh.adapter import (
-    DshEventError,
     TOOL_TABLE,
+    DshEventError,
     observed_tools_from_payloads,
     tool_table_drift,
 )
-
-from conftest import DSH_EVENT_FIXTURES
 
 pytestmark = pytest.mark.contract
 
@@ -137,7 +136,9 @@ def test_recorded_hook_fixtures_reproduce_the_same_verdict_offline() -> None:
     """第二种观察来源：committed 的真实采集载荷；目录为空同样按报错处理。"""
 
     files = sorted(DSH_EVENT_FIXTURES.glob("*.json"))
-    assert files, "观察源为空：这不是'没有漂移'，是观察数据拿不到（" + str(DSH_EVENT_FIXTURES) + "）"
+    assert files, (
+        "观察源为空：这不是'没有漂移'，是观察数据拿不到（" + str(DSH_EVENT_FIXTURES) + "）"
+    )
 
     payloads = [json.loads(path.read_text(encoding="utf-8")) for path in files]
     observed = observed_tools_from_payloads(payloads)

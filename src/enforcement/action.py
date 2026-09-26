@@ -66,7 +66,8 @@ def _require_identifier(value: Any, *, where: str) -> str:
     if not _IDENTIFIER_RE.match(token):
         raise _fail(
             ReasonCode.PARAM_INVALID,
-            f"{where} 必须匹配 {_IDENTIFIER_RE.pattern}（便于审计关联，不接受任意文本），得到 {value!r}",
+            f"{where} 必须匹配 {_IDENTIFIER_RE.pattern}"
+            f"（便于审计关联，不接受任意文本），得到 {value!r}",
         )
     return token
 
@@ -128,7 +129,10 @@ def _normalize_scalar(spec: ParamSpec, raw: Any, *, workspace: Optional[Path]) -
     name = spec.name
     if spec.type is ParamType.STRING:
         if not isinstance(raw, str):
-            raise _fail(ReasonCode.PARAM_INVALID, f"参数 {name} 必须是字符串，得到 {type(raw).__name__}")
+            raise _fail(
+                ReasonCode.PARAM_INVALID,
+                f"参数 {name} 必须是字符串，得到 {type(raw).__name__}",
+            )
         return raw
     if spec.type is ParamType.PATH:
         return _normalize_path(raw, name=name, workspace=workspace, path_kind=spec.path_kind)
@@ -277,7 +281,10 @@ def blocked_path_prefix(
 
 
 def context_digest(
-    context: Optional[PolicyContext], *, sources: Sequence[str] = (), extra: Optional[Mapping[str, Any]] = None
+    context: Optional[PolicyContext],
+    *,
+    sources: Sequence[str] = (),
+    extra: Optional[Mapping[str, Any]] = None,
 ) -> str:
     """把显式上下文压成摘要；没有上下文的动作也要留下"当时没有上下文"的痕迹。"""
 

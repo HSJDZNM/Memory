@@ -73,7 +73,9 @@ UNPROVEN_DEPENDENCY_TOKENS = frozenset({UNPROVEN_DYNAMIC_IMPORT, UNPROVEN_CHANGE
 # 每种"证明不了"的中文理由：写进 violation，人一眼能看出是哪一类。
 UNPROVEN_REASONS: Mapping[str, str] = {
     UNPROVEN_DYNAMIC_IMPORT: "变更文本出现动态导入，但目标不是字符串字面量：依赖集无法静态确定",
-    UNPROVEN_CHANGED_TEXT: "变更片段无法作为模块或缩进块解析：依赖集无法证明（解析失败不等于没有依赖）",
+    UNPROVEN_CHANGED_TEXT: (
+        "变更片段无法作为模块或缩进块解析：依赖集无法证明（解析失败不等于没有依赖）"
+    ),
 }
 
 Handler = Callable[[Rule, PolicyContext, Optional[EvidenceBundle]], List[Violation]]
@@ -146,7 +148,15 @@ def _violation_from_finding(
         tool_version = item.tool.tool
         if item.tool.version:
             tool_version += "=" + item.tool.version
-        detail = item.validator + " / " + tool_version + "（退出码 " + str(item.tool.exit_code) + "）: " + detail
+        detail = (
+            item.validator
+            + " / "
+            + tool_version
+            + "（退出码 "
+            + str(item.tool.exit_code)
+            + "）: "
+            + detail
+        )
     else:
         detail = item.validator + ": " + detail
     if item.fix:

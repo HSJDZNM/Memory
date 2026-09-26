@@ -139,7 +139,11 @@ def check_code(source: object, declaration: CodeCheckSpec) -> CodeCheckOutcome:
     if hits:
         described = _describe(hits)
         shown = "；".join(described[:_MAX_REPORTED_HITS])
-        more = "" if len(described) <= _MAX_REPORTED_HITS else f"（另有 {len(described) - _MAX_REPORTED_HITS} 处）"
+        more = (
+            ""
+            if len(described) <= _MAX_REPORTED_HITS
+            else f"（另有 {len(described) - _MAX_REPORTED_HITS} 处）"
+        )
         return CodeCheckOutcome(
             passed=False,
             reason_code=ReasonCode.CODE_BLOCKED,

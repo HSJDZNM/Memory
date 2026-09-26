@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 import pytest
+from conftest import POLICIES_DIR, REPO_ROOT, dsh_event, make_context, write_dsh_config
 
 from adapters.dsh.adapter import (
     DSH_AGENT_ID,
@@ -36,8 +37,6 @@ from adapters.dsh.adapter import (
 from policy.checkers import dependency_forbidden
 from policy.engine import evaluate
 from policy.models import Decision, Operation, PolicyContext, PolicyContextError, Severity
-
-from conftest import POLICIES_DIR, REPO_ROOT, dsh_event, make_context, write_dsh_config
 
 pytestmark = pytest.mark.contract
 
@@ -135,7 +134,10 @@ def test_windows_and_posix_paths_yield_the_same_context(dsh_config_path, dsh_pro
             tool_input={
                 "file_path": "src\\shop\\order_controller.py",
                 "old_string": "from service import OrderService",
-                "new_string": "from service import OrderService\nfrom repository import OrderRepository",
+                "new_string": (
+                    "from service import OrderService\n"
+                    "from repository import OrderRepository"
+                ),
                 "replace_all": False,
             },
         ),
@@ -515,7 +517,13 @@ def test_dynamic_import_without_a_literal_fails_closed(dsh_config_path, dsh_proj
         edit_payload(
             dsh_project,
             file_path="src/shop/order_controller.py",
-            text="import importlib\n\n\ndef load(name):\n    return importlib.import_module(name)\n",
+            text=(
+                "import importlib\n"
+                "\n"
+                "\n"
+                "def load(name):\n"
+                "    return importlib.import_module(name)\n"
+            ),
         ),
         config,
     )
@@ -534,7 +542,13 @@ def test_unparseable_changed_text_fails_closed(dsh_config_path, dsh_project, arc
         edit_payload(
             dsh_project,
             file_path="src/shop/order_controller.py",
-            text="from shop.order_repository import OrderRepository\n\n\ndef broken(:\n    return 1\n",
+            text=(
+                "from shop.order_repository import OrderRepository\n"
+                "\n"
+                "\n"
+                "def broken(:\n"
+                "    return 1\n"
+            ),
         ),
         config,
     )
@@ -557,7 +571,13 @@ def test_unproven_dependencies_only_block_when_a_dependency_rule_is_in_scope(
         edit_payload(
             dsh_project,
             file_path="src/shop/order_service.py",
-            text="import importlib\n\n\ndef load(name):\n    return importlib.import_module(name)\n",
+            text=(
+                "import importlib\n"
+                "\n"
+                "\n"
+                "def load(name):\n"
+                "    return importlib.import_module(name)\n"
+            ),
         ),
         config,
     )
@@ -582,7 +602,9 @@ def test_dependency_extraction_is_python_only(tmp_root, dsh_project):
     config = load_config(path)
     decision = to_policy_event(
         edit_payload(
-            dsh_project, file_path="docs/notes.md", text="def broken(:\n    from . import repository\n"
+            dsh_project,
+            file_path="docs/notes.md",
+            text="def broken(:\n    from . import repository\n",
         ),
         config=config,
     )
@@ -648,7 +670,9 @@ def test_evidence_facts_match_through_the_module_path(arch_rules):
         served_checkers=("forbidden_dependency",),
     )
 
-    result = evaluate(arch_rules, make_context(layer="controller", dependencies=[]), evidence=bundle)
+    result = evaluate(
+        arch_rules, make_context(layer="controller", dependencies=[]), evidence=bundle
+    )
 
     assert result.decision is Decision.BLOCK
     assert result.violations[0].evidence.value == "pkg"
@@ -1029,7 +1053,9 @@ def test_agent_teams_tools_are_in_the_default_deny_table():
         assert TOOL_TABLE[name].kind is ToolKind.NO_FILE, name
 
 
-def test_spawn_teammate_records_that_the_child_session_is_not_observable(dsh_config_path, dsh_project):
+def test_spawn_teammate_records_that_the_child_session_is_not_observable(
+    dsh_config_path, dsh_project
+):
     """分类不得声称 spawn_teammate 已被治理：note 必须进 reason（进而进审计）。"""
 
     config = load_config(dsh_config_path)

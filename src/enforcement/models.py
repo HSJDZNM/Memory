@@ -466,7 +466,8 @@ class CodeCheckSpec(StrictModel):
                 raise ValueError(f"{info.field_name} 不能包含空值")
             if _CODE_CHECK_ENTRY_RE.fullmatch(token) is None:
                 raise ValueError(
-                    f"{info.field_name} 的条目必须是模块 / 属性名（字母数字下划线点），得到 {item!r}"
+                    f"{info.field_name} 的条目必须是模块 / 属性名"
+                    f"（字母数字下划线点），得到 {item!r}"
                 )
             if token in normalized:
                 continue
@@ -498,7 +499,8 @@ class CodeCheckSpec(StrictModel):
     def _check_shape(self) -> "CodeCheckSpec":
         if not self.has_rules:
             raise ValueError(
-                "代码检查至少要声明 forbidden_imports / forbidden_calls / forbidden_attributes 之一："
+                "代码检查至少要声明 forbidden_imports / forbidden_calls / "
+                "forbidden_attributes 之一："
                 "三个都空的检查只会解析语法，却会被当成'查过了'"
             )
         return self
@@ -741,7 +743,9 @@ class ToolSpec(StrictModel):
             if self.driver is not DriverKind.SHELL_COMMAND:
                 raise ValueError(f"{self.id}: command_param 只适用于 shell_command 驱动")
             if self.parameter(self.command_param) is None:
-                raise ValueError(f"{self.id}: command_param={self.command_param!r} 不是已声明的参数")
+                raise ValueError(
+                    f"{self.id}: command_param={self.command_param!r} 不是已声明的参数"
+                )
         unknown_checks = [item for item in self.post_checks if item not in SUPPORTED_POST_CHECKS]
         if unknown_checks:
             raise ValueError(
@@ -752,7 +756,10 @@ class ToolSpec(StrictModel):
             raise ValueError(f"{self.id}: file_snapshot 回滚只适用于 effect=file_write")
         if self.risk is RiskLevel.READ_ONLY and self.effect is not EffectKind.NONE:
             raise ValueError(f"{self.id}: read_only 的动作不得声明写效果")
-        if self.audit_failure is AuditFailurePolicy.DEGRADE and self.risk is not RiskLevel.READ_ONLY:
+        if (
+            self.audit_failure is AuditFailurePolicy.DEGRADE
+            and self.risk is not RiskLevel.READ_ONLY
+        ):
             raise ValueError(
                 f"{self.id}: audit_failure=degrade 只允许只读工具使用；"
                 "任何会产生副作用的动作都必须在审计不可写时失败关闭"
@@ -1356,7 +1363,9 @@ def _protocol_error(error: Exception, *, model_name: str) -> EnforcementError:
     from pydantic import ValidationError
 
     if isinstance(error, ValidationError):
-        return EnforcementError(str(RuleValidationError.from_pydantic(error, model_name=model_name)))
+        return EnforcementError(
+            str(RuleValidationError.from_pydantic(error, model_name=model_name))
+        )
     return EnforcementError(f"{model_name} 不可消费：{error}")
 
 

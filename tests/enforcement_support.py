@@ -14,7 +14,6 @@ from typing import Any, Sequence
 
 import pytest
 import yaml
-
 from conftest import REPO_ROOT
 
 __all__ = [

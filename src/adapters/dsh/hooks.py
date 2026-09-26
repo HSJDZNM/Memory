@@ -131,7 +131,9 @@ class PolicyTimeout(Exception):
     """策略判定超出内部预算：按失败策略阻断，不执行工具。"""
 
 
-def sanitize(text: str, *, project_root: Optional[Path] = None, limit: int = FEEDBACK_MAX_CHARS) -> str:
+def sanitize(
+    text: str, *, project_root: Optional[Path] = None, limit: int = FEEDBACK_MAX_CHARS
+) -> str:
     """脱敏：去掉绝对路径与密钥样式，截断到固定长度。
 
     返回给模型的内容绝不包含内部堆栈、绝对路径、完整规则库或敏感上下文。
@@ -355,7 +357,9 @@ def feedback_text(
             lines.append(evidence_line)
         if decision.required_action is not None:
             lines.append(f"required_action: {decision.required_action.value}")
-        lines.append("expected: controller -> service -> repository（不要在该层直接依赖 repository）")
+        lines.append(
+            "expected: controller -> service -> repository（不要在该层直接依赖 repository）"
+        )
         if event is not None:
             lines.append(f"request: {event.request_id}")
     lines.append(f"schema: {SCHEMA_VERSION} agent: dsh")
@@ -634,7 +638,9 @@ class DshPreExecuteHook:
         )
 
         if not admission.governed:
-            tool_name = str(raw_payload.get("tool_name", "")) if isinstance(raw_payload, Mapping) else ""
+            tool_name = (
+                str(raw_payload.get("tool_name", "")) if isinstance(raw_payload, Mapping) else ""
+            )
             table_spec = TOOL_TABLE.get(tool_name)
             # Phase 4：执行类工具（以及注册表里声明的写类工具）一律走受控链路。
             # 注意"不在注册表里"也必须走这条路：交给门禁去拒绝（tool_not_registered），
@@ -947,7 +953,10 @@ class DshPreExecuteHook:
     ) -> HookOutcome:
         """Phase 4 的高权限执行路径：授权通过后由 Agent 运行时执行。"""
 
-        tool = str(raw_payload.get("tool_name", "unknown")) if isinstance(raw_payload, Mapping) else "unknown"
+        tool = (
+            str(raw_payload.get("tool_name", "unknown")) if isinstance(raw_payload, Mapping)
+            else "unknown"
+        )
         gate = self._enforcement_gate(
             raw_payload,
             spec=spec,
@@ -1096,7 +1105,8 @@ def _post_decision_outcome(
                 [
                     f"[policy] POST-CHECK {decision.status.value} ({decision.reason_code.value})",
                     *( [f"detail: {detail}"] if detail else [] ),
-                    "该动作已经执行，副作用无法撤销：按 repair_required 处理，需要人工或后续修复流程介入",
+                    "该动作已经执行，副作用无法撤销：按 repair_required 处理，"
+                    "需要人工或后续修复流程介入",
                 ]
             ),
             project_root=config.project_root,
@@ -1177,7 +1187,10 @@ def run_hook(
         )
         return outcome
 
-    if isinstance(raw_payload, Mapping) and raw_payload.get("hook_event_name") == HOOK_EVENT_POST_TOOL_USE:
+    if (
+        isinstance(raw_payload, Mapping)
+        and raw_payload.get("hook_event_name") == HOOK_EVENT_POST_TOOL_USE
+    ):
         return post_execute_outcome(
             raw_payload, bridge=bridge, config=config, hook=hook, started=hook.clock()
         )
@@ -1290,7 +1303,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Hook 的进程入口。
+    """执行 Hook 的进程入口。
 
     契约：stdout 在放行时保持为空（dsh 只在 exit 0 且 stdout 以 { 开头时才解析 JSON，
     提前写入文本会被误当成结构化输出）；所有诊断写 stderr。

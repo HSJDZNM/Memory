@@ -247,7 +247,8 @@ def hook_could_not_spawn() -> bool:
 
     复现（仓库外的普通 shell 里）：
         .tmp/phase-2-sandbox/demo-shop> dsh --profile headless \
-            --patch .policy/patch.yml "用 edit 工具在 src/shop/order_controller.py 的 import 区加一行"
+            --patch .policy/patch.yml \
+            "用 edit 工具在 src/shop/order_controller.py 的 import 区加一行"
     """
 
     for log in sorted(LOGS.glob("*.txt")):

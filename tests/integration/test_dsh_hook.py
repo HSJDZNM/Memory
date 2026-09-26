@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import POLICIES_DIR, REPO_ROOT, dsh_event, write_dsh_config
 
 from adapters.dsh.adapter import PolicyEvent, load_config
 from adapters.dsh.hooks import (
@@ -27,15 +28,17 @@ from adapters.dsh.hooks import (
     check_wiring,
     run_hook,
 )
+from enforcement.models import ActionRequestError
 from policy.engine import EngineError, evaluate
 from policy.loader import load_rule_set
 from policy.models import Decision, ValidationResult
 
-from conftest import POLICIES_DIR, REPO_ROOT
-
-from conftest import REPO_ROOT, dsh_event, write_dsh_config
-
 pytestmark = pytest.mark.integration
+
+# 直接调 CLI 的用例必须像真实接线一样把 hooks.json 指出来：G12 之后"接线自检缺席"
+# 是失败关闭（退出码 2），不再默认放行。这里复用仓库文档里那份接线示例，
+# 于是这些用例同时也在守着"示例接线真的能过自检"（timeout=30s > 内部预算 5000ms）。
+HOOKS_CONFIG = REPO_ROOT / "examples" / "dsh" / "hooks.json"
 
 
 class RecordingExecutor(ControlledExecutor):
@@ -108,6 +111,62 @@ def test_block_on_write_never_calls_the_executor(dsh_config_path, dsh_project):
     assert executor.count == 0
 
 
+def test_parameter_error_keeps_the_structured_reason_code(
+    dsh_config_path, dsh_project, monkeypatch
+):
+    """G5 的后半段：范围问题不能被包成笼统的"参数错误"。
+
+    实测过的误导：workdir 等于工作区根被判越界时，反馈里写的是 enforcement_param_error，
+    人和模型都会以为参数写错了，而真实原因是范围（path_out_of_scope）。
+    Phase 4 的 ActionRequestError 带**结构化** reason_code，Hook 必须透传它；
+    只有拿不到结构化原因时才可以退回笼统值。
+    """
+
+    audit = dsh_config_path.parent / "audit.jsonl"
+    hook = build_hook(dsh_config_path, audit=audit)
+
+    def refuse(**_: object) -> None:
+        raise ActionRequestError(
+            "参数 workdir 不在受控工作区内：路径不在仓库之内", reason_code="path_out_of_scope"
+        )
+
+    monkeypatch.setattr(hook.bridge, "build_request", refuse)
+
+    outcome = hook.handle(payload("pre-tool-use-edit-allow.json", dsh_project))
+
+    assert outcome.exit_code == EXIT_BLOCK
+    assert outcome.reason_code == "path_out_of_scope"
+    # 审计里也必须如实：既要有结构化码，也不能同时留下被包过的笼统码。
+    # （注意审计里还有别的 reason_code，例如 G11 的 context_injection 留痕记录，
+    # 所以这里按"存在/不存在"断言，而不是取最后一条。）
+    codes = [
+        json.loads(line)["reason_code"]
+        for line in audit.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert "path_out_of_scope" in codes
+    assert "enforcement_param_error" not in codes
+
+
+def test_parameter_error_falls_back_when_no_structured_code(
+    dsh_config_path, dsh_project, monkeypatch
+):
+    """反向：拿不到结构化 reason_code 时退回笼统值，而不是编一个具体的码出来。"""
+
+    audit = dsh_config_path.parent / "audit.jsonl"
+    hook = build_hook(dsh_config_path, audit=audit)
+
+    def refuse(**_: object) -> None:
+        raise ActionRequestError("参数不合法")
+
+    monkeypatch.setattr(hook.bridge, "build_request", refuse)
+
+    outcome = hook.handle(payload("pre-tool-use-edit-allow.json", dsh_project))
+
+    assert outcome.exit_code == EXIT_BLOCK
+    assert outcome.reason_code == "enforcement_param_error"
+
+
 def test_allow_calls_the_executor_exactly_once_without_rewriting_arguments(
     dsh_config_path, dsh_project
 ):
@@ -122,9 +181,17 @@ def test_allow_calls_the_executor_exactly_once_without_rewriting_arguments(
     assert executor.count == 1
     event = executor.calls[0]
     # 参数没有被 Adapter 改写：事件仍然指向同一个工具、同一个文件、同一批依赖。
-    assert event.tool == raw["tool_name"]
-    assert event.file == "src/shop/order_controller.py"
-    assert event.dependencies == ("service", "util")
+    #
+    # 依赖名集合是 G6 语义变更后的**正确值**，不是为了让测试变绿而改的数字。
+    # 变更文本见下面第 128 行的断言：from service import OrderService / from util import clock。
+    # - from 的模块本身是依赖（service / util），完整点分路径必须保留
+    #   （旧实现只留顶层名字，等于把 shop.order_repository 这类写法放行）；
+    # - 被导入的名字还**可能是子模块**： from X import Y 里的 Y 可能是子模块
+    #   （"from shop import order_repository" 正是必须命中的写法之一，AST 路径会把边
+    #   落在子模块文件上）。预执行路径没有模块索引，无法区分"Y 是子模块"还是
+    #   "Y 是类/函数"，因此把候选一起登记。
+    #   漏登记 = 结构性放行；多登记只可能让依赖规则更早阻断 —— 方向是失败关闭。
+    assert event.dependencies == ("service", "service.orderservice", "util", "util.clock")
     assert json.loads(json.dumps(raw))["tool_input"]["new_string"] == (
         "from service import OrderService\nfrom util import clock"
     )
@@ -174,7 +241,8 @@ def test_not_governed_read_only_tool_is_allowed_and_records_the_scope_note(
     assert outcome.reason_code == "not_governed"
     assert executor.count == 0  # 不受治理的工具不由 Hook 放行执行
 
-    record = json.loads((dsh_project.parent / "audit.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    audit_lines = (dsh_project.parent / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+    record = json.loads(audit_lines[0])
     assert record["governed"] is False
     assert "只读动作" in record["scope_note"]
 
@@ -367,7 +435,8 @@ def test_feedback_and_audit_contain_no_absolute_paths_or_secrets(dsh_config_path
             tool_input={
                 "file_path": outside.as_posix(),
                 "old_string": "a",
-                "new_string": "import repository  # sk-livekey000000000000",  # secret-scan: allow（合成值，用于验证脱敏与拒绝逻辑）
+                # 合成值：这里验证的是"凭据被脱敏"与"越界被拒绝"，不是真凭据
+                "new_string": "import repository  # sk-livekey000000000000",  # secret-scan: allow
             },
         )
     )
@@ -440,7 +509,9 @@ def test_wiring_check_requires_the_internal_budget_to_win(dsh_config_path, tmp_r
 
 def test_wiring_check_passes_for_the_documented_example(dsh_project, tmp_root):
     config_path = write_dsh_config(
-        tmp_root / "config" / "dsh-adapter.yaml", project_root=dsh_project, rules=REPO_ROOT / "policies"
+        tmp_root / "config" / "dsh-adapter.yaml",
+        project_root=dsh_project,
+        rules=REPO_ROOT / "policies",
     )
     config = load_config(config_path)
     hooks_json = REPO_ROOT / "examples" / "dsh" / "hooks.json"
@@ -474,7 +545,10 @@ def run_cli(args: list[str], stdin_text: str) -> subprocess.CompletedProcess[str
 def test_cli_blocks_with_exit_code_2_and_quiet_stdout(dsh_config_path, dsh_project):
     raw = payload("pre-tool-use-edit-block.json", dsh_project)
 
-    completed = run_cli(["--config", str(dsh_config_path)], json.dumps(raw))
+    completed = run_cli(
+        ["--config", str(dsh_config_path), "--hooks-config", str(HOOKS_CONFIG)],
+        json.dumps(raw),
+    )
 
     assert completed.returncode == EXIT_BLOCK
     assert completed.stdout == ""
@@ -484,7 +558,10 @@ def test_cli_blocks_with_exit_code_2_and_quiet_stdout(dsh_config_path, dsh_proje
 def test_cli_allows_with_exit_code_0_and_quiet_stdout(dsh_config_path, dsh_project):
     raw = payload("pre-tool-use-edit-allow.json", dsh_project)
 
-    completed = run_cli(["--config", str(dsh_config_path)], json.dumps(raw))
+    completed = run_cli(
+        ["--config", str(dsh_config_path), "--hooks-config", str(HOOKS_CONFIG)],
+        json.dumps(raw),
+    )
 
     assert completed.returncode == EXIT_ALLOW
     assert completed.stdout == ""
@@ -500,11 +577,19 @@ def test_cli_blocks_on_malformed_stdin(dsh_config_path):
 
 def test_cli_self_check_reports_wiring_errors(dsh_config_path, dsh_project, tmp_root):
     ok = run_cli(
-        ["--config", str(dsh_config_path), "--hooks-config", str(REPO_ROOT / "examples" / "dsh" / "hooks.json"), "--self-check"],
+        [
+            "--config", str(dsh_config_path),
+            "--hooks-config", str(REPO_ROOT / "examples" / "dsh" / "hooks.json"),
+            "--self-check",
+        ],
         "",
     )
     bad = run_cli(
-        ["--config", str(dsh_config_path), "--hooks-config", str(tmp_root / "missing.json"), "--self-check"],
+        [
+            "--config", str(dsh_config_path),
+            "--hooks-config", str(tmp_root / "missing.json"),
+            "--self-check",
+        ],
         "",
     )
 

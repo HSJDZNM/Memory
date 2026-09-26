@@ -21,7 +21,7 @@ import datetime as clock
 import json
 import sys
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Sequence
 
 from adapters.base import (
     APPROVED_SCHEMA_VERSION,
@@ -29,16 +29,15 @@ from adapters.base import (
     DEFAULT_APPROVED_PATH,
     AdapterRegistry,
     RegistryError,
-    manifest_digest,
 )
 from adapters.conformance import run_conformance
+from adapters.json_adapter import agent_response_from_decision
 from adapters.loader import (
     load_adapter,
-    load_adapter_config,
     load_registry_from_repo,
     repo_root,
 )
-from adapters.models import AdapterManifest, AgentEvent, EnforcementLevel, EventType
+from adapters.models import AdapterManifest, AgentEvent, EnforcementLevel
 from adapters.runtime import AgentRuntime
 from adapters.wiring import (
     DEFAULT_OBSERVED_SESSIONS,
@@ -47,10 +46,7 @@ from adapters.wiring import (
     WiringReport,
     probe_wiring,
 )
-from policy.engine import evaluate
 from policy.loader import LoaderError, load_rule_set
-
-from adapters.json_adapter import agent_response_from_decision
 
 __all__ = ["build_parser", "main", "run_approve", "run_check", "run_matrix", "run_wiring"]
 
@@ -226,7 +222,9 @@ def run_check(args: argparse.Namespace) -> int:
             failures.append(f"{agent_id}: {error}")
 
     # 工作区：默认用仓库内的探针夹具项目，保证"路径越界"测的是真实边界。
-    workspace = (root / args.workspace).resolve() if args.workspace else (root / CONFORMANCE_WORKSPACE)
+    workspace = (
+        (root / args.workspace).resolve() if args.workspace else (root / CONFORMANCE_WORKSPACE)
+    )
     if not workspace.is_dir():
         print(f"[adapters] 受控工作区不存在：{workspace}", file=sys.stderr)
         return EXIT_USAGE
@@ -537,7 +535,12 @@ def build_parser() -> argparse.ArgumentParser:
     check = _with_json(sub.add_parser("check", help="跑一致性套件"))
     check.add_argument("--agent", action="append", default=None, help="只跑指定 Agent（可重复）")
     check.add_argument("--workspace", default=None, help="受控工作区（默认用仓库内的探针项目）")
-    check.add_argument("--breaker-limit", type=int, default=3, help="熔断阈值（默认 3；必须小于循环场景的重复次数）")
+    check.add_argument(
+        "--breaker-limit",
+        type=int,
+        default=3,
+        help="熔断阈值（默认 3；必须小于循环场景的重复次数）",
+    )
     check.set_defaults(func=run_check)
 
     inspect = _with_json(sub.add_parser("inspect", help="检查一条事件：规范事件、上下文与结论"))

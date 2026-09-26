@@ -18,18 +18,24 @@ import json
 from datetime import timedelta
 
 import pytest
-
-from enforcement.approvals import ApprovalError, ApprovalRecord, load_approval
-from enforcement.audit import FileAuditSink, NullAuditSink
-from enforcement.ledger import EnforcementLedger
-from enforcement.models import Decision, ReasonCode, utc_now
-from enforcement.precheck import pre_execute
 from enforcement_support import (
     EnforcementPaths,
     approval_for,
     enforcement_paths,
     make_action,
 )
+
+# pytest 按测试模块命名空间里的**属性名**注册 fixture（没写 name= 时取的就是它），
+# 所以这里必须用原名导入：它正是测试函数形参 `enforcement_paths` 要解析到的名字。
+# `__all__` 声明这是一次刻意的再导出，不是未使用的导入（F401/F811 对它是误报）；
+# 删掉这个导入 = 26 个用例在 setup 期报 `fixture 'enforcement_paths' not found`。
+__all__ = ["enforcement_paths"]
+
+from enforcement.approvals import ApprovalError, ApprovalRecord, load_approval
+from enforcement.audit import FileAuditSink, NullAuditSink
+from enforcement.ledger import EnforcementLedger
+from enforcement.models import Decision, ReasonCode, utc_now
+from enforcement.precheck import pre_execute
 
 pytestmark = pytest.mark.contract
 
@@ -196,7 +202,9 @@ def test_pattern_approval_stops_at_the_declared_use_limit(enforcement_paths):
         allowed, _ = run_pre(
             paths, "exec.shell", shell_params(), approval=approval, action_id=f"call-{index}"
         )
-        assert allowed.decision.decision is not Decision.BLOCK, allowed.decision.check("approval").detail
+        assert allowed.decision.decision is not Decision.BLOCK, (
+            allowed.decision.check("approval").detail
+        )
 
     exhausted, _ = run_pre(
         paths, "exec.shell", shell_params(), approval=approval, action_id="call-3"
@@ -270,7 +278,9 @@ def test_approval_quota_is_returned_when_the_audit_is_unwritable(enforcement_pat
     assert ledger.of_kind("approval_use_released"), "审计不可写时必须归还审批额度"
 
     retried, _ = run_pre(paths, "exec.shell", shell_params(), approval=approval)
-    assert retried.decision.decision is not Decision.BLOCK, retried.decision.check("approval_use").detail
+    assert retried.decision.decision is not Decision.BLOCK, (
+        retried.decision.check("approval_use").detail
+    )
     assert retried.decision.check("approval_use").detail.startswith("第 1/1 次")
 
 
@@ -332,7 +342,9 @@ def test_contradictory_or_unknown_approval_fields_are_refused(tmp_root):
         ApprovalRecord(**common, binding="action")
     # 模式化审批不得声明 action_hash / action_id，且必须有参数模式
     with pytest.raises(ApprovalError):
-        ApprovalRecord(**common, binding="pattern", action_hash="h", param_patterns={"command": ".*"})
+        ApprovalRecord(
+            **common, binding="pattern", action_hash="h", param_patterns={"command": ".*"}
+        )
     with pytest.raises(ApprovalError):
         ApprovalRecord(**common, binding="pattern")
     # 未知 binding 与非法正则
