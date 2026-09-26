@@ -248,6 +248,16 @@ jobs:
       - name: Adapter event fixtures exist
         run: .venv/bin/python -m adapters.cli events
 
+      # G13：Agent 通道清点——列出本机每个 Agent 运行时的接线状态、留痕状态与工具表漂移。
+      # 这里是**报告模式**（总是退出 0）：某个 GUI profile 装没装策略插件是主机配置，
+      # 不是本仓库能负责的东西；让仓库门禁去拦用户的桌面应用配置，只会把"正确的事做不了"
+      # 变成"把门禁关掉"。可失败的形式是 .venv/bin/python -m adapters.cli wiring --check
+      # （需要时再加 --require-runtime），由 tests/contract/test_wiring_inventory.py 与
+      # tools/governance_gap_probe.py 钉住。CI 上没有 Agent 运行时，会显式报 result=skipped
+      # 并写明 reason，而不是假装通过（跳过的三种终态见 src/adapters/wiring.py）。
+      - name: Agent channel wiring inventory
+        run: .venv/bin/python -m adapters.cli wiring
+
       # Phase 6：多 Agent 闭环（等价结论 / 执行一次 / 能力降级 / 隔离 / trace / 熔断）
       - name: Multi-agent closed loop
         run: .venv/bin/python tools/agent_loop.py
