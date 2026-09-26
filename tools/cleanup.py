@@ -158,7 +158,10 @@ def is_allowed(path: Path) -> bool:
         return True
     if path.is_dir() and path.name == CACHE_DIR_NAME:
         return True
-    return path.is_file() and path.suffix in CACHE_FILE_SUFFIXES
+    # 不用 `path.suffix`：Windows 上的 `rglob("*.pyc")` 大小写不敏感（`FOO.PYC` 也会被扫进来），
+    # 而 `suffix in (...)` 的比较区分大小写；文件名恰为 `.pyc` 时 `Path(".pyc").suffix` 还是空串。
+    # 两者都会让 `candidates()` 扫出来的候选被白名单反过来拒掉——静默跳过、退出码仍是 0。
+    return path.is_file() and path.name.lower().endswith(CACHE_FILE_SUFFIXES)
 
 
 def _remove(path: Path) -> OSError | None:

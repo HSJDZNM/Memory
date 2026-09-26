@@ -202,6 +202,35 @@ def test_lock_is_held_during_deletion_and_released_afterwards(monkeypatch, capsy
     again.release()
 
 
+def test_every_candidate_passes_the_whitelist(monkeypatch, tmp_root):
+    """不变式：`candidates()` 扫出来的每一项都必须能过 `is_allowed()`。
+
+    两边不一致**不会抛错**，只会让清理静默跳过、还返回 0——与上面那条 bug 同一失败形态。
+    所以在两个层面钉住它：
+
+    - 按形状逐条断言（与平台无关）：`FOO.PYC`、`NESTED.PYO` 会被 Windows 上
+      大小写不敏感的 `rglob("*.pyc")` 扫进来，而 `Path.suffix in (...)` 的比较区分大小写；
+      文件名恰为 `.pyc` 时 `Path(".pyc").suffix == ""`。两者都曾漏进「扫出来却被拒」。
+    - 对 `candidates()` 的真实产物断言：计划里不能有任何过不了白名单的项（跨平台都成立）。
+    """
+
+    cleanup = _load_cleanup_with_tmp_root(monkeypatch, tmp_root)
+
+    for name in ("generated.pyc", "legacy.pyo", "UPPER.PYC", ".pyc"):
+        loose = tmp_root / name
+        loose.write_bytes(b"")
+        assert cleanup.is_allowed(loose), name
+    deep = tmp_root / "a" / "b"
+    deep.mkdir(parents=True)
+    nested = deep / "NESTED.PYO"
+    nested.write_bytes(b"")
+    assert cleanup.is_allowed(nested)
+
+    plan = cleanup.candidates()
+    assert plan, "计划不能为空，否则这条不变式什么都没测"
+    rejected = [str(item) for item in plan if not cleanup.is_allowed(item)]
+    assert rejected == []
+
 # --------------------------------------------------------------------------- TOCTOU 不变式
 #
 # 不变式：**要么持锁，要么完全不碰 `.tmp/`**。旧实现把判定（`tmp_dir().is_dir()`）与删除集
