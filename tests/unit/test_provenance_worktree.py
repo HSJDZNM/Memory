@@ -1,0 +1,186 @@
+"""控制面针脚的单测：四个名字、严格模式、封条比对与落地状态（方案 §3.1）。"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from provenance import worktree
+
+pytestmark = pytest.mark.contract
+
+
+def _tree(tmp_root: Path) -> Path:
+    (tmp_root / "pkg").mkdir()
+    (tmp_root / "pkg" / "one.py").write_text("one\n", encoding="utf-8")
+    (tmp_root / "top.py").write_text("top\n", encoding="utf-8")
+    return tmp_root
+
+
+def _fail_reading(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    """让某一个文件名读不出来——不必真去改文件权限（跨平台、且不碰 ACL）。"""
+
+    real = worktree._read_bytes
+
+    def reader(path: Path) -> bytes:
+        if path.name == name:
+            raise OSError(13, "Permission denied")
+        return real(path)
+
+    monkeypatch.setattr(worktree, "_read_bytes", reader)
+
+
+def test_tree_digest_is_stable_and_content_sensitive(tmp_root: Path) -> None:
+    tree = _tree(tmp_root)
+    first = worktree.tree_digest(tree)
+    second = worktree.tree_digest(tree)
+
+    assert first == second, "相同输入必须得到逐字节相同的指纹"
+    assert first.sha256.startswith("sha256:")
+    assert first.files == 2
+
+    (tree / "top.py").write_text("changed\n", encoding="utf-8")
+    assert worktree.tree_digest(tree).sha256 != first.sha256
+
+
+def test_workspace_digest_excludes_build_output(tmp_root: Path) -> None:
+    tree = _tree(tmp_root)
+    (tree / "__pycache__").mkdir()
+    (tree / "__pycache__" / "x.pyc").write_text("x", encoding="utf-8")
+
+    assert worktree.workspace_tree_digest(tree).files == 2
+    assert worktree.tree_digest(tree).files == 3, "不带排除时它照样是这棵树的一部分"
+
+
+def test_strict_mode_refuses_what_it_cannot_read(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fail_reading(monkeypatch, "top.py")
+
+    with pytest.raises(worktree.UnprovableError):
+        worktree.tree_digest(_tree(tmp_root))
+
+
+def test_annotation_mode_counts_only_what_it_could_read(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fail_reading(monkeypatch, "top.py")
+
+    digest = worktree.tree_digest(_tree(tmp_root), strict=False)
+
+    assert digest.files == 1, "标注模式：读不到的不进指纹（Phase 5 既有口径）"
+
+
+def test_tree_digest_refuses_a_missing_root(tmp_root: Path) -> None:
+    with pytest.raises(worktree.UnprovableError):
+        worktree.tree_digest(tmp_root / "nope")
+
+
+def test_referenced_inputs_digest_covers_the_declaration_only(tmp_root: Path) -> None:
+    tree = _tree(tmp_root)
+    before = worktree.referenced_inputs_digest(tree, ["pkg/*.py"])
+
+    (tree / "top.py").write_text("changed\n", encoding="utf-8")
+    assert worktree.referenced_inputs_digest(tree, ["pkg/*.py"]).sha256 == before.sha256
+
+    (tree / "pkg" / "one.py").write_text("changed\n", encoding="utf-8")
+    assert worktree.referenced_inputs_digest(tree, ["pkg/*.py"]).sha256 != before.sha256
+
+
+def test_referenced_inputs_digest_refuses_empty_and_unmatched(tmp_root: Path) -> None:
+    tree = _tree(tmp_root)
+
+    with pytest.raises(worktree.UnprovableError):
+        worktree.referenced_inputs_digest(tree, [])
+    with pytest.raises(worktree.UnprovableError):
+        worktree.referenced_inputs_digest(tree, ["missing/**/*.py"])
+
+
+def test_platform_revision_scope_comes_from_the_declaration(tmp_root: Path) -> None:
+    tree = _tree(tmp_root)
+    before = worktree.platform_revision(tree, ["pkg/*.py"])
+
+    (tree / "top.py").write_text("changed\n", encoding="utf-8")
+
+    assert worktree.platform_revision(tree, ["pkg/*.py"]).sha256 == before.sha256
+
+
+def test_seal_pair_passes_when_nothing_moves(tmp_root: Path) -> None:
+    tree = _tree(tmp_root)
+    declaration = ["pkg/*.py"]
+
+    comparison = worktree.compare_seals(
+        worktree.seal(tree, declaration, declaration),
+        worktree.seal(tree, declaration, declaration),
+    )
+
+    assert comparison.state == "pass"
+    assert comparison.differences == {"added": [], "modified": [], "removed": []}
+
+
+def test_seal_pair_reports_an_external_write(tmp_root: Path) -> None:
+    tree = _tree(tmp_root)
+    declaration = ["pkg/*.py"]
+    pre = worktree.seal(tree, declaration, declaration)
+
+    (tree / "pkg" / "one.py").write_text("changed\n", encoding="utf-8")
+
+    comparison = worktree.compare_seals(pre, worktree.seal(tree, declaration, declaration))
+
+    assert comparison.state == "external_write"
+    assert comparison.differences == {"added": [], "modified": ["pkg/one.py"], "removed": []}
+
+
+def test_seal_pair_reports_added_and_removed(tmp_root: Path) -> None:
+    tree = _tree(tmp_root)
+    declaration = ["pkg/*.py"]
+    pre = worktree.seal(tree, declaration, declaration)
+
+    (tree / "pkg" / "two.py").write_text("two\n", encoding="utf-8")
+    (tree / "pkg" / "one.py").unlink()
+
+    comparison = worktree.compare_seals(pre, worktree.seal(tree, declaration, declaration))
+
+    assert comparison.differences == {
+        "added": ["pkg/two.py"],
+        "modified": [],
+        "removed": ["pkg/one.py"],
+    }
+
+
+def test_evidence_tree_digest_is_the_same_implementation(tmp_root: Path) -> None:
+    tree = _tree(tmp_root)
+
+    assert worktree.evidence_tree_digest(tree).sha256 == worktree.tree_digest(tree).sha256
+
+
+def test_landing_states_are_not_collapsed() -> None:
+    assert worktree.resolve_landing_state("landed_unverified") == "landed_unverified"
+
+    with pytest.raises(worktree.LandingStateError):
+        worktree.resolve_landing_state("verified")
+    with pytest.raises(worktree.LandingStateError):
+        worktree.resolve_landing_state("round_verified")
+    with pytest.raises(worktree.LandingStateError):
+        worktree.resolve_landing_state("landed_peer_verified")
+
+    evidence = {"verifier": "peer-a", "artifact": "receipt.json", "sha256": "a" * 64}
+    assert (
+        worktree.resolve_landing_state("landed_peer_verified", peer_evidence=evidence)
+        == "landed_peer_verified"
+    )
+    with pytest.raises(worktree.LandingStateError):
+        worktree.resolve_landing_state(
+            "landed_peer_verified", peer_evidence=dict(evidence, sha256="not-a-hash")
+        )
+
+
+def test_load_declaration_ignores_comments_and_blank_lines(tmp_root: Path) -> None:
+    path = tmp_root / "declaration.txt"
+    path.write_text("# 注释\n\nsrc/**/*.py\n   \ntools/*.py\n", encoding="utf-8")
+
+    assert worktree.load_declaration(path) == ("src/**/*.py", "tools/*.py")
+
+    with pytest.raises(worktree.UnprovableError):
+        worktree.load_declaration(tmp_root / "missing.txt")

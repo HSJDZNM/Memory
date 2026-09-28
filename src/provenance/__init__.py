@@ -1,0 +1,43 @@
+"""控制面针脚与边界声明的公开面（方案 §3.1 / §3.5）。"""
+
+from .worktree import (
+    DEFAULT_EXCLUDES,
+    LANDING_STATES,
+    SEAL_STATES,
+    Digest,
+    LandingStateError,
+    ProvenanceError,
+    SealComparison,
+    SealPoint,
+    UnprovableError,
+    compare_seals,
+    evidence_tree_digest,
+    load_declaration,
+    platform_revision,
+    referenced_inputs_digest,
+    resolve_landing_state,
+    seal,
+    tree_digest,
+    workspace_tree_digest,
+)
+
+__all__ = [
+    "DEFAULT_EXCLUDES",
+    "LANDING_STATES",
+    "SEAL_STATES",
+    "Digest",
+    "LandingStateError",
+    "ProvenanceError",
+    "SealComparison",
+    "SealPoint",
+    "UnprovableError",
+    "compare_seals",
+    "evidence_tree_digest",
+    "load_declaration",
+    "platform_revision",
+    "referenced_inputs_digest",
+    "resolve_landing_state",
+    "seal",
+    "tree_digest",
+    "workspace_tree_digest",
+]
