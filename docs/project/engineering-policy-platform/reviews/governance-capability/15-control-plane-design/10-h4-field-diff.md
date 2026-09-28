@@ -5,7 +5,7 @@
 - **测试证据所属树（必须写清，AGENTS 第 48 条）**：`C:\\Users\\ZNM\\Downloads\\Memory\\.tmp\\h4-shadow`——同一个提交 `cb73617` 的 `--detach` 影子 worktree，位于 session workspace 内。
   **为什么要影子树**：本机沙箱不允许子进程写 `../Memory-refactor`（实测 `os.open(O_CREAT)` → `PermissionError errno=13`，连 `New-Item` 建目录也被拒），而 `tests/conftest.py:34` 会把会话临时根固定成 `<repo>/.tmp/tmp`——在重构树里跑 pytest 在 conftest 导入期就起不来。影子树与重构树**逐文件对应**（四个文件的 sha256 两边相同，见 §5），因此读数是它的，结论是重构树的。
 - **解释器**：`C:\\Users\\ZNM\\Downloads\\Memory\\.venv\\Scripts\\python.exe`（3.13.11 / pytest 9.1.1）——与 `08` 里门禁的 `CI_LOCAL_PYTHON` 同一个解释器。
-- **本文件是什么**：台阶 1 的 R-d（字段级差集）、受影响 fixture 清单与 R-f 红→绿读数。原件在 `Memory\\.tmp\\h4\\`（读数与 junit）与 `Memory-refactor\\.tmp\\`（探针脚本），`tools/cleanup.py` 之后不可复核。
+- **本文件是什么**：台阶 1 的 R-d（字段级差集）、受影响 fixture 清单与 R-f 红→绿读数；§8 补记**合并后的本树门禁读数**与影子树的删除。原件在 `Memory\\.tmp\\h4\\`（读数与 junit）与 `Memory-refactor\\.tmp\\`（探针脚本），`tools/cleanup.py` 之后不可复核。
 
 ## 1 H4 的机制（不是印象）
 
@@ -88,6 +88,7 @@
 - **绿灯运行的 `evidence_count` 仍然是 0**（pytest 全过时没有证据条目）。所以 R-f 若按字面读成「`status ∈ {ok, findings}` **且** `evidence_count > 0`」，那每一次绿灯运行都不达标；本台阶采用「真的执行过（有对象且跑过）」这一读法，并把分歧写在这里，不假装两条读法一样。
 - 影子树是临时载体：`git worktree remove` 之后它的工作区消失（`.tmp/h4-shadow/.tmp` 下的 junit 也会随之消失）；本文件 §7 的哈希是它们存在时的读数。
 - **未核实**：本机沙箱为什么允许写 `Memory` 却拒绝写 `Memory-refactor` 的机制（两棵树的 `icacls` 输出相同、都是继承来的 ACE；只观测到现象，没有定位到强制点）。
+- **（§8 补记，2026-09-29）**：上面第三条分歧（R-f 按 `evidence_count` 读会把每一次绿灯运行判成不达标）已由**方案文字修正**消解——台阶 1 的判据改成「**真实执行的用例数 ≥ 1**」（提交 `6260f06`，方案「台阶 1」里的读法补记）；最后那条「未核实」已由 §8.2 的控制变量实验定位（跟着**解释器映像位置**走，不是树的 ACL），**强制点的实现仍未核实**。
 
 ## 7 复核入口
 
@@ -117,6 +118,58 @@ python C:\\Users\\ZNM\\Downloads\\Memory\\.tmp\\h4\\json-field-diff.py --before 
 | `Memory/.tmp/h4-shadow/.tmp/h4-junit-single-after.xml` | `439ac983c356151b` | 386 |
 | `Memory/.tmp/h4/validator-loop-before.txt` / `-after.txt` | `8fccee73f7a5774e`（两份相同） | 1266 |
 | `Memory/.tmp/h4/fixtures-diff-before.txt` / `-after.txt` | `90a2929853255738`（两份相同） | 8048 |
+
+## 8 台阶 1 验收：合并后的本树本机门禁读数（2026-09-29 00:30–00:52 +08:00）
+
+**本节属于哪棵树**：`C:\Users\ZNM\Downloads\Memory-refactor` = 分支 `refactor/control-plane` @ **`4241217`**（先按要求合并 `feat/rules-and-os-platform`：基点 `f6b9b79`、对方 `6fa800e`，唯一冲突 `15-control-plane-design/README.md` 的文件清单表**手工**解决）。跑门禁时与跑完后 `git status --porcelain` 均为空。
+**§1–§5 的读数仍钉在 `cb73617`**：合并只带进 `docs/**`；四个 H4 文件的 sha256 与 §5 所记**逐位相同**（本节实测 `1634ba4af75b2829` / `493838ff39f96f97` / `47133bc5eefb9762` / `8fa0f0e5dd283e66`）。
+
+### 8.1 绿：33 步全过
+
+| 项 | 读数 |
+| --- | --- |
+| 命令 | `python tools/ci_local.py --full --python C:/Users/ZNM/Downloads/refactor-venv/Scripts/python.exe`（`python` = `C:\Users\ZNM\miniconda3\python.exe` 3.13.11） |
+| 步骤 | `改动文件 759 个；执行 33 步（本机跳过 11 步，登记豁免 2 步）`；**33/33 `rc=0`**，非 0 计数 **0** |
+| 结论行 | `本机检查全部通过（33 步）` → `ci_local.main` 返回 **0**（`tools/ci_local.py:721-728`：只有 `failures` 非空才返回 1） |
+| 墙钟 | 表内**合计 8m 01.1s**；最贵 pytest 4m 53.6s（61.0%）、Learning notebooks are in sync 1m 01.0s、Orchestration closed loop 59.3s |
+| 测试 | `1874 passed, 1 skipped, 2 warnings in 292.19s`（1875 条；与 §3 的 after 读数同形） |
+| 证据 | `.tmp/ci-full-4241217-run4-utf8var.log`（166976 B，sha256[:16] `f527e4bb5d928ee5`）；`.tmp/artifacts/tests-all-report.xml`（250297 B，`080b91208b00421a`）、`phase-8-evidence.json`（47197 B，`1e26e00019ed042d`）、`phase-8-orchestration-result.json`（9337 B，`18b4d6389fb263e1`） |
+
+### 8.2 为什么不是 `.venv` 那条原文命令（两条反证 + 机制）
+
+按要求先跑**原文命令**（`--python C:/Users/ZNM/Downloads/Memory/.venv/Scripts/python.exe`）两次，两次都红，且红因与源码无关：
+
+| 运行 | 环境 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| run1 | 继承（含 `PYTHONIOENCODING=UTF8`） | **33 步里 17 步失败**，全部 `PermissionError [WinError 5]`，落点都在 `.tmp/**`（`artifacts`、`validators/<hash>`、`phase-2-sandbox`、`retrieval`、`phase-4-demo`、`phase-7-api`、`phase-8-orchestration`） | `.tmp/ci-full-4241217-run1-pre-policy.log`（342394 B，`184dd2d6a060320d`） |
+| run2 | 去掉 `PYTHONIOENCODING` | **同样 17 步、同样 `WinError 5`** | `.tmp/ci-full-4241217-run2.log`（342886 B，`c1123d022e16afab`） |
+
+**机制（本轮实测，不是猜）**：本机沙箱的强制点跟着**进程映像所在位置**走，不跟着目标目录的 ACL 走。控制变量实验：把 `C:\Users\ZNM\miniconda3\python.exe` **原样复制**成 `Memory\.tmp\pycopy\python.exe`（映像落进会话工作区），同一份二进制立刻只能写会话工作区——`.tmp\probe-ws`（重构树）与 `C:\Users\ZNM\Downloads\refprobe` 都 `WinError 5`，而 `Memory\.tmp\dsh-probe-venv` 成功；放回工作区外时三处全过。
+**这同时补上 §6 那条「未核实」**：两棵树 `icacls` 输出相同却一写一拒，原因不在树的 ACL，而在解释器映像的位置。**仍未核实**：强制点的实现（minifilter / 令牌 / 其它）。
+**替代解释器（等效性证据，不声称等同）**：`C:\Users\ZNM\Downloads\refactor-venv`（`uv venv` + `uv pip install -r requirements.lock`，建在工作区**外**）。它与主树 `.venv` 的发行包**逐个同名 48/48**（双向比对差异 0）；差异只在 5 个补丁号（`httpcore2 2.13.0→2.13.1`、`httpx2 2.13.0→2.13.1`、`langchain-core 1.6.3→1.6.5`、`langgraph-sdk 0.4.4→0.4.5`、`langsmith 0.13.0→0.14.1`）；`requirements.lock` 的六个直接依赖逐条相同（pydantic 2.13.5 / PyYAML 6.0.3 / pytest 9.1.1 / fastapi 0.128.0 / uvicorn 0.40.0 / langgraph 1.2.11）。**§8.1 的绿属于这份解释器**，不能声称「等于主树 `.venv` 跑出来的」。
+
+### 8.3 一条会左右红绿的用例（环境口径，不是源码结论）
+
+`tests/integration/test_validator_cli.py::test_pipeline_command_matches_policy_check`（`:144-155`）用 `encoding="utf-8"` 读子进程 stdout，而子进程 stdout 的编码跟**子进程环境**走：继承 `PYTHONIOENCODING=UTF8` 时子进程写 UTF-8 → **1 passed in 1.29s**；去掉该变量后子进程写 GBK（本机 `chcp` = 936）→ 父进程解码失败、`second.stdout` 为 `None` → `TypeError` → **1 failed in 1.49s**。同样的两读法只差这一个变量，其余全同。
+
+| 运行 | 解释器 | `PYTHONIOENCODING` | 结果 | 证据 |
+| --- | --- | --- | --- | --- |
+| run3 | refactor-venv | 去掉 | **31 绿 / 2 红**：`Unit, contract, integration and security tests`；`Phase 8 acceptance evidence`（日志原文 `提示：--suite-reports 没有指向任何 XML 文件，改为真跑测试套件` 后仍失败） | `.tmp/ci-full-4241217-run3-refactor-venv.log`（180730 B，`1f78fa5f2f886294`） |
+| run4 | refactor-venv | 继承 UTF8 | **33/33 绿**（见 §8.1） | §8.1 第 1 行 |
+
+**未核实**：CI（Linux / UTF-8）与主树那两次 33/33 门禁各自的环境变量组合；本节只声明**本机这两次**的读数。
+
+### 8.4 影子树已删（`git worktree remove`）
+
+`git worktree remove C:\Users\ZNM\Downloads\Memory\.tmp\h4-shadow` **被拒**：`fatal: '...' contains modified or untracked files, use --force to delete it`（rc=128）；加 `--force` 后成功（rc=0）。`git worktree list` 现在只有 `Memory`（`feat/rules-and-os-platform` @ `6fa800e`）与 `Memory-refactor`（`refactor/control-plane` @ 交付时 HEAD）；`git worktree prune --dry-run --verbose` 无输出。
+**删之前先证明不丢证据**（逐文件 sha256）：影子树里 4 个被改的跟踪文件与重构树**逐位相同**（同 §8 开头那四个值）；`.tmp/h4-probe.py` 与 `Memory-refactor\.tmp\h4-probe.py` 相同（`04b288dd452344a4`）；§7 表里那四份 junit 与 `Memory\.tmp\h4\` 下的同名文件**逐个同哈希**（`b9e2e4c63c934164` / `a69f76688f4acf0f` / `1c46771fa582cb6f` / `439ac983c356151b`）。所以 §7 的哈希**仍可复核**——原件在 `Memory\.tmp\h4\`，影子树里那份只是副本；`--force` 丢掉的是副本与 `.tmp/` 下的构建产物。
+
+### 8.5 本节不证明什么
+
+- 不证明主树 `.venv` 能跑出同样结果（§8.2 末段）；也不证明 CI 侧会同样绿（CI 跑的是另一批步骤，见 `--list` 的「本机跳过 11 步 / 登记豁免 2 步」）。
+- 不证明「门禁绿 = 台阶 1 的全部承诺已兑现」：33 步覆盖的是本树的可执行面；R-f 的文字口径与矩阵读数纪律是**方案文档**的改动（提交 `6260f06`），不由门禁覆盖。
+- 门禁读数属于 `4241217`；其后只有 `docs/**` 改动（`6260f06` 与**本文件**）。这些改动**没有**重跑 33 步；已单独复跑 `tools/check_text_conventions.py`：`检查 613 个文本文件，问题 0 处，跳过第三方镜像 300 个`。
+- **未核实**：本机是否还有别的会话在写这两棵树（`tools/ci_local.py` 的排他锁只保证**同一棵树**上的单实例）。
 
 ---
 
