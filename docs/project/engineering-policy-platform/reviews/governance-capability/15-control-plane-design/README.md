@@ -29,6 +29,7 @@
 | [04-deliberation-record.md](04-deliberation-record.md) | design/ 下 19 份过程文档（各自带 sha256） | 方案「三轮研讨」的过程、认输与未消解分歧 |
 | [05-checkpoint-precheck.md](05-checkpoint-precheck.md) | SCAN.md `A69CAB68994B2C82`、EXCLUDE.md `DCE371C0E8C6ACCF`、stage-list.nul `369F047BCF74BDA5` | 检查点提交 e235626c 的预检结论与两条登记项 |
 | [06-round-15-closeout.md](06-round-15-closeout.md) | 本轮提交链 `8b0be68→b2c1255→c75886e→b9d3b11→80acbe9`、标签 `checkpoint/round-15` | 按轮次拆分的提交图与来源树、门禁两次运行读数、回滚手册、遗留与未验证；含推送被凭据阻塞的事实（已补记：本机推送完成） |
+| [07-final-verification-report.md](07-final-verification-report.md) | task-22 脚本（`final_check.py` / `boundary_final.py` / `reach_final.py` / `history_final.py`）与 `raw-*.txt`（原件 `.tmp/round-15/verify-final/`）；被测 sha `928df2a`、树 `f7300fcf…` | **拆分后最终状态的独立验证**：七项检查（历史 / 树同一性 / 提交信息 / 可达性 / 边界 / 抽样 / 远端）、V1–V5 偏差（5 条全部落在「复核说明 / 预期」侧，拆分内容侧 0 条） |
 | [08-refactor-kickoff.md](08-refactor-kickoff.md) | 只读核对 `f6b9b79` 与 `.tmp/push-run.log` | 重构开工状态：基线、前置清单 P1–P4、待定决策 D-1/D-2、首个改码台阶 |
 | [09-baseline-recheck.md](09-baseline-recheck.md) | `probe_matrix.py` `2b447c7b1007009b`、`scaffold_full.py` `54beeb162b7ef0f5`、`decision_invariance.py` `2F8A962A31891974`、`compare_decisions.py` `10A11BA62799DF37`；两棵树的摘要与来源块写在该文件里 | **台阶 −1②**：矩阵（248 检查 0 偏差）与 11 个 fixture（逐字段全等）在**有修订号的树**上重采；两棵树摘要 + 12 个文件的差集；正面控制（变异 B 红 61 条 / 变异 A 仪器崩溃无证据）；三条新发现 |
 | [10-h4-field-diff.md](10-h4-field-diff.md) | 影子树 `cb73617`（+新检查 / +修复）、`h4-*.json`、两份全量 junit；逐项 sha256 写在该文件 §7 | **台阶 1（H4）**：R-d 字段级差集（allow→block、violations 0→1、served 2→1）、受影响清单（1875 条用例只翻转新增的那 1 条）、R-f 红→绿、修复形状与未证明项 |
