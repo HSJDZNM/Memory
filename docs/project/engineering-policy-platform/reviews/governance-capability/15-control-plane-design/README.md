@@ -9,6 +9,7 @@
   因此：**本归档对方案的行号引用一律绑定 20:53 版 `DF00F981EEAB3F27`**；引用方案前先确认版本，行号可能已漂移。
   这不是谁的错，而是 W1/W2 的同一机制在摘录期间又发生了一次——**读任何读数前先问「哪棵树、哪一版」**。
 - **来源 sha256[:16] / 摘录日期**：逐份写在每个文件开头的「来源」块里；本文末尾汇总。
+- **补记（台阶 −1②，2026-09-28 23:20–23:35 +08:00）**：下表新增 [09-baseline-recheck.md](09-baseline-recheck.md)。矩阵与 fixture 已在**有修订号的树**（`refactor/control-plane` @ `f6b9b79`，worktree `../Memory-refactor`）上重采，因此下面「证据产出树 = 未记录修订」那条缺口被补上；09 的读数与本归档前六份的读数**分开引用**，不要混算。
 
 ## 为什么有这份归档
 
@@ -17,7 +18,7 @@
 一次 `python tools/cleanup.py` 之后原件即消失——那样这份长期文档的「现在是这样」就无法复核。
 本归档把**最小证据**（结论、计数、可重算的入口）落进已跟踪目录；**不复制原件全文**。
 
-## 六份文件
+## 文件清单（01–06 是本轮原归档；09 是台阶 −1② 的补记）
 
 | 文件 | 来源（sha256[:16]） | 支撑什么 |
 | --- | --- | --- |
@@ -28,6 +29,7 @@
 | [04-deliberation-record.md](04-deliberation-record.md) | design/ 下 19 份过程文档（各自带 sha256） | 方案「三轮研讨」的过程、认输与未消解分歧 |
 | [05-checkpoint-precheck.md](05-checkpoint-precheck.md) | SCAN.md `A69CAB68994B2C82`、EXCLUDE.md `DCE371C0E8C6ACCF`、stage-list.nul `369F047BCF74BDA5` | 检查点提交 e235626c 的预检结论与两条登记项 |
 | [06-round-15-closeout.md](06-round-15-closeout.md) | 本轮提交链 `8b0be68→b2c1255→c75886e→b9d3b11→80acbe9`、标签 `checkpoint/round-15` | 按轮次拆分的提交图与来源树、门禁两次运行读数、回滚手册、遗留与未验证；含推送被凭据阻塞的事实 |
+| [09-baseline-recheck.md](09-baseline-recheck.md) | `probe_matrix.py` `2b447c7b1007009b`、`scaffold_full.py` `54beeb162b7ef0f5`、`decision_invariance.py` `2F8A962A31891974`、`compare_decisions.py` `10A11BA62799DF37`；两棵树的摘要与来源块写在该文件里 | **台阶 −1②**：矩阵（248 检查 0 偏差）与 11 个 fixture（逐字段全等）在**有修订号的树**上重采；两棵树摘要 + 12 个文件的差集；正面控制（变异 B 红 61 条 / 变异 A 仪器崩溃无证据）；三条新发现 |
 
 ## 复核入口（全部只读）
 
@@ -54,6 +56,7 @@
 | 检查点树 | `e235626c`（tracked，可复现） | 本归档自身的来源；test-paths 重算在这棵树上做过 |
 | 工作树 | 预检时的未提交状态（当时 HEAD `8b0be68`） | 预检与「冻结前」的读数属于它；这些变更现已全部进入 `e235626c` |
 | 证据产出树 | **未记录修订** | 30 臂矩阵（`2026-09-27T15:31:00Z` 起跑）与 11-fixture 读数属于它；见 01 文件「不证明什么」 |
+| 重采树（台阶 −1②） | `refactor/control-plane` @ `f6b9b79`（worktree `../Memory-refactor`） | [09](09-baseline-recheck.md) 的矩阵 / fixture 读数属于它；pre 侧对照树是 round-10 `c/trees/post`（**不是 git 仓库根，无自有修订号**） |
 
 ## 边界（本归档不主张什么）
 
