@@ -156,6 +156,10 @@ class AdapterResult:
     # Q7：「待实现」——status 为 pending_implementation 时，这里说得出"哪个测试模块、
     # 因为哪个项目内缺失的目标"。只有状态、没有这张清单，等于把放行理由留在代码里。
     pending: Tuple[PendingImplementation, ...] = ()
+    # R-f（台阶 1 · H4）：本次**真的服务过**哪些 checker。空 = 与注册表声明相同。
+    # 它存在的理由是有一种运行"工具跑成了、却一个对象都没执行"（pytest 退出码 5）：
+    # 那种运行不许把没执行过的 checker 记成"服务过"。
+    served: Tuple[str, ...] = ()
 
 
 def sanitize_text(text: str, *, workspace: Optional[Path | str] = None, limit: int = 2000) -> str:

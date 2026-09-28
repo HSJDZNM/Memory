@@ -73,6 +73,8 @@ COLLECTION_FAILURE = "collection_failure"
 # 收集失败影响的 checker 是 failing_tests（"选中的测试跑失败了"）。missing_tests 的证据来自
 # 选择阶段（selection.missing），与 pytest 能不能收集无关，因此不受这条状态影响。
 FAILING_TESTS_CHECKER = "failing_tests"
+# missing_tests 的证据同样来自选择阶段（selection.missing）：它不受"pytest 有没有收集到用例"影响。
+MISSING_TESTS_CHECKER = "missing_tests"
 
 # pytest 收集失败的原文形态（真机读数：.tmp/round-15/fix-tdd-state/red-pytest-shapes.txt）。
 # 头部是 "______ ERROR collecting tests/test_x.py ______"；路径里可能出现下划线，
@@ -261,10 +263,20 @@ def run_pytest(
         )
 
     if run.exit_code == 5:
+        # H4（台阶 1）：pytest 真的被调起（选中了 node id），却**一个用例都没收集到**——
+        # 这不是"选中的测试都通过了"，而是"没有任何执行证据"。本次因此只服务 missing_tests
+        # （它的证据来自选择阶段）；failing_tests **不进** served_checkers，判定侧按
+        # "没有验证器为它提供证据"以 critical 阻断（AGENTS 第 20 条）。
+        # 反例（不许这么修）：给它起个"显式 no_subject"的新名字再记成通过——那只是把
+        # "没查过"换个名字，R-f 明确关掉了这条逃生门。
         return AdapterResult(
             status=ValidatorStatus.OK,
+            served=(MISSING_TESTS_CHECKER,),
             tool=invocation,
-            reason="选中的测试没有收集到任何用例（pytest 退出码 5）",
+            reason=(
+                "选中的测试没有收集到任何用例（pytest 退出码 5）：零个用例被执行，"
+                "failing_tests 没有执行证据，不记入 served_checkers"
+            ),
             payload={"selection": selection.to_payload()},
         )
     if run.exit_code not in (0, 1):

@@ -452,6 +452,82 @@ def test_failing_related_tests_block(tmp_root: Path) -> None:
     assert failures and "test_broken" in failures[0].message
 
 
+# ------------------------------------------------- H4：退出码 5 不是"跑过了"
+
+# 与 Q7 同一手法（见下面 Q7_RULES 的说明）：规则集收窄到 missing_tests + failing_tests，
+# "判定为什么是 block"就只能来自测试证据这一条链路，与 PATH 里有没有 ruff 无关。
+H4_RULES = RuleSet(
+    rules=(
+        make_checker_rule("TESTING-001", checker="missing_tests"),
+        make_checker_rule("TESTING-002", checker="failing_tests"),
+    ),
+    source_paths=(),
+)
+H4_TARGET = "src/shop/order_service.py"
+H4_TEST_MODULE = "tests/test_order_service.py"
+# 载荷：测试文件在（选择阶段选得中它），但里面一个用例都没有 → pytest 退出码 5。
+H4_EMPTY_TESTS = '"""H4 载荷：这个测试文件里一个用例都没有。"""' + chr(10)
+
+
+def h4_report(workspace: Path) -> object:
+    return run_pipeline(
+        PipelineRequest(
+            target=H4_TARGET,
+            workspace=workspace,
+            context=make_context(
+                file=H4_TARGET, language="python", layer="controller", operation="edit"
+            ),
+            rules=H4_RULES,
+            changed_files=(H4_TARGET,),
+        ),
+        config=CONFIG,
+    )
+
+
+def h4_decision(report):
+    return evaluate(
+        H4_RULES,
+        make_context(file=H4_TARGET, language="python", layer="controller", operation="edit"),
+        evidence=report.bundle,
+    )
+
+
+def test_collected_nothing_is_not_a_passing_test_run(tmp_root: Path) -> None:
+    """H4：pytest 退出码 5（一个用例都没收集到）**不是**「选中的测试都通过了」。
+
+    修复前的字段级读数（本轮 R-d 的 before 侧，见 .tmp/h4-before.json）：decision = allow、
+    violations = []、served_checkers = (failing_tests, missing_tests)、tool.pytest 记成 ok 且
+    evidence_count = 0 —— 零个测试被执行，TESTING-002 却被记成「服务过」。
+    R-f 的口径：served 只收**真的执行过**的 checker；没有执行证据就没有 served，
+    判定侧按「没有验证器为它提供证据」以 critical 阻断（AGENTS 第 20 条）。
+    """
+
+    workspace = copy_validator_project(tmp_root)
+    (workspace / H4_TEST_MODULE).write_text(H4_EMPTY_TESTS, encoding="utf-8", newline="")
+
+    report = h4_report(workspace)
+
+    record = report.record("tool.pytest")
+    assert record is not None
+    # 工具**跑成了**：选择阶段选中了测试文件、pytest 真的被调起（不是「验证器不可用」）
+    assert record.status is ValidatorStatus.OK, record.reason
+    assert "退出码 5" in (record.reason or "")
+    assert report.selection["nodeids"] == [H4_TEST_MODULE]
+    assert report.blockers == ()
+    # 一个用例都没执行 → failing_tests 没有执行证据，不许记成「服务过」
+    assert "failing_tests" not in report.served_checkers
+    # missing_tests 的证据来自选择阶段，与 pytest 能不能收集无关 → 照常记账
+    assert "missing_tests" in report.served_checkers
+    # 判定侧失败关闭：这条不是「没有发现问题」
+    decision = h4_decision(report)
+    assert decision.decision.value == "block"
+    uncovered = [
+        item
+        for item in decision.violations
+        if item.rule_id == "TESTING-002" and item.evidence.detail == "uncovered_checker"
+    ]
+    assert [item.evidence.value for item in uncovered] == ["failing_tests"]
+    assert [item.severity.value for item in uncovered] == ["critical"]
 def test_changed_set_is_required_for_the_test_validator() -> None:
     """有规则需要测试证据但没给变更集时失败关闭：证据不足不是"没有发现问题"。"""
 

@@ -530,6 +530,9 @@ def run_pipeline(
     truncated_evidence = 0
     for spec in sorted(selected_specs, key=lambda item: item.id):
         output = outputs[spec.id]
+        # P7 的两个口径必须分开读：declared = 注册表声明负责的（spec.checkers）；
+        # served = 本次真的服务过的（适配器可以收窄，例如 pytest 退出码 5 时只服务
+        # missing_tests：它的证据来自选择阶段，与"有没有用例被执行"无关）。
         checkers = output.served or spec.checkers
         # 判定口径只记"需要判定的 checker"（report.checks），避免把没规则用到的 checker
         # 也写成一条噪音记录。
@@ -567,7 +570,7 @@ def run_pipeline(
                 reason=reason,
                 tool=output.tool,
                 evidence_count=len(kept),
-                declared_checkers=tuple(sorted(checkers)),
+                declared_checkers=tuple(sorted(spec.checkers)),
             )
         )
         dependency_facts.extend(output.dependencies)
@@ -1144,7 +1147,7 @@ def _from_adapter(result: AdapterResult, *, spec: ValidatorSpec) -> ValidatorOut
         tool=result.tool,
         unmapped=result.unmapped,
         payload=result.payload,
-        served=spec.checkers,
+        served=result.served or spec.checkers,
         analysis_failure=result.analysis_failure,
         pending=result.pending,
     )
