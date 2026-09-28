@@ -5,8 +5,13 @@
 #
 # 失败语义：validators[].critical=true 的验证器只要没跑成（缺失 / 版本不符 / 超时 / 崩溃 /
 # 配置错误 / 输出非法），需要它的规则就以 critical 违规阻断——同一批里的其他 PASS 抵消不了它。
-version: 1
-schema_id: validator-registry/1
+#
+# 数据版本约定（本文件自己的）：**形状变了就同时递增 version 与 schema_id**。
+# 加载器是严格模型（未知字段一律报错），因此"新增一个顶层段"对旧读取方就是破坏性变更：
+# 旧读取方会拒绝新文件，而不是忽略新段——版本标识必须跟着动，否则"读的是哪一版形状"只能靠猜。
+# version 2 / validator-registry/2：新增 uncovered_languages（P2）。
+version: 2
+schema_id: validator-registry/2
 
 defaults:
   timeout_ms: 10000
@@ -36,6 +41,24 @@ rule_packs:
     language: python
     description: 外部工具证据（Ruff / 类型检查器 / pytest）；工具不在就叫 unavailable，不降级
     validators: [tool.ruff, tool.mypy, tool.pytest]
+
+# 「按设计不取证」的语言（07 号报告 P2）：只有 python 有 rule pack 时，任何非 python 目标在
+# 取证路径上只能得到 RegistryError（→ evidence_unavailable → 退出码 2）——连"本次没有任何规则
+# 需要验证器证据"的文档写入也被一并拦下。失败关闭本身没错（AGENTS 第 20/42 条），缺的是
+# **表达"哪些语言按设计不取证"的地方**；这里就是那个地方，它是数据，理由可以被评审。
+#
+# 口径（写在这里，读账本的人不必去猜代码）：
+#   - 命中这里的语言产出一条**显式判定**，不是错误、也不是静默放行：
+#     PipelineReport.language_coverage.status = not_covered_by_design（理由取本项 reason）；
+#   - **声明不等于放行**：本次若有规则需要某个 checker 的证据，仍然按失败关闭阻断；
+#   - 既没有 rule pack、也不在这里的语言，保持 RegistryError（退出码 2），不被顺带放行；
+#   - 同一个 language 既有 rule pack 又出现在这里 = 自相矛盾，加载期直接报错；
+#   - 每项的 reason 不能为空：空理由等于把"平台为什么不查这门语言"重新变成不可读。
+uncovered_languages:
+  # 单行标量（不用折叠块）：reason 会逐字进 PipelineReport.language_coverage 与审计摘要，
+  # 折叠换行会把中文句子拼出一个多余的空格。
+  - language: text
+    reason: 平台没有 text / markdown 的 rule pack，按声明不取证：这类目标（.md 等文档）的判定只由上下文类 checker 决定，需要验证器证据的规则一律失败关闭
 
 validators:
   - id: py.source

@@ -289,6 +289,66 @@ def test_unknown_field_in_registry_is_rejected(tmp_root: Path) -> None:
     assert "surprise" in str(error.value)
 
 
+# ------------------------------- uncovered_languages：哪些语言**按设计不取证**（P2 的声明处）
+
+
+def uncovered_entries(document: dict) -> list:
+    """清单必须存在：没有它，"哪些语言按设计不取证"就无处表达（07 号报告 P2）。"""
+
+    entries = document.get("uncovered_languages")
+    assert isinstance(entries, list) and entries, (
+        "validation/validators.yaml 必须显式声明 uncovered_languages："
+        "没有 rule pack 的语言要么在这里被声明，要么在运行期失败关闭"
+    )
+    return entries
+
+
+def test_uncovered_language_needs_a_reviewable_reason(tmp_root: Path) -> None:
+    """理由空着 = "为什么不查"重新变成不可读：加载期就拒绝，不留到评审时才发现。"""
+
+    document = registry_document()
+    uncovered_entries(document)[0]["reason"] = "   "
+
+    with pytest.raises(RegistryError) as error:
+        _load(document, tmp_root)
+
+    assert "reason" in str(error.value)
+
+
+def test_duplicate_uncovered_language_is_rejected(tmp_root: Path) -> None:
+    document = registry_document()
+    uncovered_entries(document).append(copy.deepcopy(uncovered_entries(document)[0]))
+
+    with pytest.raises(RegistryError) as error:
+        _load(document, tmp_root)
+
+    assert "重复 ID" in str(error.value)
+
+
+def test_a_language_cannot_be_covered_and_uncovered_at_once(tmp_root: Path) -> None:
+    """自相矛盾必须报错：同一个 language 既有 rule pack、又声明"按设计不取证"。"""
+
+    document = registry_document()
+    uncovered_entries(document).append({"language": "python", "reason": "自相矛盾的声明"})
+
+    with pytest.raises(RegistryError) as error:
+        _load(document, tmp_root)
+
+    message = str(error.value)
+    assert "python" in message
+    assert "自相矛盾" in message
+
+
+def test_unknown_field_in_an_uncovered_language_is_rejected(tmp_root: Path) -> None:
+    document = registry_document()
+    uncovered_entries(document)[0]["skip"] = True
+
+    with pytest.raises(RegistryError) as error:
+        _load(document, tmp_root)
+
+    assert "skip" in str(error.value)
+
+
 def test_registry_error_carries_the_file_path(tmp_root: Path) -> None:
     (tmp_root / "validation").mkdir(parents=True)
     target = tmp_root / "validation" / "validators.yaml"

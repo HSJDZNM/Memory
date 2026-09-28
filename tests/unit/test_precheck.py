@@ -876,3 +876,62 @@ def test_execution_record_and_grant_types_are_frozen(enforcement_paths):
     with pytest.raises(Exception):
         outcome.decision.decision = Decision.BLOCK
     assert isinstance(outcome.decision.grant, AuthorizationGrant)
+
+
+# --------------------------------------------------------------------------- M4：拒绝理由要带可用替代
+
+
+def test_blocked_reason_with_alternatives_is_recorded_in_the_audit_chain(enforcement_paths):
+    """可用替代不能只活在返回值里：事后读审计链的人也要看得见"能改成什么"。"""
+
+    from enforcement_support import EnforcementPaths
+
+    paths = EnforcementPaths(enforcement_paths.root / "alternatives-audit")
+    outcome = run_pre(
+        paths,
+        "exec.shell",
+        {"command": "echo hi ; print('ok')", "description": "复合"},
+        roles=("owner",),
+        action_id="alt-audit-1",
+    )
+
+    assert reason_of(outcome) is ReasonCode.COMMAND_COMPOSITION_BLOCKED
+    records = [
+        json.loads(line)
+        for line in paths.audit.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert records and records[-1]["payload"]["reason_code"] == "command_composition_blocked"
+    checks = {item["check"]: item for item in records[-1]["payload"]["checks"]}
+    detail = checks["command_composition"]["detail"]
+    assert "可用替代" in detail
+    assert "注册表白名单允许的命令形态" in detail
+    # 理由里不出现本机布局：讲清楚不等于泄露路径
+    assert paths.workspace.as_posix() not in detail
+
+
+def test_the_promised_alternative_form_really_passes_the_command_checks(enforcement_paths):
+    """理由里承诺的形态必须真的能过命令类检查，否则那句"可用替代"就是编出来的提示语。"""
+
+    import re
+
+    from enforcement_support import EnforcementPaths
+
+    paths = EnforcementPaths(enforcement_paths.root / "alternatives-real")
+    spec = paths.registry_object().tool("exec.shell")
+    promised = "print('ok')"
+    assert any(re.fullmatch(pattern, promised) is not None for pattern in spec.allowed_commands)
+
+    outcome = run_pre(
+        paths,
+        "exec.shell",
+        {"command": promised, "description": "承诺的形态"},
+        roles=("owner",),
+        action_id="alt-real-1",
+    )
+
+    assert outcome.decision.check("command_allowlist").status is CheckStatus.PASSED
+    assert outcome.decision.check("command_composition").status is CheckStatus.PASSED
+    assert outcome.decision.check("command_fragments").status is CheckStatus.PASSED
+    # 只剩人工审批这一关：可用替代描述的是"能跑到哪里"，不是"直接放行"
+    assert reason_of(outcome) is ReasonCode.APPROVAL_REQUIRED

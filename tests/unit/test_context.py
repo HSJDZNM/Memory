@@ -12,7 +12,13 @@ from policy.context import (
     normalize_operation,
     repo_relative_path,
 )
-from policy.models import Operation, PolicyContext, PolicyContextError, Principal
+from policy.models import (
+    Operation,
+    PolicyContext,
+    PolicyContextError,
+    Principal,
+    normalize_repo_path,
+)
 
 from conftest import REPO_ROOT, make_context
 
@@ -271,3 +277,130 @@ def test_build_context_returns_frozen_model() -> None:
         context.layer = "service"  # type: ignore[misc]
 
     assert isinstance(context, PolicyContext)
+
+
+# ------------------------------------------------------------------ P8：越界理由要能一次改对
+
+# 与读类（src/adapters/models.py::normalize_event_path）同口径的句子；这里只断言"有没有、
+# 是不是同一句"，句子本身写在 `policy.models.USABLE_REPO_PATH_HINT` 里，一处定义、多处引用。
+USABLE_ALTERNATIVE = "可用的替代"
+
+
+def _alternative_tail(message: str) -> str:
+    """取"可用的替代"及其之后的部分：新增的话只说形态，不得复述本机布局。"""
+
+    index = message.index(USABLE_ALTERNATIVE)
+    return message[index:]
+
+
+def test_absolute_path_outside_the_repository_names_the_usable_form() -> None:
+    """绝对路径越界：拒绝方向与原因一个字不变，但理由要写清"改成什么形态就能过"（P8）。"""
+
+    raw = "/outside/repo/file.py"
+    with pytest.raises(PolicyContextError) as error:
+        repo_relative_path(raw, repo_root=REPO_ROOT)
+
+    message = str(error.value)
+    # 为什么被拦：既有部分保持原样（范围与原始取值都还在）
+    assert "路径不在仓库" in message
+    assert "拒绝处理" in message
+    assert repr(raw) in message
+    # 可用的替代：仓库相对路径 + 范围根记为 "."，且不用 .. 往外走
+    tail = _alternative_tail(message)
+    assert "仓库相对路径" in tail
+    assert "记为 ." in tail
+    assert ".." in tail
+    # 新增的话不泄露本机布局
+    assert str(REPO_ROOT) not in tail
+    assert REPO_ROOT.as_posix() not in tail
+
+
+def test_parent_escape_names_the_usable_form() -> None:
+    """相对路径 ".." 逃逸：写类走的这条路同样给出可用形态（P8 的第二条现场）。"""
+
+    raw = "../outside.py"
+    with pytest.raises(PolicyContextError) as error:
+        repo_relative_path(raw)
+
+    message = str(error.value)
+    assert "逃出仓库根目录" in message
+    assert repr(raw) in message
+    tail = _alternative_tail(message)
+    assert "仓库相对路径" in tail
+    assert "记为 ." in tail
+
+
+def test_normalize_repo_path_parent_escape_names_the_usable_form() -> None:
+    """`normalize_repo_path` 是 ".." 逃逸的现场：与 repo_relative_path 同一句话。"""
+
+    with pytest.raises(PolicyContextError) as error:
+        normalize_repo_path("../outside.py")
+
+    message = str(error.value)
+    assert "逃出仓库根目录" in message
+    assert _alternative_tail(message)
+
+
+def test_the_alternative_sentence_is_identical_across_both_entry_points() -> None:
+    """同一条口径只写一遍：两种越界现场给出的"可用的替代"逐字相同。"""
+
+    with pytest.raises(PolicyContextError) as absolute:
+        repo_relative_path("/outside/file.py", repo_root=REPO_ROOT)
+    with pytest.raises(PolicyContextError) as escape:
+        normalize_repo_path("../outside.py")
+
+    assert _alternative_tail(str(absolute.value)) == _alternative_tail(str(escape.value))
+
+
+# --------- 反向不变量：范围内的路径逐字节不变（P8 只加理由，一个字都不放宽）
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("src/order/controller.py", "src/order/controller.py"),
+        ("./src/order/controller.py", "src/order/controller.py"),
+        ("src//order//controller.py", "src/order/controller.py"),
+        ("src/order/controller.py/", "src/order/controller.py"),
+        (WINDOWS_PATH, "src/order/controller.py"),
+        ("  src/order/controller.py  ", "src/order/controller.py"),
+    ],
+)
+def test_in_range_relative_paths_are_byte_identical(raw: str, expected: str) -> None:
+    assert repo_relative_path(raw) == expected
+    assert normalize_repo_path(raw) == expected
+
+
+def test_in_range_absolute_path_is_byte_identical() -> None:
+    absolute = str(REPO_ROOT / "src" / "order" / "controller.py")
+
+    assert repo_relative_path(absolute, repo_root=REPO_ROOT) == "src/order/controller.py"
+
+
+@pytest.mark.parametrize("raw", [".", "./"])
+def test_allow_root_true_normalizes_the_root_to_dot(raw: str) -> None:
+    """`allow_root=True`（要目录的调用点）：范围根归一化为 "."，两条入口一致。"""
+
+    assert repo_relative_path(raw, allow_root=True) == "."
+    assert normalize_repo_path(raw, allow_root=True) == "."
+
+
+@pytest.mark.parametrize("raw", [".", "./"])
+def test_allow_root_false_still_rejects_the_root(raw: str) -> None:
+    """`allow_root=False`（要文件的调用点）：根继续被拒，不是被"放宽"成 "."。"""
+
+    with pytest.raises(PolicyContextError):
+        repo_relative_path(raw)
+    with pytest.raises(PolicyContextError):
+        normalize_repo_path(raw)
+
+
+@pytest.mark.parametrize("raw", ["", "   "])
+def test_blank_paths_stay_rejected_with_or_without_allow_root(raw: str) -> None:
+    """空路径与纯空白不是"范围根"：allow_root 两种取值都必须拒绝。"""
+
+    for allow_root in (False, True):
+        with pytest.raises(PolicyContextError):
+            repo_relative_path(raw, allow_root=allow_root)
+        with pytest.raises(PolicyContextError):
+            normalize_repo_path(raw, allow_root=allow_root)

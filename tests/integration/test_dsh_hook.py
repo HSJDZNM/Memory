@@ -738,3 +738,61 @@ def test_without_the_audit_override_the_declared_ledger_path_is_the_effective_on
     assert report["ledger_overridden"] is False
     assert report["ledger_override_note"] is None
     assert report["ledger"] == report["ledger_declared"]
+
+# --------------------------------------------------------------------------- Phase 4 阻断明细的脱敏
+
+
+def test_the_phase_four_block_detail_is_redacted_in_the_audit(
+    dsh_config_path, dsh_project, tmp_root
+):
+    """AGENTS 第 16 条：进审计的明细与给模型的 stderr 是**两份产物**，两份都要脱敏。
+
+    实测（08 轮复核，独立探针 probe_p4_detail_redaction.py）：_enforcement_block 给模型的
+    stderr 走了 sanitize，而写进审计的 enforcement_detail 是原文——一条 workdir 越界的 pwsh
+    载荷会让本机绝对路径落进审计 JSONL（07 轮的 30 条矩阵里没有这个形状，所以一直没被触发）。
+
+    修复用 enforcement.audit.redact_text（工作区→<workspace>、绝对路径→<abs>），
+    而不是给模型看的 sanitize：后者带 FEEDBACK_MAX_CHARS=4000 的**面向模型**截断，
+    拿它洗审计明细会把明细截成另一种失真。
+    """
+
+    audit = dsh_project.parent / "audit.jsonl"
+    hook = build_hook(dsh_config_path, audit=audit)
+    outside = tmp_root / "outside-workdir"
+    outside.mkdir(parents=True, exist_ok=True)
+
+    outcome = hook.handle(
+        payload(
+            "pre-tool-use-pwsh-execute.json",
+            dsh_project,
+            tool_input={
+                "command": "python -m pytest -q",
+                "description": "跑一次测试",
+                "timeoutMs": 60000,
+                "workdir": str(outside),
+            },
+        )
+    )
+
+    assert outcome.exit_code == EXIT_BLOCK
+    assert outcome.reason_code == "path_out_of_scope"
+    # 对照：给模型的那一份早就是脱敏的（既有行为）
+    assert str(outside) not in outcome.stderr
+
+    gated = [
+        item
+        for item in (
+            json.loads(line)
+            for line in audit.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if item.get("reason_code") == "path_out_of_scope"
+    ]
+    assert gated
+    detail = gated[-1]["enforcement_detail"]
+    assert str(outside) not in detail
+    assert str(outside).replace("\\", "/") not in detail
+    assert str(dsh_project) not in detail
+    assert str(dsh_project).replace("\\", "/") not in detail
+    # 脱敏是换成可读记号，不是删掉信息：读者仍看得出这里出现过一个绝对路径
+    assert "<abs>" in detail or "<workspace>" in detail

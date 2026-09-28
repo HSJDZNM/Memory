@@ -698,7 +698,7 @@ def test_validate_runs_the_real_pipeline_and_returns_a_decision(tmp_root: Path) 
     assert response.status_code == 200
     body = response.json()
     report = body["report"]
-    assert report["schema_version"] == "1.0"
+    assert report["schema_version"] == "1.2"
     assert report["target"]["file"] == "src/shop/order_controller.py"
     assert report["served_checkers"] == ["forbidden_dependency"]
     # 记录里的身份字段是 `validator`（形如 py.depgraph@1.0）：证据必须能追到"谁产的"。

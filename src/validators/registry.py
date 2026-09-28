@@ -119,6 +119,21 @@ def _check_registry(registry: Registry, *, path: Path, root: Path) -> None:
 
     _assert_unique([item.id for item in registry.validators], path=path, label="validators")
     _assert_unique([item.id for item in registry.rule_packs], path=path, label="rule_packs")
+    _assert_unique(
+        [item.language for item in registry.uncovered_languages],
+        path=path,
+        label="uncovered_languages",
+    )
+
+    # 自相矛盾必须报错：同一个语言既有 rule pack、又被声明为"按设计不取证"。
+    # 放过去的话，"不取证"会被 rule pack 悄悄覆盖（或者反过来），两种读法都能自称合规。
+    covered = {pack.language for pack in registry.rule_packs}
+    contradictions = sorted({item.language for item in registry.uncovered_languages} & covered)
+    if contradictions:
+        raise RegistryError(
+            f"{path}: uncovered_languages 与 rule_packs 自相矛盾：{contradictions} "
+            "既有 rule pack 又声明「按设计不取证」；要么给它 rule pack，要么别声明它不取证"
+        )
 
     by_id = {item.id: item for item in registry.validators}
     for spec in registry.validators:

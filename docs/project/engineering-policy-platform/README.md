@@ -36,7 +36,31 @@
    [reviews/post-phase-5-review.md](reviews/post-phase-5-review.md)（Post-Phase-5 复核）、
    [reviews/post-phase-8-review.md](reviews/post-phase-8-review.md)（Post-Phase-8 验收与修复）与
    [reviews/governance-coverage-gaps.md](reviews/governance-coverage-gaps.md)（治理覆盖缺口实测清单：
-   13 项缺口、级别与复现命令，来自一次受治理会话与未治理通道的对照实验）
+   13 项缺口、级别与复现命令，来自一次受治理会话与未治理通道的对照实验）。
+   缺口之后的轮次按时间接续：修复轮 [00 根因与修复计划](reviews/governance-remediation/00-remediation-plan.md)
+   与 [11 N16–N24 修复轮](reviews/governance-remediation/11-n16-n24-fix-round.md)、
+   能力实测轮 [00 能力报告](reviews/governance-capability/00-capability-report.md) 与
+   [05 新显现的问题](reviews/governance-capability/05-emergent-issues.md)、
+   多规则开发轮 [**06 多规则开发轮**](reviews/governance-capability/06-multirule-dev-round.md)
+   （开启一条可清点的治理通道，开子会话做跨 11 个文件的多文件开发，用五类规则在两条判定路径上各做正反例）、
+   M1–M5 与 G3/N13/N14 修复轮 [**12 修复轮**](reviews/governance-remediation/12-m1-m5-g3-fix-round.md)
+   （分层声明加载期自证、可声明的动手前取证、严重级别进账本、拒绝理由带可用替代、纪律变检查）、
+   治理全开轮 [**07 治理全开轮**](reviews/governance-capability/07-governance-full-round.md)
+   （把修复结果在**真实会话里打开**：动手前取证启用后有效规则 42–43/43、每个写类动作 4–5 个规则族参与，
+   跨 12 个文件开发零规则误伤；同时显现 P1–P5，其中非 Python 目标不可写与「影子树的形状改变证据」两项
+   改变了「受治理会话能做什么」）、
+   P1–P8 修复轮 [**13 修复轮**](reviews/governance-remediation/13-p1-p8-fix-round.md)
+   （账本列出真正报违规的规则、不受验证器覆盖的语言变成显式声明、取证树范围进审计、
+   测试路径与"查了多少"收敛到平台数据与 `check_volume`、台账自述与行为对齐、同名两义改名、
+   写类越界理由带可用替代）、
+   多规则开发轮 2 [**08 多规则开发轮 2**](reviews/governance-capability/08-multirule-dev-round-two.md)
+   （真实受治理子会话跨两子系统 14 个文件开发、32 passed，五类 checker 同时参与、事前事后成对 41/41；
+   同一条违规任务书在受治理通道零落地、在未接线通道真落地且审计零增量；
+   独立验收 30 臂矩阵 0 偏差、账本 14 字段 0 偏差；新显现 Q1–Q5，其中 Q1「先写测试与 S1 约束互相拆台」是阻断级）
+   修复轮 [**14 沙箱闭环归因与适配器版本比对**](reviews/governance-remediation/14-sandbox-loop-attribution-and-agent-version.md)
+   （沙箱闭环按**被拒路径**归因——原来把「系统 temp 不可写」说成「profile 写不进去」，两条不同日志的 reason 曾逐字节相同；
+   新增 `adapters.cli host-version --check` 把「声明版本 vs 宿主版本」的静默漂移变成会红的检查，并接进 CI 与本地门禁；
+   同轮第一次量到「插件把失败原因报错」的活体证据 Q6，并第三次复现「先写测试与 S1 约束互相拆台」Q7）
 8. **尚未实现**的提案与评估见 [设计提案索引](designs/README.md)：
    "文档 → 规则"能否做成用户可操作的控制台、前后端连接实测（无 CORS、只能同源）、
    前端操作逻辑与失败语义、以及评审给出的两条**必须先修**的阻塞项

@@ -113,6 +113,9 @@ class AdapterSpec(BaseModel):
     ledger_alias: Optional[str] = None
     requested_enforcement: Optional[str] = None
     fixtures: Tuple[str, ...] = ()
+    # 宿主实际版本的读法（数据，不是代码里写死的 if agent_id == "dsh"）。
+    # 落成 Mapping 再由 AdapterManifest 校验成 HostVersionProbe：与 pre_hook / tools 同一口径。
+    host_version: Optional[Mapping[str, Any]] = None
     tools: Tuple[Mapping[str, Any], ...] = ()
     capabilities: Tuple[Mapping[str, Any], ...] = ()
     notes: str = ""

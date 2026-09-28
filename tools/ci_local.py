@@ -98,6 +98,10 @@ CODE_STEPS = (
     "dsh adapter contract",
     "dsh hook wiring",
     "Real dsh sandbox loop",
+    # 这一步跑的是 workflow 里的 host-version --record-check（CI 形态：不依赖宿主，
+    # 比对「声明 vs 提交进仓库的观测记录 + 记录钉住的 manifest 哈希」）。活体形态
+    # （--check）在没有 dsh 的机器上退 0，不能当门禁；两者同名同组，改 workflow 这里同步。
+    "Agent version vs host version",
     "Tool registry must match",
     "Enforcement self-check",
     "Enforcement refuses unknown parameters",

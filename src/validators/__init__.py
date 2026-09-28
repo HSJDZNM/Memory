@@ -21,5 +21,7 @@ __all__ = ["EVIDENCE_SCHEMA_VERSION", "PIPELINE_SCHEMA_VERSION"]
 # 证据协议的版本由核心层定义，这里只是转发，避免两处口径漂移。
 from policy.evidence import EVIDENCE_SCHEMA_VERSION  # noqa: E402
 
-# 一次流水线运行的报告版本（validators.cli --json 的顶层载荷）。
-PIPELINE_SCHEMA_VERSION = "1.0"
+# 一次流水线运行的报告版本（validators.cli --json 的顶层载荷）：与报告实现（.pipeline）
+# 共用**同一份真值**，这里只转发。第二份字面量会漂移——P7 递增版本号时它就是第一个露出来的
+# 地方：报告说 1.1、CLI 顶层说 1.0，读的人无从判断哪个才是这次载荷的协议版本。
+from .pipeline import PIPELINE_SCHEMA_VERSION  # noqa: E402

@@ -14,12 +14,24 @@ Phase 5 起默认走**验证器流水线**：先由 AST / 依赖图 / 外部工�
     0 = 通过（ALLOW）
     1 = 发现违规（BLOCK / ALLOW_WITH_WARNINGS，含需要人工审批的 block）
     2 = 配置或执行错误（规则目录不可读、规则损坏、路径不合法、上下文不完整、未知 checker、
-        验证器注册表不可用）
+        验证器注册表不可用，以及"声明了 --changed 却没有 --operation"这种自相矛盾调用）
 
 CLI 输出面向人（--json 时输出面向机器），Engine 结果始终保持结构化。
---json 的顶层是 CLI 包装（context / rule_set / reported_imports / evidence / exit_code），
-其中 result 就是完整的 PolicyDecision 协议载荷，可被 policy.parse_decision 直接消费；
-evidence 是本次验证器运行的完整事实（验证器状态、工具版本与配置哈希、依赖、发现、阻断点）。
+--json 的顶层是 CLI 包装（context / rule_set / reported_imports / evidence / exit_code /
+layer_source / check_volume），其中 result 就是完整的 PolicyDecision 协议载荷，可被
+policy.parse_decision 直接消费；evidence 是本次验证器运行的完整事实
+（验证器状态、工具版本与配置哈希、依赖、发现、阻断点）。
+
+两个**只增不改**的读数（07 号报告 P4 / P5）：
+
+- layer_source 说明 layer 是**从哪来的**（declared / platform_test_layout / filename_guess）。
+  缺 --layer 时先查平台数据 validation/test-layout.yaml 的 test_patterns，命中即 layer=test；
+  没命中才按文件名推断。受治理 Hook 路径与验证器路径因此共用同一份"哪些路径算测试"的声明，
+  不再对同一个文件给出相反结论。
+- check_volume 把"这次到底查了多少"写成结构化摘要：跳过不等于通过；缺维度（调用方没说
+  operation 之类的维度）会让 complete=false——这个 allow 比完整判定弱。
+  完全没给 --operation 的既有命令仍可执行（README 与文档里的 60+ 处命令依赖它），
+  只有"给了 --changed 却没给 --operation"这种自相矛盾的调用才失败关闭（退出码 2）。
 """
 
 from __future__ import annotations
@@ -30,12 +42,21 @@ import json
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
-from .context import build_context
+# 验证器层的配置错误类型。core（models/engine/context/scope/loader）不导入 Adapter，
+# 只有 CLI（应用层）在这里装配验证器流水线；tests/contract 里有守住这条边界的用例。
+# 平台测试路径声明（validation/test-layout.yaml）也由验证器层的 loader 读取，
+# 保证 test_patterns 只有一份解释权。
+from validators.registry import RegistryError as ValidatorConfigError  # noqa: E402
+from validators.registry import load_test_layout  # noqa: E402
+
+from .context import build_context, normalize_context, repo_relative_path
 from .engine import EngineError, evaluate
 from .loader import LoaderError, load_rule_set
 from .models import (
+    BLOCKING_SEVERITIES,
+    KNOWN_SCOPE_DIMENSIONS,
     SCHEMA_VERSION,
     Decision,
     Operation,
@@ -45,26 +66,34 @@ from .models import (
     ValidationResult,
     canonical_identifier,
 )
-
-# 验证器层的配置错误类型。core（models/engine/context/scope/loader）不导入 Adapter，
-# 只有 CLI（应用层）在这里装配验证器流水线；tests/contract 里有守住这条边界的用例。
-from validators.registry import RegistryError as ValidatorConfigError  # noqa: E402
+from .scope import match_scope
 
 __all__ = [
+    "CHECK_VOLUME_NOTE",
     "EXIT_ALLOWED",
     "EXIT_ERROR",
     "EXIT_VIOLATION",
+    "LAYER_SOURCE_DECLARED",
+    "LAYER_SOURCE_FILENAME_GUESS",
+    "LAYER_SOURCE_PLATFORM_TEST_LAYOUT",
+    "SKIP_REASON_EVIDENCE_NOT_COLLECTED",
+    "SKIP_REASON_MISSING_DIMENSION",
+    "SKIP_REASON_SCOPE_MISMATCH",
+    "build_check_volume",
     "build_parser",
     "context_payload",
     "default_rule_dirs",
     "exit_code_for",
     "infer_layer",
+    "load_platform_test_layout",
     "main",
     "parse_dependencies",
     "python_imports",
+    "render_check_volume",
     "render_json",
     "render_text",
     "repo_root",
+    "resolve_layer",
     "run",
 ]
 
@@ -208,6 +237,70 @@ def infer_layer(file: str | None) -> str:
     return UNKNOWN_LAYER
 
 
+# 分层的三个来源。写进 --json 顶层与文本输出：读者必须能分清"层是声明的"、
+# "层来自平台数据"还是"层是按文件名猜的"——三者混在一起就回到了 P4 的旧问题。
+LAYER_SOURCE_DECLARED = "declared"
+LAYER_SOURCE_PLATFORM_TEST_LAYOUT = "platform_test_layout"
+LAYER_SOURCE_FILENAME_GUESS = "filename_guess"
+
+# 平台数据判定为测试路径时使用的层名。它必须与 dsh 示例配置的 test_layer 一致，
+# 但那不是靠约定，而是由 tests/contract/test_dsh_layer_declaration.py 钉住。
+PLATFORM_TEST_LAYER = "test"
+
+# 文本输出里"这个层是怎么来的"：按来源说口径。平台数据判定时不许再说"推断"——
+# 那是猜的层与查出来的层的区别，两者给出相反结论时读数的人得看得出来。
+LAYER_SOURCE_NOTES: dict[str, str] = {
+    LAYER_SOURCE_PLATFORM_TEST_LAYOUT: (
+        "  （命中平台测试路径声明 validation/test-layout.yaml 的 test_patterns，"
+        "未显式声明 --layer）"
+    ),
+    LAYER_SOURCE_FILENAME_GUESS: "  （由文件名推断，未显式声明）",
+}
+
+
+def load_platform_test_layout(args: argparse.Namespace, *, root: Path) -> Any:
+    """读取平台级"哪些路径算测试"的声明（validation/test-layout.yaml）。
+
+    刻意复用验证器层的 loader（`validators.registry.load_test_layout`）：test_patterns
+    的解释权只有一份。自己再写一个 YAML 解析器就等于第二套口径，而 P4 的成因正是两套口径
+    ——平台数据说是测试、文件名推断说是生产层，同一个文件于是拿到相反结论。
+
+    --config-root 的解析与 collect_evidence 完全同源（锚是**仓库根**，不是 --workspace）：
+    配置在哪与目标文件属于哪个工作区是两件事，混用一个锚会让"带 --workspace 跑一次"变成
+    "读不到配置"（退出码 2）。
+    """
+
+    config_root = resolve_directory(args.config_root, anchor=root, fallback=root)
+    return load_test_layout(root=config_root)
+
+
+def resolve_layer(
+    args: argparse.Namespace, *, anchor: Path, root: Path, file_path: Path
+) -> tuple[str, str]:
+    """定层与来源（唯一口径）：declared → platform_test_layout → filename_guess。
+
+    - 显式给了 --layer：就是它，来源 declared；
+    - 否则命中平台数据 test_patterns：layer=test，来源 platform_test_layout；
+    - 否则维持按文件名推断，来源 filename_guess（推断不出来就是 unknown，不默认）。
+
+    anchor 是**工作区**（--workspace），用它算相对路径：命中判定必须发生在上下文里那个
+    路径上，否则"带工作区前缀"的写法会让两条路径匹配不同的字符串。
+    root 是**仓库根**，用它定位 validation/ 配置（与 collect_evidence 同源）。
+
+    平台数据读不到时抛 RegistryError，由 run() 按配置错误处理（退出码 2）——
+    与"验证器注册表不可用"同一口径：配置读不到时既不猜也不放行。
+    """
+
+    if args.layer:
+        return canonical_identifier(args.layer), LAYER_SOURCE_DECLARED
+    # 与 build_context 用同一个规范化器：判定与匹配必须基于同一个字符串。
+    relative = repo_relative_path(str(file_path), repo_root=anchor)
+    layout = load_platform_test_layout(args, root=root)
+    if layout.is_test(relative):
+        return PLATFORM_TEST_LAYER, LAYER_SOURCE_PLATFORM_TEST_LAYOUT
+    return infer_layer(args.file), LAYER_SOURCE_FILENAME_GUESS
+
+
 def parse_dependencies(raw: str | None) -> tuple[str, ...]:
     if not raw:
         return ()
@@ -255,13 +348,23 @@ def resolve_directory(value: str | None, *, anchor: Path, fallback: Path) -> Pat
 
 
 def resolve_workspace(args: argparse.Namespace, root: Path) -> Path:
-    """解析 --workspace：默认就是仓库根。"""
+    """解析 --workspace：默认就是仓库根。
+
+    这是 workspace 的**唯一口径**：validators.cli 也走这里（锚同样是仓库根），
+    因此同一个参数在两个入口指向同一个目录——两处各解析一遍就是两套语义。
+    """
 
     return resolve_directory(getattr(args, "workspace", None), anchor=root, fallback=root)
 
 
 def resolve_target_file(args: argparse.Namespace, root: Path) -> Path:
-    """定位待检查文件：相对路径优先按 --workspace 解析，其次按仓库根解析。"""
+    """定位待检查文件：相对路径优先按 --workspace 解析，其次按当前工作目录解析。
+
+    这也是 target 的**唯一口径**（validators.cli 的 check / pipeline 走同一条规则）：
+    带工作区前缀的路径（"--workspace X" 配 "X/某文件"）因此能被认出来并归一化成
+    工作区相对路径，而不是被判成"文件不存在"。文件定位不到时抛 PolicyContextError，
+    两个入口都按配置错误（退出码 2）处理——那是"用错了"而不是"证据不足"。
+    """
 
     if not args.file:
         raise PolicyContextError("缺少待检查文件：除 --check-rules 外必须提供 file")
@@ -276,18 +379,24 @@ def resolve_target_file(args: argparse.Namespace, root: Path) -> Path:
     return candidate.resolve()
 
 
-def build_context_args(args: argparse.Namespace, root: Path) -> PolicyContext:
-    """把 CLI 参数转换为 PolicyContext；安全关键字段缺失时直接失败。"""
+def build_context_args(args: argparse.Namespace, root: Path) -> tuple[PolicyContext, str]:
+    """把 CLI 参数转换为 PolicyContext；安全关键字段缺失时直接失败。
+
+    返回值带上**分层来源**：层与"层是怎么定的"必须是同一次解析的产物。
+    分两次算会让报告出来的口径与真正参与 scope 匹配的值有机会不一致——
+    那正是"读数与判定对不上"这类问题的起点。
+    """
 
     file_path = resolve_target_file(args, root)
     anchor = resolve_workspace(args, root)
+    layer, layer_source = resolve_layer(args, anchor=anchor, root=root, file_path=file_path)
 
     data: dict[str, Any] = {
         "request_id": args.request_id or f"cli-{uuid.uuid4().hex[:12]}",
         # 用绝对路径进入规范化器：它会按 anchor（--workspace 或仓库根）转成仓库相对路径。
         # 否则 "--workspace X" 配上 "X/中文/文件.py" 这种写法会让上下文里留下带前缀的路径。
         "file": str(file_path),
-        "layer": canonical_identifier(args.layer) if args.layer else infer_layer(args.file),
+        "layer": layer,
         "language": canonical_identifier(args.language) if args.language else None,
         "operation": args.operation,
         "project": args.project,
@@ -301,7 +410,7 @@ def build_context_args(args: argparse.Namespace, root: Path) -> PolicyContext:
     else:
         data["dependencies"] = parse_dependencies(args.dependencies)
 
-    return build_context(data, repo_root=anchor)
+    return build_context(data, repo_root=anchor), layer_source
 
 
 def exit_code_for(result: ValidationResult) -> int:
@@ -312,6 +421,160 @@ def context_payload(context: PolicyContext) -> dict[str, Any]:
     return json.loads(context.model_dump_json())
 
 
+# --------------------------------------------------------------------------- P5：检查量摘要
+
+CHECK_VOLUME_NOTE = (
+    "skipped ≠ passed；complete=false 表示本次有规则因为调用方没声明某个维度而"
+    "根本没被查，这个 allow 比完整判定弱"
+)
+
+SKIP_REASON_EVIDENCE_NOT_COLLECTED = "evidence_not_collected"
+SKIP_REASON_MISSING_DIMENSION = "missing_dimension"
+SKIP_REASON_SCOPE_MISMATCH = "scope_mismatch"
+
+# 固定顺序：输出的键序不随规则集与本次判定变化（相同输入必须得到逐字节相同的输出）。
+SKIP_REASON_ORDER = (
+    SKIP_REASON_EVIDENCE_NOT_COLLECTED,
+    SKIP_REASON_MISSING_DIMENSION,
+    SKIP_REASON_SCOPE_MISMATCH,
+)
+
+# 缺维度时告诉调用方该补哪个参数：诊断要给"改成什么形态就能过"。
+DIMENSION_FLAGS: dict[str, str] = {
+    "operation": "--operation",
+    "language": "--language",
+    "layer": "--layer",
+    "module": "--module",
+    "project": "--project",
+    "agent": "--agent",
+}
+
+
+def _dimension_sort_key(name: str) -> tuple[int, str]:
+    """按 scope 的维度顺序排（与 match_scope 的遍历顺序一致）；未知维度排在最后。"""
+
+    if name in KNOWN_SCOPE_DIMENSIONS:
+        return (KNOWN_SCOPE_DIMENSIONS.index(name), name)
+    return (len(KNOWN_SCOPE_DIMENSIONS), name)
+
+
+def build_check_volume(
+    rules: RuleSet,
+    context: PolicyContext,
+    result: ValidationResult,
+    *,
+    evidence: Any | None = None,
+) -> dict[str, Any]:
+    """把"这次到底查了多少"写成结构化摘要（只读，不改变任何判定）。
+
+    为什么不能只报 skipped 条数（07 号报告 P5）：缺 `--operation` 时 TESTING-001/002
+    只是进 skipped_rules，判定照样 allow、退出码不变——两个 allow 在读数上长得一模一样。
+    这里把三件事分开：
+
+    - **范围不匹配**：规则与本次上下文无关（例如 layer 不同）；
+    - **缺维度**：规则声明了某个维度，而调用方没有给值 —— 规则**根本没被查**；
+    - **没有证据提供者**：范围命中，但本次调用没有验证器流水线（证据类 checker 无法判定）。
+
+    分类只依赖结构化事实（`rule.scope` 与上下文的比较结果、scope 是否命中），
+    **不解析 SkippedRule.reasons 文本**：文本是给人看的渲染，不是判定输入。
+    每条被跳过的规则恰好落进一个桶，因此 skipped_by_reason 各桶之和 = skipped_rule_count。
+
+    `missing_dimensions` 从数据算：对每条被跳过的规则，把 `rule.scope` 声明的维度与
+    本次上下文的实际取值逐一比较，列出"规则要、上下文没有"的维度名。
+    `complete = not missing_dimensions`：声明得够不够全，与"有没有证据"是两条轴。
+    `served_checkers` 只认证据报告（EvidenceBundle.served_checkers），不认声明。
+    """
+
+    canonical = normalize_context(context)
+    by_id = {rule.canonical_id: rule for rule in rules.rules}
+    reasons = {name: 0 for name in SKIP_REASON_ORDER}
+    severities: dict[str, int] = {}
+    blocking_skipped = 0
+    missing: list[str] = []
+
+    for item in result.skipped_rules:
+        rule = by_id.get(item.rule_id)
+        if rule is None:
+            # 规则集里没有的 ID：不替它猜级别（与审计侧 skipped_by_severity 的口径一致），
+            # 也说不清它为什么被跳过——按"规则与本次无关"记，绝不冒充满足维度。
+            severities["unknown"] = severities.get("unknown", 0) + 1
+            reasons[SKIP_REASON_SCOPE_MISMATCH] += 1
+            continue
+
+        severity = rule.severity.value
+        severities[severity] = severities.get(severity, 0) + 1
+        if rule.severity in BLOCKING_SEVERITIES:
+            blocking_skipped += 1
+
+        scope_result = match_scope(rule.scope, canonical)
+        if scope_result.matched:
+            # 范围命中却仍进 skipped_rules：引擎只有一条这样的路径——本次调用没有验证器
+            # 流水线，而这条规则需要证据类 checker（仅凭上下文就能判的 checker 不会被跳过）。
+            # 判据是"scope 命中"这条结构化事实，不是 reasons 里那句话。
+            reasons[SKIP_REASON_EVIDENCE_NOT_COLLECTED] += 1
+            continue
+
+        absent = [
+            comparison.dimension
+            for comparison in scope_result.comparisons
+            if not comparison.matched and comparison.actual is None
+        ]
+        if absent:
+            reasons[SKIP_REASON_MISSING_DIMENSION] += 1
+            for dimension in absent:
+                if dimension not in missing:
+                    missing.append(dimension)
+            continue
+        reasons[SKIP_REASON_SCOPE_MISMATCH] += 1
+
+    missing.sort(key=_dimension_sort_key)
+    served: tuple[str, ...] = () if evidence is None else tuple(evidence.served_checkers)
+    return {
+        "rule_count": len(rules.rules),
+        "effective_rule_count": len(result.matched_rules),
+        "skipped_rule_count": len(result.skipped_rules),
+        "skipped_by_reason": {name: reasons[name] for name in SKIP_REASON_ORDER},
+        "skipped_by_severity": {name: severities[name] for name in sorted(severities)},
+        "blocking_capable_skipped": blocking_skipped,
+        "served_checkers": list(served),
+        "missing_dimensions": missing,
+        "complete": not missing,
+        "note": CHECK_VOLUME_NOTE,
+    }
+
+
+def render_check_volume(volume: Mapping[str, Any]) -> list[str]:
+    """把检查量摘要渲染成文本：只新增行，不改既有行，缺维度时给一行显眼的 INCOMPLETE。"""
+
+    reasons = ", ".join(
+        f"{name}={count}" for name, count in volume["skipped_by_reason"].items()
+    )
+    severities = (
+        ", ".join(f"{name}={count}" for name, count in volume["skipped_by_severity"].items())
+        or "<none>"
+    )
+    served = ", ".join(volume["served_checkers"]) or "<none>"
+    missing = ", ".join(volume["missing_dimensions"]) or "<none>"
+    lines = [
+        "check volume: rule_count={rule_count} effective_rule_count={effective_rule_count} "
+        "skipped_rule_count={skipped_rule_count} blocking_capable_skipped="
+        "{blocking_capable_skipped} complete={complete}".format(**volume),
+        f"  skipped_by_reason: {reasons}",
+        f"  skipped_by_severity: {severities}",
+        f"  served_checkers: {served}",
+        f"  missing_dimensions: {missing}",
+    ]
+    if not volume["complete"]:
+        flags = ", ".join(DIMENSION_FLAGS.get(name, name) for name in volume["missing_dimensions"])
+        lines.append(
+            "INCOMPLETE: 本次有 "
+            f"{volume['skipped_by_reason'][SKIP_REASON_MISSING_DIMENSION]} 条规则因为没有声明"
+            f"维度而根本没有被查（缺 {missing}）；补 {flags} 后重跑——"
+            "skipped ≠ passed，这个 allow 比完整判定弱"
+        )
+    return lines
+
+
 def render_text(
     context: PolicyContext,
     rules: RuleSet,
@@ -319,11 +582,14 @@ def render_text(
     imports: Sequence[str] = (),
     *,
     report: Any | None = None,
-    layer_inferred: bool = False,
+    layer_source: str | None = None,
+    check_volume: Mapping[str, Any] | None = None,
 ) -> str:
-    # 文档承诺"不提供 --layer 时按文件名推断并标明"：标明这件事必须在输出里看得见，
-    # 否则读者分不清 layer=controller 是声明的还是猜的。
-    layer_note = "  （由文件名推断，未显式声明）" if layer_inferred else ""
+    # 文档承诺"不提供 --layer 时标明层是怎么来的"：标明这件事必须在输出里看得见，
+    # 否则读者分不清 layer=controller 是声明的、来自平台数据的，还是按文件名猜的。
+    # 只有 policy.check 的 run() 会传 check_volume；其他入口（validators.cli 的流水线文本）
+    # 不传就保持原样——只增不改，任何既有行的字节都不动。
+    layer_note = LAYER_SOURCE_NOTES.get(layer_source or "", "")
     lines = [] if report is None else [render_report(report), ""]
     lines.extend([
         f"file: {context.file}",
@@ -349,6 +615,9 @@ def render_text(
             lines.append(f"  - {item.rule_id}: " + "; ".join(item.reasons))
     else:
         lines.append("skipped: <none>")
+    if check_volume is not None:
+        # P5：把"这次到底查了多少"写在判定之前——读者要先看出这个 allow 是完整判定还是残缺判定。
+        lines.extend(render_check_volume(check_volume))
     lines.append("")
 
     if result.required_action is not None:
@@ -389,10 +658,22 @@ def render_json(
     *,
     exit_code: int | None = None,
     report: Any | None = None,
+    layer_source: str | None = None,
+    check_volume: Mapping[str, Any] | None = None,
 ) -> str:
     if exit_code is None:
         exit_code = EXIT_ALLOWED if result is None else exit_code_for(result)
+    if check_volume is None and result is not None:
+        # 直接调用 render_json 的地方（学习手册里就是这么用的）也要拿到这一段读数：
+        # 缺省从同一次运行的数据现算，绝不写一个"看起来像"的常量。
+        check_volume = build_check_volume(
+            rules,
+            context,
+            result,
+            evidence=None if report is None else report.bundle,
+        )
     payload: dict[str, Any] = {
+        "check_volume": check_volume,
         "context": context_payload(context),
         "rule_set": {
             "count": len(rules),
@@ -404,6 +685,8 @@ def render_json(
         "reported_imports": list(imports),
         "evidence": None if report is None else report.to_payload(),
         "exit_code": exit_code,
+        # CLI 包装字段：result 之外的读数，不进决策协议载荷（协议仍是 schema_version 1.0）。
+        "layer_source": layer_source,
         "result": None if result is None else result.to_decision_dict(),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
@@ -470,6 +753,23 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
         tuple(Path(item) for item in args.rules) if args.rules else default_rule_dirs(anchor)
     )
 
+    declared_changes = [item for item in (args.changed or ()) if item.strip()]
+    if declared_changes and args.operation is None and not args.check_rules:
+        # 失败关闭的边界是**标定过的**：只对"自相矛盾"的调用生效——声明了变更集
+        # （"这是一次变更"）却不说是什么操作，判定必然是残缺的，补一句 --operation 就能改对。
+        # 完全不给 --operation 的调用仍然可执行：README 与 60+ 处文档写的都是
+        # `python -m policy.check <file> --layer X`，强行要求 --operation 会把它们全变成
+        # 配置错误，还会把文档里的 allow 例子变成 block（--operation edit 会激活 TESTING-001）。
+        print(
+            "config error: 配置自相矛盾：--changed 声明了变更集，却没有 --operation；"
+            "声明了「这是一次变更」却不说是什么操作，判定必然是残缺的。"
+            "请显式给出 --operation（"
+            + "/".join(item.value for item in Operation)
+            + "）",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
     try:
         rules = load_rule_set(rule_dirs, repo_root=anchor)
     except LoaderError as error:
@@ -477,10 +777,13 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
         return EXIT_ERROR
 
     report = None
+    evidence = None
+    layer_source = None
     try:
-        context = None if args.check_rules else build_context_args(args, anchor)
+        context: PolicyContext | None = None
+        if not args.check_rules:
+            context, layer_source = build_context_args(args, anchor)
         imports = ()
-        evidence = None
         if args.file and not args.check_rules:
             # 这里只是"报告用"的导入列表：读不了就不报，让流水线去判（它会按失败关闭
             # 给出 py.source failed 的阻断点），不要因为一份报告把它变成配置错误。
@@ -511,8 +814,21 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
             layer=UNKNOWN_LAYER,
         )
 
+    # P5：读数与判定必须来自同一次运行——evidence 就是交给引擎的那个证据包。
+    volume = (
+        None if result is None else build_check_volume(rules, context, result, evidence=evidence)
+    )
+
     if args.json:
-        rendered = render_json(context, rules, result, imports, report=report)
+        rendered = render_json(
+            context,
+            rules,
+            result,
+            imports,
+            report=report,
+            layer_source=layer_source,
+            check_volume=volume,
+        )
     else:
         rendered = render_text(
             context,
@@ -520,7 +836,8 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
             result,
             imports,
             report=report,
-            layer_inferred=not args.layer and not args.check_rules,
+            layer_source=layer_source,
+            check_volume=volume,
         )
     print(rendered)
     return EXIT_ALLOWED if result is None else exit_code_for(result)

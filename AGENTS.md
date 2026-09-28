@@ -298,6 +298,112 @@
     `test_ruff_codes_are_declared_and_selected_in_both_directions` 守住这条；**单向不一致都等于"规则静默失效"**。
     `type_check` 规则在装好 mypy 之前一律不启用（工具缺失 = 失败关闭，会让所有 Python 文件一次性判红）。
     逐篇的转化判定与理由见 `docs/project/architecture/规则转化覆盖报告.md`，方法与七个台阶见 `规则文档转化为规则.md`。
+41. **分层声明必须自证测试路径**（M1）：`layers` 按声明顺序取第一个命中的 glob，因此一条生产层通配符
+    可以悄悄罩住测试文件（实测：`tests/test_shipment_controller.py` 命中 `**/*_controller.py` 被判成
+    入口层，ARCH-001 把一份"真实装配对象图"的测试挤成了"手写替身"）。声明了 `test_paths` 与
+    `test_layer` 的配置，**加载期**必须能证明每条测试路径先命中测试层；证明不了（规则顺序不对、
+    缺 `test_layer`、落到默认层）一律拒绝启动——配置自相矛盾时 Hook 报 `startup_error` 并退出 2，
+    既不判 allow 也不判 block。检查用「见证路径」法（可能漏、不误报：报出来的每条都有真实路径支撑），
+    实现在 `AdapterConfig.layer_test_conflicts()`；没声明 `test_paths` 的配置行为不变。
+42. **动手前取证是可声明、可关闭、失败关闭的**（G3 的正面回答）：`dsh-adapter.yaml` 的 `pre_evidence` 段
+    声明是否在 pre-execute 路径上跑 Phase 5 流水线取证（`registry_root` / `workspace` / `shadow_root` /
+    `exclude` / `validators` / `timeout_ms`）。声明并启用后：在**影子工作区**（副本，用完必删）上应用
+    "提议的新内容"，跑真实验证器，把 `EvidenceBundle` 交给 `policy.engine.evaluate`——证据类 checker 于是
+    从 `skipped_rules` 变成**参与判定**。取证失败 / 超时 / 提议内容重建不了（例如 `edit` 的 `old_string`
+    不唯一）一律失败关闭（`evidence_unavailable`，退出码 2），**绝不回落到"没证据就当跳过"**；
+    没有声明这一段时保持 Phase 2 契约（只做上下文类 checker，其余显式记进 `skipped_rules`）。
+    启用时还要满足预算不等式：`pre_evidence.timeout_ms + timeout_ms < hooks.json 的 timeout`。
+43. **账本要说得出规则的严重级别分布**（M3）：`rule_count` 与"会拦人的规则数"是两回事
+    （43 条里 24 条 error、19 条 warning；实测 DOC-001 命中只产生 `allow_with_warnings`）。
+    pre-execute 的审计记录必须同时给出规则集与本次判定的按级别分布
+    （`rules_by_severity` / `evaluated_by_severity` / `skipped_by_severity` /
+    `blocking_capable_rule_count` / `advisory_rule_count`）；引用"有多少条规则在管"时必须带级别，
+    不得把 warning 级规则算成阻断力。
+44. **依赖类规则必须声明 language 维度**（N14）：`forbidden_dependency` 的依赖集来自语言解析；
+    `language` 缺失时依赖集是空元组，「查了没问题」其实是**没有查**，而且这个 allow 的
+    理由不写在任何地方（与「确实没有禁用依赖」逐字相同）。因此**加载期**拒绝「checker 属依赖类但
+    scope 不含 `language` 维度、或把它写成不限制（`*`）」的规则——
+    把「规则作者的纪律」变成会失败的检查（实现：`policy.loader.assert_language_declared`）。
+    声明了具体语言而语言不匹配时，规则会显式进 `skipped_rules`（那不是静默），不在本检查范围内。
+45. **自己的仪器也要能失败**（N13）：`tools/governance_gap_probe.py` 的 G06 曾经只驱动 Phase 2 的 Hook，
+    从不走 Phase 6，于是对「两条路径依赖提取口径不一致」这类缺陷**永远是绿的**。探针的每条检查都必须
+    写清它驱动的是哪条路径、**仍不覆盖什么**，并给出「修复前会红」的证明：在 `git archive HEAD` 的副本上
+    做一次显式变异 → 检查变红 → 撤回变异 → 变绿。做不到就写下「这条检查覆盖不到」，
+    不许把「跑了、是绿的」当成覆盖。
+46. **账本要说得出「哪几条规则报了违规」**（P1）：`matched_rules` 是本次**参与过判定**的规则，
+    `violations` 是本次**真的报了违规**的规则——43 条全开之后，只有前者的账本等于"全而糊"，
+    读的人会按 matched 数违规。判定记录因此必须同时给出 `violations`（rule_id 带版本 + severity +
+    message + 证据摘要，排序稳定、字符串脱敏）与 `violations_by_severity` / `violations_note`；
+    `allow_with_warnings` 尤其需要（warning 是"看着过了、其实被提醒过"的那一类）。
+    **没有算出 decision 的记录不许伪造这份清单**：`context_error` / `evidence_unavailable` /
+    `event_replay` 这些记录里没有 `violations` 键，这件事本身就是一个必须能被读出来的结论。
+47. **语言覆盖是数据，不是默认**（P2）：`validation/validators.yaml` 的 `uncovered_languages`
+    是"哪些语言按设计不取证"的**唯一**声明处（每项必须带可评审的 `reason`；未知字段、重复语言、
+    空理由、与既有 rule pack 自相矛盾一律加载期报错）。命中时**不是静默放行**：流水线产出显式判定
+    `PipelineReport.language_coverage = {language, status: not_covered_by_design, reason, declared_in}`，
+    `served_checkers` 保持为空——"平台对这类目标什么都没查"必须能从审计读到，而不是靠读者从 allow 反推。
+    既没有 rule pack、也没有被声明 → **仍然失败关闭**；声明了不取证但本次有规则需要某个 checker 的证据
+    → 同样是 Blocker。打开 `pre_evidence` 因此不再等于"文档类目标结构性不可写"。
+48. **证据的含义取决于取证时那棵树的形状**（P3）：动手前取证跑在"当前磁盘树 + 本次提议内容"上，
+    而"先写测试"这种正确写法会让兄弟模块还不在树里（实测：Ruff 的 isort 判成第三方 → I001 →
+    STYLE-018 warning）。所以摘要必须写清**这条证据属于哪棵树**：`tree.scope`（含提议的当前树）、
+    `target_existed_before`、`tree_digest`（覆盖「相对路径 + 文件哈希」的稳定摘要）、
+    适用范围 note，以及"可能漏、不误报"的缺口标注（`tree_gaps` 只在顶层包已存在、模块找不到时报）。
+    **同一份载荷在两棵树上得到两个结论不是缺陷，没写清是哪棵树才是**；批次语义（把同一批已提议的
+    文件也放进树里）属于一次显式设计，不在本条的承诺里。
+49. **测试路径与"查了多少"都只有一份声明**（P4/P5）："哪些路径算测试"是平台级数据
+    （`validation/test-layout.yaml` 的 `test_patterns`，值 `test`），Adapter 的
+    `test_paths` / `test_layer` 与 `policy.check` 的层推断**都**必须以它为准并写出来源
+    （`layer_source ∈ {declared, platform_test_layout, filename_guess}`）——同一个测试文件不许在
+    Hook 路径与验证器路径上得到两个层。CLI 还必须答得出"这次到底查了多少"：`check_volume`
+    （`complete` / `missing_dimensions` / `blocking_capable_skipped` / `skipped_by_reason`，
+    缺维度按 `rule.scope` 与 context 的结构化比对算出，**不解析 reasons 文本**），
+    缺维度时文本输出一行 `INCOMPLETE:`。"缺关键维度"的失败关闭只落在**自相矛盾**的调用上
+    （给了 `--changed` 却没给 `--operation` → 退出码 2）；把"完全没声明 `--operation`"一律变成
+    配置错误会让 README 与文档里必须可执行的 allow 例子变成 block，那不是失败关闭而是破坏可用性。
+50. **口径诚实：存什么、叫什么、拒绝时说清怎么改**（P6/P7/P8）：台账存参数原文与绝对
+    `request.workspace` 是 PostToolUse 重建 `ActionRequest` 与 `action_hash` 的必要条件，
+    所以**不许**为了自述好看而扣掉它——要改的是自述（`ledger.py` / `action.py` /
+    `docs/project/architecture/术语与口径.md` 三处同一口径，并有测试钉住行为）；
+    **同名两义一律改名**：验证器的 `declared_checkers` 是"声明负责"、顶层 `served_checkers`
+    是"真的服务过"，改载荷键必须按协议自己的规则显式递增版本号（`EVIDENCE_SCHEMA_VERSION` /
+    `PIPELINE_SCHEMA_VERSION`）；
+    **拒绝理由必须给出"改成什么形态就能过"**：写类越界（`policy.context.repo_relative_path`）
+    与读类、Phase 4 pre-check、Phase 6 `normalize_event_path` 用同一句话，范围校验一个字不放宽。
+51. **「待实现」是显式状态：既不是失败，也不是通过**（Q7）：选中的测试**在收集期**就失败、
+    而原因是「它 import 的**项目内**模块/名字在本次取证树里还不存在」时，取证侧必须给出
+    `ValidatorStatus.PENDING_IMPLEMENTATION`（中文「待实现」）这条**显式状态**：
+    不产生 Blocker、`failing_tests` **不进** `served_checkers`（没查成的不能记成查过了），
+    报告与审计里带上 `pending_implementation` 清单（测试模块 + 缺失目标 + 修复动作），
+    判定侧产出 **warning 级** violation，于是 decision 是 `allow_with_warnings`——
+    「先写测试、再写实现」因此不再被自己的平台拦死，而绕法（把测试先写成不测任何东西的占位）
+    也不再是唯一出路。**反例一条都不许放宽**：第三方包缺失、语法错误、conftest 出错、
+    断言失败、退出码不是收集失败形态、目标解析不出来——全部保持真违规（规则自己的 severity）
+    或原来的失败关闭（crashed/unavailable critical）。这条路**不证明测试最终会通过**：
+    它只说明这次的树还在构建中，测试是否通过由后续动作的取证与 PostToolUse 事后核对重新算。
+    新增状态值 = 载荷变更：`EVIDENCE_SCHEMA_VERSION` / `PIPELINE_SCHEMA_VERSION` 必须按协议
+    自己的规则**显式递增**（1.1 → 1.2），并把写死版本号的断言按新版本号显式更新——
+    包括 `docs/project/architecture/tech-detail/` 的生成物（改内容源后重新生成，`--check` 是门禁）。
+52. **失败关闭不等于理由正确**（Q6）：拦住一次工具调用只完成了一半，另一半是**告诉人一个对的原因**。
+    把「Hook 起不来」翻译成理由时，必须把「要启动什么」与「在哪个目录启动」**分开写**，并按
+    工作目录的真实状态归因——Node 的 spawn 在 **cwd 不存在**时把 ENOENT 归给**可执行文件**，
+    照抄它会把模型带偏到「运行时没装」。实现上 spawn **之前**用 `node:fs` 预检工作目录，
+    异常路径再复查一次（覆盖竞态），两条路都失败关闭。插件侧的理由措辞是**跨侧契约**：
+    `tools/dsh_sandbox_loop.py` 的分类器按它分流，改措辞必须同步两侧，并由
+    `tests/contract/test_policy_hook_chain.py` 的跨侧用例（真插件产出 → 真分类器）守住。
+53. **归因的合取必须落在同一条记录内**（D4）：在**整篇日志**上分别判定两组事实再合取，会把
+    「真失败」洗成「环境跳过」——`tools/dsh_sandbox_loop.py` 里「启动崩溃原文」与「被拒路径」
+    必须在**同一个崩溃块**内（崩溃原文行 + 紧随的缩进续行）、「`Hook 无法执行`」与「`spawn EPERM`」
+    必须在**同一行**内，合不起来就归不了因：**宁可让真失败保持红**，也不产生环境跳过。
+    同一纪律适用于诊断字段：从日志里推出来的根必须**先是合法的路径/URL**（`file:///C:/x` → `C:/x`），
+    畸形候选按写明理由的规则丢弃，真根不许因为解析口径而消失。
+54. **`host-version` 的四种形态互不代替，改声明必须重录观测**（Q8 尾巴）：报告（默认）/ 活体
+    `--check` / CI `--record-check`（**不探测宿主**，比对提交进仓库的 `adapters/host-versions.observed.json`）
+    / 写入 `--record`（唯一写入口）。CI 上必须跑 `--record-check`——活体形态在没装宿主的机器上
+    退 0，它既不是通过也不是失败，不能当门禁；记录缺失/不完整/哈希对不上/声明≠记录一律退出 1
+    （有门禁就必须有数据）。**维护纪律**：改 `adapters/<agent>/manifest.yaml` 之后先
+    `python -m adapters.cli approve --reviewer <name>`，**再**在装着真实宿主的机器上跑
+    `host-version --record`，把记录的 diff 送评审；版本不一致**不改变任何 allow/block**。
 
 ## 临时文件与产物
 

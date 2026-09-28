@@ -7,10 +7,18 @@
 #
 # agent_version 是**已实测**的产品版本：升级 dsh 后先重跑一致性套件与沙箱闭环，
 # 再改这里并重新审核（计划 §兼容性测试）。
+#
+# 它现在**是可核对的**：下面的 host_version 声明了「宿主实际版本从哪读」，
+#     python -m adapters.cli host-version --check
+# 会在声明与宿主不一致时退出 1（并给出"改成什么形态就能过"的修复动作）。
+# 这条检查**只在显式调用时**失败，它不是拦截判定：版本不一致不改变任何 allow / block
+# （把版本号变成放行条件，会把"宿主升级"直接封成"平台不可用"）。
 
 schema_version: "1.0"
 agent_id: dsh
-agent_version: 0.1.5-rc.1
+# 实测日期 2026-xx：见 .tmp/round-10/b/REPORT.md 的 02 / 03 / 06 号证据
+# （dsh --version = 0.1.6-alpha.2；一致性套件在它上面 87 项全绿）。
+agent_version: 0.1.6-alpha.2
 display_name: DeepSeek Harness (dsh)
 protocol: canonical-tool-table   # 复用 Phase 2 的代码工具表（受契约测试保护）
 protocol_version: dsh-hooks-claude-code@0.1.x
@@ -48,6 +56,16 @@ hooks:
 fixtures:
   - tests/fixtures/agent_events/dsh/pre-tool-use-edit-block.json
   - tests/fixtures/agent_events/dsh/post-tool-use-edit.json
+
+# 宿主实际版本的读法（数据，不是代码里写死的 if agent_id == "dsh"）。
+# 检查入口：python -m adapters.cli host-version --check
+#   match        声明 = 宿主
+#   drift        声明 ≠ 宿主（宿主升级后没重跑 fixture / 声明写错了）
+#   unavailable  读不到（二进制不在 / 非零退出 / 输出解析不出 / 超时）——不是通过
+host_version:
+  executable: dsh
+  args: ["--version"]
+  version_pattern: '([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?)'
 
 notes: >-
   dsh 的 Hook 是外部命令：exit 0 放行、exit 2 阻断；超时/崩溃/配置读不到在 dsh 侧

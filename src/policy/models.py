@@ -33,6 +33,7 @@ __all__ = [
     "RULE_BODY_CLASSES",
     "SCHEMA_VERSION",
     "SUPPORTED_SCHEMA_VERSIONS",
+    "USABLE_REPO_PATH_HINT",
     "WILDCARD",
     "Decision",
     "DocstringTarget",
@@ -131,6 +132,17 @@ def canonical_identifier(value: str) -> str:
     return value.strip().lower()
 
 
+# 越界拒绝里的"可用的替代"只写一遍：同一个语义不允许每个调用点各抄一份——抄开就会漂移，
+# 而"改成什么形态就能过"正是模型与评审唯一能据以改对的那句话（P8 / M5 / N22 同源）。
+# 只说形态、不复述本机路径：范围根一律用 "." 表示，与读类（adapters/models.py 的
+# normalize_event_path）和 dsh 侧（adapters/dsh/adapter.py 的 N22）同一句话。
+USABLE_REPO_PATH_HINT = (
+    "可用的替代：把目标写成受控范围以内的仓库相对路径"
+    "（例如 src/shop/order_service.py；范围根记为 .），"
+    "不要用范围外的绝对路径，也不要用 .. 往外走"
+)
+
+
 def normalize_repo_path(value: str, *, allow_root: bool = False) -> str:
     """把路径规范化为仓库相对形式：反斜杠转 "/"，去掉 "./" 前缀与尾部 "/"。
 
@@ -163,7 +175,9 @@ def normalize_repo_path(value: str, *, allow_root: bool = False) -> str:
         if segment in ("", "."):
             continue
         if segment == "..":
-            raise PolicyContextError(f"路径逃出仓库根目录，拒绝处理: {raw!r}")
+            raise PolicyContextError(
+                f"路径逃出仓库根目录，拒绝处理: {raw!r}。" + USABLE_REPO_PATH_HINT
+            )
         segments.append(segment)
 
     if not segments:

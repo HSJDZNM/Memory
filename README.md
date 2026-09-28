@@ -233,7 +233,7 @@ uv run python -m validators.cli probe
 # 3) 只产出证据（不做 allow/block），退出码 0/1/2
 uv run python -m validators.cli check examples/bad_controller.py --layer controller
 
-# 4) 证据 + 判定（与 policy.check 同一条链路）
+# 4) 证据 + 判定（与 policy.check 同一条链路；target / --workspace 的解析口径也相同）
 uv run python -m validators.cli pipeline examples/bad_controller.py --layer controller
 
 # 5) 测试验证器：按变更集选择最小相关测试（--operation edit 才会触发测试规则）
@@ -244,6 +244,11 @@ uv run python -m policy.check tests/fixtures/validators/project/src/shop/order_s
 # 6) 验证器闭环（AST 证据 / 失败关闭 / 测试选择 / 可重放 / 工具可追溯）
 uv run python tools/validator_loop.py
 ```
+
+**一条口径**：`--workspace` 与目标文件的解析在两个 CLI（`validators.cli` 与 `policy.check`）
+里走**同一份实现**（锚是仓库根，`--workspace` 优先；`--config-root` 只决定 `validation/`
+配置与规则目录在哪）。同一个参数不许在两个入口指向不同目录——"两处各解析一遍"就是两套语义。
+目标文件定位不到属于"用错了"，两个入口都按配置错误（退出码 2）处理，而不是记成"证据不足"的阻断。
 
 **失败关闭**：关键验证器缺失、版本不符、超时、崩溃、配置错误、输出非法或"没有验证器为某个
 checker 提供证据"时，需要它的规则以 `critical` 违规阻断——同一批里的其他 PASS 抵消不了它。
@@ -288,8 +293,31 @@ uv run python -m adapters.cli inspect --agent dsh --event e.json  # 看一条事
 uv run python -m adapters.cli wiring                              # 通道清点：本机每个 Agent 运行时的接线与留痕状态（报告模式）
 uv run python -m adapters.cli wiring --check                      # 同上，但未接线 / 无留痕 / 预算不等式不成立即退出 1
 uv run python -m adapters.cli wiring --check --require-runtime    # 连"本机没有 Agent 运行时"也算失败（跳过不等于通过）
+uv run python -m adapters.cli host-version                        # 声明版本 vs 宿主实际版本（活体探测；报告模式退出 0）
+uv run python -m adapters.cli host-version --check                # 活体探测：drift / recording_stale / full 却声明不出读法即退出 1
+uv run python -m adapters.cli host-version --record-check         # CI 形态：不依赖宿主，声明 vs 观测记录 + manifest 哈希（硬门禁）
+uv run python -m adapters.cli host-version --record               # 唯一写入口：把这次实测写进 adapters/host-versions.observed.json
 uv run python tools/agent_loop.py                                 # 多 Agent 闭环（等价结论 / 执行一次 / 隔离 / trace / 熔断）
 ```
+
+`agent_version` 的语义是「**已实测**的产品版本」，所以它必须**可核对**；核对有两处入口，缺一不可——
+只做活体探测的话，没装 dsh 的 CI 上读不到宿主（既不是通过也不是失败），就变成
+「修了一条会红的检查，却没有任何地方会为它红」：
+
+| 形态 | 退出码 |
+| --- | --- |
+| `host-version`（默认报告） | 0（只打印，不改退出码） |
+| `host-version --check`（本机活体探测） | 0 = match / unavailable / not_declared+read_only；**1** = drift、recording_stale、能力上限 full 却声明不出读法；加 `--require-runtime` 时 unavailable 也 1；2 = 用法错误 |
+| `host-version --record-check`（CI 硬门禁，不探测宿主） | 0 = 声明与记录逐条一致；**1** = 记录缺失 / 不完整 / 未知协议版本 / 声明≠记录 / 记录钉住的 manifest 哈希与当前声明不一致 / full 却声明不出读法；2 = 用法错误 |
+| `host-version --record`（唯一写入口） | 0 = 已写入；**1** = 拒写（drift / 读不到宿主 / 一个条目都没有）；2 = 用法错误 |
+
+`adapters/host-versions.observed.json` 是**提交进仓库的观测记录**：只能由 `--record` 写入，
+每条记 agent_id、`observed_version`、探测读法（`executable` + `args` + `version_pattern`）、
+观测时 manifest 的 sha256 与时间戳。CI 的 `Agent version vs host version` 步骤跑的是 `--record-check`：
+**改了 `adapters/<agent>/manifest.yaml` 就必须重跑 `--record` 并重新审核**（否则它红在「记录过期」上，
+理由与修复动作写在拒绝理由里）；本机 `--check` 还会比「活体宿主 vs 记录」，不一致时是独立状态
+`recording_stale`（退出 1，理由是"记录过期，重跑 `--record` 并把 diff 送评审"）。
+版本不一致**不改变任何 allow / block**：它不是拦截条件，只是让这条显式调用的检查变红。
 
 现在的支持矩阵（数据来源是 manifest，不是这段文字）：
 

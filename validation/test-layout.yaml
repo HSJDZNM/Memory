@@ -10,6 +10,14 @@ language: python
 production_patterns:
   - "src/**/*.py"
 
+# 这两条是**平台级**的"哪些路径算测试"声明，两条判定路径共用它（口径只有一份）：
+#   - 验证器路径按它做测试选择（validators.selection.list_test_files）；
+#   - policy.check 缺 --layer 时按它定 layer=test（layer_source=platform_test_layout），
+#     不再按文件名猜层——否则 tests/test_x_controller.py 会在 Hook 路径上 allow、
+#     在验证器路径上被 ARCH-001 block（07 号报告 P4）。
+# examples/dsh/dsh-adapter.yaml 的 test_paths / test_layer 必须与它解得通：
+# 每条 test_patterns 的见证路径都要落到声明的 test_layer，
+# 由 tests/contract/test_dsh_layer_declaration.py 钉住（声明漂移即红）。
 test_patterns:
   - "tests/**/test_*.py"
   - "tests/**/*_test.py"

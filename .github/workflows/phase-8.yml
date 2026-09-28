@@ -142,6 +142,18 @@ jobs:
       - name: Real dsh sandbox loop (skipped without dsh)
         run: .venv/bin/python tools/dsh_sandbox_loop.py
 
+      # Phase 6/2：适配器声明的 agent_version 必须等于**提交进仓库的观测记录**里的实测值，
+      # 并且记录钉住的 manifest 哈希必须与当前声明一致（修复轮 15：Q8 的尾巴）。
+      # 这一步是 CI 形态：**不探测宿主**，所以没有 dsh 的 CI 上它同样是硬门禁——
+      # 记录缺失 / 不完整 / 声明与记录不一致一律 exit 1（修复轮 14 的形态读不到宿主时退 0，
+      # 等于"修了一条会红的检查，却没有任何地方会为它红"）。
+      # 记录只能由 host-version --record 在装着真实宿主的机器上显式写入；
+      # **改了 adapters/<agent>/manifest.yaml 就必须重跑它并重新审核**（否则红在"记录过期"上）。
+      # 本机活体探测是另一条命令：python -m adapters.cli host-version --check（四状态 + recording_stale）。
+      - name: Agent version vs host version
+        run: .venv/bin/python -m adapters.cli host-version --record-check
+
+
       # Phase 3：摄取清单与镜像 manifest / 许可 / 哈希必须一致（漂移会让 verify 退出 1）
       - name: Retrieval corpus integrity
         run: .venv/bin/python -m retrieval.cli verify

@@ -616,6 +616,9 @@ os.chdir(_previous_dir)  # 恢复工作目录
 # ## 6. JSON 输出 = PolicyDecision 契约
 #
 # --json 的顶层是 CLI 包装（context / rule_set / reported_imports / exit_code），
+# Phase 5 起多了一段 evidence（验证器流水线的证据），治理修复轮又加了两项：
+# layer_source（这个层是声明的、平台测试路径推出来的、还是按文件名猜的）
+# 与 check_volume（这次到底查了多少：complete / missing_dimensions / blocking_capable_skipped）。
 # 其中 result 就是决策协议载荷：除了 Phase 0 就有的 decision、request_id、matched_rules、
 # violations、policy_version，Phase 1 还加了 schema_version、trace_id、rule_set_hash、
 # skipped_rules 与 required_action。
@@ -635,6 +638,8 @@ os.chdir(_previous_dir)  # 恢复工作目录
 # 这份输出有五个顶层键：`context`（这次检查的输入）、`rule_set`（规则集身份与来源）、
 # `result`（决策协议载荷）、`reported_imports`（被检查文件的 import 列表，仅供人参考，
 # 不参与判定——这是 Phase 0 就定下的显式边界）、`exit_code`（给脚本用的等价退出码）。
+# 后续阶段又加了三个：`evidence`（Phase 5）、`layer_source` 与 `check_volume`（治理修复轮）——
+# "这次查了多少"必须能被读出来，否则两个 allow 长得一模一样。
 #
 # `exit_code` 属于 CLI 包装而不是决策协议：Phase 1 起 `result` 必须能被
 # `policy.parse_decision` 原样解析回来，因此协议载荷里不放 CLI 专用的字段。

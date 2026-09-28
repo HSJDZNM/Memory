@@ -87,6 +87,67 @@ def _first_failure(checks: Sequence[CheckResult]) -> Optional[CheckResult]:
     return None
 
 
+# 理由里的"可用替代"是给模型读的：只列已声明数据的有限前缀。上限存在的理由不是保密，
+# 而是理由必须还能一次读完——讲清楚不能变成新的噪音。
+_MAX_LISTED_PATTERNS = 8
+
+
+def _listed(values: Sequence[str], *, max_items: int = _MAX_LISTED_PATTERNS) -> str:
+    """把已声明的模式列成可读文本；超出上限时如实写明还有多少条没列出来。"""
+
+    items = list(values)
+    if not items:
+        return "<无声明>"
+    shown = [repr(item) for item in items[:max_items]]
+    if len(items) > max_items:
+        shown.append(f"另有 {len(items) - max_items} 条未列出")
+    return ", ".join(shown)
+
+
+def _declared_alternatives(
+    spec: ToolSpec,
+    approval: Optional[ApprovalRecord],
+    *,
+    include_whitelist: bool = True,
+) -> str:
+    """把"改成什么形态就能过"写进拒绝理由（M4 的可用性修复）。
+
+    只引用两处**已声明**的数据：注册表的 allowed_commands（命令形态），
+    以及随请求交来的、绑定同一工具的已签发审批的 param_patterns（审批覆盖的形态）。
+    这里不猜参数、不拼路径、不带凭据，也**不放宽**任何判定：被拒的还是被拒，
+    差别只是模型不必再靠试错去找"本会话到底能跑什么"。
+    返回空串表示没有已声明的替代可说——此时宁可不写，也不许编一个出来。
+    """
+
+    clauses: list[str] = []
+    if include_whitelist and spec.allowed_commands:
+        clauses.append(
+            "注册表白名单允许的命令形态（整串匹配）：" + _listed(list(spec.allowed_commands))
+        )
+    bound = approval if approval is not None and approval.tool_id == spec.id else None
+    if bound is not None and bound.binding is ApprovalBinding.PATTERN:
+        clauses.append(
+            f"已签发审批 {bound.approval_id}（binding=pattern）覆盖的形态："
+            + _listed(
+                [f"{name}={pattern}" for name, pattern in sorted(bound.param_patterns.items())]
+            )
+        )
+    elif bound is not None:
+        clauses.append(
+            f"已签发审批 {bound.approval_id} 是 binding=action 的单次绑定："
+            "只对它签发时的那一次 action_hash 有效（参数、schema、主体任一变化即作废）"
+        )
+    if bound is None and spec.approval is ApprovalMode.REQUIRED:
+        clauses.append(
+            "本工具在注册表里声明 approval=required，而本次请求没有随附覆盖它的审批："
+            "命令形态改对之后仍需人工签发（binding=action 只绑一次调用，"
+            "binding=pattern 用 param_patterns 覆盖一类调用）"
+        )
+    if not clauses:
+        return ""
+    return "；可用替代：" + "；".join(clauses)
+
+
 def issue_grant(
     request: ActionRequest,
     spec: ToolSpec,
@@ -228,7 +289,9 @@ def check_list(
                 CheckStatus.FAILED,
                 ReasonCode.PATH_OUT_OF_SCOPE,
                 f"参数 {parameter} 的路径 {path!r} 命中受保护前缀 {prefix!r}；"
-                "必须改用该信任根的专用受控工具",
+                "必须改用该信任根的专用受控工具；"
+                "本会话可用的读取范围形态是受控项目内的仓库相对路径"
+                "（范围等于项目根时记为 .），受保护前缀不在其中",
             )
         )
     elif any(item.blocked_prefixes for item in spec.parameters):
@@ -265,7 +328,8 @@ def check_list(
                     CheckStatus.FAILED,
                     ReasonCode.COMMAND_NOT_ALLOWLISTED,
                     f"命令不在白名单内（完整匹配）：{text[:200]!r}；"
-                    f"允许的模式为 {list(spec.allowed_commands)}",
+                    f"允许的模式为 {list(spec.allowed_commands)}"
+                    + _declared_alternatives(spec, approval, include_whitelist=False),
                 )
             )
         else:
@@ -295,7 +359,8 @@ def check_list(
                     CheckStatus.FAILED,
                     ReasonCode.COMMAND_COMPOSITION_BLOCKED,
                     f"命令包含组合/替换/重定向片段 {[item for item in hits]}："
-                    "本阶段只允许单条语句，组合命令必须先扩白名单并复核（默认阻断）",
+                    "本阶段只允许单条语句，组合命令必须先扩白名单并复核（默认阻断）"
+                    + _declared_alternatives(spec, approval),
                 )
             )
         else:
@@ -328,7 +393,8 @@ def check_list(
                     CheckStatus.FAILED,
                     ReasonCode.COMMAND_FRAGMENT_BLOCKED,
                     f"命令包含被禁片段 {blocked}（路径穿越 / 会写文件的选项 / 外部 diff）："
-                    "白名单只看命令长什么样，这些片段决定它会做什么，一律阻断",
+                    "白名单只看命令长什么样，这些片段决定它会做什么，一律阻断"
+                    + _declared_alternatives(spec, approval),
                 )
             )
         else:
@@ -395,7 +461,14 @@ def check_list(
                 if approval is None
                 else ReasonCode.APPROVAL_INVALID
             )
-            checks.append(_check("approval", CheckStatus.FAILED, code, str(error)))
+            checks.append(
+                _check(
+                    "approval",
+                    CheckStatus.FAILED,
+                    code,
+                    str(error) + _declared_alternatives(spec, approval),
+                )
+            )
         else:
             detail = (
                 f"approval_id={approval.approval_id} granted_by={approval.granted_by} "

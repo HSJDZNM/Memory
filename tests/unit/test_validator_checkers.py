@@ -20,6 +20,7 @@ from policy.evidence import (
     DependencyResolution,
     EvidenceBundle,
     EvidenceLocation,
+    PendingImplementation,
     SourceDigest,
     ValidationEvidence,
     ValidatorKind,
@@ -59,9 +60,15 @@ def record(
     validator_id: str = "py.docstring",
     *,
     status: ValidatorStatus = ValidatorStatus.OK,
-    checkers: tuple[str, ...] = ("missing_docstring",),
+    declared: tuple[str, ...] = ("missing_docstring",),
     critical: bool = True,
 ) -> ValidatorRecord:
+    """ValidatorRecord 上的 `declared_checkers` 是"这个验证器声明负责哪些 checker"。
+
+    它与 `EvidenceBundle.served_checkers`（**真的**服务过）是两个字段、两个含义（P7）：
+    证据包里两个都叫 served_checkers 时，这里最容易把它们混着读。
+    """
+
     return ValidatorRecord(
         validator_id=validator_id,
         validator_version="1.0",
@@ -69,7 +76,7 @@ def record(
         stage="docstring",
         status=status,
         critical=critical,
-        served_checkers=checkers,
+        declared_checkers=declared,
     )
 
 
@@ -311,7 +318,7 @@ def test_forbidden_dependency_uses_evidence_facts_with_lines() -> None:
                 validator="py.depgraph@1.0",
             ),
         ),
-        validators=(record("py.depgraph", checkers=("forbidden_dependency",)),),
+        validators=(record("py.depgraph", declared=("forbidden_dependency",)),),
         served_checkers=("forbidden_dependency",),
     )
 
@@ -419,3 +426,133 @@ def test_source_digest_and_unknown_schema_are_rejected() -> None:
     with pytest.raises(Exception) as error:
         EvidenceBundle(schema_version="9.9")
     assert "未知证据协议版本" in str(error.value)
+
+
+# ------------------------------------------------------------------ Q7：待实现 ≠ 失败
+
+def pending(
+    *,
+    checkers: tuple[str, ...] = ("failing_tests",),
+    test_modules: tuple[str, ...] = ("tests/test_audit_repository.py",),
+    missing_targets: tuple[str, ...] = ("shop.audit_repository:AuditEntry",),
+) -> PendingImplementation:
+    """一条「待实现」记录：工具跑成了，但覆盖它的测试还跑不了。"""
+
+    return PendingImplementation(
+        validator_id="tool.pytest",
+        validator_version="1.0",
+        checkers=checkers,
+        test_modules=test_modules,
+        missing_targets=missing_targets,
+        reason=(
+            "选中的测试在收集期失败：项目内的 shop.audit_repository:AuditEntry "
+            "在本次取证树里还不存在"
+        ),
+        fix="先把 AuditEntry 落地，再重跑取证",
+    )
+
+
+def test_pending_implementation_warns_instead_of_blocking() -> None:
+    """Q7 的正面：规则自己是 error，但「待实现」的判定只能是 warning。
+
+    P1：allow_with_warnings 尤其要能读出"被提醒过"——折叠成普通 allow 就等于把
+    "覆盖它的测试还没能运行"这件事从账本上删掉。
+    """
+
+    rule = make_checker_rule("TESTING-002", checker="failing_tests", severity="error")
+    rules = RuleSet(rules=(rule,), source_paths=())
+    evidence = bundle(
+        validators=(
+            record("tool.pytest", declared=("failing_tests", "missing_tests")),
+        ),
+        # 没查成的 checker 不能记成查过了：missing_tests 由 selection 服务过，failing_tests 没有
+        served_checkers=("missing_tests",),
+        pending_implementation=(pending(),),
+    )
+
+    result = evaluate(rules, make_context(), evidence=evidence)
+
+    assert result.decision is Decision.ALLOW_WITH_WARNINGS
+    assert [item.canonical_id for item in result.violations] == ["TESTING-002@1"]
+    violation = result.violations[0]
+    assert violation.severity is Severity.WARNING  # 「待实现」不是违规，用 warning 表达
+    assert "待实现" in violation.message
+    assert "tests/test_audit_repository.py" in violation.message
+    assert "shop.audit_repository:AuditEntry" in violation.message
+    assert "本次写入被放行" in violation.message
+    assert result.matched_rules == ("TESTING-002@1",)
+    assert result.severity_counts == {"warning": 1}
+
+
+def test_pending_implementation_is_readable_from_the_decision_payload() -> None:
+    rule = make_checker_rule("TESTING-002", checker="failing_tests", severity="error")
+    rules = RuleSet(rules=(rule,), source_paths=())
+    evidence = bundle(
+        validators=(record("tool.pytest", declared=("failing_tests",)),),
+        pending_implementation=(pending(),),
+    )
+
+    payload = evaluate(rules, make_context(), evidence=evidence).to_decision_dict()
+    entry = payload["violations"][0]
+
+    assert payload["decision"] == "allow_with_warnings"
+    assert entry["severity"] == "warning"
+    assert "待实现" in entry["message"]
+    assert entry["evidence"]["value"] == "shop.audit_repository:AuditEntry"
+
+
+def test_pending_implementation_does_not_silence_other_checkers() -> None:
+    """待实现只覆盖它自己声明的那几个 checker：别的 checker 照旧失败关闭。"""
+
+    rule = make_checker_rule("DOC-001")
+    rules = RuleSet(rules=(rule,), source_paths=())
+    evidence = bundle(
+        validators=(record("tool.pytest", declared=("failing_tests",)),),
+        pending_implementation=(pending(),),
+    )
+
+    result = evaluate(rules, make_context(), evidence=evidence)
+
+    assert result.decision is Decision.BLOCK
+    assert "没有验证器为 checker missing_docstring 提供证据" in result.violations[0].message
+
+
+def test_a_blocker_still_wins_over_a_pending_note() -> None:
+    """失败关闭优先：同一条 checker 上既有点阻断点又有一句"待实现"时，阻断必须赢。"""
+
+    rule = make_checker_rule("TESTING-002", checker="failing_tests", severity="error")
+    rules = RuleSet(rules=(rule,), source_paths=())
+    evidence = bundle(
+        validators=(record("tool.pytest", declared=("failing_tests",)),),
+        blockers=(
+            Blocker(
+                validator_id="tool.pytest",
+                validator_version="1.0",
+                status=ValidatorStatus.TIMEOUT,
+                reason="超过超时 120000ms，已终止进程树",
+                checkers=("failing_tests",),
+            ),
+        ),
+        pending_implementation=(pending(),),
+    )
+
+    result = evaluate(rules, make_context(), evidence=evidence)
+
+    assert result.decision is Decision.BLOCK
+    assert result.violations[0].severity is Severity.CRITICAL
+    assert "关键验证器不可用" in result.violations[0].message
+
+
+def test_pending_implementation_records_are_normalised_and_carried_in_the_payload() -> None:
+    duplicated = pending()
+    raw = EvidenceBundle(pending_implementation=(duplicated, duplicated))
+
+    normalised = raw.normalize()
+
+    assert len(normalised.pending_implementation) == 1
+    assert normalised.pending_for("failing_tests") == (duplicated,)
+    assert normalised.pending_for("missing_tests") == ()
+    assert normalised.serves("failing_tests") is False
+    assert raw.to_payload()["pending_implementation"][0]["test_modules"] == [
+        "tests/test_audit_repository.py"
+    ]

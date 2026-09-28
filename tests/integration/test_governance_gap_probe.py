@@ -1,8 +1,14 @@
 """V1 独立验收：13 项治理覆盖缺口的探针（见 tools/governance_gap_probe.py）。
 
 它不复用实现者写的测试，只驱动公开入口（python -m adapters.dsh.hooks /
-python -m enforcement.cli / python -m adapters.cli / 插件源码静态事实 / 审计 JSONL），
-断言"修后"应有的行为。任一项与预期不符 -> 该缺口的测试变红。
+python -m enforcement.cli / python -m adapters.cli / 规范事件的装配入口 /
+插件源码静态事实 / 审计 JSONL），断言"修后"应有的行为。任一项与预期不符 -> 该缺口的测试变红。
+
+**G06 覆盖两条路径**（N13）：同一批用例（9 反例 + 2 必须放行的对照）既走 Phase 2 的
+`python -m adapters.dsh.hooks`，也走 Phase 6 的规范事件（generic-json Adapter →
+`to_policy_context` → `policy.engine.evaluate`）。后者在 facts 里是 `p6_*`。
+缺口的由来：只驱动钩子的仪器在 N1 还活着的那棵树上照样 13/13、exit 0 ——
+"跑过了、是绿的"并不等于"这条路径被覆盖了"，所以下面有专门的用例钉住这件事。
 
 跑法：
 
@@ -35,6 +41,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PROBE_ROOT = Path(os.environ.get("GOVERNANCE_PROBE_ROOT", str(REPO_ROOT))).resolve()
 PROBE = REPO_ROOT / "tools" / "governance_gap_probe.py"
 EXPECTED_GAPS = tuple(f"G{index:02d}" for index in range(1, 14))
+# G06 的两条路径与用例表（与探针里的 _G06_CASES / _G06_CONTROLS 同名，故意写死在测试里：
+# 探针改了用例而测试没跟上时，下面的断言必须变红，而不是自动跟着漂）。
+G06 = "G06"
+G06_PHASE2_CASES = (
+    "literal_from", "plain_import", "alias_case",
+    "importlib_module", "dunder_import", "relative_import", "relative_named",
+    "submodule_import", "dotted_import",
+)
+G06_BYPASS_CASES = (
+    "importlib_module", "dunder_import", "relative_import", "relative_named",
+    "submodule_import", "dotted_import",
+)
+G06_CONTROLS = ("controller_service_allowed", "module_layer_allowed")
+G06_CASE_COUNT = len(G06_PHASE2_CASES) + len(G06_CONTROLS)
 # 工作目录固定在仓库自己的 .tmp/ 下：pytest 的 tmp_path 走系统临时目录，
 # 在受限沙箱里会因 WinError 5 直接失败（这也是本测试不复用 tmp_path_factory 的原因）。
 PROBE_WORK = REPO_ROOT / ".tmp" / "verifier" / "probe"
@@ -69,8 +89,81 @@ def report() -> dict:
 
 
 def test_probe_declares_all_thirteen_gaps(report: dict) -> None:
+    """检查数与 id 表必须与探针一致：G06 的 Phase 6 用例**折进** G06，不新增检查 id。"""
+
     ids = [item["id"] for item in report["checks"]]
     assert ids == list(EXPECTED_GAPS), f"探针没有覆盖全部 13 项缺口：{ids}"
+
+# --------------------------------------------------------------- G06 的两条路径（N13）
+#
+# 这几条用例专门钉"G06 真的驱动了 Phase 6"，而不是复述探针自己的结论：
+# 没有它们，"G06 全绿"与"G06 只驱动了钩子"在报告里长得一模一样。
+
+
+def g06(report: dict) -> dict:
+    item = next((row for row in report["checks"] if row["id"] == G06), None)
+    assert item is not None, f"探针缺少 {G06}"
+    return item
+
+
+def test_g06_declares_phase6_expectations_for_every_case(report: dict) -> None:
+    """修前/修后两张期望表都必须逐条写出 Phase 6 的 p6_*，否则对照是半张表。"""
+
+    item = g06(report)
+    names = (*G06_PHASE2_CASES, *G06_CONTROLS)
+    missing_before = [name for name in names if f"p6_{name}" not in item["before"]]
+    missing_after = [name for name in names if f"p6_{name}" not in item["after"]]
+    assert not missing_before, f"{G06} 的修前期望缺少 Phase 6 用例：{missing_before}"
+    assert not missing_after, f"{G06} 的修后期望缺少 Phase 6 用例：{missing_after}"
+    for table in ("before", "after"):
+        assert "path_disagreements" in item[table], (
+            f"{G06} 的 {table} 期望没有声明两条路径的一致性（path_disagreements）"
+        )
+
+
+def test_g06_phase6_before_expectations_describe_the_silent_pass(report: dict) -> None:
+    """修前期望必须写出 N1 的样子：换写法在 Phase 6 路径上**静默放行**。
+
+    这是"新检查对修前快照会红"的可读形式：如果 before 表把 p6_* 写成 blocked，
+    变异体上它就不会红，这台仪器也就看不见它该看见的 bug。
+    """
+
+    item = g06(report)
+    for name in G06_BYPASS_CASES:
+        assert item["before"][f"p6_{name}"] == "allowed", (
+            f"{G06} 的修前期望把 p6_{name} 写成 {item['before'][f'p6_{name}']!r}："
+            "修前多 Agent 路径对这一形态是静默放行"
+        )
+        assert item["after"][f"p6_{name}"] == "blocked", f"{G06} 修后必须拦住 p6_{name}"
+    for name in G06_CONTROLS:
+        assert item["before"][f"p6_{name}"] == "allowed"
+        assert item["after"][f"p6_{name}"] == "allowed", (
+            f"{G06} 的对照 {name} 在修后也必须放行：一个把所有输入都判 block 的探针是假绿"
+        )
+
+
+def test_g06_actually_drove_the_phase6_path(report: dict) -> None:
+    """Phase 6 那一组必须真的跑出了逐条结论，且两条路径的结论一致。"""
+
+    item = g06(report)
+    facts = item["facts"]
+    assert not facts.get("p6_error"), (
+        f"{G06} 的 Phase 6 驱动器没有跑起来：{facts.get('p6_error')}"
+    )
+    assert facts.get("p6_case_count") == G06_CASE_COUNT, (
+        f"{G06} 只驱动了 {facts.get('p6_case_count')} 条 Phase 6 用例，"
+        f"期望 {G06_CASE_COUNT} 条：{facts}"
+    )
+    unnamed = [
+        name
+        for name in (*G06_PHASE2_CASES, *G06_CONTROLS)
+        if facts.get(f"p6_{name}") not in ("allowed", "blocked")
+    ]
+    assert not unnamed, f"{G06} 的 Phase 6 结论缺失或非法：{unnamed}"
+    assert facts.get("path_disagreements") == [], (
+        f"{G06} 的两条路径结论不一致（换个入口就换结论 = N1）：{facts.get('path_disagreements')}"
+    )
+
 
 
 def test_every_gap_declares_before_and_after_expectations(report: dict) -> None:

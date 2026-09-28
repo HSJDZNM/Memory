@@ -10,8 +10,29 @@
     {"kind": "execution",    "action_id": ..., "status": ..., "ok": true/false}
     {"kind": "approval_used","approval_id": ...}
 
-台账只存标识、哈希与结论，不存参数原文。并发说明：跨进程的原子性由"先追加再复核"实现——
-两个进程同时认领同一 action 时，只有序号更小的那条算数，另一个按重复处理（失败关闭）。
+**台账存什么**（逐项写下，读的人不用再猜）：`kind`（claim / grant / pre_decision / pre_state /
+execution / approval_used）、各条记录自己的标识（`action_id` / `claim_id` / `grant_id` …）、
+`action_hash`、结论字段（`decision` / `status` / `reason_code`），以及 `pre_state` 里的
+**请求视图** `request`。
+
+**请求视图里扣什么、不扣什么**：注册表声明 `secret: true` 的参数、以及取值里出现确定形态凭据
+（令牌前缀 / Bearer / 私钥块）的参数，只留类型、长度与摘要（此时 `values_withheld: true`）；
+**其余参数按原文落盘**（`params[].value` 就是规范化后的取值，例如整份 `content`），
+`request.workspace` 落的是**绝对路径**，并且它参与 `action_hash`。
+
+这不是"漏脱敏"，而是事后核对的前提：`adapters/dsh/enforcement.py::_restore_request` 要用台账里的
+`request` 载荷**重建 `ActionRequest`**（PostToolUse），而 `action_hash` 的参与字段里包含
+`workspace` 与规范化参数（`models.py::_ACTION_HASH_FIELDS`）。扣掉取值、或把 `workspace`
+换成占位，重建必然对不上哈希 —— 事后核对就只剩"证据不足"一个结论，
+等于把 G2（事前事后成对 + post_validated）打掉。
+
+**边界**：这不是 AGENTS 第 16 条的违反——第 16 条管的是 `audit.jsonl` 摘要链的脱敏
+（那里密钥、绝对路径、控制字符一律脱敏或转义）；台账是**另一份产物**，它的存留口径由本节写死。
+把台账当成"只存哈希"的东西读，会让安全评审得出错误结论；反过来，要改这条口径就得先解决
+"事后核对靠什么重建请求"。
+
+并发说明：跨进程的原子性由"先追加再复核"实现——两个进程同时认领同一 action 时，
+只有序号更小的那条算数，另一个按重复处理（失败关闭）。
 """
 
 from __future__ import annotations

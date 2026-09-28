@@ -5,12 +5,24 @@
     1) bad 编辑：controller 直接依赖 repository → 必须被 ARCH-001 阻断，文件哈希不变；
     2) good 编辑：新增一个方法 → 必须放行，且只发生一次预期变更。
 
-断言失败即退出码 1；dsh 不可用、**或 Hook 进程根本起不来**（CI 的 ubuntu runner、
-或沙箱禁止管道 stdio）时按**环境跳过**处理并退出码 0，因为这条闭环验证的是
-"本机真实 Agent Runtime 的行为"，不是可移植的单元测试。
+断言失败即退出码 1；dsh 不可用、**Hook 进程根本起不来且原因是沙箱禁止管道 stdio**
+（CI 的 ubuntu runner）、或 **dsh 自身被环境挡住**（$DSH_HOME 写不进去 / 系统 temp
+不可写）时按**环境跳过**处理并退出码 0，因为这条闭环验证的是"本机真实 Agent Runtime
+的行为"，不是可移植的单元测试。**但"Hook 起不来"不等于"环境不允许"**：理由是"工作目录不可用"
+（projectDir 配错）或读不出原因时按**真失败**收场（分类见 `hook_spawn_failure()`）。
 
-但"跳过"必须**可判定**、不能被读成"已验证"：两条跳过路径都在产物里写
-`environment_skipped: true`，正常路径写 `false`；`--require-dsh` 让**任何**环境跳过都失败。
+但"跳过"必须**可判定**、不能被读成"已验证"，也不能把不同的失败原因糊成一个：**每条**
+跳过路径都在产物里写 `environment_skipped: true`（正常路径写 `false`）与各自的 reason。
+"dsh 自身起不来"按**被拒路径**分成 `profile_write_denied`（落在 $DSH_HOME 下）与
+`other_path_denied`（落在 temp / spill 等 dsh 自己的启动临时区），两者都在
+`dsh_startup_denied_kind` 与 `dsh_startup_denied_path` 里写明是哪条路径被拒；
+归不了因的权限错误**不产生跳过**（宁可红着，也不把它洗成环境限制）。
+`--require-dsh` 让**任何**环境跳过都失败，跳过也绝不写成 pass。
+
+诊断字段 `dsh_startup_denied_home_roots` 逐条带来源（`dsh_startup_denied_home_root_evidence`）：
+URL 形态（`file:///…`）与普通路径**分开解析**，畸形候选按写明规则丢弃——真实日志里的
+`file:///C:/…/dsh-home/profiles/headless/#spill-local` 曾被切成 `e:///C:/…` 与丢盘符的
+`/Users/…`，而**正确的根** `C:/…/dsh-home` 反而进不了候选（它参与 is_under 判定）。
 
 用法：
 
@@ -32,9 +44,14 @@ import datetime as clock
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.parse
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -205,16 +222,548 @@ def dsh_argv() -> list[str] | None:
     return None
 
 
-# 进程内 Hook 插件在 spawn 被拒时的原文（见 src/adapters/dsh/policy-hook.plugin.mjs 的
-# catch 分支）。它出现的唯一含义是"Hook 进程起不来"，与策略判定无关。
-SPAWN_DENIED_MARKERS = ("spawn EPERM", "Hook 无法执行")
+# 进程内 Hook 插件在"Hook 起不来"时给出的原文（见 src/adapters/dsh/policy-hook.plugin.mjs
+# 的 `hookFailureReason`）。前缀只说"Hook 进程起不来"，**不说为什么**——原因必须再从理由的
+# 其余部分读出来，否则会把"projectDir 配错"说成"这台机器跑不了"：
+#   * 理由里 `工作目录不存在：…` / `工作目录不是目录：…` → Hook 的工作目录不可用（接线/配置问题）；
+#   * 理由里 `spawn 报错：spawn EPERM` → 受限沙箱禁止管道 stdio（dsh 的 ctx.shell 起不来）。
+# 只有后者是**环境限制**；前者按真失败收场（洗成环境跳过会让"配错了"看起来像"环境不允许"）。
+# **沙箱类必须同一行同时出现**两个标记（见 `_line_with_both()`）：跨行的组合只说明"这篇
+# 日志里两件事都发生了"，把它们读成因果就是一次假的环境跳过（把 exit 1 洗成 exit 0）。
+HOOK_FAILURE_MARKER = "Hook 无法执行"
+SANDBOX_SPAWN_DENIED_MARKER = "spawn EPERM"
+# 这两句只在插件**证明**目录不可用（不存在 / 不是目录）时出现；正向的"已确认存在"不含它们。
+HOOK_WORKDIR_UNUSABLE_MARKERS = ("工作目录不存在", "工作目录不是目录")
+# 插件理由里"工作目录不可用"那一段的原文形态：`工作目录不存在：<目录>（来自 <来源>）`。
+_HOOK_WORKDIR_CLAUSE = re.compile(r"工作目录(?:不存在|不是目录)：([^（\n；]+)")
 
-# dsh **自己**还没起来就被环境挡住时的原文：受限沙箱不允许写 $DSH_HOME 下的 profile。
-# 与 SPAWN_DENIED_MARKERS 是两件事：那边是"dsh 起来了、Hook 起不来"，这边是
-# "dsh 连 profile 都写不进去、进程直接退出"。两者都属于环境限制，不是策略判定结果；
-# 区别在于诊断要说清是"哪一层没起来"，否则会把 dsh 装不起来误读成治理失效。
-DSH_STARTUP_DENIED_MARKERS = ("EPERM: ", "EACCES: ", "WinError 5")
-DSH_HOME_MARKERS = ("profiles", "cordis", ".dsh", "dsh-home")
+# "Hook 进程起不来"的两类**可归因原因**（"读不出原因"是第三种情况：不产生环境跳过）。
+SANDBOX_PIPE_STDIO_DENIED = "sandbox_pipe_stdio_denied"
+HOOK_WORKDIR_UNUSABLE = "hook_workdir_unusable"
+HOOK_SPAWN_UNATTRIBUTABLE = "hook_spawn_unattributable"
+
+# 权限被拒的原文标记：出现在日志里只说明"某个路径被拒"，**不说明是哪一层失败**。
+# 旧判据就是在这里走偏的：它把这类标记与"文本里出现 profiles/.dsh/cordis/dsh-home"一与，
+# 而 dsh 的崩溃堆栈里天然带着 <dsh-home>/profiles/<name>/#spill-local 这些帧——
+# 于是任何一种启动失败都被说成"写 $DSH_HOME 下的 profile 被拒"。
+PERMISSION_DENIED_MARKERS = (
+    "EPERM",
+    "EACCES",
+    "WinError 5",
+    "Permission denied",
+    "Access is denied",
+)
+
+# dsh 启动阶段崩溃的原文（"连插件树/配置都没装起来"）。**只有**它出现，
+# 日志里的权限错误才可能与 dsh 启动有关；没有它一律按"与启动无关"处理：
+# 宁可让真失败保持红，也不要把无关的 EPERM 洗成环境跳过。
+DSH_BOOT_FAILURE_MARKERS = (
+    "plugin tree failed to load",
+    "failed to apply loader entry",
+    "dsh-app-boot",
+    "runProfile",
+)
+
+# dsh 自己的启动临时区：spill-local 插件在启动时 mkdtemp 的目录名前缀。
+DSH_SCRATCH_PREFIX = "dsh-"
+DEFAULT_DSH_HOME_DIRNAME = ".dsh"
+
+# $DSH_HOME 候选根的**来源**：诊断字段逐条写明"哪个根来自哪条证据"，读者不必猜。
+HOME_ROOT_SOURCE_ENV = "env:DSH_HOME"
+HOME_ROOT_SOURCE_DEFAULT = "default:$HOME/.dsh"
+HOME_ROOT_SOURCE_FILE_URL = "log:file-url"
+HOME_ROOT_SOURCE_LOG_PATH = "log:plain-path"
+HOME_ROOT_SOURCE_INJECTED = "injected:homes"
+
+# 两种"dsh 自身起不来"的**独立状态**，区别只在被拒路径落在哪里：
+#   profile_write_denied —— 落在 $DSH_HOME（或其 profiles 子目录）下，沿用原状态与措辞；
+#   other_path_denied    —— 落在 $DSH_HOME 之外的 dsh 启动临时区（系统 temp / dsh- scratch）。
+PROFILE_WRITE_DENIED = "profile_write_denied"
+OTHER_PATH_DENIED = "other_path_denied"
+
+# 被拒路径的三种原文形态（都要求路径带引号，避免把 syscall/errno 当成路径）：
+#   Node   EPERM: operation not permitted, mkdtemp 'C:\...\Temp\dsh-spill-XXXXXX'
+#   Node   EACCES: permission denied, open '/home/x/.dsh/profiles/headless/cordis.yml'
+#   Python PermissionError: [Errno 13] Permission denied: '<path>'
+#   .NET   [WinError 5] Access is denied: '<path>'
+_NODE_DENIAL = re.compile(
+    r"(?:EPERM|EACCES)\s*:\s*[^'\n]*?,\s*(?P<syscall>[A-Za-z_][A-Za-z0-9_]*)\s+'(?P<path>[^'\n]+)'"
+)
+_STRUCTURED_DENIAL = re.compile(
+    r"code:\s*'(?:EPERM|EACCES)'[\s\S]{0,240}?path:\s*'(?P<path>[^'\n]+)'"
+)
+_QUOTED_DENIAL = re.compile(
+    r"(?:\[Errno\s+13\]\s*Permission denied|\[WinError\s+5\][^'\n]*?"
+    r"|Permission denied|Access is denied)\s*:?\s*'(?P<path>[^'\n]+)'"
+)
+_QUOTED_TOKEN = re.compile(r"'([^'\n]+)'|\"([^\"\n]+)\"")
+# 日志里出现的 <root>/profiles/<name>：说明 dsh 正在把 root 当 profile 根用。
+# 但栈帧写的是 URL（`file:///C:/…/profiles/headless/#spill-local`），两条普通路径正则会把
+# 它切成畸形候选：Windows 正则把 `file` 的 `e` 当盘符（`e:///C:/…`），POSIX 正则丢掉盘符
+# （`/Users/…`）——而**正确的根** `C:/…/dsh-home` 反而进不了候选。所以 URL 与普通路径
+# **分开解析**：URL 先按 URL 规则解析出本地根，普通扫描再跳过 URL 区间内的匹配。
+_DSH_HOME_URL = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*)://[^\s'\"()<>]*")
+_DSH_HOME_WINDOWS = re.compile(r"((?:[A-Za-z]:[\\/])[^\s'\"()]*?)[\\/]profiles[\\/]")
+_DSH_HOME_POSIX = re.compile(r"(/[^\s'\"():]*?)[\\/]profiles[\\/]")
+
+
+@dataclass(frozen=True)
+class DeniedPath:
+    """日志里一条"某个路径被环境拒绝"的原文记录（不预设它与 dsh 启动的关系）。"""
+
+    path: str
+    syscall: str | None = None
+    evidence: str = ""
+
+
+@dataclass(frozen=True)
+class HomeRootCandidate:
+    """一条 $DSH_HOME 候选根**以及它来自哪条证据**（诊断字段逐条可读，不让人从根列表反推）。"""
+
+    root: str
+    source: str
+    evidence: str = ""
+
+
+@dataclass(frozen=True)
+class StartupDenial:
+    """一次**可归因**的"dsh 自身起不来"：路径、系统调用与全部被拒路径都留证据。"""
+
+    kind: str
+    denial: DeniedPath
+    paths: tuple[str, ...]
+    home_roots: tuple[str, ...]
+    # 与 home_roots 同序：每个根来自哪条证据（字段级来源，诊断用）。
+    home_root_evidence: tuple[HomeRootCandidate, ...]
+
+    @property
+    def path(self) -> str:
+        return self.denial.path
+
+    @property
+    def syscall(self) -> str | None:
+        return self.denial.syscall
+
+
+@dataclass(frozen=True)
+class HookSpawnFailure:
+    """一次**可归因**的"Hook 进程起不来"：哪一类原因、工作目录是多少、原文证据是什么。"""
+
+    kind: str
+    workdir: str | None = None
+    evidence: str = ""
+
+
+def _norm_path(value: str) -> str:
+    """路径归一化：统一分隔符、折叠重复分隔符、Windows 上大小写不敏感。"""
+
+    text = value.strip().strip("'\"").replace("\\", "/")
+    text = re.sub(r"/{2,}", "/", text).rstrip("/")
+    return (text or "/").lower() if os.name == "nt" else (text or "/")
+
+
+def _unique(values: Iterable[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        key = _norm_path(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return tuple(result)
+
+
+def _looks_like_path(value: str) -> bool:
+    text = value.strip()
+    if text.startswith(("/", "\\", "./", "../", ".\\", "..\\")):
+        return True
+    return len(text) >= 3 and text[1] == ":" and text[0].isalpha()
+
+
+
+def denied_paths(text: str) -> tuple[DeniedPath, ...]:
+    """按原文形态解析出日志里**每个**被拒路径；解析不出路径就返回空（不猜）。"""
+
+    found: list[DeniedPath] = []
+    seen: set[str] = set()
+
+    def remember(path: str, syscall: str | None, evidence: str) -> None:
+        key = _norm_path(path)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        detail = evidence.strip()[:200]
+        found.append(DeniedPath(path=path.strip(), syscall=syscall, evidence=detail))
+
+    for match in _NODE_DENIAL.finditer(text):
+        remember(match.group("path"), match.group("syscall"), match.group(0))
+    for match in _STRUCTURED_DENIAL.finditer(text):
+        remember(match.group("path"), None, match.group(0).replace(chr(10), " "))
+    for match in _QUOTED_DENIAL.finditer(text):
+        remember(match.group("path"), None, match.group(0))
+    for line in text.splitlines():
+        if not any(marker in line for marker in PERMISSION_DENIED_MARKERS):
+            continue
+        for match in _QUOTED_TOKEN.finditer(line):
+            candidate = match.group(1) or match.group(2) or ""
+            if _looks_like_path(candidate):
+                remember(candidate, None, line)
+    return tuple(found)
+
+
+
+def _percent_decode(text: str) -> str:
+    """百分号解码只做保守处理：**只解一层**，解不开或解出控制字符就保留原文（宁可不匹配，也不产畸形项）。
+
+    规则逐条写明白：
+      * 只解一层：`%2520` → `%20`（文件名里真的带 `%20` 四个字符），不递归解码；
+      * `%2F` / `%5C` 是**编码的分隔符**，解出来会**伪造出新的路径分隔层**（根会算错）——
+        出现就整段原样保留（`C:/a%2Fb` 仍是 `C:/a%2Fb`，不变成 `C:/a/b`）；
+      * 解出控制字符（如 `%0A` → 换行）→ 保留原文，不产畸形项。
+    解出来的**空白**（`%20`）不算畸形：它是路径内容，是否丢弃由调用方的分档规则决定。
+    """
+
+    if "%" not in text or re.search(r"%(?:2[fF]|5[cC])", text):
+        return text
+    try:
+        decoded = urllib.parse.unquote(text, errors="strict")
+    except (UnicodeDecodeError, ValueError):
+        return text
+    return text if any(ord(item) < 32 for item in decoded) else decoded
+
+
+def _file_url_path(url: str) -> str | None:
+    """把 `file://` URL 转成本地路径；不是**本机** file URL 就返回 None（不猜、不产候选）。
+
+    规则逐条写明白，下一个人不用再猜：
+      * `file:///C:/x` → `C:/x`；`file:///home/x` → `/home/x`（盘符形态去掉路径的前导斜杠）；
+      * authority 为空或 `localhost` 才算本机；`file://host/share/x` 是远程主机 → 不产候选；
+      * `#fragment` / `?query` 按 RFC 8089 不属于路径，先切掉；
+      * 非 `file` scheme（`https://…`）根本不是本地路径 → 同样不产候选。
+    """
+
+    scheme, separator, rest = url.partition("://")
+    if not separator or scheme.lower() != "file":
+        return None
+    rest = re.split(r"[#?]", rest, maxsplit=1)[0]
+    authority, slash, path = rest.partition("/")
+    if authority and authority.lower() != "localhost":
+        return None
+    text = "/" + path if slash else "/"
+    if re.match(r"^/[A-Za-z]:(?:/|$)", text):
+        text = text[1:]
+    return _percent_decode(text)
+
+
+def _root_before_profiles(path: str) -> str | None:
+    """截出 `<root>/profiles/` 前面的那一段；没有这个片段就不是 profile 根（不猜）。"""
+
+    segment = re.search(r"[\\/]profiles[\\/]", path)
+    if segment is None:
+        return None
+    return path[: segment.start()]
+
+
+def _plausible_home_root(candidate: str, *, allow_whitespace: bool = False) -> bool:
+    """候选根必须是"一条像样的绝对路径"；畸形项按下面写明的规则丢弃。
+
+    这不是好看问题：候选根参与 `is_under()` 判定，脏项会误导读者（以为某个根被查过）。
+    丢弃规则：
+      * **结构性字符**（控制字符 / 引号 / 括号 / `<` `>`）一律丢：它们在日志里是分隔符，
+        出现在候选**内部**只说明切错了（任何来源都不例外）；
+      * **空白按来源分档**（`allow_whitespace`）：
+          - 普通路径扫描（默认 False）：候选里出现空白即丢——正则以空白为边界，切进来就是切错了；
+          - URL 形态（True）：**允许**。URL 的边界由 URL 语法给出，`%20` 解出来的空格是**路径内容**
+            （`C:/Users/John Doe/.dsh` 这种家目录真实存在）；因为"含空白"就丢掉整个根，
+            正是本轮要消灭的「真根缺失」。
+      * 含 `://` → URL 被当成路径切下来的残片（例如非 file scheme 的 `s://host/x`）；
+      * 归一化后少于两个 `/` → 沿用原有形态门槛（根至少有 `<…>/<x>` 那么深）；
+      * 冒号只允许在盘符位（`X:/`）：`e:///C:/…` 正是"把 `file` 的 `e` 当盘符"留下的畸形项；
+        POSIX 候选的路径体里出现冒号同样是切片——两者都丢。
+    """
+
+    text = candidate.strip()
+    if not text:
+        return False
+    if any(item in "'\"()<>" for item in text) or any(ord(item) < 32 for item in text):
+        return False
+    if not allow_whitespace and any(item.isspace() for item in text):
+        return False
+    if "://" in text:
+        return False
+    normalized = _norm_path(text)
+    if normalized.count("/") < 2:
+        return False
+    drive = re.match(r"^[A-Za-z]:/", normalized)
+    body = normalized[2:] if drive else normalized
+    if ":" in body:
+        return False
+    return bool(drive) or normalized.startswith("/")
+
+
+def _line_at(text: str, index: int) -> str:
+    """`index` 所在的那一行（trim + 截断）：诊断里的"哪条证据"就是这一行原文。"""
+
+    start = text.rfind(chr(10), 0, index) + 1
+    end = text.find(chr(10), index)
+    line = text[start:] if end < 0 else text[start:end]
+    return line.strip()[:200]
+
+
+def dsh_home_root_evidence(text: str = "") -> tuple[HomeRootCandidate, ...]:
+    """$DSH_HOME 的候选根，**逐条带来源**：哪个根来自哪条证据。
+
+    两种日志来源都要求"日志里真的出现 `<root>/profiles/<name>`"：
+      * `log:file-url`   —— URL 形态（`file:///C:/x/profiles/…`）**单独解析**出来的本地根；
+      * `log:plain-path` —— 普通路径形态（`C:\\x\\.dsh\\profiles\\…`）。
+    落在 URL 区间内的普通扫描匹配一律丢弃（否则会切出畸形候选，见 `_DSH_HOME_URL` 的注释）。
+    """
+
+    candidates: list[HomeRootCandidate] = []
+    env_home = os.environ.get("DSH_HOME")
+    if env_home:
+        candidates.append(
+            HomeRootCandidate(
+                root=env_home, source=HOME_ROOT_SOURCE_ENV, evidence="环境变量 DSH_HOME"
+            )
+        )
+    candidates.append(
+        HomeRootCandidate(
+            root=str(Path.home() / DEFAULT_DSH_HOME_DIRNAME),
+            source=HOME_ROOT_SOURCE_DEFAULT,
+            evidence="$HOME/.dsh（平台默认）",
+        )
+    )
+
+    url_spans: list[tuple[int, int]] = []
+    for match in _DSH_HOME_URL.finditer(text):
+        url_spans.append((match.start(), match.end()))
+        path = _file_url_path(match.group(0))
+        if path is None:
+            continue
+        root = _root_before_profiles(path)
+        # URL 形态允许空白：%20 解出来的空格是路径内容（分档说明见 _plausible_home_root）。
+        if root is None or not _plausible_home_root(root, allow_whitespace=True):
+            continue
+        candidates.append(
+            HomeRootCandidate(
+                root=root, source=HOME_ROOT_SOURCE_FILE_URL, evidence=match.group(0)[:200]
+            )
+        )
+
+    for pattern in (_DSH_HOME_WINDOWS, _DSH_HOME_POSIX):
+        for match in pattern.finditer(text):
+            if any(start <= match.start() < end for start, end in url_spans):
+                continue  # URL 已单独解析过：它的切片不是路径（成文规则，见 _DSH_HOME_URL）
+            if pattern is _DSH_HOME_POSIX and text[match.start() - 1 : match.start()] == ":":
+                # 紧跟在 `:` 之后的 POSIX 路径是 **scheme 切片**：`file:///home/x` 的 `/home/x`、
+                # 以及单斜杠 `file:/C:/…` 留下的 `/Users/…`（丢盘符）都是这么来的——丢掉它
+                # （宁可少一个候选，也不留"缺盘符片段"）。Windows 形态**不能**套这条：
+                # `file:C:/…` 里那个 `C:/…` 正是正确的根，前面也天然带着冒号。
+                continue
+            candidate = match.group(1)
+            if not _plausible_home_root(candidate):
+                continue
+            candidates.append(
+                HomeRootCandidate(
+                    root=candidate,
+                    source=HOME_ROOT_SOURCE_LOG_PATH,
+                    evidence=_line_at(text, match.start()),
+                )
+            )
+
+    seen: set[str] = set()
+    unique: list[HomeRootCandidate] = []
+    for item in candidates:
+        key = _norm_path(item.root)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return tuple(unique)
+
+
+def dsh_home_roots(text: str = "") -> tuple[str, ...]:
+    """$DSH_HOME 的候选根（兼容入口）：环境变量、默认 ~/.dsh、以及日志自曝的 profile 根。
+
+    日志来源是**从证据出发**的推断（真的出现 `<root>/profiles/<name>`），不是"文本里出现了
+    profiles 这个词就算"。来源与证据见 `dsh_home_root_evidence()`——读诊断请用它，别反推。
+    """
+
+    return tuple(item.root for item in dsh_home_root_evidence(text))
+
+
+def temp_roots() -> tuple[str, ...]:
+    """本机临时根的候选集合：显式环境变量与平台默认值都算（少一个就会漏判）。"""
+
+    candidates = [
+        tempfile.gettempdir(),
+        os.environ.get("TEMP"),
+        os.environ.get("TMP"),
+        os.environ.get("TMPDIR"),
+    ]
+    if os.name == "nt":
+        candidates.append(os.path.expandvars(r"%LOCALAPPDATA%\Temp"))
+        candidates.append(os.path.expandvars(r"%SystemRoot%\Temp"))
+    else:
+        candidates.append("/tmp")
+    return _unique([item for item in candidates if item])
+
+
+def is_under(path: str, roots: Iterable[str]) -> bool:
+    """path 是否落在某个根之下（按归一化后的前缀判定，不是子串包含）。"""
+
+    target = _norm_path(path)
+    return any(
+        target == _norm_path(root) or target.startswith(_norm_path(root) + "/") for root in roots
+    )
+
+
+def is_dsh_startup_scratch(path: str, temps: Iterable[str] | None = None) -> bool:
+    """是不是 dsh 自己的启动临时区：系统 temp 之下，或目录名以 dsh- 开头。"""
+
+    if Path(_norm_path(path)).name.startswith(DSH_SCRATCH_PREFIX):
+        return True
+    return is_under(path, temp_roots() if temps is None else temps)
+
+
+def has_dsh_boot_failure(text: str) -> bool:
+    return any(marker in text for marker in DSH_BOOT_FAILURE_MARKERS)
+
+
+def crash_blocks(text: str) -> tuple[str, ...]:
+    """切出**崩溃块**：每块 = 含启动崩溃原文的那一行 + 紧随其后的缩进续行。
+
+    窗口取"块"的理由写在 classify_startup_denial 的 docstring 里（整篇 → N3 假跳过；
+    同一行 → N4 丢真因；缩进续行是"还在同一条记录里"的可判定信号）。
+    """
+
+    lines = text.splitlines()
+    blocks: list[str] = []
+    for index, line in enumerate(lines):
+        if not has_dsh_boot_failure(line):
+            continue
+        block = [line]
+        for follow in lines[index + 1 :]:
+            if not follow.strip() or not follow[:1].isspace():
+                break  # 空行 / 不缩进的行（另一条记录或普通输出）→ 本块到此为止
+            block.append(follow)
+        blocks.append(chr(10).join(block))
+    return tuple(blocks)
+
+
+def classify_startup_denial(
+    text: str,
+    *,
+    homes: Sequence[str] | None = None,
+    temps: Sequence[str] | None = None,
+) -> StartupDenial | None:
+    """按**被拒路径**判断"dsh 自身起不来、是哪一类"。
+
+    判定顺序（每一步都只承认能归因的证据，归不了因就不产生环境跳过）：
+      1. 解析出的被拒路径落在 $DSH_HOME（或其 profiles 子目录）下 → profile_write_denied；
+      2. 否则必须有 dsh 启动崩溃的原文，且被拒路径落在**同一个崩溃块**里、并在 dsh 自己的启动
+         临时区 → other_path_denied；
+      3. 其余一律返回 None：让这条闭环按失败收场，而不是被洗成 skipped。
+
+    **第 2 步的窗口为什么是"崩溃块"**（三档都试过，只有中间这档同时满足 N3/N4）：
+      * 整篇日志：会把**另一次尝试**的被拒路径读成这一次崩溃的原因——两次记录之间甚至没有空行
+        （真机自己就是两行 `Error:` 紧挨着），那就是一次假的环境跳过（把 exit 1 洗成 exit 0）；
+      * 同一行：真因常常写在**同一记录的下一条缩进行**上
+        （`  [cause]: EPERM: …, mkdtemp '<路径>'`），只认同一行会把真因丢掉
+        （把该跳过的环境限制报成失败）；
+      * 崩溃块（本实现）：块 = 含崩溃原文的那一行 + 紧随其后的**缩进续行**。Node 的崩溃打印形态就是
+        "消息行 + 缩进的栈帧 / `[cause]` 链 / 缩进的对象字段"，缩进是**可判定的**"还在同一条记录里"
+        的信号；遇到第一行**不缩进**的内容（另一条命令的输出、`dsh exited with code 1` 这类普通行、
+        空行）块就结束。块里的被拒路径才算这一次崩溃的被拒路径。
+    窗口小了只可能**归不了因**（返回 None，按真失败收场），这正是本平台要的方向。
+    已知缺口（照实写）：崩溃原文与被拒路径之间若被一条**不缩进**的行隔开（即使属于同一次崩溃），
+    这里会归不了因 → 真失败，而不是环境跳过。
+
+    homes/temps 可注入，供检查用例在不碰真实环境变量的前提下驱动判定（此时根证据标成
+    `injected:homes`，来源字段不许留空）。
+    """
+
+    denials = denied_paths(text)
+    if not denials:
+        return None
+    if homes is not None:
+        home_roots = tuple(homes)
+        home_evidence = tuple(
+            HomeRootCandidate(
+                root=item, source=HOME_ROOT_SOURCE_INJECTED, evidence="homes 参数注入（检查用例）"
+            )
+            for item in homes
+        )
+    else:
+        home_evidence = dsh_home_root_evidence(text)
+        home_roots = tuple(item.root for item in home_evidence)
+    temp_root_list = tuple(temps) if temps is not None else temp_roots()
+    inside_home = [item for item in denials if is_under(item.path, home_roots)]
+    if inside_home:
+        return StartupDenial(
+            kind=PROFILE_WRITE_DENIED,
+            denial=inside_home[0],
+            paths=tuple(item.path for item in denials),
+            home_roots=home_roots,
+            home_root_evidence=home_evidence,
+        )
+    if not has_dsh_boot_failure(text):
+        return None
+    # 「启动崩溃原文」与「被拒路径」的合取限定在**同一个崩溃块**里（窗口理由见 docstring）：
+    # 块 = 崩溃原文那一行 + 紧随其后的缩进续行（栈帧 / [cause] 链 / 缩进字段）。
+    for block in crash_blocks(text):
+        scratch = [
+            item
+            for item in denied_paths(block)
+            if is_dsh_startup_scratch(item.path, temp_root_list)
+        ]
+        if scratch:
+            return StartupDenial(
+                kind=OTHER_PATH_DENIED,
+                denial=scratch[0],
+                paths=tuple(item.path for item in denials),
+                home_roots=home_roots,
+                home_root_evidence=home_evidence,
+            )
+    return None
+
+
+def startup_denied_reason(denial: StartupDenial) -> str:
+    """把判定写成 reason：两种状态都必须写出**是哪条路径被拒**，且不许写成规则判定。"""
+
+    syscall = f"；拒绝系统调用：{denial.syscall}" if denial.syscall else ""
+    if denial.kind == PROFILE_WRITE_DENIED:
+        return (
+            "dsh 自身起不来（写 profile 被环境拒绝）：受限沙箱不允许写 $DSH_HOME 下的 "
+            "profiles/*.yml，dsh 在注册任何 Hook 之前就退出了。这是环境限制，"
+            "不是策略判定，也不是本仓库的缺陷——但它与「Hook 起不来」是两层不同的失败，"
+            f"所以单独一个状态与理由。被拒路径：{denial.path}{syscall}"
+        )
+    return (
+        "dsh 自身起不来（$DSH_HOME 之外的路径被环境拒绝）：dsh 在注册任何 Hook 之前就退出了，"
+        f"但被拒路径不在 $DSH_HOME 下，而在 dsh 自己的启动临时区——被拒路径：{denial.path}{syscall}"
+        "（dsh 的 spill-local 插件启动时要 mkdtemp，系统 temp 不可写就会走到这里）。"
+        "这不是「写 profile 被拒」，也不是策略判定，更不是本仓库的缺陷；"
+        "不要把这条跳过读成任何一条规则判定。"
+    )
+
+
+def hook_workdir_missing_reason(failure: HookSpawnFailure) -> str:
+    """把"工作目录不可用导致 Hook 起不来"写成 reason：写明怎么改，且**不**许说成沙箱原因。"""
+
+    where = f"（日志写的目录：{failure.workdir}）" if failure.workdir else ""
+    return (
+        "Hook 进程起不来，但原因**不是**沙箱：插件理由里写明工作目录不可用"
+        f"{where}——config.projectDir（或 .policy/patch.yml 的 projectDir）指向了不存在、"
+        "或者不是目录的路径，插件在 spawn 之前就按失败关闭拒绝了调用。Node 的 spawn 在 cwd "
+        "不存在时会把 ENOENT 归给可执行文件，所以理由里出现的 node.exe 是误导，不要据此判断"
+        "「Node 没装 / 路径不对」。改成什么形态就能过：把那个目录建出来，或把 projectDir 指向"
+        "真实存在的目录，再跑 python tools/dsh_sandbox_loop.py --require-dsh。"
+        "这是接线/配置错误，不是环境限制（区别于「沙箱禁止管道 stdio」那一类），也不是策略判定——"
+        "所以按**真失败**收场，不给环境跳过。"
+    )
 
 
 def run_dsh(prompt: str, log_name: str) -> int:
@@ -237,39 +786,116 @@ def run_dsh(prompt: str, log_name: str) -> int:
     return completed.returncode
 
 
-def hook_could_not_spawn() -> bool:
-    """判断"审计为空"是不是因为 Hook 进程根本起不来（而不是策略判定或别的失败）。
+def _log_texts() -> list[str]:
+    """按文件名读全部原始日志（读不到就跳过：扫描是诊断，不是判定本身）。"""
 
-    本机实测的机制：Hook 走 `ctx.shell`（dsh 的 shell 服务），它用**管道 stdio** 捕获
-    Hook 的输出；而受限沙箱禁止打开命名管道，于是 spawn 直接 EPERM。进程内插件把这个
-    异常翻译成 deny（失败关闭），模型看到的是"拒绝调用"，审计里则什么都没有——
-    与"被 ARCH-001 阻断"是两件完全不同的事，必须区分开，否则会把它当成策略结论。
+    texts: list[str] = []
+    for log in sorted(LOGS.glob("*.txt")):
+        try:
+            texts.append(log.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return texts
 
-    复现（仓库外的普通 shell 里）：
+
+def _line_with_both(text: str, first: str, second: str) -> str:
+    """返回**同一行**里同时含两个标记的那一行原文（trim + 截断；没有就返回空串）。"""
+
+    for line in text.splitlines():
+        if first in line and second in line:
+            return line.strip()[:200]
+    return ""
+
+
+def hook_failure_seen() -> bool:
+    """日志里是否出现"Hook 起不来"的原文（**任何原因**都算，读不出原因也算）。
+
+    它回答的是"Hook 到底跑没跑"，回答不了"为什么"——分类与处置见 `hook_spawn_failure()`。
+    """
+
+    return any(HOOK_FAILURE_MARKER in text for text in _log_texts())
+
+
+def hook_spawn_failure() -> HookSpawnFailure | None:
+    """判断"Hook 进程起不来"是**哪一类原因**；归不了因返回 None（不猜、不跳过）。
+
+    "审计为空"只说明 Hook 没被执行，**不说明为什么**。判据来自插件理由的文本契约
+    （前缀 `policy-hook: Hook 无法执行（`，见 plugin 的 hookFailureReason）：
+
+      1. 理由里点名工作目录不可用（`工作目录不存在：…` / `工作目录不是目录：…`）→
+         HOOK_WORKDIR_UNUSABLE：插件在 spawn **之前**就按失败关闭拒绝了调用。这是**接线/配置**
+         问题（projectDir 指向了不可用的目录），不是环境限制——按真失败收场。
+      2. **同一行**里既出现 `Hook 无法执行`、又出现 `spawn EPERM`（新措辞写成
+         `spawn 报错：spawn EPERM`，task-1 之前那种 `（spawn EPERM）` 形态同样算——判据常量
+         就是较宽的那一个，两种都要能归因；但"另一行的 `spawn EPERM` + 这一行的 Hook 失败"
+         **不算**：那是两件事，把它们读成因果就是假的环境跳过）→
+         SANDBOX_PIPE_STDIO_DENIED：Hook 走
+         `ctx.shell`（用**管道 stdio** 捕获输出），而受限沙箱禁止打开命名管道，于是 spawn
+         直接 EPERM。**只有这一类**是环境限制（可环境跳过）。
+      3. 其余（包括只有 `Hook 无法执行` 却读不出原因的旧日志）→ None：不猜，
+         与 14 号文档 §2.2「归不了因就不跳过」同一口径。
+
+    同一份日志里两类证据同时出现时按**更严**的一类算（工作目录不可用优先），宁可红着。
+
+    复现（仓库外的普通 shell 里；沙箱那一类的原文形态）：
         .tmp/phase-2-sandbox/demo-shop> dsh --profile headless \
             --patch .policy/patch.yml \
             "用 edit 工具在 src/shop/order_controller.py 的 import 区加一行"
     """
 
-    for log in sorted(LOGS.glob("*.txt")):
-        try:
-            text = log.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+    workdir_seen = False
+    workdir: str | None = None
+    workdir_evidence = ""
+    sandbox_evidence = ""
+    for text in _log_texts():
+        if HOOK_FAILURE_MARKER not in text:
             continue
-        if any(marker in text for marker in SPAWN_DENIED_MARKERS):
-            return True
-    return False
+        marker_at = _first_marker_at(text, HOOK_WORKDIR_UNUSABLE_MARKERS)
+        if marker_at is not None:
+            # 工作目录这一类更严：同一份日志里不再去认沙箱证据（宁可红着）。
+            workdir_seen = True
+            if not workdir_evidence:
+                workdir_evidence = _line_at(text, marker_at)
+                clause = _HOOK_WORKDIR_CLAUSE.search(text)
+                workdir = clause.group(1).strip() if clause is not None else None
+            continue
+        # 沙箱类必须**同一行**：跨行的组合不算归因（证据也是那一行原文，不是随便一行）。
+        if not sandbox_evidence:
+            sandbox_evidence = _line_with_both(
+                text, HOOK_FAILURE_MARKER, SANDBOX_SPAWN_DENIED_MARKER
+            )
+    if workdir_seen:
+        return HookSpawnFailure(
+            kind=HOOK_WORKDIR_UNUSABLE, workdir=workdir, evidence=workdir_evidence
+        )
+    if sandbox_evidence:
+        return HookSpawnFailure(kind=SANDBOX_PIPE_STDIO_DENIED, evidence=sandbox_evidence)
+    return None
 
 
-def dsh_could_not_start() -> bool:
-    """判断"审计为空"是不是因为 dsh 自己都没起来（受限沙箱不许它写 $DSH_HOME 下的 profile）。
+def _first_marker_at(text: str, markers: tuple[str, ...]) -> int | None:
+    """`markers` 里第一个出现在 `text` 中的位置（一个都没有就返回 None）。"""
 
-    本机实测：默认 DSH_HOME 下 dsh 以退出码 1 结束，日志里是
-    `EPERM: C:\\Users\\ZNM\\.dsh\\profiles\\headless\\cordis.yml`——连启动都没完成。
-    这与"被规则阻断""Hook 起不来"都是不同的结论，所以诊断必须分开写。
+    hits = [text.index(marker) for marker in markers if marker in text]
+    return min(hits) if hits else None
 
-    判据刻意收紧：既要出现权限被拒的原文，又要同时指向 dsh 自己的配置路径，
-    避免把日志里其它无关的 EPERM 误判成环境跳过（误判会把真失败洗成 skipped）。
+
+def hook_could_not_spawn() -> bool:
+    """兼容包装（旧名）：与 `hook_failure_seen()` 同义——**它答不出"为什么"**。
+
+    旧实现把它当成"沙箱禁止管道 stdio"的证据，于是 `projectDir` 配错（理由里写着
+    "工作目录不存在"）也被读成环境限制。要分类、要决定能不能环境跳过，用 `hook_spawn_failure()`。
+    """
+
+    return hook_failure_seen()
+
+
+def dsh_startup_denial() -> StartupDenial | None:
+    """扫 dsh 的原始日志，返回第一条**可归因**的"dsh 自身起不来"（归不了因就返回 None）。
+
+    归因按被拒路径分类，见 classify_startup_denial：落在 $DSH_HOME 下是写 profile 被拒，
+    落在 dsh 自己的启动临时区（系统 temp / dsh- scratch）是另一类失败。
+    两者都必须写明是哪条路径被拒；归不了因的权限错误**不产生环境跳过**。
     """
 
     for log in sorted(LOGS.glob("*.txt")):
@@ -277,11 +903,16 @@ def dsh_could_not_start() -> bool:
             text = log.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        if not any(marker in text for marker in DSH_STARTUP_DENIED_MARKERS):
-            continue
-        if any(token in text for token in DSH_HOME_MARKERS):
-            return True
-    return False
+        denial = classify_startup_denial(text)
+        if denial is not None:
+            return denial
+    return None
+
+
+def dsh_could_not_start() -> bool:
+    """兼容包装：是否确认"dsh 自身起不来"（具体是哪一类看 dsh_startup_denial()）。"""
+
+    return dsh_startup_denial() is not None
 
 
 def audit_records() -> list[dict]:
@@ -337,7 +968,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--require-dsh",
         action="store_true",
-        help="任何环境跳过（dsh 不可用，或 Hook 进程起不来）都视为失败",
+        help="任何环境跳过（dsh 不可用 / Hook 进程起不来 / dsh 自身被环境挡住）都视为失败",
     )
     parser.add_argument("--keep", action="store_true", help="保留上一轮审计与采集")
     args = parser.parse_args(argv)
@@ -435,9 +1066,30 @@ def main(argv: list[str] | None = None) -> int:
             "（沙箱禁止管道 stdio 时 dsh 的 ctx.shell 会 EPERM）、"
             "以及 dsh 侧是否启用了 patch.yml 的进程内转发插件"
         )
-        if hook_could_not_spawn():
+        failure = hook_spawn_failure()
+        if failure is not None and failure.kind == HOOK_WORKDIR_UNUSABLE:
+            # 归因是"工作目录不可用"= 接线/配置错误：**不产生环境跳过**（与 14 号文档 §2.2
+            # 「归不了因就不跳过」同一口径）。洗成 skipped 会让"配错了"看起来像"这台机器不允许"，
+            # 而两者要改的地方完全不同。
+            payload["result"] = "fail"
+            payload["environment_skipped"] = False
+            payload["hook_spawn_denied_kind"] = failure.kind
+            payload["hook_spawn_denied_workdir"] = failure.workdir
+            payload["hook_spawn_denied_evidence"] = failure.evidence
+            payload["diagnosis"] = (
+                "Hook 从未被调用，理由是**工作目录不可用**（projectDir 配错）："
+                "这不是沙箱拒绝，先修接线再按下面的命令重跑"
+            )
+            payload["reason"] = hook_workdir_missing_reason(failure)
+            payload["reproduce"] = (
+                "确认 config.projectDir（或 .policy/patch.yml 的 projectDir）指向存在的目录后执行："
+                "python tools/dsh_sandbox_loop.py --require-dsh"
+            )
+        elif failure is not None:
             payload["result"] = "skipped"
             payload["environment_skipped"] = True
+            payload["hook_spawn_denied_kind"] = failure.kind
+            payload["hook_spawn_denied_evidence"] = failure.evidence
             payload["reason"] = (
                 "Hook 进程起不来（spawn EPERM）：受限沙箱禁止管道 stdio，而 dsh 的 ctx.shell "
                 "正是用管道捕获 Hook 输出。命令桥（dsh-hooks-claude-code）走同一个 ctx.shell，"
@@ -450,19 +1102,46 @@ def main(argv: list[str] | None = None) -> int:
                 "\"用 edit 工具在 src/shop/order_controller.py 的 import 区加一行 "
                 "'from repository import OrderRepository'，然后一句话报告结果。\""
             )
-        elif dsh_could_not_start():
+        elif (denial := dsh_startup_denial()) is not None:
             payload["result"] = "skipped"
             payload["environment_skipped"] = True
-            payload["reason"] = (
-                "dsh 自身起不来（写 profile 被环境拒绝）：受限沙箱不允许写 $DSH_HOME 下的 "
-                "profiles/*.yml，dsh 在注册任何 Hook 之前就退出了。这是环境限制，"
-                "不是策略判定，也不是本仓库的缺陷——但它与「Hook 起不来」是两层不同的失败，"
-                "所以单独一个状态与理由。"
-            )
+            # 兼容字段 + 新字段：消费者既能沿用 dsh_startup_denied，也能直接读出
+            # "是哪一类、哪条路径被拒"，不必从 reason 文本里猜。
             payload["dsh_startup_denied"] = True
-            payload["reproduce"] = (
-                "在不受限的 shell 里（或先把 DSH_HOME 指到工作区内）执行："
-                "python tools/dsh_sandbox_loop.py --require-dsh"
+            payload["dsh_startup_denied_kind"] = denial.kind
+            payload["dsh_startup_denied_path"] = denial.path
+            payload["dsh_startup_denied_paths"] = list(denial.paths)
+            payload["dsh_startup_denied_syscall"] = denial.syscall
+            payload["dsh_startup_denied_home_roots"] = list(denial.home_roots)
+            # 「哪个根来自哪条证据」：消费者不必从 root 列表反推（env / 默认值 / URL / 普通路径）。
+            payload["dsh_startup_denied_home_root_evidence"] = [
+                {"root": item.root, "source": item.source, "evidence": item.evidence}
+                for item in denial.home_root_evidence
+            ]
+            payload["reason"] = startup_denied_reason(denial)
+            if denial.kind == PROFILE_WRITE_DENIED:
+                payload["reproduce"] = (
+                    "在不受限的 shell 里（或先把 DSH_HOME 指到可写目录）执行："
+                    "python tools/dsh_sandbox_loop.py --require-dsh"
+                )
+            else:
+                payload["reproduce"] = (
+                    "在不受限的 shell 里（或先把 TEMP/TMP 指到可写目录——dsh 的 spill-local "
+                    "插件在启动时要 mkdtemp）执行：python tools/dsh_sandbox_loop.py --require-dsh"
+                )
+        elif hook_failure_seen():
+            # Hook 起不来但**读不出原因**（旧日志只有 `Hook 无法执行`，或理由被截断）：
+            # 不猜、不跳过，按真失败收场；kind 写成显式的 unattributable，读者不必从结果反推。
+            payload["hook_spawn_denied_kind"] = HOOK_SPAWN_UNATTRIBUTABLE
+            payload["diagnosis"] = (
+                "Hook 从未被调用，且日志里的「Hook 无法执行」读不出原因（既不是 `spawn EPERM`，"
+                "也不是工作目录不可用）：按**真失败**收场，不猜原因、不环境跳过"
+            )
+            payload["reason"] = (
+                "Hook 进程起不来，但日志里的理由读不出原因：既没有 `spawn 报错：spawn EPERM`"
+                "（沙箱禁止管道 stdio），也没有「工作目录不存在 / 不是目录」（projectDir 配错）。"
+                "归不了因就不跳过——请按日志原文核对插件版本与接线；要让它能通过，"
+                "要么让插件在理由里写出原因，要么把接线恢复到真的能跑通的形态。"
             )
     write(ARTIFACT, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + chr(10))
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
@@ -470,7 +1149,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     # 环境跳过默认不红（否则门禁在没 dsh / 沙箱禁止管道 stdio 的机器上长期红着，
     # 最终被当成噪声——这个教训已经记过一次）；但 --require-dsh 必须能把它判成失败：
-    # 这个开关问的是"这条闭环真的在本机跑过吗"，两条跳过路径都得被它覆盖。
+    # 这个开关问的是"这条闭环真的在本机跑过吗"，**每一条**跳过路径都得被它覆盖。
     if payload.get("environment_skipped") is True:
         return 1 if args.require_dsh else 0
     return 1

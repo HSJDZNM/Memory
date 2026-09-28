@@ -1,0 +1,22 @@
+# 反例夹具（N14）：把 language 写成显式不限制（*）。
+# "*" 与"不声明"在判定上等价于同一件事：这一维度不参与限制，于是语言未知时
+# 依赖集为空、checker 静默放行。因此它同样必须**加载失败**。
+# 由 tests/unit/test_loader.py 加载，期望抛 RuleFileError（field=scope.language）。
+id: ARCH-901
+version: 1
+name: dependency-rule-with-wildcard-language
+description: 用 forbidden_dependency 却把 language 写成 * 的反例。
+scope:
+  language: "*"
+  layer: controller
+severity: error
+enforcement:
+  type: deterministic
+  checker: forbidden_dependency
+rule:
+  forbidden_dependency:
+    - repository
+message: Controller 不得直接依赖 Repository。
+source:
+  kind: project-policy
+  path: tests/fixtures/invalid_rules/wildcard-language/ARCH-901.yaml
