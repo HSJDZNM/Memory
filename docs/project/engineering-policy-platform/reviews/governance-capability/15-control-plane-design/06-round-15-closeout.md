@@ -4,7 +4,8 @@
 > **每个 sha 与数字都标了来源**；标「未核实」的即没有证据。全程只读 git，未修改平台源码。
 > **最终状态**（2026-09-28 22:1x +08:00）：分支 `feat/rules-and-os-platform` = `80acbe9`，工作区为空；
 > `split/round-15` 与 `wip/round-15-baseline` 已删除；检查点由注释标签 `checkpoint/round-15` 固定；
-> **推送未完成**——被凭据阻塞（见 §5.3）。
+> 推送：沙箱内被凭据阻塞；**已由使用者本机完成**（见 §5.3）。
+> **补记（2026-09-28 22:35）**：最终顶端为 `f6b9b79`（在 `80acbe9` 之后又有 `928df2a` / `f6b9b79` 两个文档提交），已推送，`origin/feat` = `f6b9b79`。
 
 ## 1 提交图
 
@@ -72,7 +73,13 @@
 在修好之后的顶端树上重跑 `python tools/ci_local.py --full --timings`：**本机检查全部通过（33 步）**。
 因此 `feat` 上这 4 个提交的内容**通过过本机全量门禁**。
 
-### 5.3 推送（未完成）
+### 5.3 推送（沙箱内失败 → 本机完成）
+
+**补记**：使用者在本机推送成功——远端 reflog `origin/feat` `8b0be68 → f6b9b79`（2026-09-28 22:35:43 +08:00）。
+pre-push 钩子（`ci_local.py --hook`）在推送前跑完且放行，原始输出 `.tmp/push-run.log`（UTF-16，含 `1873 passed, 1 skipped`）。
+`.tmp/ci-local.lock`（22:35:39）是这次钩子运行留下的空锁文件；锁是 OS 咨询锁、进程退出即释放，文件存在本身不表示有门禁在跑。
+
+以下为沙箱内的原始记录：
 
 `git push origin feat/rules-and-os-platform` **失败在凭据环节**，不是门禁：
 
@@ -86,6 +93,8 @@ fatal: could not read Username for 'https://github.com': No such file or directo
 **待办**：由使用者在具凭据的本机推送（`git push origin feat/rules-and-os-platform`），届时钩子会在这棵树上再跑一次全量门禁。
 
 ## 6 回滚手册（已按删除分支后的现状更新）
+
+> **推送后注意**：这些提交已在 `origin/feat` 上。下表的 `reset --hard` 只改本地，之后再推就要强推（改写共享历史）；已推送的内容优先用 `git revert` 回退。
 
 | 想退到哪 | 命令 | 丢什么 | 不丢什么 |
 | --- | --- | --- | --- |
