@@ -172,6 +172,79 @@ python C:\\Users\\ZNM\\Downloads\\Memory\\.tmp\\h4\\json-field-diff.py --before 
 - 门禁读数属于 `4241217`（§8.1）与 `4dc7256`（§8.2 的两次复跑）；其后只有 `docs/**` 改动（`6260f06` 与本文件）。这些改动**没有**重跑 33 步；已单独复跑 `tools/check_text_conventions.py`：`检查 613 个文本文件，问题 0 处，跳过第三方镜像 300 个`。
 - **未核实**：本机是否还有别的会话在写这两棵树（`tools/ci_local.py` 的排他锁只保证**同一棵树**上的单实例）。
 
+### 8.6 原始命令在本树跑绿（2026-09-29 07:32–07:41 +08:00，树 = `04542f9`）
+
+**与 §8.2 的关系**：§8.1–§8.2 的绿都换过 `--python`（`refactor-venv` / `refactor-venv-copy`），理由是当时
+会话沙箱写不了目标树。本节是**原文命令**（`--python .venv/Scripts/python.exe`）在**独立克隆**
+`C:\Users\ZNM\Downloads\Memory-rf` 上的读数：这一次沙箱允许目标路径写入（实测见方案附录 C · W6），
+所以既没有复制解释器、也没有换解释器。
+
+| 项 | 读数 |
+| --- | --- |
+| 命令 | `python tools/ci_local.py --full --python .venv/Scripts/python.exe`（cwd = `C:\Users\ZNM\Downloads\Memory-rf`） |
+| `python` 解析 | `C:\Users\ZNM\miniconda3\python.exe` 3.13.11（与 `08` 记录一致） |
+| 树 | `refactor/control-plane` @ `04542f9`（本文件 §8.6 之前那一提交 = item-1 杂项）；起跑与结束时 `git status --porcelain` 均为空 |
+| 步骤 | `改动文件 759 个；执行 33 步（本机跳过 11 步，登记豁免 2 步）`；**33/33 `rc=0`**，非 0 计数 **0** |
+| 结论行 | `本机检查全部通过（33 步）` → 进程 exit **0** |
+| 墙钟 | 表内**合计 7m 56.3s**；最贵 pytest 5m 01.5s（63.3%）、Learning notebooks are in sync 1m 03.8s、Orchestration closed loop 1m 01.6s |
+| 测试 | `1874 passed, 1 skipped, 3 warnings in 299.98s (0:04:59)` |
+| 环境 | 继承 `PYTHONIOENCODING=UTF8`、本机 `chcp` = 936；`CI_LOCAL_PYTHON` **未设** |
+| 证据 | `.tmp/ci-full-04542f9.log`（168156 B，sha256[:16] `8ff95c02255226a6`）；`.tmp/artifacts/tests-all-report.xml`（250291 B，`da4f6b8876e9f4d4`）、`.tmp/artifacts/phase-8-evidence.json`（47937 B，`fd7c3bcac9449b98`） |
+
+**这一步证明什么**：原文命令在本树绿，且 33 步里的 `Unit, contract, integration and security tests` 就包含
+item-1 改过的那条用例。**不证明**：CI（Linux / UTF-8）侧同样绿；也不证明「`PYTHONIOENCODING` 一变就红」
+在别的文件里不存在——本节的绿是在**继承 UTF8** 的条件下得到的，去掉该变量的对照在 §8.6.1。
+
+#### 8.6.1 item-1 的红→绿（同一棵树、同一解释器，条件只差一个环境变量）
+
+| 条件 | 被测文件 | 读数 |
+| --- | --- | --- |
+| 去掉 `PYTHONIOENCODING` | `258748a` 的 HEAD 版（`git show HEAD:…` 写进临时文件后跑，跑完删除） | **1 failed**（`test_pipeline_command_matches_policy_check`）/ 13 passed |
+| 去掉 `PYTHONIOENCODING` | item-1 改后 | **14 passed** |
+| 带 `PYTHONIOENCODING=UTF8` | item-1 改后 | **14 passed** |
+
+这就是 `test_validator_cli.py` 三个子进程调用点收口到 `subprocess_env()` 之前的红与之后的绿；
+它只覆盖**这一个文件**的三个调用点（探针临时文件没有提交、也不在树上）。
+
+---
+
+## 9 行为探针：受治理会话「先建一个空测试文件、再写实现」（2026-09-29 08:0x +08:00）
+
+**本节只记录，不修任何东西。** 判定由**生产入口**产生：`python -m adapters.dsh.hooks`（PreToolUse、
+真 stdin 事件、`--hooks-config` 过接线自检、`pre_evidence.enabled = true`），不是直接调内部函数。
+被治理工作区是 `tests/fixtures/validators/project` 的副本 `.tmp/ctl-probe/project`；解释器是
+`Memory-rf\.venv`（3.13.11）。
+
+**会话脚本**：① 用 `write` 建一个只有 docstring、**没有任何用例**的 `tests/test_order_service.py`；
+② 把①的产物落盘后，用 `edit` 给 `src/shop/order_service.py` 加一个 `cancel` 方法（= 写实现）。
+
+| 台阶 | 动作（审计里的 target / operation / layer） | Hook 退出码 | decision | reason_code | violations | served_checkers |
+| --- | --- | --- | --- | --- | --- | --- |
+| ① | `tests/test_order_service.py` / `create` / `test` | **0（放行）** | `allow` | `allow` | 0 条 | `[failing_tests, missing_docstring, missing_tests, style_lint]` |
+| ② | `src/shop/order_service.py` / `edit` / `service` | **2（阻断）** | `block` | `policy_block` | 1 条：`TESTING-002@1` / **critical** / `evidence.detail=uncovered_checker` / `evidence.value=failing_tests` | `[missing_docstring, missing_tests, style_lint]`（**没有** `failing_tests`） |
+
+**① 为什么是 allow（不等于「测试查过了」）**：这一轮 pytest 验证器给出的理由是
+`变更集里没有生产文件，测试选择不适用`——动作的目标是测试文件本身，选择阶段**没有对象**，
+`failing_tests` 由「没有对象 + 验证器给出对象判定」那条分支服务（`10` §6 已写明台阶 1 **没有**动那条分支）。
+所以①的 allow 只能读成「平台允许先把空测试文件建出来」。
+
+**② 台阶 1 之后的判定（本节的判据读数）**：pytest 的理由是
+`选中的测试没有收集到任何用例（pytest 退出码 5）：零个用例被执行，failing_tests 没有执行证据，不记入 served_checkers`，
+`failing_tests` 因此不在 `served_checkers` 里，引擎按 AGENTS 第 20 条以 **critical** 阻断（`pre_evidence_status=collected`）。
+与 `10` §1 的 after 读数**同形**（同一规则、同一 severity、同一 `evidence.value`），只是树与解释器换了。
+
+**结论（只到这里）**：「先建一个**空**测试文件」不再能换来「写实现被放行」——②会被阻断。
+**它不说的**：不证明「先写测试、再写实现」整体被拦——AGENTS 第 51 条的 Q7 路径是**真的写了测试**、
+只是实现还没落地，那条路给的是 `allow_with_warnings` + `pending_implementation`。**本节没有跑 Q7 的对照场景**，
+所以两条路的差别在本文件里只有「空占位」这一侧有读数（Q7 那一侧由既有测试 `tests/integration/`
+的 `collected_nothing` / 待实现用例钉住，不是本节读数）。
+
+**证据**（`.tmp/ctl-probe/out/`，`tools/cleanup.py` 之后不可复核）：
+`probe-report.json`（`72b13234921c4e24`，19590 B）、`step-a.decision.json`（`f2ff3db8f10ab52f`，7502 B）、
+`step-b.decision.json`（`6891de584d31b82f`，7993 B）、两份审计 JSONL
+（`step-a-create-empty-test.audit.jsonl` `6f29e07a97c3e15c`；`step-b-write-implementation.audit.jsonl` `ad8f94a8ebc5e523`）、
+`self-check.stderr.txt`（`62bacc6f93a298d0`）、两次 stdout/stderr（`e3b0c44298fc1c14` = 空；②的 stderr `30f405bfa085253d`）。
+判定记录里的 `pre_evidence.tree.tree_digest`：① `sha256:f0552be78425abe4…`、② `sha256:94a4ef473d002287…`。
 ---
 
 **签署口径**：本文件每个数字都能用上面的命令重算；凡我没亲自跑出来的，都标了「未核实」。
