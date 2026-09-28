@@ -147,6 +147,7 @@ python C:\\Users\\ZNM\\Downloads\\Memory\\.tmp\\h4\\json-field-diff.py --before 
 **机制（本轮实测，不是猜）**：本机沙箱的强制点跟着**进程映像所在位置**走，不跟着目标目录的 ACL 走。控制变量实验：把 `C:\Users\ZNM\miniconda3\python.exe` **原样复制**成 `Memory\.tmp\pycopy\python.exe`（映像落进会话工作区），同一份二进制立刻只能写会话工作区——`.tmp\probe-ws`（重构树）与 `C:\Users\ZNM\Downloads\refprobe` 都 `WinError 5`，而 `Memory\.tmp\dsh-probe-venv` 成功；放回工作区外时三处全过。
 **这同时补上 §6 那条「未核实」**：两棵树 `icacls` 输出相同却一写一拒，原因不在树的 ACL，而在解释器映像的位置。**仍未核实**：强制点的实现（minifilter / 令牌 / 其它）。
 **替代解释器（等效性证据，不声称等同）**：`C:\Users\ZNM\Downloads\refactor-venv`（`uv venv` + `uv pip install -r requirements.lock`，建在工作区**外**）。它与主树 `.venv` 的发行包**逐个同名 48/48**（双向比对差异 0）；差异只在 5 个补丁号（`httpcore2 2.13.0→2.13.1`、`httpx2 2.13.0→2.13.1`、`langchain-core 1.6.3→1.6.5`、`langgraph-sdk 0.4.4→0.4.5`、`langsmith 0.13.0→0.14.1`）；`requirements.lock` 的六个直接依赖逐条相同（pydantic 2.13.5 / PyYAML 6.0.3 / pytest 9.1.1 / fastapi 0.128.0 / uvicorn 0.40.0 / langgraph 1.2.11）。**§8.1 的绿属于这份解释器**，不能声称「等于主树 `.venv` 跑出来的」。
+**补记（同日复跑，更强的一条）**：把主树 `.venv` **原样复制**到工作区外（`C:\Users\ZNM\Downloads\refactor-venv-copy`，`robocopy /MIR`；用 `importlib.metadata` 逐条比对，`name==version` 差异 **0 / 48**），改用 `--python C:/Users/ZNM/Downloads/refactor-venv-copy/Scripts/python.exe` 在**同一个 HEAD `4dc7256`**（工作区干净）上再跑一次 `--full`：**33/33 `rc=0`、非 0 计数 0、合计 8m 02.0s、`1874 passed, 1 skipped`、末行 `本机检查全部通过（33 步）`**（证据 `.tmp/ci-full-4dc7256-venvcopy.log`，167328 B，sha256[:16] `79ec387ce223cbbe`；另有一次同 HEAD 的 refactor-venv 复跑：33/33、合计 8m 03.6s、`1874 passed, 1 skipped`、`.tmp/ci-full-4dc7256-final.log`，167096 B，`213fa342efd06eeb`）。因此 §8.1 的绿**不依赖**上面那 5 个补丁号差异——原文命令与本树之间只剩一条环境约束：**解释器映像必须在会话工作区之外**。
 
 ### 8.3 一条会左右红绿的用例（环境口径，不是源码结论）
 
@@ -168,7 +169,7 @@ python C:\\Users\\ZNM\\Downloads\\Memory\\.tmp\\h4\\json-field-diff.py --before 
 
 - 不证明主树 `.venv` 能跑出同样结果（§8.2 末段）；也不证明 CI 侧会同样绿（CI 跑的是另一批步骤，见 `--list` 的「本机跳过 11 步 / 登记豁免 2 步」）。
 - 不证明「门禁绿 = 台阶 1 的全部承诺已兑现」：33 步覆盖的是本树的可执行面；R-f 的文字口径与矩阵读数纪律是**方案文档**的改动（提交 `6260f06`），不由门禁覆盖。
-- 门禁读数属于 `4241217`；其后只有 `docs/**` 改动（`6260f06` 与**本文件**）。这些改动**没有**重跑 33 步；已单独复跑 `tools/check_text_conventions.py`：`检查 613 个文本文件，问题 0 处，跳过第三方镜像 300 个`。
+- 门禁读数属于 `4241217`（§8.1）与 `4dc7256`（§8.2 的两次复跑）；其后只有 `docs/**` 改动（`6260f06` 与本文件）。这些改动**没有**重跑 33 步；已单独复跑 `tools/check_text_conventions.py`：`检查 613 个文本文件，问题 0 处，跳过第三方镜像 300 个`。
 - **未核实**：本机是否还有别的会话在写这两棵树（`tools/ci_local.py` 的排他锁只保证**同一棵树**上的单实例）。
 
 ---
