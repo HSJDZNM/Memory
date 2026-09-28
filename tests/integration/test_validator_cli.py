@@ -95,7 +95,7 @@ def test_check_command_only_produces_evidence() -> None:
     payload = json.loads(completed.stdout)
     assert payload["result"] is None  # check 不做判定
     assert payload["evidence"]["dependencies"][0]["name"] == "repository"
-    assert payload["evidence"]["schema_version"] == "1.1"
+    assert payload["evidence"]["schema_version"] == "1.2"
 
 
 def test_check_command_exits_one_on_findings() -> None:

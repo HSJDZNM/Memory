@@ -41,6 +41,21 @@ def test_the_shipped_example_declares_the_test_layer_first() -> None:
     assert config.layers[0] == type(config.layers[0])(pattern="tests/**/*.py", layer="test")
 
 
+def test_the_shipped_example_declares_the_same_agent_version_as_the_manifest() -> None:
+    """示例配置是发给别人的模板：它的 agent_version 必须与适配器声明的实测版本一致。
+
+    修复轮 14 的背景：示例与 manifest 各自写着版本号，谁也没比对过（缺陷 2 的同族问题）。
+    这条检查不做版本语义判断，只要求这两处**同一口径**；真正的「声明 vs 宿主」比对在
+    python -m adapters.cli host-version --check 里。
+    """
+
+    manifest = yaml.safe_load(
+        (REPO_ROOT / "adapters" / "dsh" / "manifest.yaml").read_text(encoding="utf-8")
+    )
+    example = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
+
+    assert example["agent_version"] == manifest["agent_version"]
+
 def test_every_test_file_in_this_repository_resolves_to_the_test_layer() -> None:
     config = load_config(EXAMPLE)
     assert config.test_layer is not None

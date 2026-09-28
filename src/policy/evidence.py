@@ -33,6 +33,7 @@ __all__ = [
     "DependencyResolution",
     "EvidenceBundle",
     "EvidenceLocation",
+    "PendingImplementation",
     "SourceDigest",
     "ToolInvocation",
     "ValidationEvidence",
@@ -46,8 +47,13 @@ __all__ = [
 #      served_checkers、含义不同——顶层是"真的服务过"，记录里是"声明负责"；按名字读会把
 #      "没跑"读成"跑了"。1.0 的载荷在 validators[] 里用的是那个歧义键名，语义也不同，
 #      因此 **不再接受**：看不懂就拒绝，不做"尽量理解"。
+# 1.2：新增 ValidatorStatus.PENDING_IMPLEMENTATION 与 EvidenceBundle.pending_implementation
+#      （Q7：「测试已落地、目标模块还不存在」是「待实现」，不是 validator crashed）。它既不是
+#      "证据到手"（**不进** served_checkers），也不是"证据没拿到"（**不产生** Blocker），
+#      判定侧据此产出 warning。1.1 的载荷里没有这一族字段，读到 pending 记录时会当成未知
+#      状态，因此同样 **不再接受**。
 EVIDENCE_SCHEMA = "validation-evidence"
-EVIDENCE_SCHEMA_VERSION = "1.1"
+EVIDENCE_SCHEMA_VERSION = "1.2"
 SUPPORTED_EVIDENCE_SCHEMA_VERSIONS: FrozenSet[str] = frozenset({EVIDENCE_SCHEMA_VERSION})
 
 
@@ -63,6 +69,11 @@ class ValidatorStatus(str, Enum):
 
     失败关闭的状态（FAIL_CLOSED_STATUSES）必须让"需要该验证器的门禁"block，
     绝不能被同一批里的其他 PASS 抵消。
+
+    三个集合必须覆盖全部取值：SUCCESS（证据到手）、FAIL_CLOSED（证据没拿到）、
+    以及两种"都不是"的显式状态（NOT_SELECTED = 本次没选它；PENDING_IMPLEMENTATION =
+    跑成了、但这次的树还在构建中）。**新增状态必须显式归入其中之一**：漏归类会被
+    读成"没问题"，这条由 tests/contract/test_validator_protocol.py 钉住。
     """
 
     OK = "ok"
@@ -75,6 +86,11 @@ class ValidatorStatus(str, Enum):
     OUTPUT_INVALID = "output_invalid"
     FAILED = "failed"
     NOT_SELECTED = "not_selected"
+    # 「待实现」：工具**跑成了**，但选中的测试模块因为**项目内**某个模块/名字在本次树里
+    # 还不存在而在收集期失败（Q7 / 08 号报告 §5 Q1 的三次复现）。它刻意不进上面两个集合：
+    # 不是"证据到手"（没查成的不能记成查过了），也不是"证据没拿到"（那不是失败关闭，
+    # 而是"先写测试、再写实现"这条正确顺序）。判定侧据此产出 warning 级 violation。
+    PENDING_IMPLEMENTATION = "pending_implementation"
 
 
 # 成功：验证器真的跑完了（有没有发现是另一回事）。
@@ -347,6 +363,50 @@ class Blocker(StrictModel):
         }
 
 
+class PendingImplementation(StrictModel):
+    """「待实现」：这次写入放行了，但覆盖它的测试**还跑不了**。
+
+    现场（08 号报告 §5 Q1 / 14 号报告 §5 Q7，三次独立复现）：项目约定"先写测试"，平台又要求
+    "写生产文件时对应的测试必须已经存在"。先落地的测试 import 还不存在的**项目内**模块/名字时，
+    pytest 在收集期以退出码 2 结束；旧口径把它归成 validator crashed，再由 Blocker 机制升级成
+    critical 覆盖 tool.pytest 声明的两个 checker——于是两条都正确的要求在同一次写盘上互相拆台，
+    被惩罚的是正确的开发顺序，模型的绕法是"先把测试暂存成不测任何东西的占位"。
+
+    这个对象把"待实现"变成一等事实：它**不是**"证据到手"（因此不进 served_checkers，
+    AGENTS 第 50 条 / N17：没查成的不能记成查过了），**也不是**"证据没拿到"（因此不产生
+    Blocker），而是一条可读的、会进判定载荷的 warning（decision=allow_with_warnings）。
+
+    三个清单都**不许为空**：说不出"哪个测试模块、因为哪个项目内缺失的目标"就构不出这条记录——
+    否则它会长成"没有理由的放行"。字段全部是仓库相对路径 / 模块名，不含绝对路径（AGENTS 第 19 条）。
+    """
+
+    validator_id: str = Field(min_length=1)
+    validator_version: str = Field(min_length=1)
+    checkers: Tuple[str, ...] = Field(min_length=1)
+    test_modules: Tuple[str, ...] = Field(min_length=1)
+    missing_targets: Tuple[str, ...] = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    fix: str = Field(min_length=1)
+
+    @property
+    def validator(self) -> str:
+        return f"{self.validator_id}@{self.validator_version}"
+
+    @property
+    def sort_key(self) -> Tuple[str, Tuple[str, ...], Tuple[str, ...]]:
+        return (self.validator, self.test_modules, self.missing_targets)
+
+    def to_payload(self) -> Mapping[str, Any]:
+        return {
+            "validator": self.validator,
+            "checkers": list(self.checkers),
+            "test_modules": list(self.test_modules),
+            "missing_targets": list(self.missing_targets),
+            "reason": self.reason,
+            "fix": self.fix,
+        }
+
+
 class EvidenceBundle(StrictModel):
     """一次代码验证的全部证据。引擎只读这个对象，不关心它是怎么来的。"""
 
@@ -357,6 +417,9 @@ class EvidenceBundle(StrictModel):
     validators: Tuple[ValidatorRecord, ...] = ()
     blockers: Tuple[Blocker, ...] = ()
     served_checkers: Tuple[str, ...] = ()
+    # Q7：「待实现」是一个**独立**的通道——既不进 served_checkers，也不产生 blocker。
+    # 把它塞进上面任一处都会让两件事重新混成一件（"查过了、没问题"）。
+    pending_implementation: Tuple[PendingImplementation, ...] = ()
     unmapped_findings: int = Field(default=0, ge=0)
 
     @field_validator("schema_version")
@@ -391,6 +454,20 @@ class EvidenceBundle(StrictModel):
                 return blocker
         return None
 
+    def pending_for(self, checker: str) -> Tuple[PendingImplementation, ...]:
+        """返回覆盖该 checker 的「待实现」记录（按稳定顺序）。
+
+        它回答的是第三种问题：不是"这个 checker 查过了吗"，而是"它这次为什么没能查成，
+        以及这个原因属于**本次的树还在构建中**吗"。没有它，引擎只能把"没服务过"一律
+        当成失败关闭——那正是 Q7 要修的那件事。
+        """
+
+        return tuple(
+            item
+            for item in self.pending_implementation
+            if checker in item.checkers
+        )
+
     def dependency_names(self) -> Tuple[str, ...]:
         return tuple(sorted({fact.name for fact in self.dependencies}))
 
@@ -408,6 +485,12 @@ class EvidenceBundle(StrictModel):
                 "validators": tuple(sorted(self.validators, key=lambda item: item.validator)),
                 "blockers": tuple(sorted(self.blockers, key=lambda item: (item.validator, item.reason))),
                 "served_checkers": tuple(sorted(set(self.served_checkers))),
+                "pending_implementation": tuple(
+                    sorted(
+                        _unique(self.pending_implementation, key=lambda item: item.sort_key),
+                        key=lambda item: item.sort_key,
+                    )
+                ),
             }
         )
 
@@ -429,6 +512,9 @@ class EvidenceBundle(StrictModel):
             "validators": [record.to_payload() for record in self.validators],
             "blockers": [blocker.to_payload() for blocker in self.blockers],
             "served_checkers": list(self.served_checkers),
+            "pending_implementation": [
+                item.to_payload() for item in self.pending_implementation
+            ],
             "unmapped_findings": self.unmapped_findings,
         }
 

@@ -691,3 +691,208 @@ def test_the_audit_says_which_language_coverage_this_evidence_had(tmp_root: Path
     python_record = last_decision(audit)
     assert python_record["pre_evidence"]["language_coverage"]["status"] == "covered_by_rule_pack"
     assert "DOC-900@1" in python_record["matched_rules"]
+
+
+# --------------------------------------------------------------------------- Q7：待实现
+
+# 真机收据的形状（14 号报告 §5 Q7）：测试先落地，它 import 的名字还没写进实现。
+PENDING_TARGET = "src/shop/audit_repository.py"
+PENDING_TEST_MODULE = "tests/test_audit_repository.py"
+PENDING_TEST_SOURCE = (
+    '"""审计仓储的测试：先写测试，实现还没落地。"""' + chr(10) + chr(10)
+    + "from shop.audit_repository import AuditEntry" + chr(10) + chr(10) + chr(10)
+    + "def test_entry_keeps_the_sequence() -> None:" + chr(10)
+    + '    """序号原样保留。"""' + chr(10) + chr(10)
+    + "    assert AuditEntry(sequence=1).sequence == 1" + chr(10)
+)
+# 提议内容：模块落地了，AuditEntry 这个名字还没写进去
+PENDING_PROPOSAL = (
+    '"""审计仓储。"""' + chr(10) + chr(10) + chr(10)
+    + "class AuditRepository:" + chr(10)
+    + '    """审计仓储的实现（AuditEntry 还没落地）。"""' + chr(10)
+)
+# 提议内容：名字也落地了（同一条测试于是真的会跑）
+PENDING_LANDED = (
+    '"""审计仓储。"""' + chr(10) + chr(10) + chr(10)
+    + "class AuditEntry:" + chr(10)
+    + '    """一条审计记录。"""' + chr(10) + chr(10)
+    + "    def __init__(self, sequence: int) -> None:" + chr(10)
+    + '        """记录序号。"""' + chr(10) + chr(10)
+    + "        self.sequence = sequence" + chr(10)
+)
+
+
+def write_testing_rules(tmp_root: Path) -> Path:
+    """两条**证据类**规则，由真实加载器从 YAML 读出来（规则是数据）。
+
+    TESTING-900 的 severity 是 error：它的命中本来就会阻断——"待实现"必须用 warning
+    表达，而不是把规则自己的 severity 搬过来。
+    """
+
+    root = tmp_root / "pending-rules"
+    for rule_id, checker, body in (
+        ("TESTING-900", "failing_tests", {"failing_tests": {"tool": "pytest"}}),
+        ("TESTING-901", "missing_tests", {"missing_tests": {"changed_only": True}}),
+    ):
+        document = rule_document(
+            id=rule_id,
+            version=1,
+            name=rule_id.lower().replace("-", "_"),
+            description="测试证据规则（Q7 端到端）。",
+            scope={"language": "python", "operation": ["create", "edit"]},
+            severity="error",
+            enforcement={"type": "deterministic", "checker": checker},
+            rule=body,
+            message=rule_id + " 的判定信息。",
+            source={"kind": "project-policy", "path": "pending-rules/" + rule_id + ".yaml"},
+        )
+        write_rule(root / (rule_id + ".yaml"), document, yaml_module=yaml)
+    return root
+
+
+def pending_project(tmp_root: Path) -> Path:
+    project = controlled_project(tmp_root)
+    (project / PENDING_TEST_MODULE).write_text(
+        PENDING_TEST_SOURCE, encoding="utf-8", newline=""
+    )
+    return project
+
+
+def pending_payload(project: Path, *, content: str, tool_use_id: str) -> dict:
+    return dsh_event(
+        "pre-tool-use-write-block.json",
+        cwd=str(project),
+        tool_name="write",
+        tool_input={"file_path": PENDING_TARGET, "content": content},
+        tool_use_id=tool_use_id,
+    )
+
+
+def test_the_audit_reads_that_a_pending_write_was_allowed_while_tests_could_not_run(
+    tmp_root: Path,
+) -> None:
+    """端到端（生产入口 + 真流水线）：审计里读得到"这次写入是在覆盖测试跑不了的状态下放行的"。"""
+
+    project = pending_project(tmp_root)
+    rules = write_testing_rules(tmp_root)
+    config_path = config_with_evidence(
+        tmp_root,
+        project,
+        rules,
+        shadow_root=tmp_root / "shadow",
+        evidence_overrides={"validators": ["tool.pytest"]},
+    )
+    audit = tmp_root / "audit.jsonl"
+
+    completed = run_cli(
+        config_path=config_path,
+        wiring=hooks_json(tmp_root),
+        audit=audit,
+        payload=pending_payload(project, content=PENDING_PROPOSAL, tool_use_id="call-pending-1"),
+    )
+
+    assert completed.returncode == EXIT_ALLOW, completed.stderr
+    assert "ALLOWED WITH WARNINGS" in completed.stderr
+    record = last_decision(audit)
+    assert record["decision"] == "allow_with_warnings"
+    assert record["executed"] is True  # 这次写入真的放行了
+    assert record["pre_evidence_status"] == "collected"
+    summary = record["pre_evidence"]
+    # 四处必须互相印证：validators[].status / 摘要 / served_checkers / violations
+    statuses = {item["id"]: item["status"] for item in summary["validators"]}
+    assert statuses["tool.pytest@1.0"] == "pending_implementation", summary["validators"]
+    [pending] = summary["pending_implementation"]
+    assert pending["validator"] == "tool.pytest@1.0"
+    assert pending["checkers"] == ["failing_tests"]
+    assert pending["test_modules"] == [PENDING_TEST_MODULE]
+    assert pending["missing_targets"] == ["shop.audit_repository:AuditEntry"]
+    assert "待实现" in pending["reason"]
+    assert pending["fix"]
+    assert "待实现" in summary["pending_implementation_note"]
+    # 没查成的不能记成查过了；查成的照样记账
+    assert "failing_tests" not in summary["served_checkers"]
+    assert "missing_tests" in summary["served_checkers"]
+    # P1：warning 命中必须能从账本读出来
+    assert [item["rule_id"] for item in record["violations"]] == ["TESTING-900@1"]
+    assert record["violations_by_severity"] == {"warning": 1}
+    assert "待实现" in record["violations"][0]["message"]
+    assert "TESTING-900@1" in record["matched_rules"]
+    assert "TESTING-901@1" in record["matched_rules"]
+
+
+def test_the_same_test_stops_being_pending_once_the_name_lands(tmp_root: Path) -> None:
+    """同一条测试、同一条通道：把 AuditEntry 落地之后不再是"待实现"，也不再是 warning。"""
+
+    project = pending_project(tmp_root)
+    rules = write_testing_rules(tmp_root)
+    config_path = config_with_evidence(
+        tmp_root,
+        project,
+        rules,
+        shadow_root=tmp_root / "shadow",
+        evidence_overrides={"validators": ["tool.pytest"]},
+    )
+    audit = tmp_root / "audit.jsonl"
+
+    completed = run_cli(
+        config_path=config_path,
+        wiring=hooks_json(tmp_root),
+        audit=audit,
+        payload=pending_payload(project, content=PENDING_LANDED, tool_use_id="call-landed-1"),
+    )
+
+    assert completed.returncode == EXIT_ALLOW, completed.stderr
+    record = last_decision(audit)
+    assert record["decision"] == "allow"
+    summary = record["pre_evidence"]
+    statuses = {item["id"]: item["status"] for item in summary["validators"]}
+    assert statuses["tool.pytest@1.0"] in {"ok", "findings"}, summary["validators"]
+    assert summary["pending_implementation"] == []
+    assert "failing_tests" in summary["served_checkers"]
+    assert record["violations"] == []
+
+
+def test_a_third_party_import_failure_still_blocks_at_the_production_entry(
+    tmp_root: Path,
+) -> None:
+    """反例守卫：第三方包缺失仍然阻断，而且理由不再是"关键验证器不可用"。"""
+
+    project = pending_project(tmp_root)
+    (project / PENDING_TEST_MODULE).write_text(
+        '"""第三方包缺失。"""' + chr(10) + chr(10)
+        + "import requests_absent_package" + chr(10) + chr(10) + chr(10)
+        + "def test_noop() -> None:" + chr(10)
+        + '    """占位。"""' + chr(10) + chr(10)
+        + "    assert requests_absent_package" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+    rules = write_testing_rules(tmp_root)
+    config_path = config_with_evidence(
+        tmp_root,
+        project,
+        rules,
+        shadow_root=tmp_root / "shadow",
+        evidence_overrides={"validators": ["tool.pytest"]},
+    )
+    audit = tmp_root / "audit.jsonl"
+
+    completed = run_cli(
+        config_path=config_path,
+        wiring=hooks_json(tmp_root),
+        audit=audit,
+        payload=pending_payload(project, content=PENDING_LANDED, tool_use_id="call-third-party-1"),
+    )
+
+    assert completed.returncode == EXIT_BLOCK, completed.stderr
+    record = last_decision(audit)
+    assert record["decision"] == "block"
+    assert record["pre_evidence"]["pending_implementation"] == []
+    assert [item["rule_id"] for item in record["violations"]] == ["TESTING-900@1"]
+    assert record["violations_by_severity"] == {"error": 1}
+    # 真违规：证据细节里写清收集失败的原文摘要，而且**不再**说成"关键验证器不可用"
+    detail = record["violations"][0]["evidence"]["detail"]
+    assert "requests_absent_package" in detail
+    assert "收集失败" in detail
+    assert "待实现" not in detail
+    assert "关键验证器不可用" not in detail

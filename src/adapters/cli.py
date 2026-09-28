@@ -9,15 +9,29 @@
     python -m adapters.cli inspect --event event.json --agent generic-json
     python -m adapters.cli wiring [--json] [--check]   # 本机 Agent 通道清点（接线 + 留痕）
     python -m adapters.cli host-version [--json] [--check] [--require-runtime]
-                                            # 声明版本 vs 宿主实际版本（漂移即红灯）
+                                            # 声明版本 vs 宿主实际版本（活体探测；漂移即红灯）
+    python -m adapters.cli host-version --record-check [--json]
+                                            # CI 形态：不探测宿主，比对「声明 vs 观测记录」
+    python -m adapters.cli host-version --record [--json]
+                                            # 唯一写入口：把这次实测写进观测记录
 
-退出码：0 = 通过（或环境跳过）；1 = 检查失败（漂移 / 能力不足 / 一致性失败 / 通道未接线 /
-版本漂移）；2 = 用法或配置错误。
+host-version 的四种形态与退出码（README「多 Agent 适配」一节有同口径说明）：
+
+- 报告（默认，不带 --check）：0（只打印，不改退出码）；
+- --check（本机活体探测）：0 = match / unavailable / not_declared+read_only；
+  1 = drift、recording_stale、能力上限 full 却声明不出读法；加 --require-runtime 时
+  unavailable 也 1；2 = 用法错误；
+- --record-check（CI 硬门禁，不依赖宿主）：0 = 声明与记录逐条一致；1 = 记录缺失 / 不完整 /
+  未知协议版本 / 声明≠记录 / 记录的 manifest 哈希与当前声明不一致 / full 却声明不出读法；
+  2 = 用法错误；
+- --record（唯一写入口）：0 = 已写入；1 = 拒写（drift / 读不到宿主 / 一个条目都没有）；
+  2 = 用法错误。
 
 注意 adapter 这一层有**两条互不代替**的事实轴：manifest 声明「这个 Agent 能做什么」，
 host-version 声明「声明写的是哪个产品版本，以及主机上真正装着的是不是同一个」。
 两者都不改变 allow / block：版本不一致不是拦截条件。
-"与 Phase 4 的注册表审核同一条思路"：能力声明是数据，改声明必须重新审核。
+"与 Phase 4 的注册表审核同一条思路"：能力声明是数据，改声明必须重新审核——
+观测记录是这条纪律的延伸：**改了 manifest 就要重跑 --record**，否则 CI 红在"记录过期"上。
 """
 
 from __future__ import annotations
@@ -38,10 +52,20 @@ from adapters.base import (
 )
 from adapters.conformance import run_conformance
 from adapters.host_version import (
+    DEFAULT_OBSERVED_PATH,
     DEFAULT_PROBE_TIMEOUT_MS,
     READING_GUIDE as HOST_VERSION_READING_GUIDE,
+    HostVersionError,
+    HostVersionRecordError,
     HostVersionReport,
+    ObservedHostVersions,
+    build_observed_record,
     check_declared_versions,
+    check_recorded_versions,
+    load_observed_record,
+    record_failure_report,
+    record_refusal_report,
+    write_observed_record,
 )
 from adapters.json_adapter import agent_response_from_decision
 from adapters.loader import (
@@ -552,21 +576,33 @@ def _parse_probe_binaries(
 
 
 def _print_host_version(report: HostVersionReport) -> None:
-    """人类可读的比对结果：每条先给状态，再给声明 / 宿主 / 探测；失败项写 stderr。"""
+    """人类可读的比对结果：每条先给状态，再给声明 / 宿主 / 记录；失败项写 stderr。"""
 
-    print("声明版本 vs 宿主实际版本（口径：" + HOST_VERSION_READING_GUIDE + "）")
+    if report.mode == "record":
+        header = (
+            "声明版本 vs 提交进仓库的观测记录（CI 形态：不探测宿主；记录 "
+            + str(report.record_path)
+            + "，记录于 " + str(report.record_recorded_at) + "）"
+        )
+    else:
+        header = "声明版本 vs 宿主实际版本（活体探测；口径：" + HOST_VERSION_READING_GUIDE + "）"
+    print(header)
     for item in report.findings:
         print("  " + item.agent_id + "  [" + item.status.value + "]")
-        if item.status.value in ("match", "drift"):
+        if item.status.value in ("match", "drift") and item.observed_version is not None:
             relation = "=" if item.status.value == "match" else "不等于"
+            source = "记录里的实测值" if item.source == "record" else "宿主"
+            origin = (
+                "" if item.recorded_at is None
+                else "（记录于 " + str(item.recorded_at) + "）"
+            )
             print(
-                "      声明 " + item.declared_version + " " + relation + " 宿主 "
-                + str(item.observed_version) + "（探测 " + str(item.probe)
-                + "，解析到 " + str(item.resolved_name) + "）"
+                "      声明 " + item.declared_version + " " + relation + " " + source + " "
+                + str(item.observed_version) + origin
             )
         elif item.status.value == "not_declared":
             print("      未声明 host_version；能力上限 " + item.enforcement)
-        else:
+        elif item.status.value == "unavailable":
             print(
                 "      读不到宿主版本（探测 " + str(item.probe) + "，能力上限 "
                 + item.enforcement + "）"
@@ -576,11 +612,29 @@ def _print_host_version(report: HostVersionReport) -> None:
     print(
         "  合计：实际比对 " + str(report.covered) + "/" + str(report.total)
         + "；match " + str(counts["match"]) + "，drift " + str(counts["drift"])
+        + "，recording_stale " + str(counts["recording_stale"])
         + "，unavailable " + str(counts["unavailable"])
         + "，not_declared " + str(counts["not_declared"])
     )
     for note in report.notes:
         print("  说明：" + note)
+    if report.result == "record_refused":
+        print(
+            "结果：record_refused（拒绝写入观测记录——记录只装「已核对过」的证据）",
+            file=sys.stderr,
+        )
+        for failure in report.failures:
+            print("  FAIL " + failure, file=sys.stderr)
+        return
+    if report.result in ("record_missing", "record_invalid"):
+        print(
+            "结果：" + report.result
+            + "（记录缺失 / 不完整：有门禁就必须有数据——它不是通过，也不是跳过）",
+            file=sys.stderr,
+        )
+        for failure in report.failures:
+            print("  FAIL " + failure, file=sys.stderr)
+        return
     if report.result == "fail":
         print("结果：fail（" + str(len(report.failures)) + " 项）", file=sys.stderr)
         for failure in report.failures:
@@ -593,22 +647,66 @@ def _print_host_version(report: HostVersionReport) -> None:
         )
         print("加 --require-runtime 可以让它成为门禁（退出码 1）", file=sys.stderr)
         return
+    if report.mode == "record":
+        print(
+            "结果：pass（实际比对 " + str(report.covered) + "/" + str(report.total)
+            + "：声明与观测记录一致，且不依赖宿主）"
+        )
+        return
     print(
         "结果：pass（实际比对 " + str(report.covered) + "/" + str(report.total)
         + "：声明与宿主一致）"
     )
 
 
-def run_host_version(args: argparse.Namespace) -> int:
-    """声明版本 vs 宿主实际版本（R14）：显式调用时因漂移失败。
+def _print_record_written(record: ObservedHostVersions, label: str) -> None:
+    """写记录是人类动作（也是一次评审请求），输出必须自证写了什么、什么时候、按什么读法。"""
 
-    为什么必须存在：manifest 的 agent_version 说明写着「已实测的产品版本」，但在本轮修复
+    print(
+        "观测记录已写入 " + label + "（" + str(len(record.entries)) + " 条，记录于 "
+        + record.recorded_at + "）："
+    )
+    for entry in record.entries:
+        print(
+            "  " + entry.agent_id + "  observed " + entry.observed_version
+            + "  读法 " + entry.probe_text
+        )
+        print("      manifest " + entry.manifest_digest)
+    print(
+        "口径：记录只能由 --record 写入；CI 用 host-version --record-check 比对「声明 vs 记录」，"
+        "它不探测宿主。"
+    )
+    print("改了 adapters/<agent>/manifest.yaml 必须重跑 --record，否则 CI 会红在「记录过期」上。")
+
+
+def _record_label(path: Path, root: Path) -> str:
+    """记录文件在报告里的名字：**仓库相对路径**（报告里绝不出现本机绝对路径）。"""
+
+    try:
+        return path.resolve().relative_to(root).as_posix()
+    except ValueError:
+        return path.name
+
+
+def run_host_version(args: argparse.Namespace) -> int:
+    """声明版本 vs 宿主实际版本（R14）与观测记录（修复轮 15：Q8 的尾巴）。
+
+    为什么必须存在：manifest 的 agent_version 说明写着「已实测的产品版本」，但在修复轮 14
     之前没有任何地方把它与宿主实际版本比过——宿主升级后声明仍旧，而一致性套件、
     事件 fixture 重放与支持矩阵全部照常通过。那是一条**静默漂移**。
 
     为什么它不是拦截判定：版本不一致不改变任何 allow / block（AGENTS.md 第 24 / 29 条
     管的是能力上限）。把它做成放行条件，会让「宿主升级」直接封成「平台不可用」。
-    因此只有**显式调用 + --check** 才退出 1；读不到宿主版本要再加 --require-runtime。
+
+    修复轮 15 补上的是**后半个问题**：活体探测在没有宿主的 CI 上读不到版本 → unavailable
+    → 退出 0，于是"检查修好了，却没有任何地方会为它红"。所以这里多两条路径：
+
+    - --record-check（CI 形态，不依赖宿主）：比对「声明 vs 提交进仓库的观测记录」并且校验
+      记录钉住的 manifest 哈希；记录缺失 / 不完整 / 不一致一律退出 1；
+    - --record（唯一写入口）：把这次实测固化成记录。只在全部 match、且至少有一条时写入——
+      drift / 读不到 / 空记录都拒写（半份记录看起来像证据，比没有更坏）。
+
+    本机形态 --check 的四状态语义一个字不放宽，只新增第五种 recording_stale（记录过期）。
     """
 
     root = Path(args.root).resolve()
@@ -629,6 +727,34 @@ def run_host_version(args: argparse.Namespace) -> int:
         return EXIT_USAGE
 
     listing = registry.as_list()
+    manifests = {
+        item.agent_id: registry.manifest(item.agent_id) for item in listing.descriptors
+    }
+    enforcement_by_agent = {
+        item.agent_id: item.enforcement.value for item in listing.descriptors
+    }
+
+    record_mode = bool(getattr(args, "record_check", False))
+    write_mode = bool(getattr(args, "record", False))
+    if record_mode and write_mode:
+        print(
+            "[adapters] 拒绝：--record 写记录、--record-check 只读记录做比对，两者不能同时使用",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    host_only_flags = (
+        ("--probe-binary", "probe_binary"),
+        ("--require-runtime", "require_runtime"),
+    )
+    for flag, attribute in host_only_flags:
+        if record_mode and getattr(args, attribute, None):
+            print(
+                f"[adapters] 拒绝：--record-check 不探测宿主，{flag} 在这里没有意义"
+                "（CI 形态读的是提交进仓库的记录）；静默忽略它会把「我明明指定了」变成空操作",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+
     overrides, failure = _parse_probe_binaries(
         getattr(args, "probe_binary", None), set(listing.ids)
     )
@@ -636,13 +762,79 @@ def run_host_version(args: argparse.Namespace) -> int:
         print(f"[adapters] {failure}", file=sys.stderr)
         return EXIT_USAGE
 
+    record_path = (
+        Path(args.record_path)
+        if getattr(args, "record_path", None)
+        else root / DEFAULT_OBSERVED_PATH
+    )
+    label = _record_label(record_path, root)
+
+    if write_mode:
+        # 写入前先做一次完整的活体比对：记录只装「已核对过」的证据。
+        report = check_declared_versions(
+            manifests,
+            enforcement_by_agent=enforcement_by_agent,
+            overrides=overrides,
+            timeout_ms=timeout_ms,
+        )
+        try:
+            record = build_observed_record(manifests, report, recorded_at=_utc_now())
+        except HostVersionError as error:
+            refused = record_refusal_report(report, error)
+            if args.json:
+                print(json.dumps(refused.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                _print_host_version(refused)
+            print(f"[adapters] 拒绝写入观测记录：{error}", file=sys.stderr)
+            return EXIT_FAILED
+        try:
+            write_observed_record(record, record_path)
+        except HostVersionError as error:
+            print(f"[adapters] {error}", file=sys.stderr)
+            return EXIT_FAILED
+        if args.json:
+            payload = {"result": "pass", "mode": "record-write", "record_path": label}
+            payload.update(record.to_dict())
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            _print_record_written(record, label)
+        return EXIT_OK
+
+    if record_mode:
+        try:
+            record = load_observed_record(record_path, label=label)
+        except HostVersionRecordError as error:
+            report = record_failure_report(error, record_label=label)
+        else:
+            report = check_recorded_versions(
+                manifests,
+                enforcement_by_agent=enforcement_by_agent,
+                record=record,
+                record_label=label,
+            )
+        if args.json:
+            print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            _print_host_version(report)
+        # 记录形态是硬门禁：pass 之外的每一种结果（缺记录 / 记录不完整 / 声明≠记录）都退出 1。
+        return EXIT_OK if report.result == "pass" else EXIT_FAILED
+
+    record = None
+    record_error = None
+    try:
+        record = load_observed_record(record_path, label=label)
+    except HostVersionRecordError as error:
+        # 记录缺失 / 读不了不改变活体四状态语义：它只写进 notes，并指向 CI 形态。
+        record_error = str(error)
+
     report = check_declared_versions(
-        {item.agent_id: registry.manifest(item.agent_id) for item in listing.descriptors},
-        enforcement_by_agent={
-            item.agent_id: item.enforcement.value for item in listing.descriptors
-        },
+        manifests,
+        enforcement_by_agent=enforcement_by_agent,
         overrides=overrides,
         timeout_ms=timeout_ms,
+        record=record,
+        record_label=label,
+        record_error=record_error,
     )
 
     if args.json:
@@ -774,7 +966,26 @@ def build_parser() -> argparse.ArgumentParser:
     host_version.add_argument(
         "--check",
         action="store_true",
-        help="出现 drift（或能力上限 full 却没声明 host_version）时退出 1（默认只报告）",
+        help="出现 drift / recording_stale（或能力上限 full 却没声明 host_version）时退出 1"
+        "（默认只报告）",
+    )
+    host_version.add_argument(
+        "--record",
+        action="store_true",
+        help="把这次实测的宿主版本写进观测记录（唯一写入口；只在全部 match 且至少一条时写入，"
+        "否则拒写并退出 1）",
+    )
+    host_version.add_argument(
+        "--record-check",
+        action="store_true",
+        help="CI 形态：不探测宿主，比对「声明 vs 观测记录 + 记录里的 manifest 哈希」；"
+        "记录缺失 / 不完整 / 未知协议版本 / 声明不一致一律退出 1",
+    )
+    host_version.add_argument(
+        "--record-path",
+        default=None,
+        metavar="PATH",
+        help=f"观测记录路径（默认 {DEFAULT_OBSERVED_PATH}）",
     )
     host_version.add_argument(
         "--require-runtime",
@@ -817,6 +1028,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.allow_unapproved = bool(getattr(args, "allow_unapproved", False))
     args.now = getattr(args, "now", None)
     args.require_runtime = bool(getattr(args, "require_runtime", False))
+    args.record = bool(getattr(args, "record", False))
+    args.record_check = bool(getattr(args, "record_check", False))
+    args.record_path = getattr(args, "record_path", None)
     args.root = str(Path(args.root).resolve()) if args.root else str(repo_root())
     return int(args.func(args))
 

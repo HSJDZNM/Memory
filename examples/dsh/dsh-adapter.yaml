@@ -4,7 +4,7 @@
 # layer、language、project、principal、trace_id 全部在这里显式声明，
 # 没有声明项时 Adapter 失败关闭，绝不从文件名或目录猜测。
 
-agent_version: "0.1.5-rc.1" # 记录用；升级 dsh 后先重跑 fixture 与沙箱闭环再改这里
+agent_version: "0.1.6-alpha.2" # 记录用；必须与宿主实际版本一致（python -m adapters.cli host-version --check 会比对）；升级 dsh 后先重跑 fixture 与沙箱闭环再改这里
 project: memory
 project_root: ../.. # 仓库相对路径的锚点；越出这个根目录的写入一律拒绝
 rules:

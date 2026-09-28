@@ -10,6 +10,10 @@
 | 被信号杀死 / 解释器内部错误 | crashed |
 | 工具自己报配置错误、用法错误 | config_error |
 | 退出码正常但输出为空、乱码、超长、JSON 非法 | output_invalid |
+| 收集失败，且原因是"项目内某模块/名字在本次树里还不存在" | pending_implementation（见 pytest 适配器） |
+
+pending_implementation 刻意不在这张表的失败侧：它不是"工具没跑成"，而是"这次的树还在构建中"
+（Q7："先写测试、再写实现"）。它既不记进 served_checkers，也不产生 Blocker，判定侧产出 warning。
 
 安全约定：
 
@@ -32,7 +36,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
-from policy.evidence import ToolInvocation, ValidationEvidence, ValidatorStatus
+from policy.evidence import (
+    PendingImplementation,
+    ToolInvocation,
+    ValidationEvidence,
+    ValidatorStatus,
+)
 from validators.models import ToolSpec
 from validators.registry import RegistryError, config_digest
 
@@ -144,6 +153,9 @@ class AdapterResult:
     findings: int = 0
     payload: Mapping[str, Any] = field(default_factory=dict)
     analysis_failure: Tuple[str, ...] = ()
+    # Q7：「待实现」——status 为 pending_implementation 时，这里说得出"哪个测试模块、
+    # 因为哪个项目内缺失的目标"。只有状态、没有这张清单，等于把放行理由留在代码里。
+    pending: Tuple[PendingImplementation, ...] = ()
 
 
 def sanitize_text(text: str, *, workspace: Optional[Path | str] = None, limit: int = 2000) -> str:

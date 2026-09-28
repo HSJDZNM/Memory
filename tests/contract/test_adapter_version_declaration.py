@@ -23,7 +23,8 @@ import pytest
 import yaml
 
 from adapters.base import AdapterRegistry, AdapterSpec, RegistryError, manifest_digest
-from adapters.cli import build_parser, run_host_version
+from adapters.cli import build_parser, main, run_host_version
+from adapters.host_version import HOST_VERSION_RECORD_SCHEMA_VERSION
 from adapters.loader import load_registry_from_repo
 from adapters.models import AdapterManifest, EnforcementLevel
 
@@ -155,3 +156,56 @@ def test_approved_record_repeats_the_declared_version():
 
     for agent_id in sorted(registry.manifests):
         assert approved[agent_id]["agent_version"] == registry.manifest(agent_id).agent_version
+
+
+# --------------------------------------------------------------------------- 4. 观测记录（CI 形态）
+
+# 修复轮 14 的尾巴（Q8）：--check 在**没装 dsh 的机器**上读不到宿主版本 → unavailable → 退出 0，
+# 于是"声明与实测"这条检查在 CI 上谁都不会为它红。这里加的是一条**不依赖宿主**的比对：
+# 仓库里提交一份观测记录（adapters/host-versions.observed.json，只能由 host-version --record
+# 写入），CI 比对「声明 vs 记录」并且校验记录钉住的 manifest 哈希与当前声明一致。
+#
+# 由此产生一条新的维护纪律：**改了 adapters/<agent>/manifest.yaml 就必须重跑 --record**，
+# 否则 CI 会红在"记录过期"上（这正是"改声明必须重新审核"的延伸，不是误报）。
+
+RECORD_PATH = ADAPTERS_ROOT / "host-versions.observed.json"
+
+
+def test_the_committed_record_makes_the_check_work_without_a_host(capsys):
+    """CI 形态：不探测宿主，读仓库里的记录即可核对声明（这条就是 workflow 里那一步）。"""
+
+    code = main(["--root", str(REPO_ROOT), "host-version", "--record-check", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 0, payload
+    assert payload["result"] == "pass"
+    assert payload["mode"] == "record"
+    assert payload["covered"] >= 1
+
+
+def test_the_committed_record_pins_every_declared_probe():
+    """记录必须逐条覆盖"声明了读法"的 Agent，并各自钉住当前的 manifest 哈希与读法。"""
+
+    registry = load_registry_from_repo(REPO_ROOT)
+    document = json.loads(RECORD_PATH.read_text(encoding="utf-8"))
+    assert document["schema_version"] == HOST_VERSION_RECORD_SCHEMA_VERSION
+    entries = {entry["agent_id"]: entry for entry in document["entries"]}
+    assert len(entries) == len(document["entries"]), "记录里有重复的 agent_id"
+
+    declared = [
+        row.agent_id
+        for row in registry.as_list().descriptors
+        if registry.manifest(row.agent_id).host_version is not None
+    ]
+    assert declared, "没有任何 manifest 声明 host_version：这份记录什么都没覆盖"
+    assert sorted(entries) == sorted(declared)
+
+    for agent_id in declared:
+        manifest = registry.manifest(agent_id)
+        probe = manifest.host_version
+        entry = entries[agent_id]
+        assert entry["manifest_digest"] == manifest_digest(manifest), agent_id
+        assert entry["observed_version"] == manifest.agent_version, agent_id
+        assert entry["executable"] == probe.executable, agent_id
+        assert list(entry["args"]) == list(probe.args), agent_id
+        assert entry["version_pattern"] == probe.version_pattern, agent_id

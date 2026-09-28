@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from dataclasses import fields as dataclass_fields
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,7 @@ from policy.models import KNOWN_CHECKERS, SCHEMA_VERSION, ValidationResult
 from validators.pipeline import (
     KNOWN_VALIDATOR_IDS,
     PIPELINE_SCHEMA_VERSION,
+    PipelineReport,
     PipelineRequest,
     run_pipeline,
 )
@@ -44,24 +46,65 @@ CORE_MODULES = ("models", "engine", "context", "scope", "loader", "evidence", "c
 def test_evidence_schema_version_is_pinned() -> None:
     # P7：validators[].served_checkers → declared_checkers 是载荷的**字段变化**，
     # 按 src/policy/evidence.py 自己的规则（"字段增删或语义变化都要显式改这里"）递增。
-    assert EVIDENCE_SCHEMA_VERSION == "1.1"
-    assert EvidenceBundle().schema_version == "1.1"
+    # Q7（1.1 → 1.2）：新增 ValidatorStatus.PENDING_IMPLEMENTATION 与
+    # EvidenceBundle.pending_implementation（「待实现」这一族字段）。
+    assert EVIDENCE_SCHEMA_VERSION == "1.2"
+    assert EvidenceBundle().schema_version == "1.2"
 
     with pytest.raises(Exception):
         EvidenceBundle(schema_version="2.0")
 
-    # 旧载荷一律拒绝：1.0 的 validators[] 用的是另一个键名，静默接受等于读错语义
-    with pytest.raises(Exception):
-        EvidenceBundle(schema_version="1.0")
+    # 旧载荷一律拒绝：1.0 的 validators[] 用的是另一个键名；1.1 没有「待实现」这一族字段，
+    # 静默接受等于把"覆盖它的测试跑不了"读成"没有这条信息"。
+    for old in ("1.0", "1.1"):
+        with pytest.raises(Exception):
+            EvidenceBundle(schema_version=old)
 
 
 def test_pipeline_schema_version_is_pinned_and_single_sourced() -> None:
-    """流水线载荷也变了（validators[] 的键 + language_coverage），版本号同步且只有一份真值。"""
+    """流水线载荷也变了（validators[] 的键 + language_coverage + pending_implementation），
+    版本号同步且只有一份真值。"""
 
     import validators
 
-    assert PIPELINE_SCHEMA_VERSION == "1.1"
+    assert PIPELINE_SCHEMA_VERSION == "1.2"
     assert validators.PIPELINE_SCHEMA_VERSION == PIPELINE_SCHEMA_VERSION
+
+
+def test_every_validator_status_is_classified() -> None:
+    """新增一个 ValidatorStatus 必须落进三类之一，否则它会被当成"没问题"。
+
+    "待实现"（Q7）刻意两边都不进：它不是"证据到手"（否则没查成的会被记成查过了），
+    也不是"证据没拿到"（那不是失败关闭，是"这次的树还在构建中"）。它属于第三类：
+    有可读状态、不产生 Blocker、判定侧产出 warning。
+    """
+
+    assert ValidatorStatus.PENDING_IMPLEMENTATION not in SUCCESS_STATUSES
+    assert ValidatorStatus.PENDING_IMPLEMENTATION not in FAIL_CLOSED_STATUSES
+    classified = (
+        set(SUCCESS_STATUSES)
+        | set(FAIL_CLOSED_STATUSES)
+        | {ValidatorStatus.NOT_SELECTED, ValidatorStatus.PENDING_IMPLEMENTATION}
+    )
+    assert classified == set(ValidatorStatus)
+
+
+def test_report_payload_carries_every_field() -> None:
+    """载荷键与报告字段一一对应：新增字段忘了进载荷，账本里就永远读不到它。"""
+
+    rules = load_rule_set([POLICIES_DIR], repo_root=REPO_ROOT)
+    context = make_context(file="src/shop/order_controller_bad.py", language="python")
+    report = run_pipeline(
+        PipelineRequest(
+            target=context.file, workspace=VALIDATOR_PROJECT, context=context, rules=rules
+        ),
+        config=CONFIG,
+    )
+
+    assert "pending_implementation" in set(EvidenceBundle().to_payload())
+    assert set(EvidenceBundle().to_payload()) == set(EvidenceBundle.model_fields) | {"schema"}
+    assert set(report.to_payload()) == {item.name for item in dataclass_fields(PipelineReport)}
+    assert report.to_payload()["pending_implementation"] == []
 
 
 def test_checker_vocabulary_agrees_across_layers() -> None:

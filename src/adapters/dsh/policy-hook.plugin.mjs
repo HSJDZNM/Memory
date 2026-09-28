@@ -39,6 +39,8 @@
  *   projectDir: Hook 的工作目录；不填则用会话工作目录
  */
 
+import { statSync } from 'node:fs';
+
 export const name = 'policy-hook';
 export const inject = ['shell'];
 
@@ -198,6 +200,82 @@ function blockFeedback(reason, toolResponse) {
   return blocks;
 }
 
+/**
+ * 工作目录的预检事实（Q6）。
+ *
+ * 为什么必须自己查一遍：Node 的 spawn 在 **cwd 不存在**时把 ENOENT 归给**可执行文件**
+ * （真机原文里报的是 node.exe 的绝对路径，而那个可执行文件存在且可执行），于是
+ * "拒绝得对、理由错"——模型花一整轮去查"Node 没装"。理由因此要按这里的判定来写：
+ * 分开说"要启动什么"与"在哪个目录启动"，再按工作目录的真实状态把问题归到某一侧。
+ *
+ * usable=false 只表示**能证明**目录不可用（不存在 / 不是目录）：判定不可用就直接拒绝，
+ * 不再去 spawn（真机上那一次 spawn 只会给出误导的 ENOENT）。查不出来的情况
+ * （权限等）usable 仍为 true，交给 spawn 与 catch 分支——那两条路同样是失败关闭。
+ */
+function inspectWorkdir(cwd, source) {
+  if (typeof cwd !== 'string' || cwd === '') {
+    return {
+      usable: true,
+      text: '未声明可用的工作目录（config.projectDir 与会话 cwd 都不是非空路径）',
+      attribution: '要改的话：在 config.projectDir 里显式声明 Hook 的工作目录（一个非空路径字符串）',
+    };
+  }
+  let stats;
+  try {
+    stats = statSync(cwd);
+  } catch (error) {
+    const code = error && error.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      return {
+        usable: false,
+        text: '工作目录不存在：' + cwd + '（来自 ' + source + '）',
+        attribution:
+          'Node 的 spawn 在 cwd 不存在时会把 ENOENT 归给可执行文件，不要据此判断"命令 / 运行时缺失"；' +
+          '要改的是这个目录：创建它，或把 config.projectDir 指向真实存在的目录',
+      };
+    }
+    return {
+      usable: true,
+      text: '工作目录读不到：' + cwd + '（来自 ' + source + '；' + messageOf(error) + '）',
+      attribution: '要改的话：确认这个目录存在、可读，而且真的是一个目录',
+    };
+  }
+  if (!stats.isDirectory()) {
+    return {
+      usable: false,
+      text: '工作目录不是目录：' + cwd + '（来自 ' + source + '）',
+      attribution: '要改的话：把 config.projectDir 指向一个目录',
+    };
+  }
+  return {
+    usable: true,
+    text: '工作目录已确认存在：' + cwd + '（来自 ' + source + '）',
+    attribution:
+      '问题不在目录这一侧，而在「要启动的命令」这一侧：命令能不能起、是否被沙箱拒绝，看上面的 spawn 报错',
+  };
+}
+
+/** 异常的可读消息（与修前 catch 分支里那一行的口径逐字相同）。 */
+function messageOf(error) {
+  return String(error && error.message ? error.message : error);
+}
+
+/**
+ * 把"Hook 起不来"翻译成给模型的理由（Q6）。
+ *
+ * 三个部分各自可判定：**在哪个目录启动**（含它的来源与是否存在的问题）、**要启动什么**、
+ * 以及原始报错；最后一句是按工作目录事实得出的归因（目录不存在 → 说明 spawn 的 ENOENT
+ * 归错了对象，并给出要改哪里；目录已确认存在 → 问题在命令那一侧）。
+ */
+function hookFailureReason(command, workdir, cause) {
+  const clauses = [workdir.text, '要启动的命令：' + command];
+  if (cause !== '') {
+    clauses.push('spawn 报错：' + cause);
+  }
+  clauses.push(workdir.attribution);
+  return 'policy-hook: Hook 无法执行（' + clauses.join('；') + '），按失败关闭拒绝该工具调用';
+}
+
 export function apply(ctx, config) {
   const command = config.command;
   if (typeof command !== 'string' || command.trim() === '') {
@@ -213,9 +291,19 @@ export function apply(ctx, config) {
    *
    * 失败关闭的三个来源（G12）：起不来 / 被杀 / 被沙箱拒绝（catch 分支）、
    * exit 2（策略阻断）、其余非 0 退出码（未知状态）。**只有 exit 0 是放行。**
+   *
+   * Q6：起不来的理由里"要启动什么"与"在哪个目录启动"分开写；工作目录不可用时点名那个
+   * 目录（spawn 的 ENOENT 会指向可执行文件，照抄它只会把人带偏）。
    */
   const runHook = async (exec, { hookEvent, fields }) => {
+    const hasProjectDir = config.projectDir !== undefined && config.projectDir !== null;
     const cwd = config.projectDir ?? exec.agent?.session?.header?.cwd;
+    const cwdSource = hasProjectDir ? 'config.projectDir' : '会话 cwd（config.projectDir 未声明）';
+    // spawn 之前先看工作目录：能证明它不可用时直接失败关闭，理由点名那个目录。
+    const workdir = inspectWorkdir(cwd, cwdSource);
+    if (!workdir.usable) {
+      return { allowed: false, reason: hookFailureReason(command, workdir, '') };
+    }
     const payload = JSON.stringify({
       session_id: exec.agent?.session?.header?.id ?? '',
       transcript_path: '',
@@ -240,12 +328,11 @@ export function apply(ctx, config) {
       result = await ctx.shell.run(ctx.shell.resolve(request));
     } catch (error) {
       // 起不来、被杀、被沙箱拒绝——都不能静默放行：按失败关闭阻断。
+      // 归因同样按工作目录的真实状态走：目录在预检之后被删掉（或预检查不出来）时，
+      // 这里重新看一眼，理由才不会把"目录没了"说成"命令找不到"。
       return {
         allowed: false,
-        reason:
-          'policy-hook: Hook 无法执行（' +
-          String(error && error.message ? error.message : error) +
-          '），按失败关闭拒绝该工具调用',
+        reason: hookFailureReason(command, inspectWorkdir(cwd, cwdSource), messageOf(error)),
       };
     }
 

@@ -1,0 +1,17 @@
+{
+  "entries": [
+    {
+      "agent_id": "dsh",
+      "args": [
+        "--version"
+      ],
+      "executable": "dsh",
+      "manifest_digest": "sha256:5363a76fe0b38d60e33afdc1f05dad3b5e14b4a2914e1faa680516ea116a4280",
+      "observed_version": "0.1.6-alpha.2",
+      "recorded_at": "2026-09-28T00:26:29.043585Z",
+      "version_pattern": "([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.]+)?)"
+    }
+  ],
+  "recorded_at": "2026-09-28T00:26:29.043585Z",
+  "schema_version": "1.0"
+}

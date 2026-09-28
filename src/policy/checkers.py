@@ -26,7 +26,13 @@ from __future__ import annotations
 
 from typing import Callable, List, Mapping, Optional, Tuple
 
-from .evidence import Blocker, DependencyFact, EvidenceBundle, ValidationEvidence
+from .evidence import (
+    Blocker,
+    DependencyFact,
+    EvidenceBundle,
+    PendingImplementation,
+    ValidationEvidence,
+)
 from .models import (
     Evidence,
     PolicyContext,
@@ -47,6 +53,7 @@ __all__ = [
     "checker_handler",
     "dependency_forbidden",
     "dependency_words",
+    "pending_implementation_violation",
     "uncovered_checker_violation",
     "unproven_dependency_violation",
 ]
@@ -137,6 +144,56 @@ def _finding_violations(
             continue
         violations.append(_violation_from_finding(rule, context, item))
     return violations
+
+
+def _evidence_violations(
+    rule: Rule, context: PolicyContext, evidence: Optional[EvidenceBundle]
+) -> List[Violation]:
+    """证据类 checker 的统一入口：真的报了违规的证据 + 「待实现」的 warning。
+
+    两者不会同时出现在同一条规则上：出现「待实现」就意味着本次**没有**取得该 checker 的
+    证据（验证器状态是 pending_implementation，不是 findings）——这也正是它必须能读出来的原因。
+    """
+
+    violations = _finding_violations(rule, context, evidence)
+    if evidence is None:
+        return violations
+    checker = rule.enforcement.checker or ""
+    violations.extend(
+        pending_implementation_violation(rule, item)
+        for item in evidence.pending_for(checker)
+    )
+    return violations
+
+
+def pending_implementation_violation(rule: Rule, pending: PendingImplementation) -> Violation:
+    """「待实现」：不阻断也不是普通 allow，用 warning 把"覆盖它的测试还跑不了"写进判定。
+
+    为什么 severity 固定是 warning、**不取规则自己的级别**（TESTING-002 是 error）：
+    这条不是"检查发现了问题"，而是"这次的树还在构建中"。用规则级别会把它重新变成阻断，
+    而 Q7 要修的正是"先写测试"被惩罚这件事；用普通 allow 又会把"覆盖它的测试尚未运行"
+    从账本上删掉（P1：allow_with_warnings 尤其需要这份清单）。所以它只能是 warning：
+    allow_with_warnings + violations 里读得到，且不产生任何 Blocker。
+    """
+
+    modules = ", ".join(pending.test_modules)
+    targets = ", ".join(pending.missing_targets)
+    return Violation(
+        rule_id=rule.id,
+        rule_version=rule.version,
+        severity=Severity.WARNING,
+        message=(
+            "待实现（不是测试失败）：选中的测试 " + modules + " 因项目内还不存在的 "
+            + targets + " 无法收集；本次写入被放行，但覆盖它的测试尚未能运行"
+        ),
+        evidence=Evidence(
+            kind=rule.enforcement.checker or "validator",
+            subject=pending.test_modules[0],
+            value=pending.missing_targets[0],
+            file=pending.test_modules[0],
+            detail=pending.reason + "；建议修复：" + pending.fix,
+        ),
+    )
 
 
 def _violation_from_finding(
@@ -293,11 +350,13 @@ def checker_handler(checker: str) -> Handler:
 
 _HANDLERS: Mapping[str, Handler] = {
     "forbidden_dependency": _forbidden_dependency,
-    "missing_docstring": _finding_violations,
-    "style_lint": _finding_violations,
-    "type_check": _finding_violations,
-    "missing_tests": _finding_violations,
-    "failing_tests": _finding_violations,
+    # 证据类 checker 共用同一个入口：证据 → 违规，以及「待实现」→ warning。
+    # 后者由规则自己的 checker 决定归属（pending 记录只在它声明的 checker 上生效）。
+    "missing_docstring": _evidence_violations,
+    "style_lint": _evidence_violations,
+    "type_check": _evidence_violations,
+    "missing_tests": _evidence_violations,
+    "failing_tests": _evidence_violations,
 }
 
 

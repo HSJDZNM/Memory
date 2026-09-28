@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import REPO_ROOT, dsh_event, write_dsh_config
@@ -45,6 +46,7 @@ HARNESS = '''/**
  * 假 ctx 探针：在真实 node 里驱动 policy-hook.plugin.mjs 的转发逻辑。
  * 它不做任何断言，只把观察到的原始事实打成 JSON 交给 Python 侧。
  */
+import { existsSync, rmSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const { apply } = await import(pathToFileURL(process.argv[2]).href);
@@ -256,6 +258,109 @@ behaviour = { exitCode: 0, stderr: '' };
 observations.post_accept_with_output = await drivePost({
   content: [{ type: 'text', text: 'ok' }],
 });
+
+// ---------------------------------------------------------------- Q6：工作目录不可用时的归因
+//
+// 真机机制（14 号文档 §5 Q6）：Node 的 spawn 在 **cwd 不存在**时把 ENOENT 归给**可执行文件**
+// （真机原文里的可执行文件是 node.exe 的绝对路径，而它存在且可执行）。所以下面这个假 ctx 的
+// shell **照搬**这条 spawn 行为，而不是随便抛一个错：否则探针测不到真机上的那个机制，
+// 「修前会红」也就无从谈起。
+const WORKDIR_COMMAND = 'python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml';
+
+function mountForWorkdir(projectDir, sessionCwd) {
+  const state = { exitCode: 0, stderr: '', throwError: '', vanishWorkdir: false };
+  const registrations = {};
+  const calls = [];
+  const localCtx = {
+    on(name, handler) {
+      registrations[name] = handler;
+    },
+    shell: {
+      resolve(request) {
+        return request;
+      },
+      async run(request) {
+        calls.push(request);
+        if (state.vanishWorkdir && request.workdir !== undefined) {
+          // 竞态：预检时目录还在，spawn 之前没了。
+          rmSync(request.workdir, { recursive: true, force: true });
+        }
+        if (state.throwError !== '') {
+          throw new Error(state.throwError);
+        }
+        if (request.workdir !== undefined && !existsSync(request.workdir)) {
+          // 真实 Node：cwd 不存在 → ENOENT，但报的是**可执行文件**。
+          throw new Error('spawn ' + process.execPath + ' ENOENT');
+        }
+        return { exitCode: state.exitCode, stderr: { text: state.stderr } };
+      },
+    },
+  };
+  apply(localCtx, { command: WORKDIR_COMMAND, timeoutMs: 30000, projectDir });
+  const exec = {
+    name: 'edit',
+    callId: 'call-workdir',
+    arguments: { file_path: 'src/shop/order_controller.py', old_string: 'a', new_string: 'b' },
+    signal: undefined,
+    agent: { session: { header: { id: 'sess-workdir', cwd: sessionCwd } } },
+  };
+  const drive = async (event, result) => {
+    let nextCalls = 0;
+    const next = async () => {
+      nextCalls += 1;
+      return { kind: 'enter' };
+    };
+    const before = calls.length;
+    const outcome =
+      event === 'pre'
+        ? await registrations['tools/pre-execute'](exec, next)
+        : await registrations['tools/post-execute'](exec, result, next);
+    return { outcome, nextCalls, spawnAttempts: calls.length - before };
+  };
+  return {
+    state,
+    drivePre: () => drive('pre', undefined),
+    drivePost: (result) => drive('post', result),
+  };
+}
+
+// argv[4]：保证不存在的目录；argv[5]：存在、但会被假 ctx 在 spawn 之前删掉的目录。
+const missingWorkdir = process.argv[4];
+const vanishingWorkdir = process.argv[5];
+
+// (a) config.projectDir 指向不存在的目录 —— 真机症状的最小复现
+const missingProjectDir = mountForWorkdir(missingWorkdir, process.argv[3]);
+observations.workdir_missing_project_dir = await missingProjectDir.drivePre();
+observations.workdir_missing_project_dir_post = await missingProjectDir.drivePost({
+  content: [],
+});
+
+// (b) 没给 projectDir，会话 cwd 指向不存在的目录
+const missingSessionCwd = mountForWorkdir(undefined, missingWorkdir);
+observations.workdir_missing_session_cwd = await missingSessionCwd.drivePre();
+
+// 反向对照：projectDir 存在时，不存在的会话 cwd 不该被当成工作目录（不许过度拒绝）
+const projectDirWins = mountForWorkdir(process.argv[3], missingWorkdir);
+observations.workdir_project_dir_wins = await projectDirWins.drivePre();
+
+// (c) 工作目录存在，spawn 仍然抛错 —— 归因必须落在「要启动的命令」那一侧
+const intactWorkdir = mountForWorkdir(process.argv[3], process.argv[3]);
+intactWorkdir.state.throwError = 'spawn ' + process.execPath + ' ENOENT';
+observations.workdir_intact_spawn_error = await intactWorkdir.drivePre();
+
+// 竞态：预检通过之后目录被删掉（catch 分支必须重新看一眼工作目录）
+const vanishedWorkdir = mountForWorkdir(vanishingWorkdir, vanishingWorkdir);
+vanishedWorkdir.state.vanishWorkdir = true;
+observations.workdir_vanished_before_spawn = await vanishedWorkdir.drivePre();
+
+// (a2) config.projectDir 指向一个**文件**：同属"工作目录不可用"，但不是"不存在"
+const projectDirIsAFile = mountForWorkdir(process.argv[6], process.argv[3]);
+observations.workdir_project_dir_is_a_file = await projectDirIsAFile.drivePre();
+
+// (c2) 目录正常，spawn 抛 EPERM（受限沙箱禁止管道 stdio）：不是目录那一侧的问题
+const intactEperm = mountForWorkdir(process.argv[3], process.argv[3]);
+intactEperm.state.throwError = 'spawn EPERM';
+observations.workdir_intact_spawn_eperm = await intactEperm.drivePre();
 
 process.stdout.write(JSON.stringify(observations));
 '''
@@ -549,8 +654,24 @@ def _require_node() -> str:
 def run_harness(tmp_root: Path) -> dict:
     script = tmp_root / "plugin_harness.mjs"
     script.write_text(HARNESS, encoding="utf-8", newline=chr(10))
+    # Q6：工作目录一侧的事实由 Python 侧准备——一个**保证不存在**的路径、一个存在但会被假 ctx
+    # 在 spawn 之前删掉的路径（竞态），以及一个"存在但不是目录"的路径。只供这条探针使用。
+    missing = tmp_root / "missing-workdir"
+    shutil.rmtree(missing, ignore_errors=True)
+    vanishing = tmp_root / "vanishing-workdir"
+    vanishing.mkdir(parents=True, exist_ok=True)
+    not_a_dir = tmp_root / "not-a-dir.txt"
+    not_a_dir.write_text("我是一个文件，不是目录" + chr(10), encoding="utf-8", newline="")
     completed = subprocess.run(
-        [_require_node(), str(script), str(PLUGIN), str(tmp_root)],
+        [
+            _require_node(),
+            str(script),
+            str(PLUGIN),
+            str(tmp_root),
+            str(missing),
+            str(vanishing),
+            str(not_a_dir),
+        ],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
@@ -616,6 +737,201 @@ def test_the_plugin_denies_every_non_zero_non_two_exit_code_and_every_spawn_fail
     assert "退出码 1" in observed["post_unknown_exit"]["outcome"]["feedback"][0]["text"]
     assert observed["post_spawn_failure"]["outcome"]["kind"] == "block"
     assert "spawn EPERM" in observed["post_spawn_failure"]["outcome"]["feedback"][0]["text"]
+
+
+# --------------------------------------------------------------------------- 插件侧契约（Q6）
+
+
+WORKDIR_COMMAND = "python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml"
+
+
+def _denied_reason(observed: dict, key: str) -> str:
+    """取插件给出的拒绝理由：Q6 的断言都落在这一句上。"""
+
+    outcome = observed[key]["outcome"]
+    assert outcome["kind"] == "deny", (key, outcome)
+    return outcome["reason"]
+
+
+def test_a_missing_project_dir_is_named_as_a_missing_directory_not_a_missing_node(tmp_root):
+    """Q6：真机把「工作目录不存在」报成「找不到 node.exe」，这条用例钉住归因。
+
+    真机原文（14 号文档 §5 Q6，两次会话各 10 次调用逐次一致）：
+
+        policy-hook: Hook 无法执行（spawn <node.exe 的绝对路径> ENOENT），按失败关闭拒绝该工具调用
+
+    而那个 node.exe 存在且可执行；真正不存在的是配置里的 projectDir。Node 的 spawn 在 cwd
+    不存在时把 ENOENT 归给**可执行文件**——探针的假 ctx 照搬了这条行为（见 HARNESS），
+    所以这里的读数就是真机读数，不是编出来的。
+    """
+
+    observed = run_harness(tmp_root)
+    entry = observed["workdir_missing_project_dir"]
+    reason = _denied_reason(observed, "workdir_missing_project_dir")
+
+    # 前缀是 tools/dsh_sandbox_loop.py 的 SPAWN_DENIED_MARKERS 与集成测试依赖的形态，不许改
+    assert reason.startswith("policy-hook: Hook 无法执行（")
+    assert reason.endswith("），按失败关闭拒绝该工具调用")
+    # 点名的是**目录**，而且真的把那个路径与它的来源写出来
+    assert "工作目录不存在：" in reason
+    assert "missing-workdir" in reason
+    assert "config.projectDir" in reason
+    # 「要启动什么」与「在哪个目录启动」分开写
+    assert "要启动的命令：" + WORKDIR_COMMAND in reason
+    # 明确说 Node 会把 cwd 的 ENOENT 归给可执行文件，且这条报错不能用来判断"命令 / 运行时缺失"
+    assert "可执行文件" in reason
+    assert "不要据此判断" in reason
+    # 预检在 spawn **之前**：真机上那一次 spawn 正是误导的来源
+    assert entry["spawnAttempts"] == 0
+    assert entry["nextCalls"] == 0
+
+
+def test_a_missing_session_cwd_is_named_the_same_way_without_project_dir(tmp_root):
+    """Q6：(b) 未给 projectDir 时会话 cwd 就是工作目录，它不存在时报的是那个目录。
+
+    同一条用例带一个反向对照：projectDir 存在时它就是工作目录，不存在的会话 cwd 不该
+    把一次正常调用变成拒绝（修复不许过度拒绝）。
+    """
+
+    observed = run_harness(tmp_root)
+    reason = _denied_reason(observed, "workdir_missing_session_cwd")
+
+    assert "工作目录不存在：" in reason
+    assert "missing-workdir" in reason
+    # 来源要写对：这一次没有 config.projectDir，工作目录来自会话 cwd
+    assert "会话 cwd" in reason
+    assert observed["workdir_missing_session_cwd"]["spawnAttempts"] == 0
+
+    control = observed["workdir_project_dir_wins"]
+    assert control["outcome"] == {"kind": "enter"}
+    assert control["nextCalls"] == 1
+    assert control["spawnAttempts"] == 1
+
+
+def test_the_catch_path_blames_the_command_side_when_the_workdir_is_intact(tmp_root):
+    """Q6：(c) 工作目录没问题而 spawn 仍然抛错时，归因必须在「要启动的命令」那一侧。
+
+    用的是真机原文里那个错误串（spawn 可执行文件 ENOENT）：**同一条报错**，工作目录的事实
+    不同，理由的归因就必须不同——这正是这次修复要建立的东西。
+    """
+
+    observed = run_harness(tmp_root)
+    entry = observed["workdir_intact_spawn_error"]
+    reason = _denied_reason(observed, "workdir_intact_spawn_error")
+
+    # 工作目录这一侧被**排除**（它真的存在），而不是被说成"找不到"
+    assert "工作目录已确认存在" in reason
+    assert "问题不在目录这一侧" in reason
+    # 原始报错一个字都不许吞：定位要看得见原文
+    assert "spawn " in reason
+    assert "ENOENT" in reason
+    # 这一次真的去 spawn 了（失败来自 spawn，不是预检）
+    assert entry["spawnAttempts"] == 1
+
+    # 竞态：预检通过之后目录被删掉——catch 分支必须重新看一眼，理由仍然点名那个目录
+    vanished = _denied_reason(observed, "workdir_vanished_before_spawn")
+    assert "工作目录不存在：" in vanished
+    assert "vanishing-workdir" in vanished
+    assert "spawn " in vanished
+    assert observed["workdir_vanished_before_spawn"]["spawnAttempts"] == 1
+
+
+def test_a_hook_that_cannot_name_its_workdir_is_still_fail_closed(tmp_root):
+    """Q6：(d) 理由变准了，判定一点没松——pre 仍然 deny、post 仍然 block。"""
+
+    observed = run_harness(tmp_root)
+    pre = observed["workdir_missing_project_dir"]
+    post = observed["workdir_missing_project_dir_post"]
+
+    assert pre["outcome"]["kind"] == "deny"
+    assert pre["nextCalls"] == 0  # 没有委托给下一个监听者 = 没有放行
+    assert post["outcome"]["kind"] == "block"
+    assert post["nextCalls"] == 0
+    # post 阶段副作用已发生：理由交给模型，且不假装回滚
+    assert "工作目录不存在" in post["outcome"]["feedback"][0]["text"]
+
+
+# --------------------------------------------------------------------------- 跨侧契约（Q6：理由文本 ↔ 闭环分类器）
+
+
+# 修前真机原文（14 号文档 §5 Q6；node.exe 存在且可执行，真正不存在的是工作目录）：
+# 闭环必须把它判成"归不了因"——这段文本里**根本没有**目录这一侧的事实。
+BEFORE_FIX_REASON = (
+    "policy-hook: Hook 无法执行（spawn C:\\Program Files\\nodejs\\node.exe ENOENT），"
+    "按失败关闭拒绝该工具调用"
+)
+
+
+def _loop_classify(loop: Any, logs: Path, reason: str) -> tuple[str | None, str | None]:
+    """把一条理由写进闭环的日志目录并驱动它的分类入口，返回 (kind, workdir)。"""
+
+    for stale in logs.glob("*.txt"):
+        stale.unlink()
+    (logs / "hook-log.txt").write_text(
+        "dsh 的原始日志行" + chr(10) + reason + chr(10), encoding="utf-8", newline=""
+    )
+    failure = loop.hook_spawn_failure()
+    if failure is None:
+        return None, None
+    return failure.kind, failure.workdir
+
+
+def test_the_hook_failure_reason_is_classified_by_the_sandbox_loop(tmp_root, monkeypatch):
+    """Q6 跨侧契约：插件的**真实理由文本**必须被 tools/dsh_sandbox_loop.py 正确分类。
+
+    为什么必须有这条：两侧各自的用例都用自家夹具——插件侧断言自己的措辞，闭环侧拿**手抄**的
+    措辞当夹具。措辞一改，两边都还绿，接缝却断了，而断掉的方向最坏是"配置错误被读成环境限制
+    → 环境跳过"。所以这里：真 node 驱动真插件拿到**真实理由**，再喂给闭环的分类入口
+    （只读 import；`LOGS` 用 monkeypatch 注入临时目录，与
+    tests/integration/test_dsh_sandbox_loop.py 同一手法）。
+
+    三类处置不同，归错类就是新的误导：工作目录不可用 = 接线/配置错（按真失败收场）；
+    `spawn EPERM` = 受限沙箱禁止管道 stdio（**唯一**允许环境跳过的一类）；
+    其余一律"归不了因"——不能猜。
+    """
+
+    observed = run_harness(tmp_root)
+    # 函数内导入：闭环是另一侧的产物，收集期硬依赖会让"这条契约缺失"与"别的用例带崩"分不开
+    # （与读 VERDICT_PREFIX 的那条用例同一考虑）。
+    import dsh_sandbox_loop as loop
+
+    logs = tmp_root / "loop-logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(loop, "LOGS", logs)
+
+    # ① 工作目录不可用（三类）→ 工作目录类，而且闭环要把**那个目录**解出来（不是只给个类别）
+    for label, key, expected_name in (
+        ("projectDir 不存在", "workdir_missing_project_dir", "missing-workdir"),
+        ("projectDir 是个文件", "workdir_project_dir_is_a_file", "not-a-dir.txt"),
+        ("未给 projectDir、会话 cwd 不存在", "workdir_missing_session_cwd", "missing-workdir"),
+    ):
+        reason = _denied_reason(observed, key)
+        kind, workdir = _loop_classify(loop, logs, reason)
+        assert kind == "hook_workdir_unusable", (label, reason, kind)
+        assert workdir is not None, (label, reason)
+        assert Path(workdir).name == expected_name, (label, workdir)
+
+    # ② 目录正常 + spawn EPERM → 沙箱类（唯一允许环境跳过的一类）
+    reason = _denied_reason(observed, "workdir_intact_spawn_eperm")
+    kind, _ = _loop_classify(loop, logs, reason)
+    assert kind == "sandbox_pipe_stdio_denied", (reason, kind)
+
+    # ③ 归不了因：目录正常 + ENOENT，以及**修前那句真机原文**。
+    #    修前那句里没有目录这一侧的事实，被读成"工作目录不可用"就是回到修前的误导。
+    for label, reason in (
+        ("目录正常 + spawn ENOENT", _denied_reason(observed, "workdir_intact_spawn_error")),
+        ("修前真机原文", BEFORE_FIX_REASON),
+    ):
+        kind, _ = _loop_classify(loop, logs, reason)
+        assert kind is None, (label, reason, kind)
+
+    # ④ 变异（只在测试内改字符串，不改仓库源码）：措辞一改，分类必须落到"归不了因"——
+    #    既不静默通过、也不猜成任何一类。这是文本契约被改动时的**安全**失败方向。
+    tampered = _denied_reason(observed, "workdir_missing_project_dir").replace(
+        "工作目录不存在", "目标目录不可用"
+    )
+    kind, _ = _loop_classify(loop, logs, tampered)
+    assert kind is None, tampered
 
 
 def test_the_plugin_forwards_the_exit_facts_from_the_tool_result_value(tmp_root):

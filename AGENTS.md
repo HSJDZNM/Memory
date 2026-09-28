@@ -370,6 +370,40 @@
     `PIPELINE_SCHEMA_VERSION`）；
     **拒绝理由必须给出"改成什么形态就能过"**：写类越界（`policy.context.repo_relative_path`）
     与读类、Phase 4 pre-check、Phase 6 `normalize_event_path` 用同一句话，范围校验一个字不放宽。
+51. **「待实现」是显式状态：既不是失败，也不是通过**（Q7）：选中的测试**在收集期**就失败、
+    而原因是「它 import 的**项目内**模块/名字在本次取证树里还不存在」时，取证侧必须给出
+    `ValidatorStatus.PENDING_IMPLEMENTATION`（中文「待实现」）这条**显式状态**：
+    不产生 Blocker、`failing_tests` **不进** `served_checkers`（没查成的不能记成查过了），
+    报告与审计里带上 `pending_implementation` 清单（测试模块 + 缺失目标 + 修复动作），
+    判定侧产出 **warning 级** violation，于是 decision 是 `allow_with_warnings`——
+    「先写测试、再写实现」因此不再被自己的平台拦死，而绕法（把测试先写成不测任何东西的占位）
+    也不再是唯一出路。**反例一条都不许放宽**：第三方包缺失、语法错误、conftest 出错、
+    断言失败、退出码不是收集失败形态、目标解析不出来——全部保持真违规（规则自己的 severity）
+    或原来的失败关闭（crashed/unavailable critical）。这条路**不证明测试最终会通过**：
+    它只说明这次的树还在构建中，测试是否通过由后续动作的取证与 PostToolUse 事后核对重新算。
+    新增状态值 = 载荷变更：`EVIDENCE_SCHEMA_VERSION` / `PIPELINE_SCHEMA_VERSION` 必须按协议
+    自己的规则**显式递增**（1.1 → 1.2），并把写死版本号的断言按新版本号显式更新——
+    包括 `docs/project/architecture/tech-detail/` 的生成物（改内容源后重新生成，`--check` 是门禁）。
+52. **失败关闭不等于理由正确**（Q6）：拦住一次工具调用只完成了一半，另一半是**告诉人一个对的原因**。
+    把「Hook 起不来」翻译成理由时，必须把「要启动什么」与「在哪个目录启动」**分开写**，并按
+    工作目录的真实状态归因——Node 的 spawn 在 **cwd 不存在**时把 ENOENT 归给**可执行文件**，
+    照抄它会把模型带偏到「运行时没装」。实现上 spawn **之前**用 `node:fs` 预检工作目录，
+    异常路径再复查一次（覆盖竞态），两条路都失败关闭。插件侧的理由措辞是**跨侧契约**：
+    `tools/dsh_sandbox_loop.py` 的分类器按它分流，改措辞必须同步两侧，并由
+    `tests/contract/test_policy_hook_chain.py` 的跨侧用例（真插件产出 → 真分类器）守住。
+53. **归因的合取必须落在同一条记录内**（D4）：在**整篇日志**上分别判定两组事实再合取，会把
+    「真失败」洗成「环境跳过」——`tools/dsh_sandbox_loop.py` 里「启动崩溃原文」与「被拒路径」
+    必须在**同一个崩溃块**内（崩溃原文行 + 紧随的缩进续行）、「`Hook 无法执行`」与「`spawn EPERM`」
+    必须在**同一行**内，合不起来就归不了因：**宁可让真失败保持红**，也不产生环境跳过。
+    同一纪律适用于诊断字段：从日志里推出来的根必须**先是合法的路径/URL**（`file:///C:/x` → `C:/x`），
+    畸形候选按写明理由的规则丢弃，真根不许因为解析口径而消失。
+54. **`host-version` 的四种形态互不代替，改声明必须重录观测**（Q8 尾巴）：报告（默认）/ 活体
+    `--check` / CI `--record-check`（**不探测宿主**，比对提交进仓库的 `adapters/host-versions.observed.json`）
+    / 写入 `--record`（唯一写入口）。CI 上必须跑 `--record-check`——活体形态在没装宿主的机器上
+    退 0，它既不是通过也不是失败，不能当门禁；记录缺失/不完整/哈希对不上/声明≠记录一律退出 1
+    （有门禁就必须有数据）。**维护纪律**：改 `adapters/<agent>/manifest.yaml` 之后先
+    `python -m adapters.cli approve --reviewer <name>`，**再**在装着真实宿主的机器上跑
+    `host-version --record`，把记录的 diff 送评审；版本不一致**不改变任何 allow/block**。
 
 ## 临时文件与产物
 

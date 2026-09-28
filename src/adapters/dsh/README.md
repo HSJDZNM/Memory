@@ -452,6 +452,7 @@ CLI 是生产入口，`main()` 默认 `allow_unverified_wiring=False`：缺 `--h
 理由与代价写在 `hooks.py::run_hook` 的 docstring 里。
 
 插件侧的同一契约：exit 非 0 非 2 一律拒绝；`ctx.shell` 抛错（起不来 / 被杀 / 被沙箱拒）也一律拒绝。
+起不来的**理由**怎么归因（「工作目录不存在」与「可执行文件找不到」分开报）见 §9.10。
 
 **会失败的检查**：`test_self_check_without_hooks_config_is_fail_closed`、
 `test_the_only_way_out_is_the_named_waiver`、
@@ -591,6 +592,64 @@ allow_with_warnings / allow）在**生产 Hook CLI** 上的真实产物、`conte
 `evidence_unavailable` 的"没有这个键"（各带正对照，否则"谁都没有这个键"在修复前也天然
 为真）、canonical ID、稳定排序、脱敏，以及"既有键一个都不少"；
 `tests/integration/test_dsh_pre_evidence_hook.py` 里两条既有用例新增的 violations 断言。
+
+### 9.10 Q6 · 「工作目录不存在」不许报成「找不到 node.exe」
+
+**修前**：插件只在 catch 分支里把 spawn 的报错原文抄进理由，而 Node 的 spawn 在 **cwd 不存在**
+时把 ENOENT 归给**可执行文件**。真机原文（两次会话各 10 次调用逐次一致，而那个 node.exe
+存在且可执行）：
+
+```text
+policy-hook: Hook 无法执行（spawn C:\Program Files\nodejs\node.exe ENOENT），按失败关闭拒绝该工具调用
+```
+
+模型因此花一整轮推理"Node 没装 / 路径不对"。归错对象是 Node 自己的行为，不是推断——
+本机最小复现（`spawnSync(node, …, {cwd: <不存在的目录>, stdio:'ignore'})`）：
+
+    error.code = ENOENT
+    error.path = C:\Program Files\nodejs\node.exe   # 不是那个目录
+    对照组（cwd 存在）= status 0
+
+**修后**（补丁只在进程内插件里，判定语义一个字没改）：
+
+- **spawn 之前预检工作目录**（`inspectWorkdir`）：能证明目录不可用（不存在 / 不是目录）时
+  直接失败关闭，**不再去 spawn**——真机上那一次 spawn 只会给出误导的 ENOENT；
+- **catch 分支同样按工作目录的事实归因**：目录在预检之后被删掉（或预检根本查不出来）时
+  重新看一遍，所以"目录没了"不会被说成"命令找不到"；
+- 理由里三件事分开写：**在哪个目录启动**（含来源是 `config.projectDir` 还是会话 cwd、
+  以及它到底存不存在）、**要启动什么**（`command` 原文）、以及原始 spawn 报错；
+  最后一句是按目录事实得出的归因——目录不存在时明确写"Node 会把 ENOENT 归给可执行文件，
+  不要据此判断命令 / 运行时缺失"，并给出"改成什么形态就能过"（创建该目录，或把
+  `config.projectDir` 指向真实存在的目录）；
+- 前缀 `policy-hook: Hook 无法执行（` 与后缀 `），按失败关闭拒绝该工具调用` 逐字保留
+  （`tools/dsh_sandbox_loop.py` 的 `SPAWN_DENIED_MARKERS` 与
+  `tests/integration/test_dsh_sandbox_loop.py` 依赖它）；pre 仍然是 `{kind:'deny'}`、
+  post 仍然是 `{kind:'block'}`（副作用已发生，只能把结果标成不可信）；
+- 不加 JS 依赖：只用 Node 内建 `node:fs.statSync`；退出码契约（exit 0 放行 / exit 2 阻断）
+  与工具表一行未动。
+
+**这次仍然定位不到原因的形态**（不为好看假装覆盖）：
+
+| 形态 | 理由里会有什么 | 仍然定位不到 |
+| --- | --- | --- |
+| `spawn EPERM`（受限沙箱禁止管道 stdio，见 §2.3.1） | 工作目录已确认存在 + 原始报错 | 是沙箱拒绝而不是命令有问题——除非读者自己认识 EPERM；插件不猜 |
+| 命令里第一个 token 真的不存在 | 工作目录已确认存在 + `command` 原文 + 原始报错 | 点不出是命令里的哪一个 token |
+| `projectDir` 是**相对路径**、而 shell 服务按另一基准解析 | 预检按插件进程的 cwd 判定"存在" | 两个解析基准不一致这件事（预检与 spawn 基准不同，归因可能仍偏） |
+| Hook 起来了但被杀 / 超时 | 退出码分支的 `Hook 退出码 <x>，未知状态按失败关闭拒绝` | 是信号还是超时（`signal` 没进理由；本次范围外） |
+
+**会失败的检查**（`tests/contract/test_policy_hook_chain.py`，真 node + 假 ctx；假 ctx 的
+shell **照搬** Node 的 spawn 行为，所以修前读到的那一句就是真机读数）：
+
+- `::test_a_missing_project_dir_is_named_as_a_missing_directory_not_a_missing_node`：
+  `projectDir` 不存在 → 理由点名目录与来源、不许再说可执行文件、且**没有去 spawn`
+  （`spawnAttempts == 0`）；
+- `::test_a_missing_session_cwd_is_named_the_same_way_without_project_dir`：未给
+  `projectDir` 时会话 cwd 不存在 → 同样点名；反向对照：`projectDir` 存在时不存在的
+  会话 cwd 不该把一次正常调用变成拒绝（不许过度拒绝）；
+- `::test_the_catch_path_blames_the_command_side_when_the_workdir_is_intact`：目录存在而
+  spawn 仍抛 `spawn <node> ENOENT` → 归因落在「要启动的命令」那一侧、原始报错仍在；
+  竞态（预检通过后目录被删）→ catch 分支重新归因到那个目录；
+- `::test_a_hook_that_cannot_name_its_workdir_is_still_fail_closed`：pre 仍 deny、post 仍 block。
 
 ## 10. 复现命令
 
@@ -879,7 +938,7 @@ python .tmp/round-07/harness/probe_pre_evidence.py --json .tmp/round-07/evidence
 
 ## 13. 声明版本 vs 宿主实际版本：一条能失败的检查（R14 / 缺陷 2）
 
-**现象（本轮实测）**：manifest 的 agent_version 字段说明是「**已实测**的 Agent 产品版本」，
+**现象（修复轮 14 实测）**：manifest 的 agent_version 字段说明是「**已实测**的 Agent 产品版本」，
 但宿主早就是 0.1.6-alpha.2，声明却写着 0.1.5-rc.1，而**没有任何检查能发现这件事**：
 
     声明（adapters/dsh/manifest.yaml）  0.1.5-rc.1
@@ -894,27 +953,52 @@ python .tmp/round-07/harness/probe_pre_evidence.py --json .tmp/round-07/evidence
 **修后（两件事，缺一不可）**：
 
 1. 声明改成实测值：agent_version: 0.1.6-alpha.2（重新审核，哈希同步）；
-2. 新增检查入口，把"声明 vs 宿主"的漂移变成红灯：
+2. 新增检查入口，把"声明 vs 宿主"的漂移变成红灯。**同一入口四种形态，互不代替**：
 
 ```powershell
 $env:PYTHONPATH='src'
-python -m adapters.cli host-version                             # 报告（退出码 0）
-python -m adapters.cli host-version --check                     # drift 即退出 1
-python -m adapters.cli host-version --check --require-runtime   # 读不到也退出 1
+python -m adapters.cli host-version                            # ① 报告：只打印，退出码 0
+python -m adapters.cli host-version --check                    # ② 活体：drift / recording_stale 即退出 1
+python -m adapters.cli host-version --check --require-runtime  # ② 活体：读不到宿主也退出 1
+python -m adapters.cli host-version --record-check             # ③ CI 硬门禁：不探测宿主，比对观测记录
+python -m adapters.cli host-version --record                   # ④ 唯一写入口：把这次实测写进观测记录
 ```
+
+| 形态 | 读什么 | 退出码 |
+| --- | --- | --- |
+| ① 报告（默认） | 活体探测；记录存在时顺带核对 | 恒 `0`（只打印：`result` 可能是 `fail` / `unavailable`，退出码不动） |
+| ② 活体 `--check` | 活体探测 +（记录存在时）与记录逐条核对 | `1` = `result == fail`（drift / recording_stale / full 却声明不出读法）；其余 `0`；再加 `--require-runtime` 时 `unavailable` 也 `1` |
+| ③ CI `--record-check` | **只读**提交进仓库的 `adapters/host-versions.observed.json`，**不探测宿主** | `0` 仅当逐条 `pass`；`1` = 记录缺失（`record_missing`）/ 记录格式坏或记录协议版本不认识（`record_invalid`）/ 声明 ≠ 记录 / 记录钉住的 manifest 哈希对不上 / 记录里的读法变了 / 记录缺条目 / 记录里有注册表已经没有的 Agent |
+| ④ 写入 `--record` | 先做一次完整活体比对，只把**已核对过**的证据写进记录 | `0` = 已写入（全部 match 且至少一条）；`1` = 拒写（`result != pass`：drift / 读不到宿主 / 一个条目都没有）；`2` = 用法错误 |
+
+`2`（用法错误）还覆盖：`--record` 与 `--record-check` 同时给；`--record-check` 配
+`--probe-binary` 或 `--require-runtime`（它不探测宿主，静默忽略会把"我明明指定了"变成空操作）；
+`--timeout-ms` 非正数。记录路径默认 `adapters/host-versions.observed.json`，可用 `--record-path` 覆盖。
+
+记录里**不存解析结果**：只存声明的读法（executable / args / version_pattern）、这次真读到的版本、
+以及**当时那份 manifest 的 sha256**——三者缺一，这条门禁就会被绕空。报告与记录里都不出现本机
+绝对路径（记录只出现仓库相对路径）。
 
 读法本身是**数据**（manifest 的 host_version 段：executable / args / version_pattern），
 不是代码里的 if agent_id == "dsh"。三条结构性限制：executable 只能是裸命令名；
 参数里不许出现 shell 组合字符（探测走 shell=False 的 argv 直执）；版本正则恰好一个捕获组。
 
-**四种状态互不折叠**：
+**五种状态互不折叠**（第 5 种 `recording_stale` 是本轮新增）：
 
-| 状态 | 含义 | `--check` 的后果 |
-| --- | --- | --- |
-| match | 声明 = 宿主 | 0 |
-| drift | 声明 ≠ 宿主（宿主升级后没重跑 fixture / 声明写错） | **1** |
-| not_declared | 没有声明读法；能力上限是 full 时算失败（否则检查被"删块"绕空） | full → 1；read_only → 0 |
-| unavailable | 二进制不在 / 非零退出 / 输出解析不出 / 超时 | 0，加 `--require-runtime` 才 1 |
+| 状态 | 含义 | ② `--check` | ③ `--record-check` |
+| --- | --- | --- | --- |
+| match | 声明 = 宿主实测值（或记录里的实测值） | 0 | 0 |
+| drift | 声明 ≠ 宿主 / ≠ 记录里的实测值（宿主升级后没重跑 fixture / 声明写错） | **1** | **1** |
+| not_declared | 没有声明读法（没有宿主二进制的合成协议消费者）；能力上限是 full 时算失败（否则检查被"删块"绕空） | full → 1；read_only → 0 | full → 1；read_only → 0，但**若一条都没比对上**（covered 0）则失败——CI 上"这条检查什么都没覆盖"不许静默通过 |
+| unavailable | 二进制不在 / 非零退出 / 输出解析不出 / 超时 | 0，加 `--require-runtime` 才 1 | ——（这一形态不探测宿主，不产生它） |
+| recording_stale | 提交进仓库的记录过期：manifest 哈希对不上（声明改了没重录）/ 记录里的读法变了 / 活体与记录不一致 / 记录缺条目 / 记录里有注册表已经没有的 Agent | **1**（记录缺失或读不了**不**改变其余四态语义，只写进 notes 并指向 CI 形态） | **1**（记录缺失 / 格式坏同样是 1：有门禁就必须有数据） |
+
+**维护纪律（CI 硬门禁的代价，必须写下来）**：改了 `adapters/<agent>/manifest.yaml` 之后，
+**先** `python -m adapters.cli approve --reviewer <name>` 重新审核，**再**在装着真实宿主的机器上跑
+`python -m adapters.cli host-version --record`，把 `adapters/host-versions.observed.json` 的 diff
+送评审。顺序反了（先录后 approve，哈希又变）或漏了后一步，CI 都会红在「记录过期」上；
+那条红灯的修复动作写在 `failures` 里（重跑 `--record` 并把 diff 送评审），不用去读代码。
+（④ 写入前的活体比对**不读**旧记录，所以"记录已过期"不会挡住重录——这是维护流程能走通的前提。）
 
 **为什么不做成拦截判定**：AGENTS.md 第 24 / 29 条管的是**能力上限**，不是版本号。
 把版本不一致变成放行条件，等于让"宿主升级"把整个平台封成不可用——那是把正常工作封死，
@@ -924,8 +1008,10 @@ python -m adapters.cli host-version --check --require-runtime   # 读不到也�
 
 - 它读的是**宿主二进制自报的版本**，不是"这个二进制真的在治理这条链路"——
   接线事实归 adapters.cli wiring（接线 + 留痕两轴），能力上限归 manifest + 已审核哈希；
-- 它只在**能读到 dsh 可执行文件**时有意义：读不到就是 unavailable（不是通过，
-  但默认也不是红灯）；没有 dsh 的 CI 上它退出 0，因此**不能**当成"版本已核对"的证据；
+- 活体形态只在**能读到 dsh 可执行文件**时有意义：读不到就是 unavailable（不是通过，但默认
+  也不是红灯）——没有 dsh 的 CI 上它退出 0，因此**不能**当成"版本已核对"的证据。CI 上那条结论只能
+  由 ③ `--record-check` 给出；而记录形态能发现的是"声明改了没重录"，发现不了"记录是**在哪台机器上**
+  写的"（那要靠 `--record` 当时的人工核对与评审）；
 - 它不核对 Hook 包的版本（§1 表里那些包各自有版本号），也不核对 Phase 2 运行期配置
   （examples/dsh/dsh-adapter.yaml 的 agent_version 是"记录用"的，与能力声明是两份各自
   独立的声明；本轮没有把两者绑在一起——理由见 .tmp/round-10/b/REPORT.md 的诚实边界）。
@@ -935,7 +1021,17 @@ python -m adapters.cli host-version --check --require-runtime   # 读不到也�
 - tests/unit/test_host_version_drift.py：drift 必须红且给出修复动作 / full 无声明算失败 /
   read_only 无声明不算失败但也不计入"已比对" / 读不到 ≠ match / 报告无绝对路径且两次逐字节
   相同 / 读法的三条结构性限制 / CLI 上 match→0、drift→1、`--require-runtime` 对 unavailable→1；
+  记录形态还有：**没有宿主也能绿**（`test_recorded_check_is_green_without_any_host`）/
+  声明改了没重录即红 / 记录里的版本被手改即红 / 记录缺失即红 / 记录不完整或记录协议版本不认识
+  即红 / 记录里多出注册表已经没有的 Agent 也算失败 / 活体 `--check` 顺带把过期记录标成
+  `recording_stale` 而**报告形态永不因记录过期改退出码** / 记录只能由 `--record` 写入且
+  drift、读不到宿主、空记录都拒写 / `--record-check` 拒绝 `--probe-binary` 与
+  `--require-runtime`（退出 2）/ `--record` 与 `--record-check` 互斥（退出 2）；
 - tests/contract/test_adapter_version_declaration.py：读法结构 / dsh 的正则认得出真实版本行 /
-  **full 的 Adapter 必须声明读法** / **删掉 host_version 块会让哈希漂移并被拒绝装配**；
+  **full 的 Adapter 必须声明读法** / **删掉 host_version 块会让哈希漂移并被拒绝装配** /
+  **提交进仓库的观测记录在没有任何宿主时也能让这条检查工作**，且钉住每一条声明的读法；
+- 门禁接线：tools/ci_local.py 的 `Agent version vs host version` 一步与
+  .github/workflows/phase-8.yml 里的同名步骤跑的都是 ③ `--record-check`（该步注释写明：
+  活体 `--check` 在没有 dsh 的机器上退 0，不能当门禁）；
 - 变异证明（把声明改回 0.1.5-rc.1 → 检查红 → 撤回 → 绿）：
   .tmp/round-10/b/40-mutation-proof.txt。

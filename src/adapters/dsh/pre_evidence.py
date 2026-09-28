@@ -96,6 +96,14 @@ TREE_NOTE = (
     "只改「兄弟模块在不在」，工具结论就会变。tree_digest 是这棵树的指纹"
     "（仓库相对路径 + 文件 sha256，按稳定顺序算），两次证据的指纹不同就说明取证时树不同"
 )
+# Q7：待实现（pending_implementation）的读数口径。写死在摘要里，读账本的人不必去猜
+# "allow 是不是等于测试通过了"。
+PENDING_IMPLEMENTATION_NOTE = (
+    "pending_implementation 里的 checker **不在** served_checkers 里：工具跑成了，但选中的测试"
+    "因项目内还不存在的模块/名字而无法收集（待实现）。本次写入因此是 allow_with_warnings 放行的"
+    "——「覆盖它的测试尚未能运行」这件事必须能从账本读到，不能被读成「查过了、没问题」；"
+    "测试最终是否通过由后续动作的取证与 PostToolUse 事后核对负责"
+)
 TREE_GAPS_NOTE = (
     "只在「顶层包已经存在于影子树里、但这个模块的文件/包目录找不到」时报出——"
     "这正是 isort 会把项目内模块判成第三方的形状；口径是可能漏、不误报（顶层包不在树里的"
@@ -685,6 +693,13 @@ def _summary(
             for record in report.validators
         ],
         "judgements": [dict(item.to_payload()) for item in report.judgements],
+        # Q7：这次的树还在构建中（测试已落地、它 import 的项目内模块/名字还没有）。
+        # 它必须能从账本读到，否则"这次写入是在覆盖测试跑不了的状态下放行的"只能靠
+        # 读 allow 反推——而那正是"跳过被当成通过"的老毛病。
+        "pending_implementation": [
+            dict(item.to_payload()) for item in report.pending_implementation
+        ],
+        "pending_implementation_note": PENDING_IMPLEMENTATION_NOTE,
         "blockers": [dict(item.to_payload()) for item in report.blockers],
         "target": None
         if target is None

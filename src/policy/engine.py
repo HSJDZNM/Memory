@@ -12,7 +12,10 @@ Phase 5 相对 Phase 1–4 的变化：
 - 失败关闭：关键验证器不可用（缺失 / 超时 / 崩溃 / 版本不符 / 输出非法）时，
   需要它的规则以 critical 违规阻断，不被同批的其他 PASS 抵消；
 - 仅有上下文的调用路径（Phase 2 的 Hook）拿不到代码证据时，证据类 checker 的规则
-  进入 skipped_rules 并写明"需要验证器证据"，这是显式记录，不是静默放行。
+  进入 skipped_rules 并写明"需要验证器证据"，这是显式记录，不是静默放行；
+- 第三种状态（Q7）：「工具跑成了、但这次的树还在构建中」（pending_implementation）——
+  它不是"证据到手"（不进 served_checkers），也不是"证据没拿到"（不产生 Blocker），
+  判定侧产出 warning 级 violation，decision=allow_with_warnings。
 """
 
 from __future__ import annotations
@@ -144,7 +147,12 @@ def evaluate(
             if blocker is not None:
                 violations.append(blocker_violation(rule, blocker))
                 continue
-            if not bundle.serves(checker):
+            # 三种状态必须分开（Q7）：证据到手（serves）/ 这次还查不了（pending_implementation）/
+            # 证据没拿到（两者都不是 → 失败关闭）。中间那一种**不进** served_checkers，
+            # 也**不产生** Blocker；判定函数会为它产出 warning 级说明，
+            # decision 因此是 allow_with_warnings，而不是普通 allow。
+            pending = bundle.pending_for(checker)
+            if not pending and not bundle.serves(checker):
                 violations.append(uncovered_checker_violation(rule, checker))
                 continue
         violations.extend(checker_handler(checker)(rule, canonical, bundle))

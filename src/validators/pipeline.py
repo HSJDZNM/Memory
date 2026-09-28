@@ -10,6 +10,10 @@
   requires 补齐前置事实（源码 / AST）；没跑的验证器在报告里记 not_selected 与原因；
 - **失败关闭**：critical 验证器没跑成（缺失 / 版本不符 / 超时 / 崩溃 / 配置错误 / 输出非法）
   会让它服务的 checker（以及依赖它的验证器所服务的 checker）整体不可判定，由引擎按 critical 阻断；
+- **第三种状态（Q7）**：工具跑成了、但选中的测试因**项目内**某模块/名字在本次树里还不存在而
+  收集失败时，记 pending_implementation——不进 served_checkers（没查成的不能记成查过了），
+  也不产生 Blocker（那不是"证据没拿到"，而是"先写测试、再写实现"这条正确顺序）；
+  判定侧据此产出 warning（decision=allow_with_warnings），理由与缺失目标都进报告与账本；
 - **证据与判定分离**：流水线只产出证据与阻断点，"allow / block" 由 Policy Engine 决定；
 - **确定性**：波次内并行执行，但证据、依赖、记录、阻断点都按稳定键排序，与完成顺序无关。
 """
@@ -34,6 +38,7 @@ from policy.evidence import (
     DependencyKind,
     DependencyResolution,
     EvidenceBundle,
+    PendingImplementation,
     SourceDigest,
     ToolInvocation,
     ValidationEvidence,
@@ -76,7 +81,11 @@ __all__ = [
 
 # 1.1：validators[] 的 served_checkers → declared_checkers（P7："声明负责"≠"真的服务过"），
 #      并新增 PipelineReport.language_coverage（P2：哪些语言按设计不取证写成数据）。
-PIPELINE_SCHEMA_VERSION = "1.1"
+# 1.2：新增 ValidatorStatus.PENDING_IMPLEMENTATION 与 PipelineReport.pending_implementation
+#      （Q7：「测试已落地、目标模块还不存在」是「待实现」，不是 validator crashed）。
+#      1.1 的载荷里没有这一族字段：读到一条待实现记录的人只会看到"某个 checker 不在
+#      served_checkers 里"，因此不能静默接受。
+PIPELINE_SCHEMA_VERSION = "1.2"
 
 # checker 的"非判定"口径（PipelineReport.judgements 的 outcome）：
 #   empty      —— 验证器跑成了，但本次一条诊断都没归到任何规则（只计数、不判定）；
@@ -154,6 +163,9 @@ class ValidatorOutput:
     payload: Mapping[str, Any] = field(default_factory=dict)
     served: Tuple[str, ...] = ()
     analysis_failure: Tuple[str, ...] = ()
+    # Q7：status 为 pending_implementation 时，这里说得出"哪个测试模块因为哪个项目内
+    # 缺失的目标而收集失败"。空清单 + 待实现状态 = 无理由的放行，流水线会失败关闭。
+    pending: Tuple[PendingImplementation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -257,6 +269,9 @@ class PipelineReport:
     served_checkers: Tuple[str, ...] = ()
     unmapped_findings: int = 0
     judgements: Tuple[CheckerJudgement, ...] = ()
+    # Q7：「待实现」——工具跑成了、但这次的树还在构建中。它不是 served（没查成），
+    # 也不是 blocker（不阻断），而是第三种可读状态：见 policy.evidence.PendingImplementation。
+    pending_implementation: Tuple[PendingImplementation, ...] = ()
     truncated_evidence: int = 0
     selection: Mapping[str, Any] = field(default_factory=dict)
     environment: Mapping[str, str] = field(default_factory=dict)
@@ -280,6 +295,7 @@ class PipelineReport:
             validators=self.validators,
             blockers=self.blockers,
             served_checkers=self.served_checkers,
+            pending_implementation=self.pending_implementation,
             unmapped_findings=self.unmapped_findings,
         ).normalize()
 
@@ -311,6 +327,9 @@ class PipelineReport:
             "served_checkers": list(self.served_checkers),
             "unmapped_findings": self.unmapped_findings,
             "judgements": [item.to_payload() for item in self.judgements],
+            "pending_implementation": [
+                item.to_payload() for item in self.pending_implementation
+            ],
             "truncated_evidence": self.truncated_evidence,
             "selection": dict(self.selection),
             "environment": dict(self.environment),
@@ -341,6 +360,14 @@ def render_report(report: PipelineReport) -> str:
         for blocker in report.blockers:
             lines.append(
                 "  - " + blocker.validator + " " + blocker.status.value + "：" + blocker.reason
+            )
+    if report.pending_implementation:
+        lines.append("pending_implementation (待实现：覆盖它的测试这次跑不了):")
+        for item in report.pending_implementation:
+            lines.append(
+                "  - " + item.validator + " " + ", ".join(item.checkers)
+                + "：" + ", ".join(item.test_modules)
+                + " 因项目内还不存在的 " + ", ".join(item.missing_targets) + " 无法收集"
             )
     if report.judgements:
         lines.append("judgements (非判定口径，不是\"判定过、未发现\"):")
@@ -495,6 +522,7 @@ def run_pipeline(
     evidence: list[ValidationEvidence] = []
     served: set[str] = set()
     judgements: list[CheckerJudgement] = []
+    pending_records: list[PendingImplementation] = []
     unmapped = 0
     selection: Mapping[str, Any] = {}
 
@@ -563,6 +591,33 @@ def run_pipeline(
                     for checker in judged
                 )
             continue
+        if output.status is ValidatorStatus.PENDING_IMPLEMENTATION:
+            # Q7：第三种状态。**不进 served_checkers**（没查成的不能记成查过了，AGENTS 50 / N17），
+            # **也不产生 Blocker**（那不是"证据没拿到"，而是"这次的树还在构建中"）。
+            # 同一验证器负责的其它 checker 照常记账：missing_tests 的证据来自选择阶段，
+            # 与 pytest 能不能收集无关。
+            if not output.pending:
+                # 说不出"哪个测试模块因为什么查不了"的待实现 = 无理由的放行：失败关闭。
+                blocked.append(
+                    Blocker(
+                        validator_id=spec.id,
+                        validator_version=spec.version,
+                        status=ValidatorStatus.CONFIG_ERROR,
+                        reason=(
+                            "验证器自报状态 pending_implementation，却没有给出待实现清单"
+                            "（哪个测试模块、因哪个项目内缺失的目标）：拒绝把说不清理由的"
+                            "状态当成通过"
+                        ),
+                        checkers=tuple(sorted(_blocked_checkers(spec, selected_specs, registry))),
+                    )
+                )
+                continue
+            pending_checkers = {
+                checker for item in output.pending for checker in item.checkers
+            }
+            served.update(checker for checker in checkers if checker not in pending_checkers)
+            pending_records.extend(output.pending)
+            continue
         if spec.critical and output.status in FAIL_CLOSED_STATUSES:
             blocked.append(
                 Blocker(
@@ -621,6 +676,7 @@ def run_pipeline(
         judgements=tuple(
             sorted(judgements, key=lambda item: (item.checker, item.outcome, item.validators))
         ),
+        pending_implementation=tuple(sorted(pending_records, key=lambda item: item.sort_key)),
         truncated_evidence=truncated_evidence,
         selection=selection,
         environment={
@@ -1090,4 +1146,5 @@ def _from_adapter(result: AdapterResult, *, spec: ValidatorSpec) -> ValidatorOut
         payload=result.payload,
         served=spec.checkers,
         analysis_failure=result.analysis_failure,
+        pending=result.pending,
     )
