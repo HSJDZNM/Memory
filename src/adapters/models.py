@@ -622,8 +622,13 @@ def normalize_event_path(value: str, *, workspace: Path, path_base: Optional[Pat
     if path_base is not None and not looks_absolute:
         candidate = (Path(path_base).resolve() / raw.replace(chr(92), "/")).resolve()
         if not _within(candidate, anchor):
+            # M5：拒绝方向不变（含只读动作），但理由要能一次改对——与 N22 在 dsh 侧
+            # 的做法同一口径：给出**可用的替代**，只说工作区名、不说本机绝对路径。
             raise AdapterEventError(
-                f"路径不在受控工作区 {anchor.name} 内：越界一律拒绝（含只读动作）"
+                f"路径不在受控工作区 {anchor.name} 内：越界一律拒绝（含只读动作）。"
+                "可用的替代：把目标写成工作区以内的仓库相对路径"
+                f"（工作区根 {anchor.name} 本身记为 .），"
+                "不要用工作区外的绝对路径，也不要用 .. 往外走"
             )
         return _relative_to(candidate, anchor)
 
@@ -631,7 +636,10 @@ def normalize_event_path(value: str, *, workspace: Path, path_base: Optional[Pat
         candidate = Path(raw).resolve()
         if not _within(candidate, anchor):
             raise AdapterEventError(
-                f"路径不在受控工作区 {anchor.name} 内：越界一律拒绝（含只读动作）"
+                f"路径不在受控工作区 {anchor.name} 内：越界一律拒绝（含只读动作）。"
+                "可用的替代：把目标写成工作区以内的仓库相对路径"
+                f"（工作区根 {anchor.name} 本身记为 .），"
+                "不要用工作区外的绝对路径，也不要用 .. 往外走"
             )
         return _relative_to(candidate, anchor)
 
@@ -643,7 +651,9 @@ def normalize_event_path(value: str, *, workspace: Path, path_base: Optional[Pat
         # 反例（真实踩过）：把 "../outside.py" 先 normpath 成 "outside.py"，
         # 再交给这里，逃逸就变成了一次静默的"规范化"。
         raise AdapterEventError(
-            f"相对路径不允许包含 '..'：{raw!r} 试图逃出工作区，越界一律拒绝"
+            f"相对路径不允许包含 '..'：{raw!r} 试图逃出工作区，越界一律拒绝。"
+            "可用的替代：写成工作区以内的仓库相对路径"
+            f"（例如 src/shop/order_service.py；工作区根 {anchor.name} 本身记为 .）"
         )
     try:
         return normalize_repo_path(raw)

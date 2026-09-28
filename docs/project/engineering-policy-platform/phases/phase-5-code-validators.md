@@ -133,7 +133,7 @@ Code → AST → Dependency → Lint → Type → Tests → Evidence → Policy
 | `src/policy/checkers.py` | 新增：checker 分派（`CONTEXT_CHECKERS` = forbidden_dependency；`EVIDENCE_CHECKERS` = missing_docstring / style_lint / type_check / missing_tests / failing_tests）+ 阻断类 violation 的构造 |
 | `src/policy/models.py` | 变化：`Rule.rule` 从单一规则体变为**按 checker 区分的规则体 union**（forbidden_dependency / missing_docstring / style_lint / type_check / missing_tests / failing_tests），并加入"规则体必须与 checker 一致、未知 checker 直接报错"的校验；错误位置去掉 union 成员类名 |
 | `src/policy/engine.py` | 变化：`evaluate(rules, context, *, evidence=None)`；判定改为按 checker 查表；证据类 checker 在没有证据的调用路径上进 `skipped_rules` 并写明原因；新增 `matching_rules` 供流水线选验证器 |
-| `src/policy/check.py` | 变化：默认走验证器流水线（目标路径先按 `--workspace` 解析、再按仓库根）；新增 `--workspace` / `--config-root` / `--changed` / `--validators` / `--keep-temp`；`--json` 增加 `evidence` 段；`--dependencies` 语义变成"显式声明依赖、覆盖 AST 证据" |
+| `src/policy/check.py` | 变化：默认走验证器流水线（目标路径先按 `--workspace` 解析、再按仓库根）；新增 `--workspace` / `--config-root` / `--changed` / `--validators` / `--keep-temp`；`--json` 增加 `evidence` 段；`--dependencies` 语义变成"显式声明依赖、覆盖 AST 证据"。08 修复轮起 `--json` 顶层另有 `layer_source`（层从哪来：声明 / 平台测试路径 / 文件名推断）与 `check_volume`（这次到底查了多少：`complete` / `missing_dimensions` / `blocking_capable_skipped`） |
 | `src/validators/models.py`、`registry.py` | 新增：注册表 / 项目档案 / 测试布局的数据模型与加载器（原子、拒绝未知字段、拒绝重复 ID、`requires` 必须更早执行、工具配置必须存在、checker 必须有验证器负责） |
 | `src/validators/source.py` | 新增：源码身份（哈希、语言、规模），拒绝越界路径、符号链接逃逸、超大文件、非 UTF-8、NUL |
 | `src/validators/python_ast.py` | 新增：标准库 ast 事实（import / 别名 / 相对导入 / 动态 import 的常量性 / 调用链 / 定义与 docstring / 语法错误） |

@@ -59,9 +59,15 @@ def record(
     validator_id: str = "py.docstring",
     *,
     status: ValidatorStatus = ValidatorStatus.OK,
-    checkers: tuple[str, ...] = ("missing_docstring",),
+    declared: tuple[str, ...] = ("missing_docstring",),
     critical: bool = True,
 ) -> ValidatorRecord:
+    """ValidatorRecord 上的 `declared_checkers` 是"这个验证器声明负责哪些 checker"。
+
+    它与 `EvidenceBundle.served_checkers`（**真的**服务过）是两个字段、两个含义（P7）：
+    证据包里两个都叫 served_checkers 时，这里最容易把它们混着读。
+    """
+
     return ValidatorRecord(
         validator_id=validator_id,
         validator_version="1.0",
@@ -69,7 +75,7 @@ def record(
         stage="docstring",
         status=status,
         critical=critical,
-        served_checkers=checkers,
+        declared_checkers=declared,
     )
 
 
@@ -311,7 +317,7 @@ def test_forbidden_dependency_uses_evidence_facts_with_lines() -> None:
                 validator="py.depgraph@1.0",
             ),
         ),
-        validators=(record("py.depgraph", checkers=("forbidden_dependency",)),),
+        validators=(record("py.depgraph", declared=("forbidden_dependency",)),),
         served_checkers=("forbidden_dependency",),
     )
 

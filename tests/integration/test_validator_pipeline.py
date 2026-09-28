@@ -24,7 +24,7 @@ from conftest import (
 )
 from policy.check import EXIT_ALLOWED, EXIT_ERROR, EXIT_VIOLATION
 from policy.engine import evaluate
-from policy.evidence import ValidatorStatus
+from policy.evidence import EVIDENCE_SCHEMA_VERSION, ValidatorStatus
 from policy.loader import load_rule_set
 from validators.adapters.base import probe_tool
 from validators.pipeline import PipelineRequest, run_pipeline
@@ -226,6 +226,34 @@ def test_ruff_findings_are_mapped_to_their_rules() -> None:
     assert report.unmapped_findings == 0  # ruff.toml 只选有规则归属的码
 
 
+def test_declared_checkers_are_not_served_checkers() -> None:
+    """P7 的可执行反例：`validators[].declared_checkers`（声明负责）≠ 顶层 `served_checkers`（真的服务过）。
+
+    修复前这个字段叫 `served_checkers`，与顶层同名。一个 `not_selected` 的验证器照样把它
+    列出来——按名字读会把"没跑"读成"跑了"，正是本仓库反复强调的那类静默。
+    """
+
+    report = run_pipeline_for("src/shop/broken_syntax.py")
+
+    record = report.record("py.depgraph")
+    assert record is not None
+    # 语法错误让 py.ast 失败关闭，依赖它的 py.depgraph 于是没被选中
+    assert record.status is ValidatorStatus.NOT_SELECTED
+    # 声明负责：即使一条证据都没产
+    assert record.declared_checkers == ("forbidden_dependency",)
+    # 真的服务过：顶层口径里没有它
+    assert "forbidden_dependency" not in report.served_checkers
+
+    payload = report.to_payload()
+    entry = next(
+        item for item in payload["validators"] if item["validator"] == "py.depgraph@1.0"
+    )
+    assert entry["declared_checkers"] == ["forbidden_dependency"]
+    assert "served_checkers" not in entry
+    # 顶层 served_checkers 不改名、不改语义：它仍然是"真的服务过"
+    assert payload["served_checkers"] == list(report.served_checkers)
+
+
 def test_missing_external_tool_blocks_instead_of_passing(tmp_root: Path) -> None:
     """工具不在时失败关闭：需要它的规则以 critical 阻断，而不是"没有发现问题"。"""
 
@@ -242,6 +270,11 @@ def test_missing_external_tool_blocks_instead_of_passing(tmp_root: Path) -> None
     blocker = [item for item in report.blockers if item.validator_id == "tool.ruff"][0]
     assert blocker.status is ValidatorStatus.UNAVAILABLE
     assert "style_lint" in blocker.checkers
+    # P7：没跑成的验证器只"声明负责"，不"服务过"——两个字段必须分开读
+    record = report.record("tool.ruff")
+    assert record is not None
+    assert record.declared_checkers == ("style_lint",)
+    assert "style_lint" not in report.served_checkers
 
 
 def test_wrong_tool_version_blocks(tmp_root: Path) -> None:
@@ -476,7 +509,8 @@ def test_cli_json_exposes_the_evidence_section() -> None:
 
     payload = json.loads(completed.stdout)
     assert completed.returncode == EXIT_ALLOWED, payload
-    assert payload["evidence"]["schema_version"] == "1.0"
+    # 协议版本由契约测试逐字钉住（tests/contract/test_validator_protocol.py），这里跟随常量
+    assert payload["evidence"]["schema_version"] == EVIDENCE_SCHEMA_VERSION
     assert payload["evidence"]["served_checkers"] == [
         "forbidden_dependency",
         "missing_docstring",

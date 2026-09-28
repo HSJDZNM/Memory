@@ -83,6 +83,7 @@ __all__ = [
     "LayerResolution",
     "LayerRule",
     "PolicyEvent",
+    "PreEvidenceConfig",
     "ToolKind",
     "ToolSpec",
     "ToolTableDrift",
@@ -130,11 +131,14 @@ _CONFIG_FIELDS: Tuple[str, ...] = (
     "timeout_ms",
     "layers",
     "default_layer",
+    "test_paths",
+    "test_layer",
     "languages",
     "default_language",
     "principal",
     "trace_id",
     "audit_log",
+    "pre_evidence",
 )
 
 
@@ -494,6 +498,87 @@ class LayerResolution:
     defaulted: bool
 
 
+def _pattern_witness(pattern: str) -> str:
+    """把一条 glob 变成一个具体的仓库相对路径（"见证路径"）。
+
+    用途只有一个：**在加载期**回答"这条测试路径究竟会被解析成哪个 layer"。
+    见证路径完全由声明本身推导（**/ → x/、* → w、? → q），不读文件系统，
+    因此可复核、可复现，也不会因仓库当前内容不同而给出不同结论。
+    """
+
+    parts: list[str] = []
+    index = 0
+    while index < len(pattern):
+        if pattern[index : index + 2] == "**":
+            if pattern[index + 2 : index + 3] == "/":
+                parts.append("x/")
+                index += 3
+                continue
+            parts.append("x")
+            index += 2
+            continue
+        char = pattern[index]
+        if char == "*":
+            parts.append("w")
+        elif char == "?":
+            parts.append("q")
+        else:
+            parts.append(char)
+        index += 1
+    return "".join(parts)
+
+
+def _literal_prefix(pattern: str) -> str:
+    """pattern 里第一个通配符之前的字面部分（含结尾斜杠）。"""
+
+    for index, char in enumerate(pattern):
+        if char in "*?":
+            return pattern[:index]
+    return pattern
+
+
+def _tail_witness(pattern: str) -> str:
+    """把 pattern 从最后一个斜杠起的那一段实例化（用于与另一条 pattern 的字面前缀拼接）。"""
+
+    raw = pattern if "/" not in pattern else pattern[pattern.rfind("/") + 1 :]
+    return _pattern_witness(raw)
+
+
+def _test_path_witnesses(test_pattern: str, other_pattern: str) -> tuple[str, ...]:
+    """可能同时命中 test_pattern 与 other_pattern 的见证路径。
+
+    三条来源：测试 pattern 自己的见证；测试 pattern 的字面前缀 + 另一条的结尾；
+    反向拼接。它**可能漏**（复杂重叠拼不出来），但不会误报——报出来的每一条
+    都是"两条 pattern 都真的命中"的真实路径。
+    """
+
+    candidates = {
+        _pattern_witness(test_pattern),
+        _literal_prefix(test_pattern) + _tail_witness(other_pattern),
+        _literal_prefix(other_pattern) + _tail_witness(test_pattern),
+    }
+    return tuple(sorted(item for item in candidates if item))
+
+
+@dataclass(frozen=True)
+class PreEvidenceConfig:
+    """动手前取证的声明（G3）：在影子工作区上跑 Phase 5 流水线，把证据交给引擎。
+
+    这是**显式声明**，不是新的默认行为：没有这一项时，pre-execute 路径保持 Phase 2
+    的契约（只有上下文类 checker 参与判定，其余进 skipped_rules 并写明原因）。
+    声明了它，证据类 checker 就能在动手前判定——代价是每次写类动作都要在影子副本上
+    跑一遍验证器，因此注册表根、影子落点、排除项、验证器白名单与预算全部是数据。
+    """
+
+    enabled: bool
+    registry_root: Path
+    workspace: Path
+    shadow_root: Path
+    exclude: Tuple[str, ...] = ()
+    validators: Tuple[str, ...] = ()
+    timeout_ms: int = 60000
+
+
 @dataclass(frozen=True)
 class AdapterConfig:
     """dsh Adapter 的显式上下文来源。
@@ -509,6 +594,10 @@ class AdapterConfig:
     timeout_ms: int = 5000
     layers: Tuple[LayerRule, ...] = ()
     default_layer: Optional[str] = None
+    # M1：测试路径的显式声明。声明了 test_paths 就必须同时声明 test_layer，
+    # 加载期证明不了「每条测试路径都落在 test_layer」时拒绝启动。
+    test_paths: Tuple[str, ...] = ()
+    test_layer: Optional[str] = None
     languages: Tuple[LanguageRule, ...] = ()
     default_language: Optional[str] = None
     principal: Optional[Principal] = None
@@ -521,6 +610,8 @@ class AdapterConfig:
     registry_approved_path: Optional[Path] = None
     enforcement_ledger: Optional[Path] = None
     approval_file: Optional[Path] = None
+    # G3：动手前取证的声明。None = 保持 Phase 2 契约（没有证据提供者）。
+    pre_evidence: Optional[PreEvidenceConfig] = None
 
     @property
     def rule_anchor(self) -> Path:
@@ -556,6 +647,52 @@ class AdapterConfig:
         """
 
         return self.layer_resolution(repo_path).layer
+
+    def layer_test_conflicts(self) -> Tuple[str, ...]:
+        """M1：把"测试文件被卷进生产层"在**加载期**变成一条会失败的检查。
+
+        分层是数据，改一行就换结论——代价是**顺序**与**命名**都能让一条生产层规则
+        悄悄罩住测试文件：tests/test_shipment_controller.py 命中 **/*_controller.py，
+        于是它被当成入口层，生产层的规则开始管测试的写法（实测把一份测试从
+        "真实装配对象图"挤成了"手写替身"）。
+
+        声明了 test_paths 之后，这里对每条测试路径的见证路径回答一个问题：
+        "按声明顺序，它先命中哪条规则？" 只要先命中的不是 test_layer，加载就失败——
+        因为那意味着某条生产层规则正在管测试文件。检查是**保守**的：见证路径法可能
+        漏掉复杂重叠（漏 = 少报），但报出来的每一条都有真实路径支撑，不是猜测。
+        """
+
+        if not self.test_paths:
+            return ()
+        if self.test_layer is None:
+            return (
+                "声明了 test_paths 却没有声明 test_layer：无法证明测试路径不被生产层规则罩住",
+            )
+
+        conflicts: list[str] = []
+        for pattern in self.test_paths:
+            seen: set[str] = set()
+            for other in [None, *self.layers]:
+                candidates = (
+                    (_pattern_witness(pattern),)
+                    if other is None
+                    else _test_path_witnesses(pattern, other.pattern)
+                )
+                for candidate in candidates:
+                    if candidate in seen or not glob_match(pattern, candidate):
+                        continue
+                    seen.add(candidate)
+                    resolution = self.layer_resolution(candidate)
+                    if resolution.layer == self.test_layer:
+                        continue
+                    conflicts.append(
+                        f"test_paths {pattern!r} 的见证路径 {candidate} 解析成 "
+                        f"layer={resolution.layer!r}（pattern={resolution.matched_pattern!r}，"
+                        f"defaulted={resolution.defaulted}），不是声明的 "
+                        f"test_layer={self.test_layer!r}：请把测试层的规则放到 layers 顶部"
+                        "（例如 tests/**/*.py -> test），或收窄那条先命中的规则"
+                    )
+        return tuple(sorted(set(conflicts)))
 
     def language_for(self, repo_path: str) -> Optional[str]:
         for rule in self.languages:
@@ -635,6 +772,69 @@ def _rule_rows(
     return parsed
 
 
+_PRE_EVIDENCE_FIELDS: Tuple[str, ...] = (
+    "enabled",
+    "registry_root",
+    "workspace",
+    "shadow_root",
+    "exclude",
+    "validators",
+    "timeout_ms",
+)
+
+
+def _as_str_list(value: Any, *, where: str) -> list[str]:
+    """可选字符串列表：None 视为空表；非列表、空元素、非字符串一律报错。"""
+
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise DshEventError(f"{where} 必须是字符串列表，得到 {type(value).__name__}")
+    return [_as_str(item, where=f"{where}[{index}]") for index, item in enumerate(value)]
+
+
+def _pre_evidence_config(value: Any, *, base_dir: Path, project_root: Path) -> PreEvidenceConfig:
+    """解析 pre_evidence 段：未知字段、类型错误、缺必需项一律报错（声明即契约）。"""
+
+    if not isinstance(value, Mapping):
+        raise DshEventError("pre_evidence 必须是映射")
+    unknown = sorted(set(value) - set(_PRE_EVIDENCE_FIELDS))
+    if unknown:
+        raise DshEventError(
+            f"pre_evidence 出现未知字段 {unknown}；允许的字段为 {sorted(_PRE_EVIDENCE_FIELDS)}"
+        )
+    enabled = value.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise DshEventError(f"pre_evidence.enabled 必须是布尔值，得到 {enabled!r}")
+    registry_root = _as_path(
+        _require(value, "registry_root", where="pre_evidence"),
+        base_dir=base_dir,
+        where="pre_evidence.registry_root",
+    )
+    workspace = (
+        project_root
+        if value.get("workspace") is None
+        else _as_path(value["workspace"], base_dir=base_dir, where="pre_evidence.workspace")
+    )
+    shadow_root = (
+        project_root / ".policy" / "pre-evidence"
+        if value.get("shadow_root") is None
+        else _as_path(value["shadow_root"], base_dir=base_dir, where="pre_evidence.shadow_root")
+    )
+    timeout_ms = value.get("timeout_ms", 60000)
+    if not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool) or timeout_ms <= 0:
+        raise DshEventError(f"pre_evidence.timeout_ms 必须是正整数毫秒，得到 {timeout_ms!r}")
+    return PreEvidenceConfig(
+        enabled=enabled,
+        registry_root=registry_root,
+        workspace=workspace,
+        shadow_root=shadow_root,
+        exclude=tuple(_as_str_list(value.get("exclude"), where="pre_evidence.exclude")),
+        validators=tuple(_as_str_list(value.get("validators"), where="pre_evidence.validators")),
+        timeout_ms=timeout_ms,
+    )
+
+
 def config_from_mapping(document: Mapping[str, Any], *, base_dir: Path) -> AdapterConfig:
     """从显式映射构造 Adapter 配置；未知键、类型错误、缺必需项一律报错。"""
 
@@ -670,6 +870,30 @@ def config_from_mapping(document: Mapping[str, Any], *, base_dir: Path) -> Adapt
         for item in _rule_rows(document, key="languages", fields=("pattern", "language"))
     )
 
+    test_paths = tuple(
+        _as_str(item, where=f"test_paths[{index}]")
+        for index, item in enumerate(
+            _as_str_list(document.get("test_paths"), where="test_paths")
+        )
+    )
+    for item in test_paths:
+        if item.startswith("/") or ".." in item.split("/"):
+            raise DshEventError(
+                f"test_paths 必须是仓库相对 glob（不能以 / 开头、不能含 ..）：{item!r}"
+            )
+    test_layer = (
+        None
+        if document.get("test_layer") is None
+        else canonical_identifier(_as_str(document["test_layer"], where="test_layer"))
+    )
+    pre_evidence = (
+        None
+        if document.get("pre_evidence") is None
+        else _pre_evidence_config(
+            document["pre_evidence"], base_dir=base_dir, project_root=project_root
+        )
+    )
+
     principal: Optional[Principal] = None
     raw_principal = document.get("principal")
     if raw_principal is not None:
@@ -700,7 +924,7 @@ def config_from_mapping(document: Mapping[str, Any], *, base_dir: Path) -> Adapt
     enforcement_ledger = document.get("enforcement_ledger")
     approval_file = document.get("approval_file")
 
-    return AdapterConfig(
+    config = AdapterConfig(
         project_root=project_root,
         rule_dirs=rule_dirs,
         agent_version=canonical_identifier(
@@ -710,6 +934,9 @@ def config_from_mapping(document: Mapping[str, Any], *, base_dir: Path) -> Adapt
         timeout_ms=timeout_ms,
         layers=layers,
         default_layer=optional_identifier("default_layer"),
+        test_paths=test_paths,
+        test_layer=test_layer,
+        pre_evidence=pre_evidence,
         languages=languages,
         default_language=optional_identifier("default_language"),
         principal=principal,
@@ -746,6 +973,14 @@ def config_from_mapping(document: Mapping[str, Any], *, base_dir: Path) -> Adapt
             else _as_path(approval_file, base_dir=base_dir, where="approval_file")
         ),
     )
+
+    # 加载期检查（M1）：声明了测试路径，就必须能证明测试路径先命中测试层。
+    conflicts = config.layer_test_conflicts()
+    if conflicts:
+        raise DshEventError(
+            "分层声明把测试路径卷进了生产层（M1）：\n- " + "\n- ".join(conflicts)
+        )
+    return config
 
 
 def load_config(path: Path | str) -> AdapterConfig:

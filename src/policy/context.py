@@ -24,6 +24,7 @@ from typing import Any, Mapping, Optional
 from pydantic import ValidationError
 
 from .models import (
+    USABLE_REPO_PATH_HINT,
     Operation,
     PolicyContext,
     PolicyContextError,
@@ -94,7 +95,12 @@ def repo_relative_path(
     if len(target_parts) < len(anchor_parts) or [item.lower() for item in head] != [
         item.lower() for item in anchor_parts
     ]:
-        raise PolicyContextError(f"路径不在仓库 {anchor} 之内，拒绝处理: {raw!r}")
+        # P8：拒绝方向一个字不变，但理由要能一次改对——与读类（adapters/models.py 的
+        # normalize_event_path）同口径：写成范围以内的仓库相对路径，范围根记为 "."。
+        # 新增的这句话只说形态，不复述本机绝对路径。
+        raise PolicyContextError(
+            f"路径不在仓库 {anchor} 之内，拒绝处理: {raw!r}。" + USABLE_REPO_PATH_HINT
+        )
 
     remainder = target_parts[len(anchor_parts) :]
     if not remainder:

@@ -10,7 +10,7 @@
 | `policy_bench.py` | 固定种子生成 10/100/1000 条规则的匹配性能基线（测试与证据共用） | `python tools/policy_bench.py` |
 | `retrieval_eval.py` | Phase 3 固定评测集基线：FTS5（门槛决定退出码）与向量检索（对照记录）在同一数据集上的对比，结论写到 `.tmp/artifacts/phase-3-retrieval-baseline.json` | `python tools/retrieval_eval.py --method both` |
 | `dsh_sandbox_loop.py` | 在受控临时项目里重放 Phase 2 的真实 dsh 闭环（bad 编辑被阻断 / good 编辑放行），结论写给阶段证据；两类**环境跳过**（退出码 0，并写出 reason 与复现命令）：没有 dsh / 沙箱禁止管道 stdio 导致 Hook 起不来（spawn EPERM），以及 dsh 自身起不来（写 `$DSH_HOME` 下 profile 被拒，`dsh_startup_denied`）；`--require-dsh` 让任何跳过都失败关闭 | `python tools/dsh_sandbox_loop.py` |
-| `governance_gap_probe.py` | 治量覆盖缺口的确定性探针：13 项（G01–G13）各一条断言，每项同时声明**修前/修后**两套预期，只走公开入口（hook CLI / enforcement CLI / adapters CLI / 插件源码静态事实 / 审计与台账真实内容）；`--repeat N` 连跑并比对逐项结论（探针必须是纯函数），每次运行用唯一 `run-<run_id>` 目录避免台账残留把本次变成 `event_replay` | `python tools/governance_gap_probe.py --root . --phase after --repeat 2` |
+| `governance_gap_probe.py` | 治量覆盖缺口的确定性探针：13 项（G01–G13）各一条断言，每项同时声明**修前/修后**两套预期，只走公开入口（hook CLI / enforcement CLI / adapters CLI / 插件源码静态事实 / 审计与台账真实内容）；`--repeat N` 连跑并比对逐项结论（探针必须是纯函数），每次运行用唯一 `run-<run_id>` 目录避免台账残留把本次变成 `event_replay`；**G06 对同一批用例跑两条路径**（Phase 2 钩子 + Phase 6 规范事件），并有变异体证红 | `python tools/governance_gap_probe.py --root . --phase after --repeat 2` |
 | `enforcement_loop.py` | Phase 4 受控执行闭环：允许执行一次 / 重放阻断 / 事后验证失败回滚 / 高风险默认阻断 / trace 可重放，结论写给阶段证据 | `python tools/enforcement_loop.py` |
 | `agent_loop.py` | Phase 6 多 Agent 闭环：同语义事件在每个 Adapter 上得到同一结论 / 允许恰好执行一次 / 能力不足失败关闭 / 跨 Agent 命名空间隔离 / trace 来源可验证 / 循环熔断，结论写给阶段证据 | `python tools/agent_loop.py` |
 | `api_loop.py` | Phase 7 Policy API 闭环：本地引擎与 HTTP API 决定整份相等 / 两个协议消费者等价 / 超时与不可达都不返回 allow / 幂等重放与冲突 / 跨租户隔离 / readiness 反映真实依赖 / 观测日志可对外锚定 | `python tools/api_loop.py` |

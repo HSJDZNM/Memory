@@ -96,12 +96,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _workspace(args: argparse.Namespace, anchor: Path) -> Path:
-    """解析 --workspace：与 policy.check 用同一条规则（cwd → 仓库根 → 原样）。"""
+def _workspace(args: argparse.Namespace, root: Path) -> Path:
+    """解析 --workspace：与 policy.check 用同一条规则（--workspace 优先，否则仓库根）。
+
+    锚必须是**仓库根**而不是 --config-root：口径统一之前这里跟着配置根走，
+    于是同一个 --workspace 参数（乃至省略 --workspace 的默认值）在两个 CLI 里指向不同目录。
+    """
 
     from policy.check import resolve_workspace
 
-    return resolve_workspace(args, anchor)
+    return resolve_workspace(args, root)
 
 
 def _changed_files(args: argparse.Namespace, anchor: Path) -> Tuple[str, ...]:
@@ -135,7 +139,7 @@ def _git_changed(ref: str, anchor: Path) -> Tuple[str, ...]:
     return tuple(line.strip() for line in completed.stdout.splitlines() if line.strip())
 
 
-def build_context_from_args(args: argparse.Namespace, anchor: Path, workspace: Path) -> PolicyContext:
+def build_context_from_args(args: argparse.Namespace, root: Path, workspace: Path) -> PolicyContext:
     if not args.file:
         raise PolicyContextError("缺少待验证文件")
     layer = args.layer
@@ -143,11 +147,18 @@ def build_context_from_args(args: argparse.Namespace, anchor: Path, workspace: P
         raise PolicyContextError(
             "缺少 --layer：layer 是安全关键维度，适配器与 CLI 都不得从文件名推断"
         )
+    # target 解析只有一条口径（policy.check 的仓库根口径）：先按 --workspace 找文件、
+    # 再按当前工作目录找，最后交给规范化器按 workspace 转成仓库相对路径。
+    # 直接把 args.file 交给规范化器会把 "--workspace X" 配 "X/某文件" 当成工作区内的
+    # 相对路径，同一个文件在一个 CLI 存在、在另一个 CLI 不存在——两处口径就是两套语义。
+    from policy.check import resolve_target_file
+
+    target = resolve_target_file(args, root)
     language = args.language.strip().lower() if args.language else None
     return build_context(
         {
             "request_id": args.request_id or "validators-" + uuid.uuid4().hex[:12],
-            "file": args.file,
+            "file": str(target),
             "layer": layer,
             "language": language,
             "module": args.module,
@@ -160,11 +171,13 @@ def build_context_from_args(args: argparse.Namespace, anchor: Path, workspace: P
 
 def run(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    anchor = repo_root()
+    # 仓库根是 workspace / target 解析的唯一锚（与 policy.check 同一条规则）；
+    # --config-root 只决定 validation/ 配置与规则目录在哪，不再顺带改工作区口径。
+    root = repo_root()
     from policy.check import resolve_directory
 
-    anchor = resolve_directory(args.config_root, anchor=anchor, fallback=anchor)
-    workspace = _workspace(args, anchor)
+    anchor = resolve_directory(args.config_root, anchor=root, fallback=root)
+    workspace = _workspace(args, root)
 
     try:
         config = load_config(root=anchor)
@@ -185,7 +198,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         return EXIT_ERROR
 
     try:
-        context = build_context_from_args(args, anchor, workspace)
+        context = build_context_from_args(args, root, workspace)
         request = PipelineRequest(
             target=context.file,
             workspace=workspace,

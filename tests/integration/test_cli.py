@@ -34,7 +34,7 @@ from policy.models import (
     parse_decision,
 )
 
-from conftest import REPO_ROOT, rule_document, write_rule
+from conftest import REPO_ROOT, rule_document, write_rule, write_validation_config
 
 pytestmark = pytest.mark.integration
 
@@ -208,10 +208,15 @@ def test_json_output_matches_policy_decision_contract() -> None:
     assert completed.returncode == EXIT_VIOLATION
     payload = json.loads(completed.stdout)
 
+    # P4/P5 起顶层多了两个**只增不改**的 CLI 包装字段：
+    # layer_source（这次的分层从哪来）与 check_volume（这次到底查了多少）。
+    # 它们属于包装层，不进决策协议载荷 result（协议仍是 schema_version 1.0）。
     assert set(payload) == {
+        "check_volume",
         "context",
         "evidence",
         "exit_code",
+        "layer_source",
         "reported_imports",
         "result",
         "rule_set",
@@ -419,3 +424,306 @@ def test_exit_code_for_maps_decision_to_code() -> None:
 
     assert exit_code_for(allowed) == EXIT_ALLOWED
     assert exit_code_for(blocked) == EXIT_VIOLATION
+
+
+# --------------------------------------------------------------------------- A2：target 解析（canonical 口径）
+
+
+PROJECT = "tests/fixtures/validators/project"
+
+
+def missing_target_blockers(payload: dict) -> list:
+    """只挑"目标文件没被定位到"这一类阻断点：它是 target 解析口径分叉时的可观察差异。
+
+    窄口径（只跑 py.*）下还会有"没有验证器为某个 checker 提供证据"的失败关闭阻断点，
+    那是**预期的**，与 target 解析无关。
+    """
+
+    return [
+        item
+        for item in payload["evidence"]["blockers"]
+        if "目标文件不存在" in str(item.get("reason", ""))
+    ]
+
+
+def test_prefixed_target_is_resolved_against_the_workspace() -> None:
+    """带工作区前缀的路径先按 --workspace 找文件，再归一化成工作区相对路径。
+
+    这是 target 解析的 canonical 口径（validators.cli 现在跟随它）：
+    "--workspace X" 配上 "X/某文件" 这种写法不该在上下文里留下前缀。
+    """
+
+    completed = run_cli(
+        PROJECT + "/src/shop/order_controller.py",
+        "--layer",
+        "controller",
+        "--workspace",
+        PROJECT,
+        "--validators",
+        "py.source,py.ast,py.depgraph",
+        "--request-id",
+        "req-a2-canonical",
+        "--json",
+    )
+
+    assert completed.returncode != EXIT_ERROR, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["context"]["file"] == "src/shop/order_controller.py"
+    assert missing_target_blockers(payload) == []
+
+
+def test_config_root_does_not_move_the_workspace(tmp_root: Path) -> None:
+    """--config-root 只决定 validation/ 配置在哪；默认工作区仍然是仓库根。"""
+
+    write_validation_config(tmp_root)
+    completed = run_cli(
+        PROJECT + "/src/shop/order_controller.py",
+        "--layer",
+        "controller",
+        "--config-root",
+        workspace_path(tmp_root),
+        "--validators",
+        "py.source,py.ast,py.depgraph",
+        "--request-id",
+        "req-a2-config-root",
+        "--json",
+    )
+
+    assert completed.returncode != EXIT_ERROR, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["context"]["file"] == PROJECT + "/src/shop/order_controller.py"
+    assert missing_target_blockers(payload) == []
+
+
+# --------------------------------------------------------------- P4：测试路径收敛到平台数据
+
+
+def write_shipment_controller_test(workspace: Path, relative: str) -> str:
+    """在临时工作区里造一个"文件名带生产层名、但按平台数据是测试"的真文件。
+
+    P4 的原形就是这种文件：`tests/test_shipment_controller.py` 在受治理 Hook 路径上
+    layer=test（dsh 的 test_paths / test_layer 在加载期自证），在验证器路径上却因为
+    `infer_layer` 按文件名猜成 controller，被 ARCH-001 拦下。用例必须用真文件——
+    只测一个纯函数挡不住"两条路径两个结论"。
+    """
+
+    target = workspace / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        chr(10).join(
+            [
+                '"""出库控制器测试：用真实仓储组装对象图，而不是手写替身。"""',
+                "",
+                "",
+                "def test_shipment_controller_assembles_the_real_repository() -> None:",
+                '    """真实装配：controller 拿到的仓储是真的仓储对象。"""',
+                "",
+                '    wiring = {"controller": "shipment", "repository": "real"}',
+                '    assert wiring["repository"] == "real"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return relative
+
+
+def test_a_platform_test_path_is_no_longer_guessed_as_a_production_layer(tmp_root: Path) -> None:
+    """P4：缺 --layer 时，平台数据说是测试的文件必须按 test 层判定。
+
+    判据不是"看起来对不对"，而是"与显式 --layer test 逐字同一条判定"：
+    缺 --layer 的那次不许再多出任何一条参与判定的规则。
+    """
+
+    from adapters.dsh.adapter import load_config as load_dsh_config
+
+    workspace = tmp_root / "ws"
+    relative = write_shipment_controller_test(workspace, "tests/test_shipment_controller.py")
+    implicit = run_cli(
+        relative,
+        "--workspace",
+        workspace_path(workspace),
+        "--dependencies",
+        "repository",
+        "--request-id",
+        "req-p4-layer",
+        "--json",
+    )
+    explicit = run_cli(
+        relative,
+        "--workspace",
+        workspace_path(workspace),
+        "--layer",
+        "test",
+        "--dependencies",
+        "repository",
+        "--request-id",
+        "req-p4-layer",
+        "--json",
+    )
+
+    assert implicit.returncode != EXIT_ERROR, implicit.stderr
+    payload = json.loads(implicit.stdout)
+    reference = json.loads(explicit.stdout)
+
+    assert payload["context"]["layer"] == "test"
+    assert payload["layer_source"] == "platform_test_layout"
+    assert reference["layer_source"] == "declared"
+    # 同一个文件、同一次判定：缺 --layer 与显式 --layer test 的结果必须逐字相同
+    assert payload["context"] == reference["context"]
+    assert payload["result"] == reference["result"]
+    assert payload["exit_code"] == reference["exit_code"]
+    assert "ARCH-001" + "@" + "1" not in payload["result"]["matched_rules"]
+    # 与受治理 Hook 路径同向：示例 Adapter 配置对同一条路径也解析成它的 test_layer
+    hook_config = load_dsh_config(REPO_ROOT / "examples" / "dsh" / "dsh-adapter.yaml")
+    assert hook_config.layer_resolution(relative).layer == hook_config.test_layer == "test"
+
+
+def test_text_output_names_where_the_layer_came_from(tmp_root: Path) -> None:
+    """文本输出按来源改口径：平台数据判定时不许再说"由文件名推断"。"""
+
+    workspace = tmp_root / "ws"
+    relative = write_shipment_controller_test(workspace, "tests/test_shipment_controller.py")
+    platform = run_cli(
+        relative, "--workspace", workspace_path(workspace), "--dependencies", "repository"
+    )
+    platform_line = next(
+        line for line in platform.stdout.splitlines() if line.startswith("layer: ")
+    )
+    assert platform_line.startswith("layer: test")
+    assert "test_patterns" in platform_line
+    assert "由文件名推断" not in platform_line
+
+    guessed = run_cli(BAD_EXAMPLE, "--dependencies", "repository")
+    guessed_line = next(
+        line for line in guessed.stdout.splitlines() if line.startswith("layer: ")
+    )
+    assert guessed_line.startswith("layer: controller")
+    assert "由文件名推断" in guessed_line
+
+
+def test_layer_source_is_declared_when_the_caller_says_so() -> None:
+    completed = run_cli(
+        BAD_EXAMPLE, "--layer", "controller", "--dependencies", "repository", "--json"
+    )
+
+    payload = json.loads(completed.stdout)
+
+    assert payload["layer_source"] == "declared"
+    assert payload["context"]["layer"] == "controller"
+
+
+def test_layer_source_is_a_filename_guess_without_platform_data() -> None:
+    """不在平台 test_patterns 里的路径行为不变：还是按文件名猜，并且说清楚是猜的。"""
+
+    completed = run_cli(BAD_EXAMPLE, "--dependencies", "repository", "--json")
+
+    payload = json.loads(completed.stdout)
+
+    assert payload["layer_source"] == "filename_guess"
+    assert payload["context"]["layer"] == "controller"
+
+
+# --------------------------------------------------------------------------- P5：检查量摘要与缺维度
+
+
+def test_missing_operation_is_visible_as_an_incomplete_check() -> None:
+    """缺 --operation：判定可以照旧 allow，但读数必须说清有几条规则没被查。"""
+
+    completed = run_cli(
+        GOOD_EXAMPLE, "--layer", "controller", "--dependencies", "service", "--json"
+    )
+
+    assert completed.returncode == EXIT_ALLOWED, completed.stderr
+    volume = json.loads(completed.stdout)["check_volume"]
+
+    assert volume["complete"] is False
+    assert volume["missing_dimensions"] == ["operation"]
+    assert volume["blocking_capable_skipped"] >= 2
+    assert volume["effective_rule_count"] < volume["rule_count"]
+    assert volume["skipped_by_reason"]["missing_dimension"] >= 2
+    # 每条被跳过的规则恰好落进一个桶：计数必须等于 skipped_rule_count
+    assert sum(volume["skipped_by_reason"].values()) == volume["skipped_rule_count"]
+    assert volume["skipped_by_severity"]["error"] >= 2
+    assert "skipped ≠ passed" in volume["note"]
+
+
+def test_declaring_the_operation_completes_the_check() -> None:
+    """给了 --operation：不再缺维度，complete 为真——配置错误与判定是两回事。"""
+
+    completed = run_cli(
+        BAD_EXAMPLE,
+        "--layer",
+        "controller",
+        "--dependencies",
+        "repository",
+        "--operation",
+        "read",
+        "--json",
+    )
+    volume = json.loads(completed.stdout)["check_volume"]
+
+    assert volume["complete"] is True
+    assert volume["missing_dimensions"] == []
+    assert volume["skipped_by_reason"]["missing_dimension"] == 0
+
+
+def test_text_output_flags_the_incomplete_check() -> None:
+    completed = run_cli(GOOD_EXAMPLE, "--layer", "controller", "--dependencies", "service")
+
+    assert completed.returncode == EXIT_ALLOWED, completed.stderr
+    incomplete = [
+        line for line in completed.stdout.splitlines() if line.startswith("INCOMPLETE:")
+    ]
+
+    assert len(incomplete) == 1
+    assert "operation" in incomplete[0]
+    assert "--operation" in incomplete[0]
+
+
+def test_changed_without_operation_is_a_config_error() -> None:
+    """自相矛盾才失败关闭：声明了变更集却不说是什么操作，判定必然是残缺的。"""
+
+    completed = run_cli(BAD_EXAMPLE, "--layer", "controller", "--changed", BAD_EXAMPLE)
+
+    assert completed.returncode == EXIT_ERROR
+    assert "config error" in completed.stderr
+    assert "--operation" in completed.stderr
+    assert completed.stdout == ""
+
+
+def test_missing_operation_alone_stays_executable() -> None:
+    """标定过的边界：完全不给 --operation 的既有命令必须还能跑。
+
+    README 与 60+ 处文档写的都是 `python -m policy.check <file> --layer X`；
+    把"没声明"也做成退出码 2，会把这些命令全变成配置错误，还会把文档里的
+    allow 例子变成 block（`--operation edit` 会激活 TESTING-001）。
+    """
+
+    completed = run_cli(GOOD_EXAMPLE, "--layer", "controller", "--dependencies", "service")
+
+    assert completed.returncode == EXIT_ALLOWED, completed.stderr
+    assert "config error" not in completed.stderr
+
+
+def test_changed_with_operation_is_a_decision_not_a_config_error() -> None:
+    """给了 --operation 之后，--changed 不再触发失败关闭：退出码只能来自判定。"""
+
+    completed = run_cli(
+        PROJECT + "/src/shop/order_service.py",
+        "--workspace",
+        PROJECT,
+        "--layer",
+        "service",
+        "--operation",
+        "edit",
+        "--changed",
+        "src/shop/order_service.py",
+        "--validators",
+        "py.source,py.ast,py.depgraph",
+        "--json",
+    )
+
+    assert completed.returncode in (EXIT_ALLOWED, EXIT_VIOLATION), completed.stderr
+    assert "自相矛盾" not in completed.stderr
+    assert json.loads(completed.stdout)["check_volume"]["complete"] is True

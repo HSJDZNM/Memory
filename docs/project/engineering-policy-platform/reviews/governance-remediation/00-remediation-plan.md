@@ -228,6 +228,49 @@ G4 的审批那一半 FIXED、G1 部分关闭），对照表见
 **N27** `exit_code_zero` 把"证据充分"与"命令成功"合成一条判定、**N28** 门禁对工作树之外的动作不免疫），
 登记与处置见 [11 §3](11-n16-n24-fix-round.md)。
 
+### 5.3 修复轮：M1–M5 与 G3/N13/N14（2026-09-27）
+
+[多规则开发轮](../governance-capability/06-multirule-dev-round.md) §8 的"建议的下一轮"与它新显现的 M1–M5，
+加上本表里三个登记候补（**N13** / **N14** / [11 §5 第 6 条](11-n16-n24-fix-round.md)），在 2026-09-27 的修复轮上被处置。
+完整机制、红→绿证据、独立验收与边界见 [12-m1-m5-g3-fix-round.md](12-m1-m5-g3-fix-round.md)。
+
+| 编号 | 本轮处置 | 落点 |
+| --- | --- | --- |
+| **M1** | **已修（数据 + 加载期检查）**：示例配置把 `tests/**/*.py -> test` 放到 `layers` 顶部；新增 `test_paths` / `test_layer`，加载期证明不了「测试路径先命中测试层」就拒绝启动 | `examples/dsh/dsh-adapter.yaml`、`src/adapters/dsh/adapter.py` |
+| **M2 / G3** | **正面回答**：`pre_evidence` 声明式动手前取证（影子副本 + Phase 5 真流水线），证据类 checker 从 skipped 变成参与判定；失败 / 超时一律 `evidence_unavailable` 失败关闭 | `src/adapters/dsh/pre_evidence.py`、`hooks.py` |
+| **M3** | **已修（口径）**：审计新增按严重级别的分布，以及「有阻断力 / 只有判定力」两个数 | `src/adapters/dsh/hooks.py` |
+| **M4** | **已修（可用性）**：命令类阻断的理由带「可用替代」（白名单形态 + 已签发审批覆盖的形态），判定一个字不放宽 | `src/enforcement/precheck.py` |
+| **M5** | **已修（可用性）**：越界理由带可用替代；Phase 6 的 `normalize_event_path` 三处补齐（dsh 侧 N22 早有这句） | `src/enforcement/precheck.py`、`src/adapters/models.py` |
+| **N13** | **已修**：G06 现在对同一批 11 条用例跑两条路径（Phase 2 钩子 + Phase 6 规范事件），并用变异体证红（12 处不符，其中 6 条 `p6_*`） | `tools/governance_gap_probe.py` |
+| **N14** | **已修**：依赖类规则不声明 `language`（或写 `*`）在**加载期**被拒 | `src/policy/loader.py` |
+| 11 §5.6 | **已修**：`validators.cli` 与 `policy.check` 的 target / workspace 解析统一为一条口径 | `src/validators/cli.py`、`src/policy/check.py` |
+
+仍未做（理由写在 12 号文档 §1.3 与 §9）：桌面通道接线（GUI）、N25/N26（宿主环境事实）、
+N2（Phase 2 与 Phase 6 的配置口径合并）、N27 的残留语义（注册表词汇表变更）。
+**N27 的失败路径本轮仍未在真实会话里压过。**
+
+### 5.4 修复轮：07 治理全开轮的 P1–P8（2026-09-27）
+
+[07 治理全开轮](../governance-capability/07-governance-full-round.md) 把上一条的修复**在真实会话里打开**，
+也第一次暴露了八项问题。它们在同日修复轮上被处置：**5 项产品改动（P1/P3/P4/P7/P8）+ 3 项"先定口径再改"
+（P2/P5/P6）**。完整机制、红→绿证据、独立复核与边界见
+[13 P1–P8 修复轮](13-p1-p8-fix-round.md)。
+
+| 编号 | 本轮处置 | 落点 |
+| --- | --- | --- |
+| **P1** | **已修**：判定记录新增 `violations`（rule_id 带版本 + severity + message + 证据摘要）/ `violations_by_severity` / `violations_note`；没有算出 decision 的记录**不伪造**这份清单 | `src/adapters/dsh/hooks.py` |
+| **P2** | **已修（数据 + 显式判定）**：`validation/validators.yaml` 声明 `uncovered_languages`，命中产出 `language_coverage = not_covered_by_design`；未声明的语言仍然失败关闭 | `validation/validators.yaml`、`src/validators/pipeline.py` |
+| **P3** | **已修（可读性 + 确定性）**：取证摘要新增 `tree` 段（`scope` / `target_existed_before` / `tree_digest` / 适用范围 note + 可能漏不误报的 `tree_gaps`） | `src/adapters/dsh/pre_evidence.py` |
+| **P4** | **已修**：`policy.check` 缺 `--layer` 时先查平台 `validation/test-layout.yaml` 的 `test_patterns`，命中即 `test` 层并写出 `layer_source` | `src/policy/check.py`、`validation/test-layout.yaml` |
+| **P5** | **已修（口径先定）**：新增 `check_volume`（`complete` / `missing_dimensions` / `blocking_capable_skipped`）+ 自相矛盾调用（`--changed` 无 `--operation`）失败关闭 | `src/policy/check.py` |
+| **P6** | **已修（改自述不改行为）**：台账存参数原文与绝对 `workspace` 是 PostToolUse 重建与 `action_hash` 的必要条件，口径写进代码与 `术语与口径.md`，行为有测试钉住 | `src/enforcement/ledger.py`、`action.py` |
+| **P7** | **已修**：`validators[].served_checkers` → `declared_checkers`（"声明负责" ≠ "真的服务过"），证据/流水线协议版本随之显式递增 | `src/policy/evidence.py`、`src/validators/pipeline.py` |
+| **P8** | **已修**：写类越界的理由补上与读类同口径的「可用的替代」，范围校验一个字不放宽 | `src/policy/context.py`、`src/policy/models.py` |
+
+仍未做（理由写在 13 号文档 §1.4 与 §6）：批次语义的取证树（P3 的另一个方向）、桌面通道接线（GUI）、
+N25/N26（宿主环境事实）、N27 的残留语义、N2 的配置口径合并。
+**本轮没有再开真实受治理会话**：八项的判据全部是确定性的（生产 Hook CLI + 真验证器流水线 + 真台账复算）。
+
 ## 6. 最终状态（集成收口）
 
 **本机门禁：`python tools/ci_local.py --full` → 本机检查全部通过（32 步）。**

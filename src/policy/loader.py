@@ -5,6 +5,7 @@
 - 只扫描调用方显式给出的规则目录；
 - 按规范化仓库相对路径排序，保证加载顺序稳定；
 - 拒绝重复 ID、空 ID、未知严重级别、不支持的 enforcement；
+- 拒绝"用依赖类 checker 却没有声明 language 维度"的规则（见 assert_language_declared）；
 - 错误信息必须包含文件路径与字段位置；
 - 一次性原子替换：任何文件失败都不会留下半套规则。
 """
@@ -19,12 +20,13 @@ from typing import Iterator, Sequence
 import yaml
 from pydantic import ValidationError
 
-from .models import Rule, RuleSet, RuleValidationError
+from .models import WILDCARD, Rule, RuleSet, RuleValidationError, ScopeValue
 
 __all__ = [
     "LoadedRule",
     "LoaderError",
     "RuleFileError",
+    "assert_language_declared",
     "collect_rule_files",
     "load_rule_file",
     "load_rule_set",
@@ -32,6 +34,19 @@ __all__ = [
 ]
 
 _SUPPORTED_SUFFIXES = frozenset({".yaml", ".yml"})
+
+# 依赖类 checker：判定完全建立在"依赖集"这一个维度上，因此它们的规则必须显式声明 language。
+#
+# 为什么这不是形式主义：依赖提取（adapters.textfacts.governed_dependencies）只在语言被
+# **显式解析成 python** 时才可能给出非空依赖集；language 为 None（声明不出来）或不是 python
+# 时结果都是空元组。于是"规则不声明 language"意味着它对任何上下文都相关，语言未知时
+# 依赖集是空的，依赖类 checker 只能判 allow —— 而这个 allow 的理由（语言不知道）不会写进
+# 决策的任何地方，它与"确实没有禁用依赖"逐字相同。
+#
+# 今天没有洞，只是因为 43 条规则里唯一用 forbidden_dependency 的 ARCH-001 恰好在 scope 里
+# 写了 language: python：那是**规则作者的纪律**，不是代码保证。本检查把它变成加载期的失败。
+# 新增依赖类 checker 时必须一起加到这里（engine 侧的分派表见 policy.checkers）。
+_LANGUAGE_DEPENDENT_CHECKERS = frozenset({"forbidden_dependency"})
 
 
 class LoaderError(Exception):
@@ -160,6 +175,55 @@ def _read_mapping(path: Path, repo_path: str) -> dict:
     return document
 
 
+def _is_unrestricted(declared: ScopeValue) -> bool:
+    """该维度的声明是否等于"显式不限制"（`*`，或含 `*` 的列表）。
+
+    语义必须与 policy.scope 的匹配一致（那里是私有的 _is_wildcard）：含 `*` 的列表
+    同样表示"这一维度不参与限制"，而不是"只匹配字面量 *"。
+    """
+
+    return declared == WILDCARD or (isinstance(declared, tuple) and WILDCARD in declared)
+
+
+def assert_language_declared(loaded: LoadedRule) -> None:
+    """依赖类 checker 的规则必须声明 language 维度；不声明或显式不限制都在加载期拒绝。
+
+    为什么只能在加载期拦：判定期拿不到这个信息。依赖类 checker 看到的只有依赖集本身，
+    "语言解析不出来"在那里与"这次改动没有依赖"是**同一种输入**（都是空元组），
+    它没有可依据的东西去拒绝放行——那是构造上下文那一层才知道的事实。
+    规则数据是唯一能在加载期被检查的地方，所以"记得写 language"这条纪律只能在这里
+    变成会失败的检查（AGENTS.md 第 3、20 条：未知维度不得静默、证明不了不得放行）。
+
+    边界（写下来，别假装全覆盖）：本检查拦住"不声明"与"显式 *"这两条静默路径。
+    声明了具体语言时，语言不匹配会让规则**显式跳过**（skipped_rules 里写明 language
+    不匹配），那不是静默；而"声明了多种语言、其中非 python 的那一段依赖集仍为空"
+    属于依赖提取本身的边界（只有 python 有提取实现），不在这里判。
+    """
+
+    rule = loaded.rule
+    if rule.enforcement.checker not in _LANGUAGE_DEPENDENT_CHECKERS:
+        return
+    declared = rule.scope.declared_dimensions.get("language")
+    if declared is not None and not _is_unrestricted(declared):
+        return
+    shape = (
+        "scope 里没有声明 language 维度"
+        if declared is None
+        else f"scope.language={declared!r} 等于「该维度不限制」（{WILDCARD}）"
+    )
+    raise RuleFileError(
+        f"依赖类 checker（{rule.enforcement.checker}）的规则必须声明 language 维度，"
+        f"本规则 {shape}：语言解析不出来时是 null，依赖集因此是空元组，"
+        "依赖类 checker 只能静默放行 —— 而放行的理由（语言未知）不会出现在决策的"
+        "任何位置，它与「确实没有禁用依赖」逐字相同。请显式声明该维度"
+        "（例如 scope.language: python）。",
+        path=loaded.path,
+        repo_path=loaded.repo_path,
+        rule_id=rule.id,
+        field="scope.language",
+    )
+
+
 def load_rule_file(
     path: Path | str,
     *,
@@ -190,7 +254,10 @@ def load_rule_file(
             rule_id=document.get("id") if isinstance(document.get("id"), str) else None,
         ) from error
 
-    return LoadedRule(rule=rule, repo_path=repo_path, path=file_path)
+    loaded = LoadedRule(rule=rule, repo_path=repo_path, path=file_path)
+    # 加载期语义检查（不是格式检查）：不满足就无法安全判定，宁可整份规则集读不进来。
+    assert_language_declared(loaded)
+    return loaded
 
 
 def load_rules(

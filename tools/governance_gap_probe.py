@@ -1,10 +1,13 @@
 """治理覆盖缺口探针（V1 独立验收）：13 项缺口的确定性对照。
 
-它只走公开入口，不使用模型、不导入被测实现做判定：
+它只走公开入口，不使用模型；判定一律由**被检树自己的** `policy.engine.evaluate` 给出，
+探针只读它的结论（不重写判定语义——复制一份判定正是这一轮在治的病）：
 
     python -m adapters.dsh.hooks        （PreToolUse / PostToolUse 载荷走 stdin）
     python -m enforcement.cli           （precheck / approve / registry）
     python -m adapters.cli              （wiring / events）
+    python -c "..."                     （G06 的 Phase 6 路径：装配 generic-json Adapter，
+                                         规范事件 → to_policy_context → evaluate）
     python -c "from adapters.dsh.adapter import glob_match, TOOL_TABLE"   （静态事实）
     src/adapters/dsh/policy-hook.plugin.mjs                                （插件源码静态事实）
     审计 JSONL / 台账 JSONL 的实际内容
@@ -1401,22 +1404,35 @@ def check_g05(env: Env) -> Check:
 
 
 # ---------------------------------------------------------------------------- G06
-# 范围声明（留着，别删）：
-#   G06 **只驱动 Phase 2 的 `python -m adapters.dsh.hooks`**——它证明的是"钩子那条路径没有回退"，
-#   它**不覆盖 Phase 6 的多 Agent 路径**。G6 曾经在那条路径上独立地成立过一轮：同一段变更文本，
-#   走 dsh 钩子被拦、走多 Agent 路径**静默放行**；而在那棵树上跑本探针，G06 照样报 13/13。
-#   所以**不要把这里的全绿当成"依赖规则在所有入口都生效"**。
+# 覆盖范围（留着，别删）：G06 驱动**两条路径**，同一批用例各走一遍。
 #
-#   覆盖 Phase 6 的是（git 跟踪，随代码一起演进）：
+#   (a) Phase 2：`python -m adapters.dsh.hooks`（PreToolUse 载荷走 stdin，退出码即结论）；
+#   (b) Phase 6：规范事件路径 —— `adapters.loader.load_adapter("generic-json")` →
+#       `to_policy_event` → `to_policy_context` → `policy.engine.evaluate`。
+#       判定仍由被检树自己的引擎给出，探针只读它（不重写判定语义）。
+#
+#   为什么必须有 (b)（N13，见 00-remediation-plan.md）：G06 原来只走 (a)。同一段变更文本，
+#   走 dsh 钩子被拦、走多 Agent 路径**静默放行**的那一轮（N1）里，拿它跑 `--phase after`
+#   仍然 13/13、exit 0 —— 一台看不见 N1 的仪器不能当 N1 的验收证据。
+#   修前两条路径共用同一份旧提取口径（只认行首字面写法），因此 p6_* 的修前期望与 (a) 逐条相同；
+#   修后两条路径都必须"该拦的拦、该放的放"，且结论一致（facts 里的 path_disagreements 为空）。
+#
+#   它**仍然不覆盖**（别把这里的全绿读成"依赖规则在所有入口都生效"）：
+#     - Phase 6 的 dsh 桥（canonical 事件 → dsh_adapter）与 hook-command 事件型 Adapter；
+#     - 验证器 / AST 证据路径（Phase 5 的 py.ast、py.depgraph）；
+#     - 运行时（runtime）的幂等、能力门禁与受控执行链路。
+#   这三块由 git 跟踪的测试承担（随代码一起演进）：
 #     tests/integration/test_dependency_path_consistency.py
 #     tests/contract/test_dependency_extraction_parity.py
-#   本轮独立验收另有探针在 .tmp/verifier-n1/probe_n1.py（构建产物，cleanup 会删、可重建；
-#   复现命令见本轮独立验收报告 08-n1-independent-verification.md 的 §7.2，
-#   与 07-ruff-cleanup-and-n1.md、00-remediation-plan.md 同在
-#   docs/project/engineering-policy-platform/reviews/governance-remediation/ 下。）
 #
-#   待办 N13（00-remediation-plan.md §5）：给 G06 补一组走 generic-json 规范事件的用例。
-#   它的验收判据是"**对修前快照必须变红**"——否则就是又做了一台假绿仪器。
+#   "修前的红"怎么复核（别只信某一次会话的结论）：探针自带 before/after 两张表，不带快照；
+#   用 09 号文档的变异规格从当前树重建修前树即可（§9.1 变异 D + §10.4 首段截断，
+#   三处替换都在 src/adapters/textfacts.py）：
+#     ① from 形态的正则去掉前导点 —— 相对导入看不见；
+#     ② propose_dependencies 不再登记动态导入 —— importlib.import_module / __import__ 看不见；
+#     ③ _from_targets 只登记模块首段、_module_names 只取首段 —— 点分写法看不见。
+#   同一份探针在重建树上跑：--phase before 必须 exit 0（修前期望成立），
+#   --phase after 必须 exit 1（该拦的拦不住 —— 新检查确实看得见这个 bug）。
 _G06_CASES: dict[str, str] = {
     "literal_from": "from repository import Repository\n",
     "plain_import": "import repository\n",
@@ -1436,18 +1452,90 @@ _G06_CONTROLS: dict[str, tuple[str, str]] = {
     "module_layer_allowed": ("src/helpers.py", "from repository import Repository\n"),
 }
 
+# 两条路径喂**同一批输入**：名称 -> {path, text}。用例表只有一份，
+# 否则"两条路径都覆盖了"会退化成"两边各测各的"。
+_G06_TARGET = "src/inventory_controller.py"
+
+
+def _g06_cases() -> dict[str, dict[str, str]]:
+    cases = {name: {"path": _G06_TARGET, "text": text} for name, text in _G06_CASES.items()}
+    for name, (path, text) in _G06_CONTROLS.items():
+        cases[name] = {"path": path, "text": text}
+    return cases
+
+
+# Phase 6 的驱动器：在被检树的 PYTHONPATH 下装配它自己的 Adapter 与规则集，
+# 把规范事件（canonical-json 线上形态）喂到 to_policy_context，再交给**它自己的**
+# policy.engine.evaluate 判定。探针只看结论与依赖集，不复制任何判定逻辑
+# （复制一份判定语义正是这一轮在治的病）。
+_G06_PHASE6_CODE = r'''
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+root = Path(payload["root"]).resolve()
+workspace = Path(payload["workspace"]).resolve()
+sys.path.insert(0, str(root / "src"))
+
+from adapters.loader import load_adapter
+from policy.engine import evaluate
+from policy.loader import load_rule_set
+
+rules = load_rule_set([root / "policies"], repo_root=root)
+adapter = load_adapter("generic-json", root=root)
+out = {}
+for name, case in payload["cases"].items():
+    document = {
+        "schema_version": "1.0",
+        "event_id": "probe-g06:" + name,
+        "event_type": "tool.pre_execute",
+        "request_id": "probe-g06-" + name,
+        "agent_version": "third-party-0.9.0",
+        "tool": "edit",
+        "operation": "edit",
+        "payload": {"path": case["path"], "text": case["text"]},
+    }
+    try:
+        event = adapter.to_policy_event(document, workspace=workspace)
+        context = adapter.to_policy_context(event, workspace=workspace)
+        result = evaluate(rules, context)
+    except Exception as error:  # 探针自身故障也要能看见：写成 error 而不是让它消失
+        out[name] = {"verdict": "error", "detail": type(error).__name__ + ": " + str(error)}
+        continue
+    out[name] = {
+        "verdict": "blocked" if result.decision.value == "block" else "allowed",
+        "decision": result.decision.value,
+        "language": context.language,
+        "layer": context.layer,
+        "dependencies": list(context.dependencies),
+        "violations": sorted({item.rule_id for item in result.violations}),
+    }
+print(json.dumps(out, ensure_ascii=False, sort_keys=True))
+'''
+
 
 def check_g06(env: Env) -> Check:
     bypass = ("importlib_module", "dunder_import", "relative_import", "relative_named",
               "submodule_import", "dotted_import")
-    before = {name: "blocked" for name in ("literal_from", "plain_import", "alias_case")}
-    before.update({name: "allowed" for name in bypass})
-    before.update({name: "allowed" for name in _G06_CONTROLS})
-    after = {name: "blocked" for name in _G06_CASES}
-    after.update({name: "allowed" for name in _G06_CONTROLS})
+    phase2_before = {name: "blocked" for name in ("literal_from", "plain_import", "alias_case")}
+    phase2_before.update({name: "allowed" for name in bypass})
+    phase2_before.update({name: "allowed" for name in _G06_CONTROLS})
+    phase2_after = {name: "blocked" for name in _G06_CASES}
+    phase2_after.update({name: "allowed" for name in _G06_CONTROLS})
+    cases = _g06_cases()
+    before = dict(phase2_before)
+    after = dict(phase2_after)
+    # Phase 6 那一组与 Phase 2 **逐条同期望**：修前两条路径共用同一份旧提取口径
+    # （只认行首字面写法），修后两条路径都必须给出同一个、且正确的结论。
+    before.update({f"p6_{name}": value for name, value in phase2_before.items()})
+    after.update({f"p6_{name}": value for name, value in phase2_after.items()})
+    # 两条路径的结论必须一致：不一致就是 N1 那种"换个入口就静默放行"。
+    before["path_disagreements"] = []
+    after["path_disagreements"] = []
     check = Check(
         id="G06",
-        title="依赖规则只认行首字面写法：换写法是否仍然放行",
+        title="依赖规则只认行首字面写法：换写法 / 换入口是否仍然放行",
         before=before, after=after,
     )
     for name, text in _G06_CASES.items():
@@ -1476,6 +1564,42 @@ def check_g06(env: Env) -> Check:
                               f"reason={_hook_reason(run)}")
     check.facts["bypass_now_blocked"] = sorted(
         name for name in bypass if check.facts.get(name) == "blocked"
+    )
+
+    # ---- (b) Phase 6：规范事件（canonical-json）→ Adapter → PolicyContext → evaluate。
+    # 一次子进程跑完全部用例：每条用例一个新进程只会让探针变慢，不会让它更可信。
+    payload = env.write_request(
+        "g06-phase6",
+        {"root": env.root.as_posix(), "workspace": env.project.as_posix(), "cases": cases},
+    )
+    phase6 = env.py(["-c", _G06_PHASE6_CODE, str(payload)], cwd=env.work)
+    data = phase6.json()
+    check.evidence.append(
+        "Phase 6 规范事件（generic-json → to_policy_event → to_policy_context → evaluate）："
+        f"exit={phase6.exit} 用例数={len(cases)}"
+    )
+    if not isinstance(data, Mapping):
+        # 驱动器跑不起来 = 这一组事实不可得，必须写进报告并让 p6_* 与期望不符（失败关闭），
+        # 不能"少了就跳过"——那就又成了一台假绿仪器。
+        detail = " ".join((phase6.stderr or phase6.stdout).split())[:300]
+        check.facts["p6_error"] = f"exit={phase6.exit} {detail}"
+        for name in cases:
+            check.facts[f"p6_{name}"] = "error"
+    else:
+        for name in cases:
+            row = data.get(name)
+            row = row if isinstance(row, Mapping) else {}
+            verdict = str(row.get("verdict") or "error")
+            check.facts[f"p6_{name}"] = verdict
+            check.evidence.append(
+                f"[Phase 6] {name}: deps={row.get('dependencies')} "
+                f"language={row.get('language')} layer={row.get('layer')} -> {verdict}"
+                f"（violations={row.get('violations')}）"
+                f"{'' if not row.get('detail') else ' ' + str(row.get('detail'))}"
+            )
+    check.facts["p6_case_count"] = len(cases)
+    check.facts["path_disagreements"] = sorted(
+        name for name in cases if check.facts.get(name) != check.facts.get(f"p6_{name}")
     )
     return check
 

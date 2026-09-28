@@ -1,0 +1,21 @@
+# 正例对照（N14）：同样用 forbidden_dependency，但显式声明了 language。
+# 它证明上面两条反例被拒的原因是"没有可判定的语言"，而不是"依赖类规则一律被拦"。
+# 由 tests/unit/test_loader.py 加载，期望正常加载出 ARCH-902@1。
+id: ARCH-902
+version: 1
+name: dependency-rule-with-declared-language
+description: 声明了 language 维度的依赖规则（加载期检查的正例对照）。
+scope:
+  language: python
+  layer: controller
+severity: error
+enforcement:
+  type: deterministic
+  checker: forbidden_dependency
+rule:
+  forbidden_dependency:
+    - repository
+message: Controller 不得直接依赖 Repository。
+source:
+  kind: project-policy
+  path: tests/fixtures/invalid_rules/declared-language/ARCH-902.yaml

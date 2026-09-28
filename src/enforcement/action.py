@@ -353,13 +353,20 @@ def build_action_request(
 
 
 def redacted_request_payload(request: ActionRequest) -> dict[str, Any]:
-    """审计 / 台账用的请求视图：参数原文一律不落盘，只留类型、长度与摘要。
+    """审计 / 台账用的请求视图：**只有像密钥的值**才扣留，其余参数按原文落盘。
 
-    两类参数会被扣掉取值：注册表声明 `secret: true` 的，以及取值里出现确定形态凭据的
-    （令牌前缀、Bearer、私钥块）。后者是为了兑现"台账不存参数原文"这条不变量——
-    审计链本来就脱敏，但台账此前会把 `content` / `new_string` 的原文写进 JSONL。
+    扣留的判据是两条：注册表把这个参数声明成 `secret: true`，或它的取值里出现确定形态的凭据
+    （令牌前缀、Bearer、私钥块）。命中的参数只留类型、长度与摘要，并在结构里记
+    `values_withheld: true`；**没命中的参数 `value` 就是规范化后的取值本身**
+    （例如整份 `content` / `new_string`），`workspace` 落的是**绝对路径**。
 
-    扣掉取值的代价是明确的：`values_withheld=True` 的请求无法在 PostToolUse 阶段重建
+    为什么不能"一律不落盘"：事后核对（PostToolUse）要用这份载荷重建 `ActionRequest`
+    （`adapters/dsh/enforcement.py::_restore_request`），而 `action_hash` 覆盖 `workspace`
+    与规范化参数（`models.py::_ACTION_HASH_FIELDS`）。扣掉取值、或把 `workspace` 换成占位，
+    重建就会因为哈希对不上被模型拒绝，事后核对永远只剩"证据不足"——那不是更安全，那是把
+    事前事后成对（G2）打掉。审计链 `audit.jsonl` 是另一份产物，它按 AGENTS 第 16 条脱敏。
+
+    扣掉取值的代价也是明确的：`values_withheld=True` 的请求无法在 PostToolUse 阶段重建
     （重建会因为 action_hash 对不上而被模型拒绝），调用方据此判"证据不足"，
     而不是把密钥落盘换一份好看的事后证据。
     """

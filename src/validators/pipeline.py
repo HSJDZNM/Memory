@@ -41,7 +41,7 @@ from policy.evidence import (
     ValidatorRecord,
     ValidatorStatus,
 )
-from policy.models import PolicyContext, Rule, RuleSet
+from policy.models import PolicyContext, Rule, RuleSet, canonical_identifier
 
 from .adapters.base import AdapterResult, Probe, probe_tool
 from .adapters.mypy import run_mypy
@@ -59,16 +59,24 @@ __all__ = [
     "JUDGEMENT_OUTCOMES",
     "JUDGEMENT_UNANALYZED",
     "KNOWN_VALIDATOR_IDS",
+    "LANGUAGE_COVERAGE_COVERED",
+    "LANGUAGE_COVERAGE_DECLARED_IN",
+    "LANGUAGE_COVERAGE_NOT_COVERED",
+    "LANGUAGE_COVERAGE_STATUSES",
+    "LANGUAGE_COVERAGE_UNKNOWN",
     "PIPELINE_SCHEMA_VERSION",
     "BuiltinError",
     "CheckerJudgement",
     "PipelineReport",
     "PipelineRequest",
+    "language_coverage",
     "render_report",
     "run_pipeline",
 ]
 
-PIPELINE_SCHEMA_VERSION = "1.0"
+# 1.1：validators[] 的 served_checkers → declared_checkers（P7："声明负责"≠"真的服务过"），
+#      并新增 PipelineReport.language_coverage（P2：哪些语言按设计不取证写成数据）。
+PIPELINE_SCHEMA_VERSION = "1.1"
 
 # checker 的"非判定"口径（PipelineReport.judgements 的 outcome）：
 #   empty      —— 验证器跑成了，但本次一条诊断都没归到任何规则（只计数、不判定）；
@@ -77,6 +85,25 @@ PIPELINE_SCHEMA_VERSION = "1.0"
 JUDGEMENT_EMPTY = "empty"
 JUDGEMENT_UNANALYZED = "unanalyzed"
 JUDGEMENT_OUTCOMES: Tuple[str, ...] = (JUDGEMENT_EMPTY, JUDGEMENT_UNANALYZED)
+
+# 语言覆盖口径（PipelineReport.language_coverage）：
+#   covered_by_rule_pack   —— 这门语言有 rule pack，验证器选择走原有路径；
+#   not_covered_by_design  —— 这门语言在 validation/validators.yaml 的 uncovered_languages 里
+#                             被显式声明为"按设计不取证"：这是**判定**，不是错误、也不是静默放行；
+#   language_unknown       —— 上下文没有声明语言，无法选择验证器（仍然是失败关闭）。
+# 为什么要有这条记录（07 号报告 P2）：只有 python 有 rule pack 时，非 python 目标在取证路径上
+# 只能失败关闭——连"本次没有任何规则需要验证器证据"的文档写入也被一并拦下。缺的不是失败关闭，
+# 而是"哪些语言按设计不取证"的表达；把它写成一条显式判定，账本才读得出"为什么这次没查"。
+LANGUAGE_COVERAGE_DECLARED_IN = "validation/validators.yaml"
+LANGUAGE_COVERAGE_COVERED = "covered_by_rule_pack"
+LANGUAGE_COVERAGE_NOT_COVERED = "not_covered_by_design"
+LANGUAGE_COVERAGE_UNKNOWN = "language_unknown"
+# 受控集合：未知取值一律报错（PipelineReport 会校验），避免"新的覆盖口径"悄悄出现却没人读得懂。
+LANGUAGE_COVERAGE_STATUSES: Tuple[str, ...] = (
+    LANGUAGE_COVERAGE_COVERED,
+    LANGUAGE_COVERAGE_NOT_COVERED,
+    LANGUAGE_COVERAGE_UNKNOWN,
+)
 
 # 显式依赖（CLI --dependencies）在证据里的验证器身份：它也是一种证据来源，不是"没有证据"。
 EXPLICIT_VALIDATOR_ID = "cli.explicit"
@@ -161,10 +188,64 @@ class CheckerJudgement:
         }
 
 
+def language_coverage(registry: Any, language: Optional[str]) -> Mapping[str, Any]:
+    """语言维度的显式判定：有 rule pack / 按声明不取证 / 语言未知。
+
+    字段形状是接口（审计摘要的 passthrough 直接取它），因此键固定为
+    `language` / `status` / `reason` / `declared_in`，status 取值落在
+    LANGUAGE_COVERAGE_STATUSES 里。
+
+    **失败关闭没有被放宽**：既没有 rule pack、也没被声明为"按设计不取证"的语言仍然
+    抛 RegistryError（退出码 2）。"我们没声明过它"与"我们声明了不验证它"是两件事，
+    前者不该被后者顺带放行（AGENTS 第 3/20/42 条）。
+    """
+
+    if language is None:
+        return {
+            "language": None,
+            "status": LANGUAGE_COVERAGE_UNKNOWN,
+            "reason": (
+                "上下文没有声明语言：无法选择验证器（拒绝靠扩展名猜语言，"
+                "见 AGENTS 核心约束 6），需要证据的规则按失败关闭处理"
+            ),
+            "declared_in": LANGUAGE_COVERAGE_DECLARED_IN,
+        }
+
+    token = canonical_identifier(language) or language
+    if registry.packs_for(token):
+        return {
+            "language": token,
+            "status": LANGUAGE_COVERAGE_COVERED,
+            "reason": "",
+            "declared_in": LANGUAGE_COVERAGE_DECLARED_IN,
+        }
+
+    declared = registry.uncovered(token)
+    if declared is not None:
+        return {
+            "language": declared.language,
+            "status": LANGUAGE_COVERAGE_NOT_COVERED,
+            "reason": declared.reason,
+            "declared_in": LANGUAGE_COVERAGE_DECLARED_IN,
+        }
+
+    raise RegistryError(
+        "上下文声明的语言 " + token + " 没有任何 rule pack（已声明的语言："
+        + ", ".join(sorted({pack.language for pack in registry.rule_packs}))
+        + "），也没有在 " + LANGUAGE_COVERAGE_DECLARED_IN + " 的 uncovered_languages 里"
+        "被声明为「按设计不取证」；拒绝在不了解该语言规则的情况下给出结论"
+    )
+
+
 @dataclass(frozen=True)
 class PipelineReport:
-    """一次流水线运行的完整报告。"""
+    """一次流水线运行的完整报告。
 
+    `language_coverage` 没有默认值：一份说不出"这次的语言是怎么被覆盖的"的报告，
+    与"这次没查"长得一模一样（07 号报告 P2）。
+    """
+
+    language_coverage: Mapping[str, Any]
     schema_version: str = PIPELINE_SCHEMA_VERSION
     target: Optional[SourceDigest] = None
     language: Optional[str] = None
@@ -180,6 +261,15 @@ class PipelineReport:
     selection: Mapping[str, Any] = field(default_factory=dict)
     environment: Mapping[str, str] = field(default_factory=dict)
     configs: Mapping[str, Optional[str]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # status 是受控集合：未知取值一律报错，不留"没人读得懂的新口径"
+        status = self.language_coverage.get("status")
+        if status not in LANGUAGE_COVERAGE_STATUSES:
+            raise ValueError(
+                "未知的语言覆盖状态 " + repr(status)
+                + "；允许的取值只有 " + repr(list(LANGUAGE_COVERAGE_STATUSES))
+            )
 
     @property
     def bundle(self) -> EvidenceBundle:
@@ -212,6 +302,7 @@ class PipelineReport:
                 "lines": self.target.lines,
             },
             "language": self.language,
+            "language_coverage": dict(self.language_coverage),
             "checks": list(self.checks),
             "validators": [item.to_payload() for item in self.validators],
             "blockers": [item.to_payload() for item in self.blockers],
@@ -230,9 +321,15 @@ class PipelineReport:
 def render_report(report: PipelineReport) -> str:
     """把一次运行的证据渲染成给人看的文本（判定部分由 policy.check 负责）。"""
 
+    coverage = report.language_coverage
     lines = [
         "target: " + (report.target.file if report.target else "<unknown>"),
         "language: " + (report.language or "<unknown>"),
+        "language_coverage: " + str(coverage.get("status")) + (
+            "（" + str(coverage.get("reason")) + "）"
+            if coverage.get("reason")
+            else ""
+        ),
         "checks: " + (", ".join(report.checks) or "<none>"),
         "validators:",
     ]
@@ -307,6 +404,9 @@ def run_pipeline(
             needed.add(checker)
 
     registry = config.registry
+    # 语言覆盖口径先算出来并进报告：它是"这次为什么查了 / 为什么没查"的一部分，
+    # 不能只靠验证器记录里的**缺席**来表达（缺席与"判定过、未发现"长得一样）。
+    coverage = language_coverage(registry, language)
     # 显式声明依赖时，依赖类验证器不再参与：证据来源是调用方的声明（记录在 cli.explicit）。
     skip = (
         frozenset({"forbidden_dependency"})
@@ -320,6 +420,7 @@ def run_pipeline(
         only=request.only,
         skip=skip,
         target=request.target,
+        coverage=coverage,
     )
 
     changed_files = _validated_changed(request.changed_files)
@@ -438,7 +539,7 @@ def run_pipeline(
                 reason=reason,
                 tool=output.tool,
                 evidence_count=len(kept),
-                served_checkers=tuple(sorted(checkers)),
+                declared_checkers=tuple(sorted(checkers)),
             )
         )
         dependency_facts.extend(output.dependencies)
@@ -500,13 +601,14 @@ def run_pipeline(
                 critical=True,
                 reason="依赖由调用方显式声明，未使用 AST / 依赖图证据",
                 evidence_count=0,
-                served_checkers=("forbidden_dependency",),
+                declared_checkers=("forbidden_dependency",),
             )
         )
         served.add("forbidden_dependency")
         blocked = [item for item in blocked if "forbidden_dependency" not in item.checkers]
 
     return PipelineReport(
+        language_coverage=coverage,
         target=None if state.source is None else state.source.digest,
         language=language,
         checks=tuple(sorted(needed)),
@@ -556,6 +658,7 @@ def _select_specs(
     only: Sequence[str],
     skip: FrozenSet[str] = frozenset(),
     target: str,
+    coverage: Mapping[str, Any],
 ) -> Tuple[Tuple[ValidatorSpec, ...], list[Blocker]]:
     """按"命中的规则需要哪些 checker"挑选验证器，并补齐它们依赖的前置验证器。
 
@@ -563,14 +666,30 @@ def _select_specs(
     没有任何验证器负责的 checker 会变成失败关闭的阻断点。
     """
 
-    # 语言先于"需不需要验证器"校验：一个没有 rule pack 的语言意味着"我们不知道它的规则"，
-    # 此时"没有规则命中 → allow"是假结论（--language go 曾因此 exit 0），必须失败关闭。
-    if language is not None and not registry.packs_for(language):
-        raise RegistryError(
-            "上下文声明的语言 " + language + " 没有任何 rule pack（已声明的语言："
-            + ", ".join(sorted({pack.language for pack in registry.rule_packs}))
-            + "）；拒绝在不了解该语言规则的情况下给出结论"
-        )
+    # 没有 rule pack 的语言在 language_coverage() 里已经分过流：声明过"按设计不取证"的
+    # 落到这里按下面的规则处理；没声明过的在那里直接 RegistryError（失败关闭不放宽）。
+    if coverage["status"] == LANGUAGE_COVERAGE_NOT_COVERED:
+        # 按声明不取证 ≠ 放行：**没有任何规则需要验证器证据**时它是一条显式判定
+        # （07 号报告 P2 的现场：所有规则都是 python 作用域，.md 目标一条都用不上）；
+        # 一旦有规则需要某个 checker 的证据，就与"没有验证器为它提供证据"同样失败关闭。
+        pending = sorted(set(needed) - set(skip))
+        if not pending:
+            return (), []
+        return (), [
+            Blocker(
+                validator_id="pipeline",
+                validator_version=PIPELINE_SCHEMA_VERSION,
+                status=ValidatorStatus.NOT_SELECTED,
+                reason=(
+                    "语言 " + str(coverage["language"]) + " 按声明不取证（"
+                    + LANGUAGE_COVERAGE_DECLARED_IN + " 的 uncovered_languages："
+                    + str(coverage["reason"]) + "），但本次有规则需要 checker "
+                    + checker + " 的证据；拒绝在证明不了的情况下放行"
+                ),
+                checkers=(checker,),
+            )
+            for checker in pending
+        ]
 
     if not needed:
         return (), []

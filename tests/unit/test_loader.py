@@ -1,4 +1,8 @@
-"""Phase 0 Loader 测试：排序、重复 ID、错误定位、原子加载。"""
+"""Phase 0 Loader 测试：排序、重复 ID、错误定位、原子加载。
+
+另有 N14 的一组用例：依赖类 checker 的规则必须在加载期声明 language 维度
+（夹具在 `tests/fixtures/invalid_rules/`，见那里的 README）。
+"""
 
 from __future__ import annotations
 
@@ -7,6 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from policy.engine import evaluate
 from policy.loader import (
     LoaderError,
     RuleFileError,
@@ -15,9 +20,16 @@ from policy.loader import (
     load_rule_set,
     load_rules,
 )
-from policy.models import RuleSet
+from policy.models import Decision, PolicyContext, Rule, RuleSet
 
-from conftest import ARCH_DIR, REPO_ROOT, RULE_DOCUMENT, rule_document, write_rule
+from conftest import (
+    ARCH_DIR,
+    FIXTURES_DIR,
+    REPO_ROOT,
+    RULE_DOCUMENT,
+    rule_document,
+    write_rule,
+)
 
 
 def test_repository_rule_loads_with_expected_identity() -> None:
@@ -209,3 +221,111 @@ def test_loading_twice_is_stable(tmp_root: Path) -> None:
 
     assert first.identity == second.identity
     assert first.model_dump() == second.model_dump()
+
+
+# --------------------------------------------------- N14：依赖类 checker 的 language 门槛
+#
+# 缺口：`language` 解析不出来时为 None → 依赖集是空元组 → 依赖类 checker 于是 allow，
+# 而「为什么 allow」（语言未知）没有任何地方写下来。43 条规则里唯一用
+# forbidden_dependency 的 ARCH-001 恰好在 scope 里声明了 language: python，所以今天
+# 没有洞 —— 那是规则作者的纪律，不是代码保证。下面这组用例把纪律变成会失败的检查。
+
+INVALID_RULES_DIR = FIXTURES_DIR / "invalid_rules"
+
+
+def test_dependency_rule_without_language_is_rejected_at_load_time() -> None:
+    """不声明 language 的依赖规则必须**读不进来**，且错误信息要讲清为什么。"""
+
+    with pytest.raises(RuleFileError) as error:
+        load_rules(INVALID_RULES_DIR / "no-language", repo_root=REPO_ROOT)
+
+    message = str(error.value)
+    assert error.value.rule_id == "ARCH-900"
+    assert error.value.field == "scope.language"
+    assert "没有声明 language" in message
+    # 错误信息必须自己解释「为什么」，否则下一个人只会把它当成格式检查：
+    assert "依赖集" in message  # 语言未知 = 依赖集为空
+    assert "静默放行" in message  # 而这个 allow 的理由没有任何地方写下来
+
+
+def test_dependency_rule_with_wildcard_language_is_rejected_at_load_time() -> None:
+    """`language: "*"` 与「不声明」在判定上等价（该维度不限制），所以同样拒绝。"""
+
+    with pytest.raises(RuleFileError) as error:
+        load_rules(INVALID_RULES_DIR / "wildcard-language", repo_root=REPO_ROOT)
+
+    message = str(error.value)
+    assert error.value.rule_id == "ARCH-901"
+    assert error.value.field == "scope.language"
+    assert "不限制" in message
+    assert "依赖集" in message
+
+
+def test_dependency_rule_with_declared_language_still_loads() -> None:
+    """正例对照：同一种规则体，只要声明了 language 就照常加载。"""
+
+    loaded = load_rules(INVALID_RULES_DIR / "declared-language", repo_root=REPO_ROOT)
+
+    assert [item.rule.canonical_id for item in loaded] == ["ARCH-902@1"]
+    assert loaded[0].rule.scope.declared_dimensions["language"] == "python"
+
+
+def test_language_gate_does_not_apply_to_other_checkers(tmp_root: Path) -> None:
+    """门槛只针对依赖类 checker：docstring 类规则没有 language 维度是合法的。
+
+    否则这条检查会变成「所有规则都必须声明 language」，那是另一条（更严的）契约，
+    与本缺口无关，也会把 43 条规则里的绝大多数判红。
+    """
+
+    root = tmp_root / "policies"
+    write_rule(
+        root / "DOC-900.yaml",
+        rule_document(
+            id="DOC-900",
+            scope={"layer": "controller"},
+            enforcement={"type": "deterministic", "checker": "missing_docstring"},
+            rule={"missing_docstring": {"targets": ["module"]}},
+        ),
+        yaml_module=yaml,
+    )
+
+    assert load_rule_set([root], repo_root=tmp_root).ids == ("DOC-900@1",)
+
+
+def test_repository_rule_declares_the_language_dimension() -> None:
+    """既有规则（43 条里唯一用依赖 checker 的那条）不受影响，且它本来就写对了。"""
+
+    loaded = load_rule_file(
+        ARCH_DIR / "ARCH-001.yaml",
+        repo_path="policies/architecture/ARCH-001.yaml",
+        repo_root=REPO_ROOT,
+    )
+
+    assert loaded.rule.scope.declared_dimensions["language"] == "python"
+
+
+def test_the_gate_is_about_a_silent_allow_not_a_format_rule() -> None:
+    """把「为什么非在加载期拦不可」钉成可失败的断言（而不是注释里的一句话）。
+
+    这里**绕过加载器**直接构造规则（Rule 模型本身不查 scope.language，见
+    tests/unit/test_engine.py 的「缺省 = 不限制」）：在「语言解析不出来（None）+
+    依赖集为空」的上下文上，它判 allow，而且既不在 violations 里，也不在
+    skipped_rules 里 —— 决策里没有任何地方写得出「为什么放行」。
+    加载期检查要拦的就是这种写法：让它在规则进仓库时失败，而不是等某个 Adapter
+    声明不出语言时静默放行。
+    """
+
+    rule = Rule.model_validate(rule_document(scope={"layer": "controller"}))
+    context = PolicyContext(
+        request_id="req-n14",
+        file="src/shop/order_controller.py",
+        layer="controller",
+        dependencies=[],
+    )
+
+    result = evaluate(RuleSet(rules=(rule,), source_paths=("fixture",)), context)
+
+    assert context.language is None
+    assert result.decision is Decision.ALLOW
+    assert not result.violations
+    assert not result.skipped_rules, "规则没有 language 限制，所以它会「相关」地判 allow"

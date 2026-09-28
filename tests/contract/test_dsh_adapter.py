@@ -664,7 +664,7 @@ def test_evidence_facts_match_through_the_module_path(arch_rules):
                 kind=ValidatorKind.BUILTIN,
                 stage="dependency",
                 status=ValidatorStatus.OK,
-                served_checkers=("forbidden_dependency",),
+                declared_checkers=("forbidden_dependency",),
             ),
         ),
         served_checkers=("forbidden_dependency",),

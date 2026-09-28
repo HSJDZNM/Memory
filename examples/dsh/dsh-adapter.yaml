@@ -12,8 +12,21 @@ rules:
 
 timeout_ms: 5000 # 内部预算：必须严格小于 hooks.json 里的 timeout
 
+# M1：测试路径必须**第一个**声明。
+#
+# 分层是数据，改一行就换结论——但**顺序**能让一条生产层规则罩住测试文件：
+# tests/test_shipment_controller.py 会命中下面的 **/*_controller.py，被当成入口层，
+# 于是生产层的规则开始管测试的写法（实测把一份测试从"真实装配对象图"挤成了"手写替身"）。
+# 声明 test_paths / test_layer 之后，加载期会证明每条测试路径都落在 test_layer，
+# 证明不了就拒绝启动（src/adapters/dsh/adapter.py 的 layer_test_conflicts）。
+test_paths:
+  - "tests/**/*.py"
+test_layer: test
+
 # path → layer：按顺序取第一个命中；不命中则失败关闭（除非显式声明 default_layer）
 layers:
+  - pattern: "tests/**/*.py"
+    layer: test
   - pattern: "**/*_controller.py"
     layer: controller
   - pattern: "**/*_service.py"
@@ -46,3 +59,22 @@ enforcement_ledger: ../../.tmp/artifacts/dsh-enforcement-ledger.jsonl
 # 高风险动作（pwsh / bash / run_code）需要事先签发、且与具体 action_hash 绑定的审批文件。
 # 生成方式见 README：python -m enforcement.cli approve --request <req.json> --out <approval.json>
 # approval_file: .policy/approval.json
+
+# —— G3：动手前取证（可选；默认关闭 = 保持 Phase 2 契约） ——
+# 声明并启用后，pre-execute 会在**影子工作区**（副本，用完即删）上应用"提议的新内容"，
+# 跑 Phase 5 的真实验证器，把 EvidenceBundle 交给引擎——证据类 checker（style_lint /
+# missing_docstring / missing_tests / failing_tests）于是从 skipped_rules 变成参与判定。
+# 代价：每次写类动作都要在副本上跑一遍验证器；失败/超时/提议内容重建不了一律失败关闭
+# （evidence_unavailable，退出码 2），绝不回落到"没证据就当跳过"。
+#
+# 预算不等式（check_wiring 会查）：pre_evidence.timeout_ms + timeout_ms < hooks.json 的 timeout。
+# 上面的 hooks.json 写的是 30s，所以这里先只写形状、不启用；要启用就把 timeout 一起调大。
+#
+# pre_evidence:
+#   enabled: true
+#   registry_root: ../..            # 平台验证器数据所在处：包含 validation/ 的那一层（也可直接写 validation/ 目录）
+#   workspace: .                    # 要取证的受控工作区（默认 project_root）
+#   shadow_root: .policy/pre-evidence   # 影子副本落点（用完必删；与被治理项目重叠会被拒绝）
+#   exclude: [".git/**", ".policy/**", ".tmp/**", "**/__pycache__/**"]
+#   validators: []                  # 省略 = 按规则选择；写死可省时间（例如 [py.source, tool.ruff]）
+#   timeout_ms: 60000

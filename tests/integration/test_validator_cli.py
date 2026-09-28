@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import POLICIES_DIR, REPO_ROOT
+from conftest import POLICIES_DIR, REPO_ROOT, write_validation_config
 from policy.loader import load_rule_set
 
 pytestmark = pytest.mark.integration
@@ -95,7 +95,7 @@ def test_check_command_only_produces_evidence() -> None:
     payload = json.loads(completed.stdout)
     assert payload["result"] is None  # check 不做判定
     assert payload["evidence"]["dependencies"][0]["name"] == "repository"
-    assert payload["evidence"]["schema_version"] == "1.0"
+    assert payload["evidence"]["schema_version"] == "1.1"
 
 
 def test_check_command_exits_one_on_findings() -> None:
@@ -206,3 +206,129 @@ def test_changed_from_git_uses_the_working_tree(tmp_root: Path) -> None:
     assert completed.returncode in (0, 1, 2)
     if completed.returncode == 2:
         assert "git" in completed.stderr
+
+
+# --------------------------------------------------------------------------- A2：target 解析只有一条口径
+
+
+def policy_cli(*args: str) -> subprocess.CompletedProcess[str]:
+    """在仓库根目录以子进程方式运行 python -m policy.check（只用于口径比对）。"""
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT / "src")
+    env["PYTHONIOENCODING"] = "utf-8"
+    return subprocess.run(
+        [sys.executable, "-m", "policy.check", *args],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+
+def missing_target_blockers(payload: dict) -> list:
+    """只挑"目标文件没被定位到"这一类阻断点：它正是两处口径分叉时的可观察差异。
+
+    窄口径（只跑 py.*）下还会有"没有验证器为某个 checker 提供证据"的失败关闭阻断点，
+    那是**预期的**，与 target 解析无关，不能拿来当信号。
+    """
+
+    return [
+        item
+        for item in payload["evidence"]["blockers"]
+        if "目标文件不存在" in str(item.get("reason", ""))
+    ]
+
+
+def test_target_resolution_matches_policy_check_for_a_workspace_prefixed_path() -> None:
+    """带工作区前缀的路径按 --workspace 解析，与 policy.check 得到同一个 context。
+
+    旧口径把整串当成工作区相对路径，于是同一个文件被判成"不存在"——
+    调用方要么换成裸文件名、要么白试一次，这正是"两处口径"的代价。
+    """
+
+    args = (
+        PROJECT + "/src/shop/order_controller.py",
+        "--layer",
+        "controller",
+        "--workspace",
+        PROJECT,
+        "--validators",
+        "py.source,py.ast,py.depgraph",
+        "--request-id",
+        "req-a2-prefixed",
+        "--json",
+    )
+    evidence_run = cli("check", *args)
+    policy_run = policy_cli(*args)
+
+    # 只跑 py.* 时，没被覆盖的 checker 仍按失败关闭给出阻断点（退出码 1）：
+    # 这里要守的是"文件被定位到了"，不是"命令有没有发现"。
+    assert evidence_run.returncode in (0, 1), evidence_run.stderr + evidence_run.stdout
+    payload = json.loads(evidence_run.stdout)
+    assert payload["context"]["file"] == "src/shop/order_controller.py"
+    assert missing_target_blockers(payload) == []
+    assert payload["context"] == json.loads(policy_run.stdout)["context"]
+
+
+def test_config_root_does_not_move_the_workspace(tmp_root: Path) -> None:
+    """--config-root 只决定 validation/ 配置在哪，不再顺带改工作区口径。
+
+    目标写成仓库相对路径、并且**不给 --workspace**：旧口径会把 --config-root 也当成
+    工作区的锚，于是目标被判成"不存在"；统一之后默认工作区是仓库根（与 policy.check 同一条规则）。
+    """
+
+    import shutil
+
+    write_validation_config(tmp_root)
+    # 规则目录也必须落在配置根之内（loader 的 repo_root 就是配置根），
+    # 所以这里连规则一起复制——这条用例要测的是工作区口径，不是规则加载。
+    shutil.copytree(REPO_ROOT / "policies", tmp_root / "policies")
+    completed = cli(
+        "check",
+        PROJECT + "/src/shop/order_controller.py",
+        "--layer",
+        "controller",
+        "--config-root",
+        tmp_root.relative_to(REPO_ROOT).as_posix(),
+        "--rules",
+        str(tmp_root / "policies"),
+        "--validators",
+        "py.source,py.ast,py.depgraph",
+        "--json",
+    )
+
+    assert completed.returncode in (0, 1), completed.stderr + completed.stdout
+    payload = json.loads(completed.stdout)
+    assert payload["context"]["file"] == PROJECT + "/src/shop/order_controller.py"
+    assert missing_target_blockers(payload) == []
+
+# --------------------------------------------------------------- P4：验证器入口不做分层推断
+
+
+def test_validators_cli_still_rejects_a_missing_layer_for_a_platform_test_path(
+    tmp_root: Path,
+) -> None:
+    """P4 只改 policy.check：验证器入口缺 --layer 时**继续拒绝**，不跟着推断。
+
+    `validators.cli` 的 --layer 是调用方必须自证的输入；给它补一个"平台数据说是测试"的
+    默认值，等于把分层责任从调用方挪到平台，而验证器与流水线要的恰恰是一个**声明过的**层。
+    这条用例守住"P4 的改动没有顺着共享数据扩散到另一个入口"。
+    """
+
+    workspace = tmp_root / "ws"
+    target = workspace / "tests" / "test_shipment_controller.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('"""出库控制器测试。"""' + chr(10), encoding="utf-8", newline="")
+
+    completed = cli(
+        "check",
+        "tests/test_shipment_controller.py",
+        "--workspace",
+        workspace.relative_to(REPO_ROOT).as_posix(),
+    )
+
+    assert completed.returncode == 2
+    assert "--layer" in completed.stderr

@@ -25,7 +25,12 @@ from policy.evidence import (
 )
 from policy.loader import load_rule_set
 from policy.models import KNOWN_CHECKERS, SCHEMA_VERSION, ValidationResult
-from validators.pipeline import KNOWN_VALIDATOR_IDS, PipelineRequest, run_pipeline
+from validators.pipeline import (
+    KNOWN_VALIDATOR_IDS,
+    PIPELINE_SCHEMA_VERSION,
+    PipelineRequest,
+    run_pipeline,
+)
 from validators.registry import load_config
 
 pytestmark = pytest.mark.contract
@@ -37,11 +42,26 @@ CORE_MODULES = ("models", "engine", "context", "scope", "loader", "evidence", "c
 
 
 def test_evidence_schema_version_is_pinned() -> None:
-    assert EVIDENCE_SCHEMA_VERSION == "1.0"
-    assert EvidenceBundle().schema_version == "1.0"
+    # P7：validators[].served_checkers → declared_checkers 是载荷的**字段变化**，
+    # 按 src/policy/evidence.py 自己的规则（"字段增删或语义变化都要显式改这里"）递增。
+    assert EVIDENCE_SCHEMA_VERSION == "1.1"
+    assert EvidenceBundle().schema_version == "1.1"
 
     with pytest.raises(Exception):
         EvidenceBundle(schema_version="2.0")
+
+    # 旧载荷一律拒绝：1.0 的 validators[] 用的是另一个键名，静默接受等于读错语义
+    with pytest.raises(Exception):
+        EvidenceBundle(schema_version="1.0")
+
+
+def test_pipeline_schema_version_is_pinned_and_single_sourced() -> None:
+    """流水线载荷也变了（validators[] 的键 + language_coverage），版本号同步且只有一份真值。"""
+
+    import validators
+
+    assert PIPELINE_SCHEMA_VERSION == "1.1"
+    assert validators.PIPELINE_SCHEMA_VERSION == PIPELINE_SCHEMA_VERSION
 
 
 def test_checker_vocabulary_agrees_across_layers() -> None:

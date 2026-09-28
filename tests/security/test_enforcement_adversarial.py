@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -328,6 +329,8 @@ def test_agent_identifiers_cannot_be_used_as_a_channel(enforcement_paths):
 
 
 def test_cli_refuses_a_request_that_points_outside_the_workspace(enforcement_paths):
+    """P8：越界照旧拒（exit 2 + path_out_of_scope），但理由要能一次改对。"""
+
     enforcement_paths.file("src/shop/order_controller.py", "from service import OrderService\n")
     document = {
         "action_id": "escape-1",
@@ -377,6 +380,10 @@ def test_cli_refuses_a_request_that_points_outside_the_workspace(enforcement_pat
 
     assert completed.returncode == 2
     assert "path_out_of_scope" in completed.stderr
+    # 可用的替代：与读类同口径的那句话要真的走出 CLI，而不只是活在函数里（P8）
+    assert "可用的替代" in completed.stderr
+    assert "仓库相对路径" in completed.stderr
+    assert "记为 ." in completed.stderr
     assert not (enforcement_paths.root / "escape-cleaned").exists()
 
 
@@ -420,8 +427,9 @@ def test_generic_orchestrator_writes_cannot_touch_trust_roots(enforcement_paths)
 def test_secret_bearing_parameter_values_never_reach_the_ledger(enforcement_paths):
     """参数取值里出现确定形态的凭据时，台账不写原文，事后按"证据不足"处理。
 
-    审计链本来就脱敏，但台账此前会把 content / new_string 的原文写进 JSONL，
-    与 ledger.py 自述的"不存参数原文"矛盾。这条用例把该不变量钉住。
+    台账的存留口径是"扣留疑似密钥，其余按原文落盘"（见 ledger.py 的模块自述与
+    docs/project/architecture/术语与口径.md 第四条）：普通 content 会按原文落盘以支持
+    PostToolUse 重建请求，但**像凭据的值**必须扣掉。这条用例钉住的是后一半。
     """
 
     from adapters.dsh.enforcement import EnforcementBridge
@@ -486,3 +494,155 @@ def test_plain_parameter_values_are_still_replayable(enforcement_paths):
     bridge.pre(request)
     state = bridge.state_for(request.action_id)
     assert state is not None and state["has_secret_params"] is False
+
+# --------------------------------------------------------------------------- P8：写类越界的理由
+
+# 生产入口：`python -m adapters.dsh.hooks`（dsh 的 PreToolUse 命令）。
+# 这里复用仓库文档里那份接线示例：接线自检缺席是失败关闭，跑不起来就等于没测到。
+HOOKS_CONFIG = REPO_ROOT / "examples" / "dsh" / "hooks.json"
+
+
+def _hook_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT / "src")
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def _audit_records(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _write_payload(project: Path, file_path: str, tool_use_id: str) -> dict:
+    """dsh 真实会发的写类 PreToolUse 载荷（tool_name=write + tool_input.file_path）。"""
+
+    return {
+        "session_id": "sec-p8-" + tool_use_id,
+        "transcript_path": "",
+        "cwd": str(project),
+        "hook_event_name": "PreToolUse",
+        "tool_name": "write",
+        "tool_input": {"file_path": file_path, "content": "x = 1" + chr(10)},
+        "tool_use_id": tool_use_id,
+    }
+
+
+def _run_write_hook(
+    config: Path, payload: dict, *, audit: Path
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "adapters.dsh.hooks",
+            "--config",
+            str(config),
+            "--hooks-config",
+            str(HOOKS_CONFIG),
+            "--audit",
+            str(audit),
+        ],
+        cwd=REPO_ROOT,
+        env=_hook_env(),
+        input=json.dumps(payload, ensure_ascii=False),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+
+def _blocked_record(records: list[dict]) -> dict:
+    """取本次阻断写下的那条记录（跳过留痕类：context_injection / ledger_path_overridden）。"""
+
+    hits = [
+        item
+        for item in records
+        if item.get("hook_event") == "PreToolUse"
+        and item.get("reason_code") not in ("context_injection", "ledger_path_overridden")
+    ]
+    assert hits, "没有写下阻断记录：这条载荷根本没走到判定"
+    return hits[-1]
+
+
+def test_hook_write_outside_project_reason_names_the_usable_form(
+    dsh_config_path, dsh_project, tmp_root
+):
+    """P8 端到端 1/2：写类目标在工作区之外（绝对路径）。
+
+    修前现场（07 轮 matrix 的 block-write-outside 审计记录）：reason_code=context_error、
+    exit 2，detail 只有"路径不在仓库 <repo> 之内，拒绝处理: '<abs>'" ——正确阻断，
+    但调用方读不出"改成什么形态就能过"。
+    """
+
+    outside = (tmp_root / "outside.py").resolve()
+    audit = dsh_config_path.parent / "audit.jsonl"
+    # A1 矩阵偏差的两个形状都在这里：绝对路径越界，以及把范围外写成相对路径
+    # （后者由 Adapter 解析成 <repo>/../outside.py，落到同一支拒绝）。
+    payloads = {
+        "call-sec-p8-outside": str(outside),
+        "call-sec-p8-relative": "../outside.py",
+    }
+
+    for tool_use_id, file_path in payloads.items():
+        before = len(_audit_records(audit))
+        completed = _run_write_hook(
+            dsh_config_path,
+            _write_payload(dsh_project, file_path, tool_use_id),
+            audit=audit,
+        )
+
+        # 判定一个字不放宽
+        assert completed.returncode == 2
+        record = _blocked_record(_audit_records(audit)[before:])
+        assert record["reason_code"] == "context_error"
+        assert record["exit_code"] == 2
+        # 为什么被拦（原有部分）+ 怎么改对（新增部分）都在
+        assert "拒绝处理" in record["detail"]
+        assert "可用的替代" in record["detail"]
+        assert "仓库相对路径" in record["detail"]
+        assert "记为 ." in record["detail"]
+        # 理由里不出现本机绝对路径：审计链的脱敏照旧（只给范围形态）
+        serialized = json.dumps(record, ensure_ascii=False)
+        assert str(outside) not in serialized
+        assert str(dsh_project.resolve()) not in serialized
+        assert "可用的替代" in completed.stderr
+
+
+def test_hook_write_parent_escape_reason_names_the_usable_form(dsh_config_path, dsh_project):
+    """P8 端到端 2/2：写类目标含 ".."，由 Phase 4 的 _normalize_path 拦下。
+
+    载荷取 "src/shop/../shop/order_service.py"：它规范化后仍落在项目内（于是 Phase 2 的
+    上下文与 layer 映射都过得去），但原始取值里的 ".." 必须在受控执行层被结构性拒绝——
+    这正是写类走的那条路。这一条的 reason_code 是 path_out_of_scope，明细写在审计的
+    enforcement_detail 字段（顶层 detail 留给 Phase 2 的上下文错误，
+    见 hooks.py::_enforcement_block）。要证明的是：包装层没有把"可用的替代"吞掉或截断。
+    """
+
+    audit = dsh_config_path.parent / "audit.jsonl"
+
+    completed = _run_write_hook(
+        dsh_config_path,
+        _write_payload(
+            dsh_project, "src/shop/../shop/order_service.py", "call-sec-p8-escape"
+        ),
+        audit=audit,
+    )
+
+    assert completed.returncode == 2
+    record = _blocked_record(_audit_records(audit))
+    assert record["reason_code"] == "path_out_of_scope"
+    detail = str(record.get("enforcement_detail") or "")
+    # 包装层的那半句还在（不是被替换掉），"可用的替代"也在
+    assert "不在受控工作区" in detail
+    assert "逃出仓库根目录" in detail
+    assert "可用的替代" in detail
+    assert "仓库相对路径" in detail
+    # 面向模型的那条路（stderr）同样读得到
+    assert "可用的替代" in completed.stderr

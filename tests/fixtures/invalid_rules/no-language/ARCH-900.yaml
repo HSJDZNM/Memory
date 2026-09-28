@@ -1,0 +1,21 @@
+# 反例夹具（N14）：用 forbidden_dependency 却没有声明 language 维度。
+# 它必须**加载失败**：语言解析不出来时是 null，依赖集因此是空元组，依赖类 checker
+# 只能静默放行——而放行的理由（语言未知）不会出现在决策的任何位置。
+# 由 tests/unit/test_loader.py 加载，期望抛 RuleFileError（field=scope.language）。
+id: ARCH-900
+version: 1
+name: dependency-rule-without-language
+description: 用 forbidden_dependency 却没有声明 language 维度的反例。
+scope:
+  layer: controller
+severity: error
+enforcement:
+  type: deterministic
+  checker: forbidden_dependency
+rule:
+  forbidden_dependency:
+    - repository
+message: Controller 不得直接依赖 Repository。
+source:
+  kind: project-policy
+  path: tests/fixtures/invalid_rules/no-language/ARCH-900.yaml

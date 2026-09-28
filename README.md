@@ -233,7 +233,7 @@ uv run python -m validators.cli probe
 # 3) 只产出证据（不做 allow/block），退出码 0/1/2
 uv run python -m validators.cli check examples/bad_controller.py --layer controller
 
-# 4) 证据 + 判定（与 policy.check 同一条链路）
+# 4) 证据 + 判定（与 policy.check 同一条链路；target / --workspace 的解析口径也相同）
 uv run python -m validators.cli pipeline examples/bad_controller.py --layer controller
 
 # 5) 测试验证器：按变更集选择最小相关测试（--operation edit 才会触发测试规则）
@@ -244,6 +244,11 @@ uv run python -m policy.check tests/fixtures/validators/project/src/shop/order_s
 # 6) 验证器闭环（AST 证据 / 失败关闭 / 测试选择 / 可重放 / 工具可追溯）
 uv run python tools/validator_loop.py
 ```
+
+**一条口径**：`--workspace` 与目标文件的解析在两个 CLI（`validators.cli` 与 `policy.check`）
+里走**同一份实现**（锚是仓库根，`--workspace` 优先；`--config-root` 只决定 `validation/`
+配置与规则目录在哪）。同一个参数不许在两个入口指向不同目录——"两处各解析一遍"就是两套语义。
+目标文件定位不到属于"用错了"，两个入口都按配置错误（退出码 2）处理，而不是记成"证据不足"的阻断。
 
 **失败关闭**：关键验证器缺失、版本不符、超时、崩溃、配置错误、输出非法或"没有验证器为某个
 checker 提供证据"时，需要它的规则以 `critical` 违规阻断——同一批里的其他 PASS 抵消不了它。

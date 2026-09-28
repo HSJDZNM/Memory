@@ -17,10 +17,14 @@ dsh 侧的真实契约（0.1.5-rc.1，证据见 src/adapters/dsh/README.md）：
   3) hooks.json 读不到等于零 hook 注册，所以运行期用 --self-check 显式验证接线，
      且**自检缺席本身就按失败关闭处理**（没有接线证据 = 证明不了治理生效）。
 
-治理覆盖面的三条可见性约定（G3 / G11 / G12 修复）：
+治理覆盖面的四条可见性约定（G3 / G11 / G12 与 P1 修复）：
 
 - 审计记录里 effective_rule_count / skipped_rule_count / skipped_reason 把
   "查了并通过"与"被跳过"分开（跳过绝不等于通过）；
+- 判定记录里的 violations 列出**真的报了违规**的规则（canonical rule_id + severity +
+  message + evidence），与"参与过判定"的 matched_rules 分开；没有做出判定的记录
+  （context_error / evidence_unavailable / event_replay 等）没有这个键；
+
 - 会进入 AI 上下文的项目约定文档（AGENTS.md / CLAUDE.md）的来源路径与内容哈希
   在会话起点附近记一次，供事后核对"模型看到的约定"是不是评审过的那一份；
 - 每个受治理动作在审计里带 hook_event（PreToolUse / PostToolUse）与 action_id，
@@ -40,14 +44,16 @@ import time
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Protocol, Sequence
 
-from enforcement.audit import FileAuditSink
+from enforcement.audit import FileAuditSink, redact_text
 from enforcement.ledger import EnforcementLedger
 from policy.checkers import CONTEXT_CHECKERS
 from policy.engine import EngineError, evaluate
+from policy.evidence import EvidenceBundle
 from policy.loader import LoaderError, load_rule_set
 from policy.models import (
+    BLOCKING_SEVERITIES,
     SCHEMA_VERSION,
     Decision,
     PolicyContextError,
@@ -67,16 +73,19 @@ from .adapter import (
     to_policy_event,
 )
 from .enforcement import EnforcementBridge, EnforcementUnavailable, bridge_from_config
+from .pre_evidence import PreEvidenceError, PreEvidenceResult, build_pre_evidence
 
 __all__ = [
     "EXIT_ALLOW",
     "EXIT_BLOCK",
     "AUDIT_SCHEMA_VERSION",
+    "PRE_EVIDENCE_STATUSES",
     "VERDICT_PREFIX",
     "VERDICT_SCHEMA_VERSION",
     "AuditLedger",
     "ControlledExecutor",
     "DshPreExecuteHook",
+    "EvidenceProvider",
     "ExecutionOutcome",
     "HookOutcome",
     "NullExecutor",
@@ -118,12 +127,49 @@ VERDICT_PREFIX = "[policy] VERDICT "
 # 处置：把生效路径变成一等输出（自检行 + 审计记录），不一致时显式警告。
 EFFECTIVE_PATHS_PREFIX = "[policy] effective-paths "
 
+# G3/M2：动手前取证的状态值域（封闭枚举）。读账本的人必须能一眼分清五件事——
+# 缺任何一个值，"跳过"都会重新长成"通过"：
+#   not_declared   配置里没有 pre_evidence（Phase 2 契约：证据类 checker 进 skipped_rules）
+#   disabled       声明了但 enabled=false（显式关闭，不是"取不到"）
+#   collected      本次真的取到了证据并交给了引擎
+#   unavailable    声明并启用，但取证失败（已按失败关闭阻断，exit 2）
+#   not_applicable 该动作没有文件维度（执行类），取证不适用
+PRE_EVIDENCE_STATUSES = (
+    "not_declared",
+    "disabled",
+    "collected",
+    "unavailable",
+    "not_applicable",
+)
+
+# dsh 的默认 hook 超时：hooks.json 没写 timeout 时用桥的 defaultTimeoutMs（README §2.5）。
+# pre_evidence 的预算不等式必须把它写成显式事实——"没写 timeout"不等于"没有上限"。
+DEFAULT_HOOK_TIMEOUT_MS = 600_000
+
 LEDGER_OVERRIDE_NOTE = (
     "--audit 派生优先：Phase 2 的审计记录与 Phase 4 的台账是两份不同的 JSONL 协议，"
     "不能混写；按配置声明的 enforcement_ledger 去数台账会得到 0 条"
 )
 
-_ABS_PATH_RE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)[^\s'\"]+")
+# P1：判定记录里的违规可见性。
+#
+# 为什么口径必须写死在账本里：matched_rules 的语义是"参与过判定"。06 轮参与面只有 1 条时，
+# "参与"与"报违规"在账本上长得一样；07 轮治理全开之后参与面变成 43 条，block 与
+# allow_with_warnings 的记录里于是**一条真正报违规的规则都读不出来**——那份清单只活在
+# 给模型看的 stderr 里。三个词必须能分开读：真的报了违规 / 参与过判定 / 没有做出判定。
+VIOLATIONS_NOTE = (
+    "violations 是本次**真的报了违规**的规则；matched_rules 是本次**参与过判定**的规则；"
+    "两者不是一回事，warning 命中只产出 allow_with_warnings。"
+    "没有 violations 键的记录（context_error / evidence_unavailable / event_replay 等）"
+    "表示本次没有做出判定——「没判定」与「判定了、没违规」必须能分开读"
+)
+
+# 绝对路径的识别必须带**边界**：没有边界的 "/" 会把普通仓库相对路径
+# （src/shop/order_service.py）也当成绝对路径，账本里于是只剩 "src<abs>"，
+# 而"这次查的是哪个文件"正是审计要回答的问题。边界 = 串首，或空白 / 引号 /
+# 括号 / 等号 / 冒号 / 逗号之后。
+_ABS_PATH_BOUNDARY = r"(?:(?<=[\s'\"(\[=:,])|^)"
+_ABS_PATH_RE = re.compile(_ABS_PATH_BOUNDARY + r"(?:[A-Za-z]:[\\/]|\\\\|/)[^\s'\"]+")
 _SECRET_RE = re.compile(
     r"(?i)\b(?:sk-[A-Za-z0-9_\-]{8,}|api[_-]?key\s*[=:]\s*\S+|authorization:\s*\S+|bearer\s+\S+)"
 )
@@ -180,6 +226,37 @@ def sanitize(
     return text
 
 
+def _sanitized(value: Any, *, project_root: Optional[Path]) -> Any:
+    """递归脱敏：审计里的字符串一律走 sanitize。
+
+    一条违规的 message / evidence 都可能带路径与工具原文，而"绝对路径与凭据不得进审计"
+    （AGENTS 第 16 条）不因为字段嵌套一层就放松。递归只处理容器与字符串，其余原样返回。
+    """
+
+    if isinstance(value, str):
+        return sanitize(value, project_root=project_root)
+    if isinstance(value, Mapping):
+        return {
+            key: _sanitized(item, project_root=project_root) for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_sanitized(item, project_root=project_root) for item in value]
+    return value
+
+
+def _counts_by_severity(names: Iterable[str]) -> dict[str, int]:
+    """按严重级别计数（键排序）：M3 的 *_by_severity 与 P1 的 violations_by_severity 共用。
+
+    只有这一份实现，两个字段的"同一口径"才不是靠人工比对维持的：分级名归调用方给
+    （规则集里没有的 rule_id 归 "unknown"，违规自带 severity），这里只负责数。
+    """
+
+    bucket: dict[str, int] = {}
+    for name in names:
+        bucket[name] = bucket.get(name, 0) + 1
+    return {key: bucket[key] for key in sorted(bucket)}
+
+
 def context_documents(project_root: Path | str) -> list[dict[str, Any]]:
     """G11：项目根下会进入 AI 上下文的约定文档 → 来源路径 + 内容哈希。
 
@@ -225,6 +302,27 @@ class ControlledExecutor(Protocol):
     """受控执行器端口：只在 allow 之后被调用，且至多一次。"""
 
     def execute(self, event: PolicyEvent) -> ExecutionOutcome:
+        ...
+
+
+class EvidenceProvider(Protocol):
+    """动手前取证的端口：默认实现是 pre_evidence.build_pre_evidence（Phase 5 真流水线）。
+
+    端口契约（Hook 依赖的全部）：在 pre_evidence.timeout_ms 之内返回一个
+    PreEvidenceResult；取不到证据就抛 PreEvidenceError，**不许**返回一份空证据。
+    Hook 另外会套一层更大的预算（pre_evidence.timeout_ms + config.timeout_ms），
+    并在任何一层超时 / 异常 / 形状不对时按 evidence_unavailable 失败关闭。
+    """
+
+    def __call__(
+        self,
+        raw_payload: Any,
+        *,
+        event: PolicyEvent,
+        config: AdapterConfig,
+        rules: RuleSet,
+        context: Any,
+    ) -> PreEvidenceResult:
         ...
 
 
@@ -321,38 +419,68 @@ class AuditLedger:
             handle.write(line + "\n")
 
 
-def _evaluate_with_budget(
-    evaluator: Callable[[RuleSet, Any], ValidationResult],
-    rules: RuleSet,
-    context: Any,
+def _within_budget(
+    run: Callable[[], Any],
+    *,
     budget_ms: int,
-) -> ValidationResult:
-    """在预算内完成策略判定。
+    on_timeout: Callable[[], BaseException],
+    name: str,
+) -> Any:
+    """在预算内跑一段可能阻塞的调用；超预算就抛 on_timeout() 造的异常。
 
-    用 daemon 线程 + join(timeout) 实现：超时后线程不会阻止解释器退出，
-    本函数抛出 PolicyTimeout，调用方按失败策略阻断（工具不执行）。
-    预算必须严格小于 hooks.json 的 timeout，否则 dsh 会先杀进程，
-    而"被杀死"在 dsh 协议里是放行语义。
+    用 daemon 线程 + join(timeout) 实现：超时后线程不会阻止解释器退出。
+    策略判定与动手前取证共用这一个形状——两处的预算语义必须一致，否则
+    "哪一个会先超时"就变成要靠读两个实现来猜的事。预算之和必须严格小于
+    hooks.json 的 timeout（check_wiring 会把这条不等式当成接线错误报出来），
+    因为 dsh 杀进程在协议里等于放行。
     """
 
     box: dict[str, Any] = {}
 
-    def run() -> None:
+    def run_it() -> None:
         try:
-            box["result"] = evaluator(rules, context)
+            box["result"] = run()
         except BaseException as error:  # noqa: BLE001 - 任何异常都必须回到调用方
             box["error"] = error
 
-    worker = threading.Thread(target=run, name="policy-evaluate", daemon=True)
+    worker = threading.Thread(target=run_it, name=name, daemon=True)
     worker.start()
     worker.join(budget_ms / 1000)
     if worker.is_alive():
-        raise PolicyTimeout(f"策略判定超过内部预算 {budget_ms} ms")
+        raise on_timeout()
 
     error = box.get("error")
     if error is not None:
         raise error
     return box["result"]
+
+
+def _evaluate_with_budget(
+    evaluator: Callable[..., ValidationResult],
+    rules: RuleSet,
+    context: Any,
+    budget_ms: int,
+    *,
+    evidence: Optional[EvidenceBundle] = None,
+) -> ValidationResult:
+    """在预算内完成策略判定（Phase 2 契约 + G3 的证据入口）。
+
+    evidence 为 None 时**逐字节保持**既有调用形状：`evaluator(rules, context)` 两个位置参数。
+    既有测试与既有消费方注入的是 2 参数替身，改成恒传关键字会让它们全部变成内部错误——
+    而"没有声明取证"正是 Phase 2 的默认路径，它必须一点都不变。
+    """
+
+    def run() -> ValidationResult:
+        if evidence is None:
+            return evaluator(rules, context)
+        return evaluator(rules, context, evidence=evidence)
+
+    return _within_budget(
+        run,
+        budget_ms=budget_ms,
+        on_timeout=lambda: PolicyTimeout(f"策略判定超过内部预算 {budget_ms} ms"),
+        name="policy-evaluate",
+    )
 
 
 def feedback_text(
@@ -427,6 +555,8 @@ class DshPreExecuteHook:
     capture_dir: Optional[Path] = None
     sequence: int = 0
     bridge: Optional[EnforcementBridge] = None
+    # G3/M2：动手前取证的提供者。None = 按配置决定（声明并启用时用 Phase 5 真实现）。
+    evidence_provider: Optional[EvidenceProvider] = None
 
     def __post_init__(self) -> None:
         """没有显式注入桥接层时，按配置自己装配一次。
@@ -484,15 +614,122 @@ class DshPreExecuteHook:
             newline="\n",
         )
 
-    def rule_visibility(self, decision: ValidationResult) -> dict[str, Any]:
+    def _pre_evidence(
+        self, raw_payload: Any, *, event: PolicyEvent, context: Any
+    ) -> PreEvidenceResult:
+        """按声明取证。提供者默认是 pre_evidence.build_pre_evidence（Phase 5 真流水线）。
+
+        外层预算 = pre_evidence.timeout_ms + config.timeout_ms：取证与判定是**串行**的，
+        而 dsh 的 hooks.json timeout 必须大于它们之和（check_wiring 会把这条不等式
+        当成接线错误报出来）。dsh 杀掉 Hook 等于放行，所以这道外层预算不是优化，
+        而是"失败关闭真的会触发"的前提。
+        """
+
+        pre = self.config.pre_evidence
+        assert pre is not None  # 调用点在 pre is not None and pre.enabled 的分支里
+        provider = self.evidence_provider or build_pre_evidence
+        budget_ms = pre.timeout_ms + self.config.timeout_ms
+        return _within_budget(
+            lambda: provider(
+                raw_payload,
+                event=event,
+                config=self.config,
+                rules=self.rules,
+                context=context,
+            ),
+            budget_ms=budget_ms,
+            on_timeout=lambda: PreEvidenceError(
+                f"动手前取证超过外层预算 {budget_ms} ms（pre_evidence.timeout_ms="
+                f"{pre.timeout_ms} + timeout_ms={self.config.timeout_ms}）"
+            ),
+            name="pre-evidence-budget",
+        )
+
+    def _checker_scope_note(self, evidence_collected: bool) -> str:
+        """能力边界的说明文字。
+
+        没有取证时（默认）与改动前**逐字节相同**——既有键既不能少、也不能换意思。
+        取到证据时追加的那句话是必要的：否则"本路径没有证据提供者"会在取证成功的
+        记录里变成一句假话，而账本里最危险的就是"读起来没问题的假话"。
+        """
+
+        head = (
+            "pre-execute 路径只做文本类 checker（"
+            + ", ".join(sorted(CONTEXT_CHECKERS))
+            + "）：仅凭上下文即可判定；"
+        )
+        if evidence_collected:
+            return (
+                head
+                + "其余 checker 的证据由本次 pre_evidence 流水线提供"
+                "（见 pre_evidence 摘要的 served_checkers / validators / target_sha256），"
+                "因此它们真的参与了判定；没出现在 served_checkers 里的 checker 仍然进 "
+                "skipped_rule_count —— 跳过不等于通过"
+            )
+        return (
+            head + "其余 checker 需要 Phase 5 的验证器证据，"
+            "本路径没有证据提供者，因此进 skipped_rule_count —— 跳过不等于通过"
+        )
+
+    def _severity_visibility(
+        self, *, evaluated: Sequence[str], skipped: Sequence[str]
+    ) -> dict[str, Any]:
+        """M3：按严重级别的分布（只**新增**键，既有键一个都不动）。
+
+        为什么必须按级别报（AGENTS 第 43 条）：实测 43 条规则里 24 条 error、19 条 warning，
+        而 warning 命中只产出 allow_with_warnings——它拦不下任何东西。只报总数会让
+        "43 条规则在管着"与"43 条会拦人的规则"在账本上一模一样。
+
+        两条口径写死在这里：
+        - evaluated_by_severity 数的是**真的参与过判定**的规则（matched_rules）；
+        - skipped_by_severity 数的是**没有被查**的规则——它们不是"查过没问题"。
+        规则集里没有的 rule_id 归 "unknown"：替它猜一个级别等于伪造分布。
+        """
+
+        severity_of = {rule.canonical_id: rule.severity.value for rule in self.rules.rules}
+        blocking = {item.value for item in BLOCKING_SEVERITIES}
+
+        def counts(ids: Sequence[str]) -> dict[str, int]:
+            return _counts_by_severity(severity_of.get(item, "unknown") for item in ids)
+
+        rule_set = counts(sorted(severity_of))
+        evaluated_counts = counts(evaluated)
+        skipped_counts = counts(skipped)
+        blocking_count = sum(count for name, count in rule_set.items() if name in blocking)
+        advisory_count = rule_set.get("warning", 0)
+        return {
+            "rules_by_severity": rule_set,
+            "evaluated_by_severity": evaluated_counts,
+            "skipped_by_severity": skipped_counts,
+            "blocking_capable_rule_count": blocking_count,
+            "advisory_rule_count": advisory_count,
+            "severity_note": (
+                "严重级别分布：只有 error / critical 拦得住（规则集里 "
+                + str(blocking_count)
+                + " 条），warning 命中只产出 allow_with_warnings、拦不下任何东西（"
+                + str(advisory_count)
+                + " 条）；evaluated_by_severity 是本次**真的参与过判定**的规则，"
+                "skipped_by_severity 是本次**没有被查**的规则（跳过不等于通过）"
+            ),
+        }
+
+    def rule_visibility(
+        self, decision: ValidationResult, *, evidence_collected: bool = False
+    ) -> dict[str, Any]:
         """G3：把"查了并通过"与"被跳过"写成审计里可区分的两个数（只标注，不改判定）。
 
         - effective_rule_count：本次**真的参与了判定**的规则数（= 总规则数 - 跳过数）；
         - skipped_rule_count / skipped_reason：跳过的规则数与按 checker 的归类；
-        - checker_scope(_note)：写明 pre-execute 路径只做文本类 checker。
+        - checker_scope(_note)：写明 pre-execute 路径只做文本类 checker；
+        - 按严重级别的分布（M3，见 _severity_visibility）："有多少条规则"与
+          "有多少条会拦人的规则"是两件事，引用时必须带级别。
 
         "跳过"既不判违规，也**不是通过**：把它写进审计，是为了让读者一眼看出
         "这次到底查了几条规则"，而不是从 allow 反推"全都查过且没问题"。
+
+        evidence_collected=True（声明并取到证据）时，note 会追加一句"本次证据类 checker
+        真的参与了判定"——否则那句"本路径没有证据提供者"会在取证成功的记录里变成假话。
+        默认 False 时输出与改动前逐字节相同（Phase 2 契约）。
         """
 
         checker_of = {
@@ -516,13 +753,57 @@ class DshPreExecuteHook:
                 key: skipped_by_checker[key] for key in sorted(skipped_by_checker)
             },
             "checker_scope": sorted(CONTEXT_CHECKERS),
-            "checker_scope_note": (
-                "pre-execute 路径只做文本类 checker（"
-                + ", ".join(sorted(CONTEXT_CHECKERS))
-                + "）：仅凭上下文即可判定；其余 checker 需要 Phase 5 的验证器证据，"
-                "本路径没有证据提供者，因此进 skipped_rule_count —— 跳过不等于通过"
-            ),
+            "checker_scope_note": self._checker_scope_note(evidence_collected),
             "skipped_rule_ids_unknown": sorted(unknown_rules),
+            # M3：按严重级别的分布（只新增键）。matched_rules 才是"真的参与过判定"的规则。
+            **self._severity_visibility(
+                evaluated=decision.matched_rules,
+                skipped=[item.rule_id for item in decision.skipped_rules],
+            ),
+        }
+
+    def violation_visibility(self, decision: ValidationResult) -> dict[str, Any]:
+        """P1：账本必须答得出"哪几条规则真的报了违规"（只标注，不改判定）。
+
+        为什么需要它：matched_rules 的语义是"参与过判定"，而 07 轮治理全开之后参与面是
+        43 条——block 与 allow_with_warnings 的记录里因此读不出任何一条**真正报违规**的规则，
+        那份清单只活在给模型看的 stderr 里。这里把同一份清单搬进审计。
+
+        三条口径（同一条也写在 violations_note 里）：
+
+        - violations 是本次真的报了违规的规则，逐条带 canonical rule_id（ARCH-001@1）、
+          severity、message、evidence（与决策载荷同一形状）与决策级 required_action（若有）；
+        - matched_rules 是本次参与过判定的规则；两者不是一回事——warning 命中只产出
+          allow_with_warnings，而判定为 allow 的记录会带一个**空的** violations；
+        - 排序用 Violation.sort_key（规则身份 → 证据值 → 证据主体），字符串一律走 sanitize：
+          相同输入必须得到逐字节相同的记录，绝对路径与凭据不得进审计（AGENTS 第 16 条）。
+
+        调用点只在"已经算出 decision"之后：没有判定的记录（context_error /
+        evidence_unavailable / event_replay 等）不许出现这些键——"没判定"与"判定了、
+        没违规"必须能分开读。
+        """
+
+        violations = [
+            {
+                "rule_id": violation.canonical_id,
+                "severity": violation.severity.value,
+                "message": violation.message,
+                # 复用 Evidence 自己的字段集合：与决策载荷里的 evidence 子对象逐字段相同
+                "evidence": violation.evidence.model_dump(exclude_none=True),
+            }
+            for violation in sorted(decision.violations, key=lambda item: item.sort_key)
+        ]
+        if decision.required_action is not None:
+            # required_action 是**决策级**字段（审批门禁）：逐条附上是为了让单独一行违规
+            # 也能读到它；它不表示"这条规则本身要求审批"。
+            for item in violations:
+                item["required_action"] = decision.required_action.value
+        return {
+            "violations": _sanitized(violations, project_root=self.config.project_root),
+            "violations_by_severity": _counts_by_severity(
+                violation.severity.value for violation in decision.violations
+            ),
+            "violations_note": VIOLATIONS_NOTE,
         }
 
     def rule_visibility_not_applicable(self) -> dict[str, Any]:
@@ -544,6 +825,10 @@ class DshPreExecuteHook:
                 "授权由 Tool Registry（权限 / 参数白名单 / 命令白名单 / 审批）决定"
             ),
             "skipped_rule_ids_unknown": [],
+            # M3：没有文件维度时全部规则都没跑，因此 skipped 的分布就等于规则集分布。
+            **self._severity_visibility(
+                evaluated=(), skipped=[rule.canonical_id for rule in self.rules.rules]
+            ),
         }
 
     def _record_context_injection(
@@ -736,8 +1021,50 @@ class DshPreExecuteHook:
                 )
 
         context = to_policy_context(event, config=self.config)
+        # G3/M2：动手前取证。声明的形状决定这一段是否存在——没有声明时连提供者都不问，
+        # Phase 2 的判定路径因此逐字节不变。
+        pre = self.config.pre_evidence
+        evidence: Optional[EvidenceBundle] = None
+        if pre is None:
+            record["pre_evidence_status"] = "not_declared"
+        elif not pre.enabled:
+            record["pre_evidence_status"] = "disabled"
+        else:
+            try:
+                result = self._pre_evidence(raw_payload, event=event, context=context)
+            except PreEvidenceError as error:
+                detail = sanitize(str(error), project_root=self.config.project_root)
+                record["pre_evidence_status"] = "unavailable"
+                record["pre_evidence"] = {"status": "unavailable", "detail": detail}
+                return self._fail(
+                    "evidence_unavailable",
+                    detail
+                    + "；本次声明了 pre_evidence，就必须拿出验证器证据："
+                    "拒绝在证明不了的情况下放行（绝不把「跳过」当成「通过」）",
+                    started=started,
+                    base_record=record,
+                )
+            bundle = getattr(result, "bundle", None)
+            if not isinstance(bundle, EvidenceBundle):
+                detail = (
+                    "取证提供者没有返回 EvidenceBundle：无法证明证据来自 Phase 5 流水线，"
+                    "拒绝在证明不了的情况下放行"
+                )
+                record["pre_evidence_status"] = "unavailable"
+                record["pre_evidence"] = {"status": "unavailable", "detail": detail}
+                return self._fail(
+                    "evidence_unavailable", detail, started=started, base_record=record
+                )
+            evidence = bundle
+            record["pre_evidence_status"] = "collected"
+            record["pre_evidence"] = dict(getattr(result, "summary", None) or {})
+
         decision = _evaluate_with_budget(
-            self.evaluator, self.rules, context, self.config.timeout_ms
+            self.evaluator,
+            self.rules,
+            context,
+            self.config.timeout_ms,
+            evidence=evidence,
         )
 
         if decision.decision not in (Decision.ALLOW, Decision.ALLOW_WITH_WARNINGS, Decision.BLOCK):
@@ -755,7 +1082,11 @@ class DshPreExecuteHook:
             None if decision.required_action is None else decision.required_action.value
         )
         # G3：把"查了并通过"与"被跳过"分开写进审计（新增字段，既有字段不动）。
-        record.update(self.rule_visibility(decision))
+        record.update(
+            self.rule_visibility(decision, evidence_collected=evidence is not None)
+        )
+        # P1：判定记录还要答得出"哪几条规则真的报了违规"（新增字段，既有字段不动）。
+        record.update(self.violation_visibility(decision))
 
         if decision.decision is Decision.BLOCK:
             outcome = HookOutcome(
@@ -827,7 +1158,17 @@ class DshPreExecuteHook:
         tool: Optional[str] = None,
         file: Optional[str] = None,
     ) -> HookOutcome:
-        """按 Phase 4 的检查结论阻断，并把失败项写进给模型的理由与审计记录。"""
+        """按 Phase 4 的检查结论阻断，并把失败项写进给模型的理由与审计记录。
+
+        审计里那一份（`enforcement_detail`）与给模型的那一份（stderr）**脱敏口径必须一致**：
+        `path_out_of_scope` 的文案里带受控范围的**绝对路径**（"路径不在仓库 <anchor> 之内"），
+        不脱敏就等于把本机布局写进审计（AGENTS 第 16 条）。这里用**审计链自己的**
+        `enforcement.audit.redact_text`（工作区路径 → <workspace>、绝对路径 → <abs>、
+        密钥 → <redacted-secret>、控制字符转义、2000 字符上限），而不是面向模型的 `sanitize`：
+        后者带 FEEDBACK_MAX_CHARS=4000 的**面向模型**截断，拿它洗审计明细会把明细截成另一种失真。
+        两份产物各自用自己的口径，但都不许出现本机绝对路径——不会出现"摘要链干净、Hook 记录流脏"
+        这种一半干净。
+        """
 
         stderr = sanitize(
             enforcement_feedback(
@@ -846,7 +1187,13 @@ class DshPreExecuteHook:
             elapsed_ms=int((self.clock() - started) * 1000),
         )
         self._audit(
-            {**base_record, "enforcement_reason": reason_code, "enforcement_detail": detail},
+            {
+                **base_record,
+                "enforcement_reason": reason_code,
+                "enforcement_detail": redact_text(
+                    detail, workspace=self.config.project_root
+                ),
+            },
             outcome=outcome,
         )
         return outcome
@@ -1014,6 +1361,9 @@ class DshPreExecuteHook:
                 # G3：这类动作没有文件维度，Phase 1 一条规则都没跑 —— 显式写明，
                 # 免得读者把"没有 matched_rules"读成"规则都查过且通过"。
                 **self.rule_visibility_not_applicable(),
+                # M2/G3：执行类动作没有文件内容可取证，证据类 checker 在这里同样不参与判定。
+                # 写封闭值域里的取值，而不是留空让人猜"是没声明还是没取到"。
+                "pre_evidence_status": "not_applicable",
             },
             outcome=outcome,
         )
@@ -1153,6 +1503,7 @@ def run_hook(
     hooks_config_path: Optional[Path | str] = None,
     allow_unverified_wiring: bool = True,
     bridge: Optional[EnforcementBridge] = None,
+    evidence_provider: Optional[EvidenceProvider] = None,
 ) -> HookOutcome:
     """装配并执行一次 Hook 调用（测试与 CLI 共用的入口）。
 
@@ -1204,6 +1555,8 @@ def run_hook(
         kwargs["executor"] = executor
     if evaluator is not None:
         kwargs["evaluator"] = evaluator
+    if evidence_provider is not None:
+        kwargs["evidence_provider"] = evidence_provider
 
     hook = DshPreExecuteHook(**kwargs)
     report = check_wiring(
@@ -1429,6 +1782,25 @@ def check_wiring(
             f"hooks.json 的 timeout={timeout_sec:g}s 不大于内部预算 {config.timeout_ms}ms："
             "dsh 会先杀掉 Hook，而被杀在 dsh 协议里等同于放行，必须让内部预算先触发"
         )
+
+    # G3/M2：声明了 pre_evidence 之后，Hook 一次调用里**串行**跑两段带预算的工作
+    # （取证 → 判定），因此要证明的是"两段之和"小于 dsh 的超时。只证明其中一段，
+    # 等价于把"被杀 = 放行"这条路径留在接线里。
+    pre = config.pre_evidence
+    if pre is not None and pre.enabled:
+        budget_ms = pre.timeout_ms + config.timeout_ms
+        # hooks.json 没写 timeout 时 dsh 用桥的 defaultTimeoutMs（README §2.5）：
+        # "没写"不等于"没有上限"，所以这里用显式常量而不是跳过检查。
+        limit_ms = DEFAULT_HOOK_TIMEOUT_MS if timeout_sec is None else int(timeout_sec * 1000)
+        if budget_ms >= limit_ms:
+            return (
+                f"pre_evidence 的预算之和 {budget_ms}ms"
+                f"（pre_evidence.timeout_ms={pre.timeout_ms} + timeout_ms={config.timeout_ms}）"
+                f"不小于 dsh 侧的 {limit_ms}ms"
+                + ("（hooks.json 没写 timeout，按 dsh 默认 600000ms 计）" if timeout_sec is None else "")
+                + "：dsh 会先杀掉 Hook，而被杀在 dsh 协议里等同于放行；"
+                "必须让取证与判定两段预算都在 dsh 超时之前触发"
+            )
     return ""
 
 

@@ -328,6 +328,42 @@ adapter 配置里的 `enforcement_ledger` **只在不带 `--audit` 时生效**�
 配置名那份没有被创建、审计里的警告记录、每会话只记一次），以及反向对照
 `test_without_the_audit_override_the_declared_ledger_path_is_the_effective_one`。
 
+### 8.2 阻断理由落在哪一栏（读账本的人不必读代码）
+
+审计里"为什么被拒"由**三栏**分工。它们是三件不同的事，按同一个名字去找会读成"没有理由"
+（07 §4 P8 的现场就是这么读出来的）：
+
+| 阻断类型 | `reason_code` 的取值 | 理由写在哪 | 顶层 `detail` |
+| --- | --- | --- | --- |
+| 规则级 block（Policy Engine 判的） | `policy_block` | 判定字段：`decision` / `violations`（哪几条规则）/ `violations_note` / `matched_rules` / `required_action` | **不出现**（规则级阻断的理由是结构化的，没有一段自由文本） |
+| 失败关闭（上下文 / 证据 / 引擎 / 接线 / 重放 / 未知决策） | `context_error` / `evidence_unavailable` / `engine_error` / `policy_timeout` / `config_error` / `internal_error` / `wiring_error` / `event_replay` / `event_id_reuse` / `unknown_decision` | 顶层 **`detail`** | 就是它 |
+| Phase 4 门禁（授权 / 参数 / 审批 / 限流 / pre-check） | `reason_code`（Phase 4 另写入同值的 `enforcement_reason`） | 顶层 **`enforcement_reason` + `enforcement_detail`** | **不出现** |
+
+**这就是 07 §4 P8 那句「`path_out_of_scope`，detail 为空」的现场**：那条阻断由 Phase 4
+门禁写出（`hooks.py::_enforcement_block`），理由在 `enforcement_detail` 里；按
+`detail` 去读，读到的自然是一片空。
+
+**这一栏与 stderr 各自脱敏、都不许有本机路径**：`enforcement_detail` 进审计前走
+`enforcement.audit.redact_text`（工作区路径 → `<workspace>`、绝对路径 → `<abs>`、
+密钥 → `<redacted-secret>`、控制字符转义、2000 字符上限），给模型的 stderr 走 `sanitize`。
+两者是两份产物、各有各的截断口径（面向模型 4000 / 审计 2000），但**都不许出现本机绝对路径**；
+拿面向模型的 `sanitize` 去洗审计明细会把明细截成另一种失真。实测缺口（08 轮复核 + 独立探针）：
+一条 `workdir` 越界的 `pwsh` 载荷（07 轮的 30 条矩阵里没有这个形状）曾让
+`enforcement_detail` 带着 `C:\...` 原文落进审计 JSONL——**这是可达的**，不是理论问题。
+
+**两个键不写同一个值**：把 `enforcement_detail` 也复制进 `detail` 会造出"一个意思
+两个名字"，正是 P7 要消掉的那类读数陷阱。要看 Phase 4 的理由就读 `enforcement_*`，要看
+失败关闭的理由就读 `detail`；一条记录同时有判定字段与 `enforcement_*` 时，它是
+"判定记录 + 授权记录"的复合形状（判定先发生、门禁后发生），两者的理由各自成立。
+
+**会失败的检查**：
+`tests/unit/test_hook_violation_visibility.py::test_the_block_reason_lands_in_the_documented_field`
+（三类阻断各跑一次真实 Hook：规则级 block 没有 `detail`、失败关闭有 `detail`、
+Phase 4 门禁有 `enforcement_detail` 而没有 `detail`），以及
+`tests/integration/test_dsh_hook.py::test_the_phase_four_block_detail_is_redacted_in_the_audit`
+（`workdir` 越界的 `pwsh` 载荷：stderr 与审计明细里都读不到本机绝对路径，且脱敏记号
+`<abs>` / `<workspace>` 在位——脱敏是换记号，不是删掉信息）。
+
 ## 9. 治理覆盖缺口修复（G2 / G3 / G11 / G12）
 
 本轮修复的出发点是实测缺口清单（`docs/project/engineering-policy-platform/reviews/governance-coverage-gaps.md`）
@@ -519,6 +555,39 @@ CLI 是生产入口，`main()` 默认 `allow_unverified_wiring=False`：缺 `--h
 **会失败的检查**：`tests/contract/test_policy_hook_chain.py::test_a_blocked_post_check_hands_the_raw_output_back_as_untrusted_data`
 （两块的结构、理由与原文都在、横幅写明不可信、空输出不加节、长输出仍被截断、accept 分支零注入）。
 
+### 9.9 P1 · 判定记录要能读出「哪几条规则报了违规」（08 修复轮）
+
+**修前**：`matched_rules` 的语义是"参与过判定"。06 轮参与面只有 1 条时，"参与"与"报违规"
+在账本上长得一样；07 轮治理全开之后参与面变成 **43 条**，于是判定=block 与
+判定=allow_with_warnings 的记录里**一条真正报违规的规则都读不出来**（07 轮实测 36 条受治理
+pre-execute 记录里 `violations` 字段出现 **0 次**）——那份清单只活在给模型看的 stderr 里
+（`feedback_text` 会逐条渲染 rule / severity / message / evidence）。
+
+**修后**（只新增键，既有键一个都不动）：凡是**算出了 decision** 的记录都带
+
+| 字段 | 含义 |
+| --- | --- |
+| `violations` | 本次**真的报了违规**的规则，逐条 `{rule_id, severity, message, evidence[, required_action]}`；`rule_id` 是 canonical 形态（`ARCH-001@1`），`evidence` 与决策载荷里的 evidence 子对象**逐字段相同**（复用 `Evidence` 自己的字段集合，不另写一份序列化）；排序用 `Violation.sort_key`；判定了但没有违规时是 `[]` |
+| `violations_by_severity` | 上面那份清单按严重级别的条数（与 M3 的 `*_by_severity` 同一口径：键排序、只列出现过的级别） |
+| `violations_note` | 一句话口径：`violations` 是**真的报了违规**的规则，`matched_rules` 是**参与过判定**的规则，两者不是一回事，warning 命中只产出 `allow_with_warnings` |
+
+`required_action` 是**决策级**字段（审批门禁）：有值时逐条附在违规上（单看一行也能读到
+它），没有值时不写这个键。字符串一律走 `sanitize(..., project_root=...)`：绝对路径与凭据
+不得进审计（AGENTS 第 16 条）。
+
+**哪些记录没有这些键**：`context_error` / `evidence_unavailable` /
+`event_replay` / `event_id_reuse` / `unknown_decision` / `wiring_error` /
+`policy_timeout` / `engine_error` / `config_error` / `internal_error`
+（都没有算出 decision，**不伪造**违规清单），以及 `not_governed` / `allow_delegated` /
+`enforcement_*`（规则引擎不适用，或只是授权链路写的记录）。
+**「没判定」与「判定了、没违规」必须能分开读**：前者没有这个键，后者是 `[]`。
+
+**会失败的检查**：`tests/unit/test_hook_violation_visibility.py`——三类判定（block /
+allow_with_warnings / allow）在**生产 Hook CLI** 上的真实产物、`context_error` 与
+`evidence_unavailable` 的"没有这个键"（各带正对照，否则"谁都没有这个键"在修复前也天然
+为真）、canonical ID、稳定排序、脱敏，以及"既有键一个都不少"；
+`tests/integration/test_dsh_pre_evidence_hook.py` 里两条既有用例新增的 violations 断言。
+
 ## 10. 复现命令
 
     # 契约测试（fixture → PolicyContext）
@@ -542,6 +611,12 @@ CLI 是生产入口，`main()` 默认 `allow_unverified_wiring=False`：缺 `--h
 
     # G3 / G11：跳过可见性与注入留痕的审计字段
     python -m pytest tests/unit/test_hook_skip_visibility.py -q
+
+    # P1（08 修复轮）：判定记录里的违规清单（三类判定 + "没有这个键"的记录）
+    python -m pytest tests/unit/test_hook_violation_visibility.py -q
+
+    # P3（08 修复轮）：取证树的适用范围与指纹（兄弟模块在不在必须给出不同指纹）
+    python -m pytest tests/unit/test_dsh_pre_evidence.py -q -k tree
 
 
     # N16：委派路径上的退出事实（exit 0 → validated；非 0 → repair_required 且带真实退出码）
@@ -594,3 +669,206 @@ CLI 是生产入口，`main()` 默认 `allow_unverified_wiring=False`：缺 `--h
    要同时授权 `pwsh` 与另一个工具，需要另一份文件（并且要显式改配置里的 `approval_file`）。
 
 `binding=action` 仍然是默认档、也是更严格的那一档，不要因为不可用就把它删掉。
+
+## 12. G3 的正面回答：动手前取证（pre_evidence，本轮新增）
+
+### 12.1 修前 / 修后
+
+受治理的写类动作此前只做**文本类** checker（`forbidden_dependency`）：实测两次真实会话里
+`effective_rule_count ∈ {0, 1}`、`skipped_rule_count ∈ {42, 43}`。**跳过不等于通过**，
+所以"仓库里有 43 条规则"这句话在会话内不成立。
+
+| 项 | 修前 | 声明并启用 `pre_evidence` 之后 |
+| --- | --- | --- |
+| 参与判定的规则 | 只有文本类 checker 的规则 | 证据类 checker（style_lint / missing_docstring / missing_tests / failing_tests / type_check）也参与 |
+| 证据类规则 | 每次进 `skipped_rules`（"需要验证器证据"） | 由 Phase 5 流水线产出 `EvidenceBundle` 后真的判定 |
+| 取不到证据 | 这一步不存在 | `evidence_unavailable`，退出码 2，执行器 **0 次**调用 |
+| 账本 | 只报规则总数 | 另报按严重级别的分布（见 12.6） |
+
+确定性探针（同一份载荷，只改声明）：`effective_rule_count` **0 → 1**、`skipped_rule_count`
+**1 → 0**，`decision` **allow → block**，阻断理由里能看到那条规则 ID（见 12.7）。
+
+### 12.2 做了什么
+
+`src/adapters/dsh/pre_evidence.py`（新模块，冻结接口 `build_pre_evidence`）：
+
+1. **重建"这次动作之后文件长什么样"**：字段名取自 `TOOL_TABLE`（数据）——
+   `write` → `content`；`edit` → 读当前文件、把 `old_string` 替换成 `new_string`；
+   `str_replace_editor` → `file_text`（整份）或 `old_str` + `new_str`（替换）。
+   `old_string` **必须恰好出现一次**：`replace_all` 命中多处时"替换了哪几处"只能靠猜，
+   而猜出来的内容会变成证据、证据会变成放行理由，因此直接拒绝（边界见 12.4）；
+2. **影子工作区**：把 `workspace` 复制到 `shadow_root/<动作标识>`（只复制未被 `exclude`
+   glob 命中的内容），把提议内容写进去，`finally` 必删；默认的 `shadow_root` 就在项目里
+   （`<project>/.policy/pre-evidence`），复制时显式剪掉自己，否则会递归到磁盘满；
+3. **跑真实流水线**：`validators.pipeline.run_pipeline(PipelineRequest(target=event.file,
+   workspace=影子目录, context, rules, changed_files=(event.file,), only=config.validators))`，
+   把 `report.bundle`（`EvidenceBundle`）交给 `policy.engine.evaluate(..., evidence=...)`。
+   验证器模块只在**函数内**导入：没声明 `pre_evidence` 的部署不该因为"验证器层读不到"
+   而连 Hook 都起不来（起不来 = 非 0 非 2 退出 = dsh 侧放行）；
+4. **脱敏摘要**：`served_checkers` / 每个 validator 的 id + status / `judgements` /
+   `blockers` / target 的 `sha256` / 提议内容的来源字段与哈希。摘要里**不出现绝对路径、
+   不出现耗时**（相同输入必须得到逐字节相同的摘要），字符串统一脱敏。
+
+### 12.3 代价（必须写下来）
+
+- **每次写类动作都要在副本上跑一遍验证器**：一次 `write` / `edit` 现在等于
+  "复制工作区 + 跑流水线"两段开销，都由 `pre_evidence.timeout_ms` 兜住；
+- 副本大小由 `exclude` 决定：**不排除 `.git/` 之类的目录时，复制本身就是主要开销**
+  （探针里排除之后 `files_copied` 是个位数量级）；
+- 只用内置验证器（`py.source` / `py.ast` / `py.depgraph` / `py.docstring`）时不需要外部工具；
+  选上 `tool.ruff` / `tool.pytest` 就等于每次写类动作都要起一次外部进程；
+- **`pre_evidence` 是声明，不是默认**：它没有让平台"更聪明"，只是把"跳过"换成了"查过"。
+
+### 12.4 配置形状（`dsh-adapter.yaml`）
+
+```yaml
+pre_evidence:
+  enabled: true                       # false = 显式关闭（账本里记 disabled，不是"取不到"）
+  registry_root: <仓库>/validation    # 平台验证器数据所在
+  workspace: <受控项目根>             # 复制谁
+  shadow_root: .policy/pre-evidence   # 副本落在哪（在项目内时会被剪掉自己）
+  exclude: [".git/**", ".policy/**", "**/__pycache__/**"]
+  validators: ["py.source", "py.ast", "py.docstring"]   # 空 = 按规则需要自动选
+  timeout_ms: 30000                   # 取证预算（硬上限）
+```
+
+两条与实现有关的形状约定：
+
+1. `registry_root` 收两种写法——**`validation/` 目录本身**，或**包含它的那一层**（仓库根）。
+   解析方式写进摘要的 `registry_resolution`（`as_declared` / `parent_of_declared`）；
+   两种同时成立时报错而不是挑一个（配置有歧义时挑一个，等于把"读的是哪份数据"变成猜的）；
+2. `edit` 载荷声明 `replace_all: true` 时本实现只承认唯一匹配：命中多处一律拒绝。
+   这是**刻意的边界**——要覆盖它必须先回答"替换范围怎么证明"，而不是先放行。
+
+### 12.5 失败语义（失败关闭，无例外）
+
+| 情况 | 结果 |
+| --- | --- |
+| 声明并启用，取证成功 | 证据交给引擎；审计 `pre_evidence_status: "collected"` + 摘要 |
+| 提议内容重建不了（`old_string` 不是恰好一次 / 读不到目标文件 / 缺少提议字段） | `evidence_unavailable`，退出码 2，执行器 0 次 |
+| 平台数据读不到、验证器崩了、流水线报错 | 同上（异常一律转成同一个失败码，理由里写明原因） |
+| 超过 `pre_evidence.timeout_ms` 或外层预算（`pre_evidence.timeout_ms + timeout_ms`） | 同上（超时 → `PreEvidenceError` → 退出码 2） |
+| 没有声明 `pre_evidence` | **Phase 2 契约逐字节不变**：判定只做文本类 checker，证据类规则进 `skipped_rules` 并写明"需要验证器证据"；审计新增 `pre_evidence_status: "not_declared"`，仅此一项 |
+| 声明了但 `enabled: false` | 同"没有声明"，状态记 `disabled`（"关掉"与"取不到"必须能分开读） |
+| 该动作没有文件维度（执行类） | 状态记 `not_applicable`；授权仍由 Tool Registry 决定 |
+
+只读 / 不受治理的调用不写规则账（既有行为），因此它们也没有 `pre_evidence_status`——
+那些调用连规则都没跑，写一个"取证状态"反而会让人以为查过什么。
+
+**绝不回落到"没证据就当跳过"**：`skipped` 会被读成 `pass`，那正是 G3 本身。
+阻断理由的固定句式是"…必须拿出验证器证据：拒绝在证明不了的情况下放行"。
+
+接线自检多了一条不等式（AGENTS 第 42 条）：启用 `pre_evidence` 时
+`pre_evidence.timeout_ms + timeout_ms < hooks.json 的 timeout`（hooks.json 没写 timeout 时
+按 dsh 默认 600000ms 计）。取证与判定是**串行**的两段，只证明其中一段小于 dsh 超时，
+等于把"被杀 = 放行"这条路径留在接线里。`pre_evidence` 为 None 时，自检输出逐字节不变。
+
+### 12.6 M3 · 账本要说得出规则的严重级别分布
+
+`rule_visibility()` 新增五个键（既有的 `rule_count` / `effective_rule_count` /
+`skipped_rule_count` / `skipped_reason` / `checker_scope*` / `skipped_rule_ids_unknown` 一个都没动）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `rules_by_severity` | 规则集里每个严重级别多少条 |
+| `evaluated_by_severity` | 本次**真的参与过判定**的规则按级别 |
+| `skipped_by_severity` | 本次**没有被查**的规则按级别（规则集里没有的 ID 归 `unknown`，不猜级别） |
+| `blocking_capable_rule_count` | 有阻断力的规则数（`error` + `critical`） |
+| `advisory_rule_count` | 只有判定力的规则数（`warning`：命中只产出 `allow_with_warnings`） |
+
+另有 `severity_note`（一句话口径）。**为什么必须按级别**：实测 `DOC-001` 命中、证据齐全，
+判定却是 `allow_with_warnings`——warning 级规则拦不下任何东西。只报总数会让
+"43 条规则在管着"与"43 条会拦人的规则"在账本上长得一模一样。
+没有文件维度的动作（执行类）用同一套键，且 `skipped_by_severity == rules_by_severity`。
+
+`rule_visibility()` 还有一个可选参数 `evidence_collected`（默认 False）：取到证据时
+`checker_scope_note` 会追加一句"本次证据类 checker 真的参与了判定"，否则那句
+"本路径没有证据提供者"会在取证成功的记录里变成假话。默认值下输出逐字节不变。
+
+### 12.7 会失败的检查
+
+- `tests/unit/test_dsh_pre_evidence.py`：提议内容、`old_string` 不唯一、影子副本
+  （含"影子在项目里时剪掉自己"）、摘要里没有绝对路径、预算是硬上限、
+  取证失败 / 返回形状不对 → `evidence_unavailable`、`enabled: false` 与未声明的区别、
+  2 参数 evaluator 的调用形状、M3 的严重级别分布；
+- `tests/integration/test_dsh_pre_evidence_hook.py`：真实 Hook + 真实流水线 + 真实规则加载器
+  （规则是临时目录里的 YAML，不是合成对象）——证据类规则参与判定并阻断、warning 级只告警、
+  未声明时同一条载荷只是被跳过、取证失败时执行器 0 次调用、`edit` 不唯一被拒、
+  影子目录不残留、预算不等式的接线错误，以及**生产 CLI**（`python -m adapters.dsh.hooks`）
+  上的 exit 2 + 判定行；
+
+- 确定性探针（不依赖模型，两次运行都在生产 CLI 上）：
+
+```powershell
+$env:PYTHONPATH='src'
+python .tmp/round-07/harness/probe_pre_evidence.py --json .tmp/round-07/evidence/pre-evidence-probe.json
+```
+
+    label | decision | reason_code  | effective | skipped | served_checkers   | violation_rules
+    ------+----------+--------------+-----------+---------+-------------------+----------------
+    off   | allow    | allow        | 0         | 1       | -                 | -
+    on    | block    | policy_block | 1         | 0       | missing_docstring | DOC-900@1
+
+探针自带受控项目与规则夹具（`.tmp/round-07/probe/pre-evidence/`），产物 JSON 落
+`.tmp/round-07/evidence/pre-evidence-probe.json`；任一条不成立时它退出 1。
+
+### 12.8 P3 · 取证树的形状：读数的人必须知道这条证据属于哪棵树（08 修复轮）
+
+**现象（07 §4 P3）**：受控项目的约定是"先写测试再写实现"，于是测试文件被取证时，它要 import
+的兄弟模块**还不存在** → Ruff 的 isort 把项目内模块判成第三方 → `I001` → 命中
+**STYLE-018（warning）** → 4 次写入成了 `allow_with_warnings`，而交付物本身是干净的。
+确定性复现（同一份文件、同一份配置，只改"兄弟模块在不在"）：
+
+    影子树里有 src/invsvc/returns_service.py   → ruff 无诊断（exit 0）
+    删掉它                                     → ruff 报 I001（exit 1）
+    放回一个 stub                              → ruff 又无诊断
+
+一般化的事实：**证据的含义取决于取证时那棵树的形状**，"相同输入得到相同结论"里的"输入"
+必须包含树的状态。
+
+**修后（只标注，不改判定）**：摘要新增 `tree` 段。
+
+| 字段 | 含义 |
+| --- | --- |
+| `scope` | 固定 `"current_disk_tree_plus_proposal"`：这条证据属于「当前磁盘树 + 本次提议内容」 |
+| `target_existed_before` | 提议之前目标文件在**当前磁盘树**里是否存在（write 新建 = false、edit 改已有 = true）。按磁盘树判定而不是按副本：`exclude` 可能恰好不复制这个目标，那时"副本里没有"会被读成"这次是新建" |
+| `tree_digest` | 影子树的指纹：`sha256` 覆盖「仓库相对路径 + 文件 sha256」**排序后的行**（不是文件系统遍历顺序）。取值时刻是**验证器跑之前**：跑完之后副本里会有 `__pycache__` 之类的副产物，"同一份输入"就会得到两个值 |
+| `note` | 适用范围：同一批次里其它尚未落地的写入**不在**树里（Hook 每次只见一个文件），以及"先写测试"实测会触发 I001 这件事 |
+| `tree_gaps` | **可选**：`{status, python_roots, unresolved_project_modules, note}`。用 `validation/project.yaml` 声明的 `python_roots` 解析提议内容里的 import，**只在**「顶层包已存在于影子树里、但这个模块的文件/包目录找不到」时报出（口径是可能漏、不误报）。数据读不到、或提议内容解析不了时**没有这个键**——"没做"与"做了、没发现"必须能分开读 |
+
+`files_copied` 仍然是既有的**顶层**键（这棵树复制了多少个文件），`tree` 段里不重复造
+它。树段进审计同样脱敏，相同输入必须得到逐字节相同的 `tree`。
+
+**会失败的检查**：
+
+- `tests/unit/test_dsh_pre_evidence.py` 的 P3 段：范围 / 目标是否预先存在 / 指纹的稳定性与
+  内容敏感性 / 同一份载荷两次逐字节相同 / **兄弟模块在不在必须给出不同指纹** /
+  `tree_gaps` 的报出与清空；
+- `tests/integration/test_dsh_pre_evidence_hook.py` 的
+  `test_the_evidence_summary_says_which_tree_it_was_gathered_on`（真实 Hook + 真实流水线）；
+- 确定性探针 `python .tmp/round-08/hook-audit/harness/probe_p1_p3.py`：在 07 轮受控项目的
+  **只读副本**上跑生产 CLI——兄弟模块缺席 → `allow_with_warnings` 且 `violations` 里是
+  `STYLE-018@1`；放回 stub → `allow` 且清单为空；两次 `tree_digest` 不同，
+  `tree_gaps` 从报出到清空。
+
+### 12.9 P2 的显式判定进审计：`language_coverage`（08 修复轮收尾）
+
+`pre_evidence` 摘要新增 `language_coverage`（原样搬 `PipelineReport.language_coverage`，
+形状由 `validators.pipeline` 冻结，键固定 4 个）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `language` | 本次取证的语言（上下文声明出来的那个，**不从扩展名猜**） |
+| `status` | `covered_by_rule_pack` / `not_covered_by_design` / `language_unknown` |
+| `reason` | "按设计不取证"的理由（取 `validation/validators.yaml` 的 `uncovered_languages`；`covered` 时为空串） |
+| `declared_in` | 这条判定的数据出处（`validation/validators.yaml`） |
+
+为什么必须进审计：P2 的处置是"在数据里显式声明哪些语言按设计不取证"，但那份声明只有进了
+账本，读数的人才不必去翻流水线报告——07 §4 P2 要的正是"这件事能从账本读到"。
+**声明不等于放行**：`not_covered_by_design` 时若有规则需要某个 checker 的证据，流水线
+照样失败关闭（阻断点写在 `pre_evidence.blockers`）。
+
+**会失败的检查**：
+`tests/integration/test_dsh_pre_evidence_hook.py::test_the_audit_says_which_language_coverage_this_evidence_had`
+（`.md` 载荷跑**生产 Hook CLI** → 判定 `allow` 且 `status == "not_covered_by_design"`；
+对照 `.py` 载荷 → `covered_by_rule_pack`）。

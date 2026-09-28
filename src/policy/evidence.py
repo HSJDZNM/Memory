@@ -42,8 +42,12 @@ __all__ = [
 ]
 
 # 证据协议版本。字段增删或语义变化都要显式改这里；消费方只接受列出的版本。
+# 1.1：ValidatorRecord.served_checkers → declared_checkers（P7）。同一份载荷里曾有两个
+#      served_checkers、含义不同——顶层是"真的服务过"，记录里是"声明负责"；按名字读会把
+#      "没跑"读成"跑了"。1.0 的载荷在 validators[] 里用的是那个歧义键名，语义也不同，
+#      因此 **不再接受**：看不懂就拒绝，不做"尽量理解"。
 EVIDENCE_SCHEMA = "validation-evidence"
-EVIDENCE_SCHEMA_VERSION = "1.0"
+EVIDENCE_SCHEMA_VERSION = "1.1"
 SUPPORTED_EVIDENCE_SCHEMA_VERSIONS: FrozenSet[str] = frozenset({EVIDENCE_SCHEMA_VERSION})
 
 
@@ -282,7 +286,14 @@ class DependencyFact(StrictModel):
 
 
 class ValidatorRecord(StrictModel):
-    """一次验证器运行的可追溯记录：状态、耗时、工具版本与原因。"""
+    """一次验证器运行的可追溯记录：状态、耗时、工具版本与原因。
+
+    `declared_checkers` 的口径（写死，不要按名字猜）：它回答"这个验证器**声明负责**
+    哪些 checker"，因此在 `not_selected` / `crashed` / `unavailable` 时**照样**列出来。
+    **声明负责 ≠ 真的服务过**：真的服务过的是 `EvidenceBundle.served_checkers` /
+    `PipelineReport.served_checkers`（只收 status ∈ SUCCESS_STATUSES、且没被 blocker 划掉的
+    checker）。两个字段同名会把"没跑"读成"跑了"（07 号报告 P7），所以名字必须不同。
+    """
 
     validator_id: str = Field(min_length=1)
     validator_version: str = Field(min_length=1)
@@ -294,7 +305,7 @@ class ValidatorRecord(StrictModel):
     reason: Optional[str] = None
     tool: Optional[ToolInvocation] = None
     evidence_count: int = Field(default=0, ge=0)
-    served_checkers: Tuple[str, ...] = ()
+    declared_checkers: Tuple[str, ...] = ()
 
     @property
     def validator(self) -> str:
@@ -310,7 +321,7 @@ class ValidatorRecord(StrictModel):
             "reason": self.reason,
             "tool": None if self.tool is None else _tool_payload(self.tool),
             "evidence_count": self.evidence_count,
-            "served_checkers": list(self.served_checkers),
+            "declared_checkers": list(self.declared_checkers),
         }
 
 

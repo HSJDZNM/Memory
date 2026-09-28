@@ -28,6 +28,7 @@ __all__ = [
     "TestLayout",
     "TestLimits",
     "ToolSpec",
+    "UncoveredLanguage",
     "ValidatorSpec",
 ]
 
@@ -244,6 +245,41 @@ class RulePack(StrictModel):
         return normalized
 
 
+class UncoveredLanguage(StrictModel):
+    """「按设计不取证」的语言：平台**显式**声明"这门语言没有 rule pack，也不打算验证它"。
+
+    存在的理由（07 号报告 P2）：只有 python 有 rule pack 时，任何非 python 目标在取证路径上
+    只能得到 `RegistryError`（→ `evidence_unavailable` → 退出码 2）——连"本次没有任何规则
+    需要验证器证据"的文档写入也被一并拦下。失败关闭本身没错（AGENTS 第 20/42 条），
+    错的是**没有地方表达**这件事。
+
+    声明的形态是数据而不是代码里的 if 分支（AGENTS 第 2/21 条），因此 `reason` 是必填的：
+    空理由等于把"平台为什么不查这门语言"重新变成不可读，评审就无从谈起。
+    """
+
+    language: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+    @field_validator("language")
+    @classmethod
+    def _check_language(cls, value: str) -> str:
+        normalized = canonical_identifier(value)
+        if not normalized:
+            raise ValueError("uncovered_languages[].language 不能为空")
+        return normalized
+
+    @field_validator("reason")
+    @classmethod
+    def _check_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(
+                "uncovered_languages[].reason 不能为空："
+                "「按设计不取证」必须给出可被评审的理由"
+            )
+        return normalized
+
+
 class Registry(StrictModel):
     """完整的验证器注册表。"""
 
@@ -252,6 +288,7 @@ class Registry(StrictModel):
     defaults: RegistryDefaults = RegistryDefaults()
     stages: Tuple[str, ...] = Field(min_length=1)
     rule_packs: Tuple[RulePack, ...] = ()
+    uncovered_languages: Tuple[UncoveredLanguage, ...] = ()
     validators: Tuple[ValidatorSpec, ...] = Field(min_length=1)
 
     def stage_index(self) -> Mapping[str, int]:
@@ -266,6 +303,15 @@ class Registry(StrictModel):
     def packs_for(self, language: str) -> Tuple[RulePack, ...]:
         token = canonical_identifier(language)
         return tuple(pack for pack in self.rule_packs if pack.language == token)
+
+    def uncovered(self, language: str) -> Optional[UncoveredLanguage]:
+        """该语言是否被声明为"按设计不取证"；没声明返回 None（调用方按失败关闭处理）。"""
+
+        token = canonical_identifier(language)
+        for item in self.uncovered_languages:
+            if item.language == token:
+                return item
+        return None
 
     def validators_for_language(self, language: str) -> Tuple[ValidatorSpec, ...]:
         """该语言启用的验证器，按阶段顺序（同阶段按 id）稳定排列。"""
