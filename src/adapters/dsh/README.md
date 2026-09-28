@@ -8,14 +8,18 @@
 
 | 项 | 值 |
 | --- | --- |
-| dsh CLI | 0.1.5-rc.1（dsh --version） |
-| Hook 相关包 | dsh-hook-protocol / dsh-hooks-claude-code / dsh-hooks-codex / dsh-base 为 0.1.5-rc.2 |
+| dsh CLI（Phase 2 调查时） | 0.1.5-rc.1（dsh --version） |
+| Hook 相关包（Phase 2 调查时） | dsh-hook-protocol / dsh-hooks-claude-code / dsh-hooks-codex / dsh-base 为 0.1.5-rc.2 |
+| **dsh CLI（本轮实测 2026-09-27）** | **0.1.6-alpha.2**（dsh --version；shutil.which('dsh') 命中 C:\Users\ZNM\AppData\Roaming\npm\dsh.CMD） |
+| **Hook 相关包（本轮实测 2026-09-27）** | **dsh-hook-protocol / dsh-hooks-claude-code / dsh-hooks-codex = 0.1.6-alpha.2**（与 CLI 同号：Phase 2 那句"补丁号不一致"在本机已不再成立） |
 | 实现位置 | C:\Users\ZNM\Downloads\study\.cache\npm-cache\_npx\1e7f6d9597241db0\node_modules\@deepseek-ai\ |
 | 平台 | Windows，node v24.19.0，hook 命令由 pwsh 执行 |
 | 事件 fixture | tests/fixtures/agent_events/dsh/（脱敏后的真实载荷） |
 
-注意：同一次安装里 CLI 与 Hook 包的补丁版本号并不一致，因此"dsh 版本"必须按包分别记录，
-升级后要重跑 fixture 契约测试与沙箱闭环。
+注意：同一次安装里 CLI 与 Hook 包的补丁版本号**曾经**并不一致，因此"dsh 版本"必须按包分别记录，
+升级后要重跑 fixture 契约测试与沙箱闭环。本轮重新核对的结果写在上面两行（证据
+.tmp/round-10/b/01-dsh-version.txt 与 50-installed-package-versions.txt）；
+**能力声明里那个版本由 §13 的检查守着**，不再靠"人记得改"。
 
 ## 2. 调查结论（Phase 2 文档要求的 6 项）
 
@@ -872,3 +876,66 @@ python .tmp/round-07/harness/probe_pre_evidence.py --json .tmp/round-07/evidence
 `tests/integration/test_dsh_pre_evidence_hook.py::test_the_audit_says_which_language_coverage_this_evidence_had`
 （`.md` 载荷跑**生产 Hook CLI** → 判定 `allow` 且 `status == "not_covered_by_design"`；
 对照 `.py` 载荷 → `covered_by_rule_pack`）。
+
+## 13. 声明版本 vs 宿主实际版本：一条能失败的检查（R14 / 缺陷 2）
+
+**现象（本轮实测）**：manifest 的 agent_version 字段说明是「**已实测**的 Agent 产品版本」，
+但宿主早就是 0.1.6-alpha.2，声明却写着 0.1.5-rc.1，而**没有任何检查能发现这件事**：
+
+    声明（adapters/dsh/manifest.yaml）  0.1.5-rc.1
+    宿主（dsh --version）              0.1.6-alpha.2
+    python -m adapters.cli check        87 项检查全绿（exit 0）   ← 漂移是静默的
+    python -m adapters.cli events       exit 0，并把 0.1.5-rc.1 报成 "agent_version"
+    python -m adapters.cli matrix       exit 0
+
+这不是功能失效：同一台 0.1.6-alpha.2 上的真实受治理会话跑得通（43 条规则参与判定）。
+它是**声明口径**的缺陷——一句"已实测"没有任何东西在核对。
+
+**修后（两件事，缺一不可）**：
+
+1. 声明改成实测值：agent_version: 0.1.6-alpha.2（重新审核，哈希同步）；
+2. 新增检查入口，把"声明 vs 宿主"的漂移变成红灯：
+
+```powershell
+$env:PYTHONPATH='src'
+python -m adapters.cli host-version                             # 报告（退出码 0）
+python -m adapters.cli host-version --check                     # drift 即退出 1
+python -m adapters.cli host-version --check --require-runtime   # 读不到也退出 1
+```
+
+读法本身是**数据**（manifest 的 host_version 段：executable / args / version_pattern），
+不是代码里的 if agent_id == "dsh"。三条结构性限制：executable 只能是裸命令名；
+参数里不许出现 shell 组合字符（探测走 shell=False 的 argv 直执）；版本正则恰好一个捕获组。
+
+**四种状态互不折叠**：
+
+| 状态 | 含义 | `--check` 的后果 |
+| --- | --- | --- |
+| match | 声明 = 宿主 | 0 |
+| drift | 声明 ≠ 宿主（宿主升级后没重跑 fixture / 声明写错） | **1** |
+| not_declared | 没有声明读法；能力上限是 full 时算失败（否则检查被"删块"绕空） | full → 1；read_only → 0 |
+| unavailable | 二进制不在 / 非零退出 / 输出解析不出 / 超时 | 0，加 `--require-runtime` 才 1 |
+
+**为什么不做成拦截判定**：AGENTS.md 第 24 / 29 条管的是**能力上限**，不是版本号。
+把版本不一致变成放行条件，等于让"宿主升级"把整个平台封成不可用——那是把正常工作封死，
+而且失败方向是反的（越新的宿主越被拒）。因此它只在**显式调用**时失败。
+
+**这条检查不覆盖什么**（必须写下来）：
+
+- 它读的是**宿主二进制自报的版本**，不是"这个二进制真的在治理这条链路"——
+  接线事实归 adapters.cli wiring（接线 + 留痕两轴），能力上限归 manifest + 已审核哈希；
+- 它只在**能读到 dsh 可执行文件**时有意义：读不到就是 unavailable（不是通过，
+  但默认也不是红灯）；没有 dsh 的 CI 上它退出 0，因此**不能**当成"版本已核对"的证据；
+- 它不核对 Hook 包的版本（§1 表里那些包各自有版本号），也不核对 Phase 2 运行期配置
+  （examples/dsh/dsh-adapter.yaml 的 agent_version 是"记录用"的，与能力声明是两份各自
+  独立的声明；本轮没有把两者绑在一起——理由见 .tmp/round-10/b/REPORT.md 的诚实边界）。
+
+**会失败的检查**：
+
+- tests/unit/test_host_version_drift.py：drift 必须红且给出修复动作 / full 无声明算失败 /
+  read_only 无声明不算失败但也不计入"已比对" / 读不到 ≠ match / 报告无绝对路径且两次逐字节
+  相同 / 读法的三条结构性限制 / CLI 上 match→0、drift→1、`--require-runtime` 对 unavailable→1；
+- tests/contract/test_adapter_version_declaration.py：读法结构 / dsh 的正则认得出真实版本行 /
+  **full 的 Adapter 必须声明读法** / **删掉 host_version 块会让哈希漂移并被拒绝装配**；
+- 变异证明（把声明改回 0.1.5-rc.1 → 检查红 → 撤回 → 绿）：
+  .tmp/round-10/b/40-mutation-proof.txt。

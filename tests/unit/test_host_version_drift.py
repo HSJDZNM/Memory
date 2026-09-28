@@ -288,7 +288,9 @@ def test_manifest_without_a_probe_still_validates():
 # --------------------------------------------------------------------------- CLI 入口
 
 
-def _write_temp_repo(root: Path, *, declared: str, args: list, enforcement: str = "full") -> None:
+def _write_temp_repo(
+    root: Path, *, declared: str, args: list, enforcement: str = "full", capture=None
+) -> None:
     directory = root / "adapters" / "demo-agent"
     directory.mkdir(parents=True, exist_ok=True)
     document = _manifest_document(
@@ -305,13 +307,16 @@ def _write_temp_repo(root: Path, *, declared: str, args: list, enforcement: str 
         )
     )
     assert approved == 0
+    if capture is not None:
+        # run_approve 自己也会打印一份 JSON：先清掉，别让它混进被测命令的输出。
+        capture.readouterr()
 
 
 def test_cli_drift_is_red_and_match_is_green(tmp_root, capsys):
     """同一条命令：声明与宿主一致 → 0；不一致 → 1。检查因此「现在通过、以后能失败」。"""
 
     root = tmp_root / "repo"
-    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('1.0.0')"])
+    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('1.0.0')"], capture=capsys)
 
     code = main(
         [
@@ -326,7 +331,7 @@ def test_cli_drift_is_red_and_match_is_green(tmp_root, capsys):
     assert payload["findings"][0]["status"] == "match"
 
     # 宿主「升级」了：同一条声明立刻变红。
-    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('2.0.0')"])
+    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('2.0.0')"], capture=capsys)
     code = main(
         [
             "--root", str(root),
@@ -345,7 +350,7 @@ def test_cli_reports_without_check_and_exits_zero(tmp_root, capsys):
     """不带 --check 时它是一份报告：漂移照样打出来，但不改退出码。"""
 
     root = tmp_root / "repo"
-    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('2.0.0')"])
+    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('2.0.0')"], capture=capsys)
 
     code = main(
         [
@@ -365,7 +370,7 @@ def test_cli_unavailable_needs_the_explicit_require_runtime_flag(tmp_root, capsy
     """读不到宿主版本：--check 不红，--require-runtime 红——环境跳过必须能被显式要求成红灯。"""
 
     root = tmp_root / "repo"
-    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('1.0.0')"])
+    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('1.0.0')"], capture=capsys)
 
     code = main(
         ["--root", str(root), "host-version", "--check", "--json",
@@ -386,7 +391,7 @@ def test_cli_unavailable_needs_the_explicit_require_runtime_flag(tmp_root, capsy
 
 def test_cli_report_does_not_leak_absolute_paths(tmp_root, capsys):
     root = tmp_root / "repo"
-    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('1.0.0')"])
+    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('1.0.0')"], capture=capsys)
 
     main(
         [
@@ -405,7 +410,7 @@ def test_cli_report_does_not_leak_absolute_paths(tmp_root, capsys):
 
 def test_cli_rejects_a_probe_binary_for_an_unknown_agent(tmp_root, capsys):
     root = tmp_root / "repo"
-    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('1.0.0')"])
+    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('1.0.0')"], capture=capsys)
 
     code = main(["--root", str(root), "host-version", "--probe-binary", "nobody=/bin/sh"])
 

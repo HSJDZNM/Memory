@@ -62,6 +62,7 @@ __all__ = [
     "EnforcementLevel",
     "EventType",
     "HookNames",
+    "HostVersionProbe",
     "ManifestError",
     "ParticipantCapability",
     "ParticipantKind",
@@ -304,6 +305,80 @@ class AgentTool(BaseModel):
         return self
 
 
+# 宿主版本探测：把「声明写着已实测的版本」变成一条**可核对**的声明。
+#
+# 为什么读法是数据而不是代码：dsh --version 只是当前唯一真实接入的产品的读法，
+# 下一个 Agent 的读法不同。把命令写进代码就变成 if agent_id == "dsh"，
+# 而能力声明本来就是数据（与 tools 表、fixtures 同一条思路）。
+#
+# 下面三条限制都是**结构性**的，不是文风问题：
+# 1. executable 只能是裸命令名（不允许路径分隔符）：声明必须在别的机器上照样成立，
+#    也不允许用相对路径把探测指向仓库里的任意文件——要指定具体位置用 CLI 的 --probe-binary；
+# 2. 参数里出现 shell 组合字符一律拒绝：探测走的是 shell=False 的 argv 直执，
+#    这些字符只可能意味着「想借声明执行另一条命令」；
+# 3. 版本正则必须**恰好一个捕获组**：零个捕获组让人无从判断取哪一段，
+#    多个捕获组把「用第几个」变成实现细节。
+_SHELL_METACHARACTERS: Tuple[str, ...] = (
+    ";", "|", "&", chr(96), "$(", "$" "{" , ">", "<", "\r", "\n",
+)
+_PROBE_EXECUTABLE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+class HostVersionProbe(BaseModel):
+    """宿主实际版本的读法（manifest 的 host_version 段）。
+
+    它只为一条检查服务：python -m adapters.cli host-version --check。
+    版本不一致**不改变任何判定**（不是拦截条件），只让这条显式调用的检查退出 1。
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    executable: str = Field(min_length=1, description="裸命令名，例如 dsh")
+    args: Tuple[str, ...] = Field(default=(), description="argv 直执，不经 shell")
+    version_pattern: str = Field(min_length=1, description="恰好一个捕获组；组 1 就是版本")
+
+    @field_validator("executable")
+    @classmethod
+    def _check_executable(cls, value: str) -> str:
+        normalized = value.strip()
+        if not _PROBE_EXECUTABLE_PATTERN.match(normalized):
+            raise ValueError(
+                f"host_version.executable 必须是裸命令名（字母数字开头，只允许 . _ -），"
+                f"得到 {value!r}；允许路径会让声明指向仓库外的任意文件，"
+                "要指定具体位置请用 CLI 的 --probe-binary"
+            )
+        return normalized
+
+    @field_validator("args")
+    @classmethod
+    def _check_args(cls, value: Tuple[str, ...]) -> Tuple[str, ...]:
+        for item in value:
+            if not isinstance(item, str) or not item:
+                raise ValueError(f"host_version.args 只能是非空字符串，得到 {item!r}")
+            if any(token in item for token in _SHELL_METACHARACTERS):
+                raise ValueError(
+                    f"host_version.args 里出现 shell 组合字符：{item!r}；"
+                    "探测是 argv 直执（shell=False），这些字符只可能意味着"
+                    "「借声明执行另一条命令」，一律拒绝"
+                )
+        return tuple(value)
+
+    @field_validator("version_pattern")
+    @classmethod
+    def _check_pattern(cls, value: str) -> str:
+        normalized = value.strip()
+        try:
+            compiled = re.compile(normalized)
+        except re.error as error:
+            raise ValueError(f"host_version.version_pattern 不是合法正则：{error}") from error
+        if compiled.groups != 1:
+            raise ValueError(
+                f"host_version.version_pattern 必须恰好一个捕获组（现在是 {compiled.groups} 个）："
+                "零个捕获组无从判断取哪一段，多个捕获组把「用第几个」变成实现细节"
+            )
+        return normalized
+
+
 class AdapterManifest(BaseModel):
     """Adapter 的能力声明（`adapters/<agent_id>.yaml` 的文档模型）。
 
@@ -316,6 +391,10 @@ class AdapterManifest(BaseModel):
     schema_version: str = Field(default=ADAPTER_MANIFEST_SCHEMA_VERSION)
     agent_id: str = Field(min_length=1)
     agent_version: str = Field(min_length=1, description="已实测的 Agent 产品版本")
+    # 宿主实际版本的读法（可选）。声明了它，python -m adapters.cli host-version --check
+    # 才能把「声明版本 vs 宿主版本」的漂移变成红灯；没有宿主二进制的合成协议消费者可以不声明，
+    # 但能力上限是 full 的 Adapter 必须声明（否则那条检查对它什么都查不到）。
+    host_version: Optional[HostVersionProbe] = None
     display_name: str = Field(min_length=1)
     protocol: str = Field(min_length=1, description="线协议名，例如 dsh-hooks-claude-code")
     protocol_version: str = Field(min_length=1)

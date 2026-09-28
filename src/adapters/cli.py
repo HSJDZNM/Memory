@@ -8,9 +8,15 @@
     python -m adapters.cli check --agent dsh --agent generic-json
     python -m adapters.cli inspect --event event.json --agent generic-json
     python -m adapters.cli wiring [--json] [--check]   # 本机 Agent 通道清点（接线 + 留痕）
+    python -m adapters.cli host-version [--json] [--check] [--require-runtime]
+                                            # 声明版本 vs 宿主实际版本（漂移即红灯）
 
-退出码：0 = 通过（或环境跳过）；1 = 检查失败（漂移 / 能力不足 / 一致性失败 / 通道未接线）；
-2 = 用法或配置错误。
+退出码：0 = 通过（或环境跳过）；1 = 检查失败（漂移 / 能力不足 / 一致性失败 / 通道未接线 /
+版本漂移）；2 = 用法或配置错误。
+
+注意 adapter 这一层有**两条互不代替**的事实轴：manifest 声明「这个 Agent 能做什么」，
+host-version 声明「声明写的是哪个产品版本，以及主机上真正装着的是不是同一个」。
+两者都不改变 allow / block：版本不一致不是拦截条件。
 "与 Phase 4 的注册表审核同一条思路"：能力声明是数据，改声明必须重新审核。
 """
 
@@ -21,7 +27,7 @@ import datetime as clock
 import json
 import sys
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from adapters.base import (
     APPROVED_SCHEMA_VERSION,
@@ -31,6 +37,12 @@ from adapters.base import (
     RegistryError,
 )
 from adapters.conformance import run_conformance
+from adapters.host_version import (
+    DEFAULT_PROBE_TIMEOUT_MS,
+    READING_GUIDE as HOST_VERSION_READING_GUIDE,
+    HostVersionReport,
+    check_declared_versions,
+)
 from adapters.json_adapter import agent_response_from_decision
 from adapters.loader import (
     load_adapter,
@@ -49,7 +61,15 @@ from adapters.wiring import (
 )
 from policy.loader import LoaderError, load_rule_set
 
-__all__ = ["build_parser", "main", "run_approve", "run_check", "run_matrix", "run_wiring"]
+__all__ = [
+    "build_parser",
+    "main",
+    "run_approve",
+    "run_check",
+    "run_host_version",
+    "run_matrix",
+    "run_wiring",
+]
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -504,6 +524,141 @@ def run_wiring(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _parse_probe_binaries(
+    values: Optional[Sequence[str]], known: set[str]
+) -> tuple[dict[str, str], Optional[str]]:
+    """解析 --probe-binary AGENT=PATH；返回 (覆盖表, 错误理由)。
+
+    指向未知 Agent 一律是用法错误：静默忽略会让"我明明指定了"变成空操作。
+    """
+
+    overrides: dict[str, str] = {}
+    for raw in values or ():
+        token = str(raw)
+        agent_id, separator, path = token.partition("=")
+        agent_id = agent_id.strip()
+        path = path.strip()
+        if not separator:
+            return {}, f"--probe-binary 必须是 AGENT=PATH 形态，得到 {token!r}"
+        if not agent_id or not path:
+            return {}, f"--probe-binary 的 AGENT 与 PATH 都不能为空，得到 {token!r}"
+        if agent_id not in known:
+            return {}, (
+                f"--probe-binary 指向注册表里没有的 Agent {agent_id!r}："
+                f"可用的有 {sorted(known)}"
+            )
+        overrides[agent_id] = path
+    return overrides, None
+
+
+def _print_host_version(report: HostVersionReport) -> None:
+    """人类可读的比对结果：每条先给状态，再给声明 / 宿主 / 探测；失败项写 stderr。"""
+
+    print("声明版本 vs 宿主实际版本（口径：" + HOST_VERSION_READING_GUIDE + "）")
+    for item in report.findings:
+        print("  " + item.agent_id + "  [" + item.status.value + "]")
+        if item.status.value in ("match", "drift"):
+            relation = "=" if item.status.value == "match" else "不等于"
+            print(
+                "      声明 " + item.declared_version + " " + relation + " 宿主 "
+                + str(item.observed_version) + "（探测 " + str(item.probe)
+                + "，解析到 " + str(item.resolved_name) + "）"
+            )
+        elif item.status.value == "not_declared":
+            print("      未声明 host_version；能力上限 " + item.enforcement)
+        else:
+            print(
+                "      读不到宿主版本（探测 " + str(item.probe) + "，能力上限 "
+                + item.enforcement + "）"
+            )
+        print("      " + item.detail)
+    counts = report.to_dict()["counts"]
+    print(
+        "  合计：实际比对 " + str(report.covered) + "/" + str(report.total)
+        + "；match " + str(counts["match"]) + "，drift " + str(counts["drift"])
+        + "，unavailable " + str(counts["unavailable"])
+        + "，not_declared " + str(counts["not_declared"])
+    )
+    for note in report.notes:
+        print("  说明：" + note)
+    if report.result == "fail":
+        print("结果：fail（" + str(len(report.failures)) + " 项）", file=sys.stderr)
+        for failure in report.failures:
+            print("  FAIL " + failure, file=sys.stderr)
+        return
+    if report.result == "unavailable":
+        print(
+            "结果：unavailable（声明了探测但这次读不到宿主版本——它不是通过）",
+            file=sys.stderr,
+        )
+        print("加 --require-runtime 可以让它成为门禁（退出码 1）", file=sys.stderr)
+        return
+    print(
+        "结果：pass（实际比对 " + str(report.covered) + "/" + str(report.total)
+        + "：声明与宿主一致）"
+    )
+
+
+def run_host_version(args: argparse.Namespace) -> int:
+    """声明版本 vs 宿主实际版本（R14）：显式调用时因漂移失败。
+
+    为什么必须存在：manifest 的 agent_version 说明写着「已实测的产品版本」，但在本轮修复
+    之前没有任何地方把它与宿主实际版本比过——宿主升级后声明仍旧，而一致性套件、
+    事件 fixture 重放与支持矩阵全部照常通过。那是一条**静默漂移**。
+
+    为什么它不是拦截判定：版本不一致不改变任何 allow / block（AGENTS.md 第 24 / 29 条
+    管的是能力上限）。把它做成放行条件，会让「宿主升级」直接封成「平台不可用」。
+    因此只有**显式调用 + --check** 才退出 1；读不到宿主版本要再加 --require-runtime。
+    """
+
+    root = Path(args.root).resolve()
+    approved = Path(args.approved) if args.approved else root / DEFAULT_APPROVED_PATH
+    try:
+        registry = AdapterRegistry.load(
+            root / DEFAULT_ADAPTERS_ROOT,
+            approved_path=approved,
+            require_approval=not args.allow_unapproved,
+        )
+    except RegistryError as error:
+        print(f"[adapters] 注册表不可用：{error}", file=sys.stderr)
+        return EXIT_USAGE
+
+    timeout_ms = int(getattr(args, "timeout_ms", DEFAULT_PROBE_TIMEOUT_MS))
+    if timeout_ms <= 0:
+        print("[adapters] --timeout-ms 必须是正整数", file=sys.stderr)
+        return EXIT_USAGE
+
+    listing = registry.as_list()
+    overrides, failure = _parse_probe_binaries(
+        getattr(args, "probe_binary", None), set(listing.ids)
+    )
+    if failure is not None:
+        print(f"[adapters] {failure}", file=sys.stderr)
+        return EXIT_USAGE
+
+    report = check_declared_versions(
+        {item.agent_id: registry.manifest(item.agent_id) for item in listing.descriptors},
+        enforcement_by_agent={
+            item.agent_id: item.enforcement.value for item in listing.descriptors
+        },
+        overrides=overrides,
+        timeout_ms=timeout_ms,
+    )
+
+    if args.json:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        _print_host_version(report)
+
+    if getattr(args, "require_runtime", False) and report.result == "unavailable":
+        # 与 tools/dsh_sandbox_loop.py 的 --require-dsh 同一条思路：这个开关问的是
+        # "本机真的有可探测的宿主运行时吗"，环境跳过必须能让它变红。
+        return EXIT_FAILED
+    if args.check and report.result == "fail":
+        return EXIT_FAILED
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m adapters.cli",
@@ -609,6 +764,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="覆盖当前时间（ISO8601，仅用于可复现的报告；不写进输出）",
     )
     wiring.set_defaults(func=run_wiring)
+
+    host_version = _with_json(
+        sub.add_parser(
+            "host-version",
+            help="比对声明版本与宿主实际版本（漂移即失败；它不是拦截判定）",
+        )
+    )
+    host_version.add_argument(
+        "--check",
+        action="store_true",
+        help="出现 drift（或能力上限 full 却没声明 host_version）时退出 1（默认只报告）",
+    )
+    host_version.add_argument(
+        "--require-runtime",
+        action="store_true",
+        help="读不到宿主版本（二进制不在 / 非零退出 / 输出解析不出 / 超时）也退出 1："
+        "环境跳过不能被读成通过",
+    )
+    host_version.add_argument(
+        "--probe-binary",
+        action="append",
+        default=None,
+        metavar="AGENT=PATH",
+        help="用指定的可执行文件替换该 Agent 声明里的裸命令名（可重复；只影响这一次探测，"
+        "不改变声明本身）",
+    )
+    host_version.add_argument(
+        "--timeout-ms",
+        type=int,
+        default=DEFAULT_PROBE_TIMEOUT_MS,
+        help=f"单次探测超时（毫秒，默认 {DEFAULT_PROBE_TIMEOUT_MS}）",
+    )
+    host_version.set_defaults(func=run_host_version)
     return parser
 
 
