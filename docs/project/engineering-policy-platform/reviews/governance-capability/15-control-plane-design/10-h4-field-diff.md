@@ -308,8 +308,105 @@ PreToolUse、真 stdin 事件、`--hooks-config` 过接线自检、`pre_evidence
   pytest 命令行手工复跑得到 `rc=1`（断言失败），且删掉 `src/validators/**/__pycache__` 后重跑探针仍稳定复现本节 ② 的读数。
   那次矛盾读数的**机制未能定位**（是探针侧的观测方式问题还是别的），因此**本节所有结论只取自上面那份 `probe-report.json`
   与两份 `decision.json`**，不取自那次观测；排查用的临时脚本与中间产物在 `Memory\.tmp\ctl-staging\` 下，属一次性证据。
+  **补记（2026-09-29，见 §9.2）**：这条矛盾已**复现并定位**——它是**探针写法**（同一入口、同一提议，只差测试文件里 import 的名字），
+  **不是**平台假绿；同一段里「手工复跑得到 `rc=1`」经复核实为**不含提议的对照树**上的读数，不是平台影子树的读数。
 - **未核实**：本机沙箱的强制点实现（与 §6 / §8.2 同一条）。
 
+## 9.2 Q7 矛盾观测的定位：同一入口的两种测试形状（2026-09-29，树 `6b3dd36`）
+
+**本节只记录，不修任何东西**（与 §9 / §9.1 同一纪律）。§9.1 的「未核实」里留了一条矛盾读数：诊断期间有一次运行给出
+`tool.pytest` 理由 = **`选中的测试全部通过`**，与 §9.1 ② 的「待实现」矛盾，当时**机制未定位**。本节把它**复现**并**定位**：
+结论是**探针写法**（两种测试形状被并置成了一次比较），**不是平台假绿**（与 H4 不同类）。
+
+**复现入口**：`.tmp/q7-repro/q7_repro.py`（本轮新写，产物只落 `.tmp/q7-repro/`），驱动**生产入口**
+`python -m adapters.dsh.hooks` 的 PreToolUse（真 stdin 事件、`--hooks-config` 过接线自检、
+`pre_evidence.enabled = true`），受治理工作区 = `tests/fixtures/validators/project` 的**逐次全新副本**
+（每次一个 run 目录，互不覆盖），解释器 = 本树 `.venv`（3.13.11）。两种形状**只差测试文件本身**；
+两次的编辑提议**逐字节相同**（给 `src/shop/order_service.py` 的 `OrderService` 加一个 `cancel` 方法）：
+
+| 形状 | 测试文件里写的是 | 那个名字在本树里 |
+| --- | --- | --- |
+| 方法形状 | `from shop.order_service import OrderService` + `service.cancel("order-1")` | 不存在（`OrderService` 还没有 `cancel`） |
+| 函数形状 | `from shop.order_service import OrderService, cancel_order` | 不存在（模块里没有 `cancel_order`） |
+
+| # | 运行 | 入口 | 形状 | Hook 退出码 | decision | reason_code | served_checkers | pending_implementation | `tool.pytest` status / reason |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `r1-method-cli` | CLI 子进程 | 方法 | **0** | `allow` | `allow` | 4 项（**含** `failing_tests`） | `[]` | `ok` / `选中的测试全部通过` |
+| 2 | `r5-method-cli`（重复） | CLI 子进程 | 方法 | **0** | `allow` | `allow` | 同 1 | `[]` | 同 1 |
+| 3 | `r3-method-capture` | 同进程 + 影子留存 | 方法 | **0** | `allow` | `allow` | 同 1 | `[]` | 同 1 |
+| 4 | `r2-function-cli` | CLI 子进程 | 函数 | **0** | **`allow_with_warnings`** | `allow_with_warnings` | 3 项（**没有** `failing_tests`） | 1 条：`tests/test_order_service.py` / `shop.order_service:cancel_order` | `pending_implementation` / `待实现：…` |
+| 5 | `r4-function-capture` | 同进程 + 影子留存 | 函数 | **0** | 同 4 | 同 4 | 同 4 | 同 4 | 同 4 |
+
+**五次运行按形状分组后逐字段相等**：方法形状 3 次、函数形状 2 次的判定记录（除运行身份字段外）**完全相同**。
+所以这不是「同一个探针给出两个答案」，而是**两个探针各给一个答案**。
+
+**机制（读数，不是推理）**：
+
+1. **平台的影子树包含提议内容**：两次留存下来的影子副本里，`src/shop/order_service.py` **都有** `def cancel`
+   （`out/shadow-copy-facts.json`：`has_cancel_method = true`；方法形状 `test_bytes = 526`、函数形状 `384`）。
+   平台的动作顺序是「复制工作区 → 写入提议内容 → 跑验证器」（`src/adapters/dsh/pre_evidence.py:219-237`），
+   对 `edit` 的提议是把 `old_string`→`new_string` 应用到**当前文件**上（`_propose_edit`），
+   所以副本里的目标文件是**改完之后**那一份。
+2. **在留存的影子副本上用平台原样的 pytest 命令行复跑**（`-c <repo>/validation/pytest.ini -q -rf -p no:cacheprovider
+   --no-header -o addopts= --rootdir <shadow> tests/test_order_service.py`，`PYTHONPATH=<shadow>;<shadow>\src`）：
+   方法形状 **`1 passed`（rc=0）**；函数形状 **`ImportError: cannot import name 'cancel_order'`（rc=2，收集失败）**。
+3. 于是两条读数的差别**完全来自测试文件自己 import 的名字**：`cancel`（提议会创建）→ 通过；
+   `cancel_order`（提议不创建）→ 收集失败 → 走 `diagnose_collection_failure` → 「待实现」。
+
+**那条「矛盾」里的第二个读数（`rc=1`）属于第三棵树**：§9.1 还写着「我在同一份影子树上用平台原样的 pytest 命令行
+手工复跑得到 `rc=1`（断言失败）」。本轮用**同一份测试文本 + 平台原样的 pytest 命令行**在一棵**不含提议内容**的对照树
+（`.tmp/q7-repro/treeB`：项目磁盘副本，未应用提议）上跑，得到
+`AttributeError: 'OrderService' object has no attribute 'cancel'` / `1 failed` / **rc=1**——与那句读数**逐字同形**。
+也就是说：`rc=1` 属于**手工搭的那棵树**，**不属于平台的影子树**；把它读成「平台影子树的读数」是把两棵树混成了一棵
+（AGENTS 第 48 条讲的正是这件事；上一轮那次手工复跑用的 `shadow-repro` 就是这种树：`copytree` 之后直接写测试文件、不应用提议）。
+
+**判定：探针写法的问题**。三条理由：
+
+1. 同一入口、同一提议、同一解释器，**唯一变量是测试文件的两个 import 形状**；两次读数各自稳定
+   （方法 3 次、函数 2 次，分组内逐字段相同）；
+2. 平台的影子树在两次里**形状相同**（都含提议内容）：没有任何一次读到「影子树没应用提议」，
+   也没有读到「提议重建失败」（那会失败关闭成 `evidence_unavailable`，不是这个形态）；
+3. 方法形状的 `选中的测试全部通过` **有真实执行证据**：pytest 退出码 0 且 `1 passed`（≥1 个用例真的跑了）。
+   它与 **H4 不是同一类**——H4 是退出码 5、**零个用例执行**却把 `failing_tests` 记成 served（台阶 1 已修，R-f 关掉了那条路）。
+
+**字段级差集（两种形状的判定记录之间，不是平台改动之间）**：两条 step-b 判定记录递归比对（剔除
+`timestamp` / `recorded_at` / `elapsed_ms` / 各类 `digest` / `sha256` / `tree_digest`）共 **11 个字段路径**不同：
+
+| # | 字段路径 | 方法形状（before） | 函数形状（after） |
+| --- | --- | --- | --- |
+| 1 | `decision` | `allow` | `allow_with_warnings` |
+| 2 | `reason_code` | `allow` | `allow_with_warnings` |
+| 3 | `violations` | `[]` | 1 条（`TESTING-002@1` / **warning**） |
+| 4 | `violations_by_severity.warning` | **缺键** | `1` |
+| 5 | `pre_evidence.served_checkers` | `[failing_tests, missing_docstring, missing_tests, style_lint]` | 去掉 `failing_tests` 的 3 项 |
+| 6 | `pre_evidence.pending_implementation` | `[]` | 1 条（测试模块 + 缺失目标 `shop.order_service:cancel_order`） |
+| 7 | `pre_evidence.validators` | 数组内 `tool.pytest@1.0`：`status=ok`、`reason=选中的测试全部通过` | 同一条目：`status=pending_implementation`、`reason=待实现：…` |
+| 8–11 | `action_id` / `event_id` / `request_id` / `tool_use_id` | 只差 run-id 串（本次运行的身份，不是判定内容） | 同左 |
+
+`tool.pytest@1.0` 条目内**相同**的字段：`critical=true`、`evidence_count=0`、`id`；两条记录的 `hook_exit`（0）、
+`layer`（`service`）、`operation`（`edit`）、`pre_evidence_status`（`collected`）也相同。
+**这不是任何平台改动的 R-d 差集**：本轮没有改平台源码，差集只用来说明「两条读数差在哪几个字段上」。
+
+**本节不证明什么 / 未核实**：
+
+- **不证明 Q7 的整体承诺**（与 §9.1 同一条）：只跑了两种形状；反例（第三方包缺失 / 语法错误 / conftest 出错 /
+  断言失败）没有重跑。
+- **不证明「选中的测试全部通过」是好消息**：方法形状通过的，是**会话自己在①写下的那条测试**。断言为空、
+  或断言并不检验实现时，这条读数**照样**是「全部通过」——那句话的边界在 §9（空占位）那一侧；
+  H4/R-f 只关掉「零个用例执行」这一种，**没有**关掉「用例跑了但没断言什么」。
+- **未核实**：上一轮那次诊断用的**具体命令与具体那棵树**没有原始日志留存；本节只能做到「三棵树的读数各自成立、
+  逐字复现」，**不能指认**当时那一次是哪一行命令跑出来的。
+
+**证据**（`.tmp/q7-repro/`，`tools/cleanup.py` 之后不可复核；口径 = 每个 run 的 `out/readings.json`）：
+
+| 运行 | `readings.json` sha256[:16] | 附加 |
+| --- | --- | --- |
+| `r1-method-cli` | `9fca38b8258a06e6` | `out/step-b.decision.json`（字段级差集的 before） |
+| `r2-function-cli` | `e3561e726067ca2e` | `out/step-b.decision.json`（after） |
+| `r3-method-capture` | `32a674ea70d430da` | 影子留存：`out/shadow-copy-facts.json` + `out/shadow-copy/`（复跑 `1 passed`） |
+| `r4-function-capture` | `41b8f1d3e57cf6cf` | 影子留存：同两件（复跑 `ImportError`，rc=2） |
+| `r5-method-cli` | `e582f67fd3ab04b7` | 重复运行（稳定性） |
+| `treeB`（对照树，非平台产物） | —— | 不含提议的磁盘副本：`1 failed` / rc=1（`AttributeError`） |
 
 ---
 
