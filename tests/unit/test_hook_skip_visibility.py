@@ -306,7 +306,8 @@ def test_existing_audit_fields_are_kept_unchanged(tmp_root, dsh_project):
     assert missing <= {"required_action"}, sorted(missing)
     assert record["trace_id"] == "trace-demo-1"
     assert "required_action" not in record
-    assert record["audit_schema_version"] == AUDIT_SCHEMA_VERSION == "1.0"
+    # 台阶 3a（H1）：判定记录新增受控 decision_reason → 审计协议按自己的规则递增。
+    assert record["audit_schema_version"] == AUDIT_SCHEMA_VERSION == "1.1"
     assert record["agent"] == "dsh"
     assert record["rule_set_hash"].startswith("sha256:")
     assert record["payload_digest"].startswith("sha256:")

@@ -23,6 +23,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from conftest import REPO_ROOT, dsh_event, make_checker_rule, write_dsh_config
 from test_hook_skip_visibility import EXISTING_GOVERNED_FIELDS
 
@@ -34,6 +37,7 @@ from adapters.dsh.hooks import (
     run_hook,
 )
 from adapters.dsh.pre_evidence import PreEvidenceError
+from orchestration.client import decision_reason
 from policy.models import (
     Decision,
     Evidence,
@@ -334,6 +338,47 @@ def test_the_required_action_is_visible_on_every_violation(dsh_config_path):
         )
     )["violations"]
     assert "required_action" not in plain[0]
+
+
+def test_the_audit_says_which_kind_of_block_this_was(dsh_config_path, dsh_project):
+    """台阶 3a（H1）：账本要答得出「这次 block 属于哪一类」，且归类是**结构**的。
+
+    为什么必须有它：`block` + `violations` 为空的记录在账本上只能读成"没有依据"，
+    而审批门禁正是**合法**的空 violations 形态（快照 `decisions/approval.json` 就是它）。
+    这条用例同时钉住"不许靠中文 message 猜"：instruction 里给出的 rule_id 是
+    `APPROVAL-001`，归类看的是 required_action，不是那句话。
+    """
+
+    hook = visibility_hook(dsh_config_path)
+
+    approval = ValidationResult(
+        decision=Decision.BLOCK,
+        request_id="req-approval",
+        required_action=RequiredAction.APPROVAL,
+    )
+    assert hook.decision_reason_for_audit(approval) == "approval_required"
+
+    violation = ValidationResult(
+        decision=Decision.BLOCK,
+        request_id="req-violation",
+        violations=(report("ARCH-001"),),
+    )
+    assert hook.decision_reason_for_audit(violation) == "policy_violation"
+
+    # allow 与 allow_with_warnings 没有 block 归类——不写这个键（不编造）
+    assert (
+        hook.decision_reason_for_audit(
+            ValidationResult(decision=Decision.ALLOW, request_id="req-allow")
+        )
+        is None
+    )
+    # 说不出理由的 block：**构造不出来**（模型自洽校验会拒绝：decision 必须与
+    # violations/required_action 一致）。也就是说"block + 空 violations"在判定层**只有**
+    # 审批门禁这一种合法形态——这一条本身就是本台阶穷举结论的钉子。
+    with pytest.raises(ValidationError):
+        ValidationResult(decision=Decision.BLOCK, request_id="req-silent")
+    # 归类函数本身仍要能回答"说不出来"（消费方不许把 None 读成某一种）。
+    assert decision_reason(Decision.BLOCK, required_action=None, violations=()) is None
 
 
 def test_the_violation_payload_is_sanitized(dsh_config_path, dsh_project):

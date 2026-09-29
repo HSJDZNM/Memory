@@ -57,6 +57,7 @@ from policy.models import (
     SCHEMA_VERSION,
     Decision,
     PolicyContextError,
+    RequiredAction,
     RuleSet,
     ValidationResult,
 )
@@ -110,7 +111,10 @@ __all__ = [
 EXIT_ALLOW = 0
 EXIT_BLOCK = 2
 
-AUDIT_SCHEMA_VERSION = "1.0"
+# 1.1（台阶 3a / H1）：判定记录新增**受控** `decision_reason`（"这次 block 属于哪一类"）。
+# 判定记录是审计协议的一部分，改键集合就按它自己的规则递增版本号——决策协议（1.0）不动：
+# 这个值是**从已有字段派生**的，不是第二份判定（见 `decision_reason`）。
+AUDIT_SCHEMA_VERSION = "1.1"
 
 # 反馈文本长度上限：阻断理由会进入模型上下文，必须足够短且不含敏感内容。
 FEEDBACK_MAX_CHARS = 4000
@@ -180,8 +184,26 @@ VIOLATIONS_NOTE = (
 # （src/shop/order_service.py）也当成绝对路径，账本里于是只剩 "src<abs>"，
 # 而"这次查的是哪个文件"正是审计要回答的问题。边界 = 串首，或空白 / 引号 /
 # 括号 / 等号 / 冒号 / 逗号之后。
-_ABS_PATH_BOUNDARY = r"(?:(?<=[\s'\"(\[=:,])|^)"
+# 全角标点同样算边界：归因的 observation.result 是「（路径）」这种中英混排形态，
+# 只认 ASCII 括号会让整个绝对路径原样漏过（台阶 3a 实测，见 10-h4-field-diff / 11 号 §7.5）。
+_ABS_PATH_BOUNDARY = r"(?:(?<=[\s'\"(\[=:,\uff08\uff09\u3001\uff0c\u3002\uff1b\uff1a])|^)"
 _ABS_PATH_RE = re.compile(_ABS_PATH_BOUNDARY + r"(?:[A-Za-z]:[\\/]|\\\\|/)[^\s'\"]+")
+# 含空格的绝对路径：上一条在空白处截断，`C:\Program Files\nodejs\node.exe` 只会被抹掉
+# `C:\Program`，尾巴留在账本里（实测；这正是 11-step2-origin-closure.md §7.5 点名的真机串）。
+# 第二条整段匹配「盘符/UNC 起、到行尾或成对包边标点为止」，因此只在**成对包边或行尾**这一侧收敛，
+# 不会跨过句读吃掉后面的话；同一段被上一条先抹掉时它无副作用（幂等）。
+# 结构写成「卷标 + 一段段路径」，段内允许空格——但这**必然**多吞掉同一行里路径之后的
+# 尾随词（`...node.exe ENOENT` → `<abs>`）："哪些空格属于路径"在没有引号的语言里不可判。
+# 取舍按「失败关闭」写：**宁可多抹，也不留半截路径**（半截路径正是要修的那个缺陷），
+# 代价是同一行的诊断词可能一起消失——这个代价写在文档里，不假装没有。
+_ABS_PATH_COMPONENT = r"[^\\/\r\n'\"\[\]()\uff08\uff09\u3001\uff0c\u3002\uff1b\uff1a]+"
+_ABS_PATH_RELAXED = re.compile(
+    _ABS_PATH_BOUNDARY
+    + r"(?:[A-Za-z]:[\\/]|\\\\|/)"
+    + _ABS_PATH_COMPONENT
+    + r"(?:[\\/]" + _ABS_PATH_COMPONENT + r")*"
+    + r"(?:[ \t]+" + _ABS_PATH_COMPONENT + r")*"
+)
 _SECRET_RE = re.compile(
     r"(?i)\b(?:sk-[A-Za-z0-9_\-]{8,}|api[_-]?key\s*[=:]\s*\S+|authorization:\s*\S+|bearer\s+\S+)"
 )
@@ -231,6 +253,9 @@ def sanitize(
         for variant in variants:
             if variant:
                 text = text.replace(variant, "<repo>")
+    # 顺序要紧：先跑"整段"那条（它认得含空格的路径），再跑"到空白为止"那条兜住其余形态。
+    # 反过来写会把 `C:\Program Files\...` 先切成 `<abs> Files\...`，尾巴再也抹不掉（实测）。
+    text = _ABS_PATH_RELAXED.sub("<abs>", text)
     text = _ABS_PATH_RE.sub("<abs>", text)
     text = _SECRET_RE.sub("<redacted>", text)
     if len(text) > limit:
@@ -254,6 +279,41 @@ def _sanitized(value: Any, *, project_root: Optional[Path]) -> Any:
     if isinstance(value, (list, tuple)):
         return [_sanitized(item, project_root=project_root) for item in value]
     return value
+
+
+# H1：一次 block 属于哪一类。**受控闭集**，由判定载荷里已有的字段派生，绝不猜：
+#   approval_required    授权是前置条件（required_action=approval），没有可修的对象；
+#   policy_violation     至少一条 violation 是规则报的违规（可修）；
+#   evidence_unavailable 全部 violation 都是"平台没能查"（uncovered / blocker），改文件改不掉；
+#   None                 说不出来（例如 block + 空 violations 却没有审批要求）——
+#                        消费方必须按失败关闭处理，**不许把 None 读成某一种**。
+DECISION_REASON_APPROVAL_REQUIRED = "approval_required"
+DECISION_REASON_POLICY_VIOLATION = "policy_violation"
+DECISION_REASON_EVIDENCE_UNAVAILABLE = "evidence_unavailable"
+UNREPAIRABLE_VIOLATION_DETAILS = frozenset({"uncovered_checker", "blocker"})
+
+
+def decision_reason(decision: ValidationResult) -> Optional[str]:
+    """给一次判定算受控 `decision_reason`；allow / allow_with_warnings 返回 None。
+
+    为什么必须有它：`block` + `violations=[]` 是**合法**形态（审批门禁），而账本只写
+    "block + 空清单"时，读的人（和下游节点）只能把它读成"没有依据"。归类的规则是**结构**的
+    （required_action 与 evidence.kind），不解析任何中文。
+    """
+
+    if decision.decision is not Decision.BLOCK:
+        return None
+    if decision.required_action is RequiredAction.APPROVAL:
+        return DECISION_REASON_APPROVAL_REQUIRED
+    if not decision.violations:
+        return None
+    if all(
+        violation.evidence.kind == "validator"
+        and (violation.evidence.detail or "") in UNREPAIRABLE_VIOLATION_DETAILS
+        for violation in decision.violations
+    ):
+        return DECISION_REASON_EVIDENCE_UNAVAILABLE
+    return DECISION_REASON_POLICY_VIOLATION
 
 
 def _counts_by_severity(names: Iterable[str]) -> dict[str, int]:
@@ -825,6 +885,11 @@ class DshPreExecuteHook:
             "violations_note": VIOLATIONS_NOTE,
         }
 
+    def decision_reason_for_audit(self, decision: ValidationResult) -> Optional[str]:
+        """账本口径的受控 `decision_reason`（薄封装：归类规则只有一份实现）。"""
+
+        return decision_reason(decision)
+
     def rule_visibility_not_applicable(self) -> dict[str, Any]:
         """没有文件维度的动作（Phase 4 执行类）：Phase 1 规则引擎完全不适用。
 
@@ -1101,6 +1166,11 @@ class DshPreExecuteHook:
         record["matched_rules"] = list(decision.matched_rules)
         record["skipped_rules"] = [item.rule_id for item in decision.skipped_rules]
         record["decision"] = decision.decision.value
+        # H1：判定记录必须答得出"这次 block 属于哪一类"，否则 block + 空 violations 会被
+        # 读成"没有依据"。None 时不写这个键（与 violations 同一条纪律：说不出来就不编）。
+        reason = decision_reason(decision)
+        if reason is not None:
+            record["decision_reason"] = reason
         record["required_action"] = (
             None if decision.required_action is None else decision.required_action.value
         )
@@ -1420,7 +1490,11 @@ class DshPreExecuteHook:
         )
         record: dict[str, Any] = {**base_record, "detail": detail}
         if origin is not None:
-            record["origin"] = origin.to_payload()
+            # 审计里的归因同样要脱敏（AGENTS 第 16 条；2026-09-29 裁定不开例外）：
+            # detail 早就走 sanitize，origin 却整份直写——同一个字段族里两套口径。
+            record["origin"] = _sanitized(
+                origin.to_payload(), project_root=self.config.project_root
+            )
         self._audit(record, outcome=outcome)
         return outcome
 
@@ -1873,14 +1947,21 @@ def check_wiring(
     return ""
 
 
-def origin_line(origin: Origin) -> str:
+def origin_line(origin: Origin, *, project_root: Optional[Path] = None) -> str:
     """归因的机读行（台阶 2）。
 
     与 `verdict_line` 分开：判定行是**契约**（消费方按精确版本号读，读不到按未知状态
     失败关闭），归因行是**诊断**（读不到只是读不到，不改任何 allow/block）。
+
+    绝对路径不开例外（AGENTS 第 16 条，2026-09-29 裁定）：observation.result / object.value /
+    object.source 里的真机原文可能带绝对路径（实测：`--config <绝对路径>` 会整串出现在
+    object.source 与 observation.result 里）。**脱敏在 json.dumps 之前**做，载荷的键集合因此
+    一字不变（跨语言`payload_is_well_formed` 只校验形状与取值闭集）。
+    脱敏只处理字符串，不引入新的失败模式：它不改变 reason_code / exit_code。
     """
 
-    return ORIGIN_PREFIX + json.dumps(origin.to_payload(), ensure_ascii=False, sort_keys=True)
+    payload = _sanitized(origin.to_payload(), project_root=project_root)
+    return ORIGIN_PREFIX + json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def verdict_line(

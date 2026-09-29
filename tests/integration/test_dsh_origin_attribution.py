@@ -40,6 +40,23 @@ from provenance.origin_runtime import origin_from_failure
 
 pytestmark = pytest.mark.integration
 
+# 绝对路径的"缺席断言"用**具体串**而不是宽泛正则：正则的边界一放宽就会把仓库相对路径
+# （src/shop/order_service.py）判成绝对路径，那是本仓库反复踩过的"仪器假阳"。
+# 这里断言的是"这条路径的两种写法都不在文本里"——含空格那一族（C:\Program Files\...）
+# 因此不需要正则就能被钉住。
+def leaked_paths(text: str, *absolute: Path | str) -> list[str]:
+    """文本里还活着的绝对路径（原样与正斜杠两种写法）。空表 = 脱敏成立。"""
+
+    found: list[str] = []
+    for item in absolute:
+        raw = str(item)
+        if not raw:
+            continue
+        for variant in (raw, raw.replace("\\", "/")):
+            if variant in text:
+                found.append(variant)
+    return found
+
 
 def origin_lines(stderr: str) -> list[dict]:
     """把 stderr 里的 ORIGIN 行读成载荷（读不到就返回空表：这不是失败，是"没有归因"）。"""
@@ -94,6 +111,37 @@ def test_a_config_that_is_really_missing_is_named_as_missing(tmp_root: Path):
     assert payload["fix"]
     # 核验是真的做过：理由里说出了"不存在"这个观测，而不是照抄错误原文
     assert "ENOENT" in payload["observation"]["result"]
+
+
+def test_origin_payload_never_carries_an_absolute_path(tmp_root: Path):
+    """台阶 3a：ORIGIN 行是**诊断**，但诊断里也不许留绝对路径（AGENTS 第 16 条）。
+
+    为什么要专门钉这一条：本例的 `--config` 就是一个**绝对**路径，而它会被原样拼进
+    `object.source`（`hooks.main` 的兜底分支）与 `observation.result`（失败原文）。
+    改动前实测 stderr 里能读回本机绝对路径——这条用例在改动前**会红**，是本台阶的判据。
+    """
+
+    missing = tmp_root / "config" / "dsh-adapter.yaml"
+    completed = run_cli("--config", str(missing), cwd=tmp_root)
+    assert completed.returncode == EXIT_BLOCK
+
+    payloads = origin_lines(completed.stderr)
+    assert len(payloads) == 1, completed.stderr
+    payload = payloads[0]
+    # 形状与取值闭集不受脱敏影响：脱敏只动字符串，不动键与枚举。
+    assert payload_is_well_formed(payload), payload
+    assert payload["origin"] == "platform.config_unreadable"
+    assert payload["observation"]["method"] == "stat"
+
+    # 绝对路径的两种写法都不许在载荷里存活（Windows 反斜杠 / 正斜杠）。
+    dumped = json.dumps(payload, ensure_ascii=False)
+    assert not leaked_paths(dumped, tmp_root), dumped
+    # 连"半截路径"也不许留：`<abs> Files\...` 这种形态正是本台阶修掉的缺陷——
+    # 于是这里断言的正是**前缀之后那一截**还在不在。
+    assert not leaked_paths(completed.stderr, str(tmp_root / "config")), completed.stderr
+    # 脱敏不是"把整条诊断抹空"：对象末段名与观测方法仍然读得到。
+    assert payload["object"]["value"] == "dsh-adapter.yaml"
+    assert payload["fix"]
 
 
 def test_a_config_that_loads_but_says_wrong_things_falsifies_the_claim(tmp_root: Path):
