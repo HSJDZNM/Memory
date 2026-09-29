@@ -18,7 +18,7 @@
 一次 `python tools/cleanup.py` 之后原件即消失——那样这份长期文档的「现在是这样」就无法复核。
 本归档把**最小证据**（结论、计数、可重算的入口）落进已跟踪目录；**不复制原件全文**。
 
-## 文件清单（01–08 是本轮原归档；09–11 是重构台阶的补记）
+## 文件清单（01–08 是本轮原归档；09–11 是台阶 −1/1/2 的补记；12–17 是台阶 3a/3b/小修/3c 与 §3.6 评估的补记）
 
 | 文件 | 来源（sha256[:16]） | 支撑什么 |
 | --- | --- | --- |
@@ -33,6 +33,12 @@
 | [08-refactor-kickoff.md](08-refactor-kickoff.md) | 只读核对 `f6b9b79` 与 `.tmp/push-run.log` | 重构开工状态：基线、前置清单 P1–P4、待定决策 D-1/D-2、首个改码台阶 |
 | [09-baseline-recheck.md](09-baseline-recheck.md) | `probe_matrix.py` `2b447c7b1007009b`、`scaffold_full.py` `54beeb162b7ef0f5`、`decision_invariance.py` `2F8A962A31891974`、`compare_decisions.py` `10A11BA62799DF37`；两棵树的摘要与来源块写在该文件里 | **台阶 −1②**：矩阵（248 检查 0 偏差）与 11 个 fixture（逐字段全等）在**有修订号的树**上重采；两棵树摘要 + 12 个文件的差集；正面控制（变异 B 红 61 条 / 变异 A 仪器崩溃无证据）；三条新发现 |
 | [10-h4-field-diff.md](10-h4-field-diff.md) | 影子树 `cb73617`（+新检查 / +修复）、`h4-*.json`、两份全量 junit；逐项 sha256 写在该文件 §7 | **台阶 1（H4）**：R-d 字段级差集（allow→block、violations 0→1、served 2→1）、受影响清单（1875 条用例只翻转新增的那 1 条）、R-f 红→绿、修复形状与未证明项；8.6 原文命令（.venv）的本树门禁读数、9「先建空测试文件、再写实现」行为探针、**9.1 Q7 对照探针**（真的写了测试、导入一个还不存在的目标 → `allow_with_warnings` + `pending_implementation`） |
+| [12-step3a-reason-and-redaction.md](12-step3a-reason-and-redaction.md) | `hooks.py` / 审计记录读数（该文件 §7 逐项 sha256） | **台阶 3a（H1/H10）**：受控 `decision_reason` 与归因路径脱敏的字段级差集、跨语言（Python ↔ JS）脱敏口径、审计 1.0→1.1 |
+| [13-step3b-d1-field-diff.md](13-step3b-d1-field-diff.md) | 分析会话采集的两棵树的决策载荷（该文件 §5.4 预注册形状） | **台阶 3b（D-1）分析稿**：pending 移出 `violations` 的字段级差集预注册、B1–B7 的"绿但静默流失"清点、B4 的两个半边 |
+| [14-step3b-landing.md](14-step3b-landing.md) | `.tmp/step3b/` 的 6 个产物（逐个 sha256）+ junit 报告 | **台阶 3b 落地**：决策 `SCHEMA_VERSION` 1.0→1.1、`POLICY_VERSION` 改 `decision-1.1`、审计 1.1→1.2、R-d 差集（0 条判定变化）、B 类 7 处、旧 checkpoint REFUSE 的证明、L5 未做项 |
+| [15-small-fixes.md](15-small-fixes.md) | `.tmp/verdict-check/` 的 4 个产物（逐个 sha256） | **小修**：VERDICT 行在 `6fa800e → 466a75b` 的字段级差集 **0 条**（14 个用例 + 调用点/取值域读数 → **不升** `VERDICT_SCHEMA_VERSION`）；`warnings` 为何不触发这条轴；AGENTS 第 55 条版本轴清单；B4 正例（经 API 的 pending + 请求级 JSONL 行） |
+| [16-step3c-obligation-ledger.md](16-step3c-obligation-ledger.md) | `.tmp/step3c/` 的 R-d 读数与 `readings.json`（逐个 sha256） | **台阶 3c 义务账**：三条口径与账本协议（新版本轴 `LEDGER_SCHEMA_VERSION`）、R-d 差集 **0 条**、J1(c)/(d) 读数、**L5 一轮：2 个账本 / 3 次门禁 / 命中 1 次**、预算对账（src 714 / tests 872 / 工具 137） |
+| [17-step4-5-scope-assessment.md](17-step4-5-scope-assessment.md) | 本次实跑 `adapters.cli wiring --json`、`ci_local.py --list`、两份测试路径声明与各数据文件（逐条来源写在表里） | **§3.6 前置评估**：台阶 4–5 的两份**整数清单**（已声明不治理 **2** 条；在范围内 **4 组 + 5 组**）与逐条"建机制 / 写声明 / 只报告"结论（台阶 4：5/5/0；台阶 5：4/2/1）；D-2 冻结下**只交清单** |
 | [11-step2-origin-closure.md](11-step2-origin-closure.md) | `provenance/origin.py` `43d301bd547f1428`、`origin_runtime.py` `4bd867cf875cbb81`、`hooks.py` `75a0f52e7ac2bf83`、插件 `26ABA823F6DD9949`、契约用例 `1AC992EFDBE11336`；R-d 读数在 `.tmp/rd-diff/` | **台阶 2（归因闭集与核验前置，判据 R-g）**：五族闭集 + 每族必备字段 + 「写不出 fix 的 origin 不许存在」；核验前置与「证伪自己人落 unknown_origin」；配置族（Python）与 spawn 输入族（JS）的读数；R-d 字段级差集（11 个 fixture：0 条判定变化、3 条新增 `origin`、4 条墙钟漂移） |
 
 ## 复核入口（全部只读）
