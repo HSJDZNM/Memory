@@ -156,7 +156,10 @@ def test_the_hook_records_no_discharge(tmp_root: Path, dsh_project) -> None:
     hook = _hook(tmp_root, dsh_project, ledger=ledger)
 
     hook.handle(_payload(dsh_project))
-    hook.handle(dsh_event("pre-tool-use-edit-allow.json", cwd=str(dsh_project), tool_use_id="call-2"))
+    second = dsh_event(
+        "pre-tool-use-edit-allow.json", cwd=str(dsh_project), tool_use_id="call-2"
+    )
+    hook.handle(second)
 
     kinds = [item["kind"] for item in _records(ledger)]
     assert kinds == ["pending", "pending"], kinds

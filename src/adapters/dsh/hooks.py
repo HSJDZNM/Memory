@@ -52,7 +52,6 @@ from policy.checkers import CONTEXT_CHECKERS
 from policy.engine import EngineError, evaluate
 from policy.evidence import EvidenceBundle
 from policy.loader import LoaderError, load_rule_set
-from policy.obligations import book_pending_findings
 from policy.models import (
     BLOCKING_SEVERITIES,
     SCHEMA_VERSION,
@@ -62,6 +61,7 @@ from policy.models import (
     RuleSet,
     ValidationResult,
 )
+from policy.obligations import book_pending_findings
 from provenance.origin import Origin
 from provenance.origin_runtime import ORIGIN_BY_REASON_CODE, origin_from_failure
 

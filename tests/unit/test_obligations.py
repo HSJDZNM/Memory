@@ -218,12 +218,16 @@ def test_summary_reports_integers_only_and_names_no_ratio(tmp_root: Path) -> Non
     pending(ledger)
     summary = summarize(ledger)
 
-    assert all(
-        isinstance(value, int)
-        for key, value in summary.items()
-        if key in {"records", "pending_records", "test_run_records", "obligations_open", "obligations_closed"}
-    )
-    assert not [key for key in summary if any(word in key for word in ("ratio", "percent", "coverage"))]
+    counted = {
+        "records",
+        "pending_records",
+        "test_run_records",
+        "obligations_open",
+        "obligations_closed",
+    }
+    assert all(isinstance(value, int) for key, value in summary.items() if key in counted)
+    banned = ("ratio", "percent", "coverage")
+    assert not [key for key in summary if any(word in key for word in banned)]
 
 
 # --------------------------------------------------------------------------- 失败关闭

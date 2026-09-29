@@ -142,7 +142,7 @@ def ledger_records(path: Path) -> list:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
-def test_a_pending_write_opens_an_obligation_and_makes_the_volume_incomplete(tmp_root: Path) -> None:
+def test_a_pending_write_opens_an_obligation(tmp_root: Path) -> None:
     """J1(c)：先写测试 → 判定仍是 allow_with_warnings（不阻断），但账本多一条义务、
     `check_volume.complete` 变成 false，而且理由是义务 —— 不是"缺维度"。"""
 

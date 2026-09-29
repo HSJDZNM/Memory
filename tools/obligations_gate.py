@@ -125,7 +125,8 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             print("      " + describe(report))
             if report["last_real_test_run"] is not None:
                 print("      最近一次真实 pytest 运行：" + str(report["last_real_test_run"]["at"]))
-        print("  HITS: " + str(hits) + " / " + str(len(reports)) + " 个账本" + ("（有命中）" if hits else "（0 命中）"))
+        verdict = "（有命中）" if hits else "（0 命中）"
+        print("  HITS: " + str(hits) + " / " + str(len(reports)) + " 个账本" + verdict)
     return 1 if hits else 0
 
 

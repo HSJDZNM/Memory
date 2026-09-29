@@ -116,7 +116,8 @@ def test_an_unreadable_ledger_is_a_usage_error(tmp_root: Path) -> None:
     """协议不认识的账本一律不读（退出码 2）—— 不许把它当成"没有义务"。"""
 
     ledger = tmp_root / "broken.jsonl"
-    ledger.write_text(json.dumps({"kind": "pending", "schema_version": "9.9"}) + chr(10), encoding="utf-8")
+    record = {"kind": "pending", "schema_version": "9.9"}
+    ledger.write_text(json.dumps(record) + chr(10), encoding="utf-8")
 
     completed = run_gate("--ledger", str(ledger))
 

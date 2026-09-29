@@ -54,7 +54,6 @@ from validators.registry import load_test_layout  # noqa: E402
 from .context import build_context, normalize_context, repo_relative_path
 from .engine import EngineError, evaluate
 from .loader import LoaderError, load_rule_set
-from .obligations import ObligationsError
 from .models import (
     BLOCKING_SEVERITIES,
     KNOWN_SCOPE_DIMENSIONS,
@@ -68,6 +67,7 @@ from .models import (
     Violation,
     canonical_identifier,
 )
+from .obligations import ObligationsError
 from .scope import match_scope
 
 __all__ = [
@@ -857,8 +857,9 @@ def obligation_summary(
     if report is not None:
         record = report.record(PYTEST_VALIDATOR_ID)
         if record is not None:
+            nodeids = selected_nodeids(report)
             selected = tuple(
-                sorted({str(item).split("::")[0].replace("\\", "/") for item in selected_nodeids(report)})
+                sorted({str(item).split("::")[0].replace("\\", "/") for item in nodeids})
             )
             record_test_run(
                 ledger,
