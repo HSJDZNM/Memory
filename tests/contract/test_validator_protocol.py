@@ -251,7 +251,10 @@ def test_statuses_partition_into_success_and_failure() -> None:
 
 
 def test_decision_protocol_is_untouched_by_phase_five() -> None:
-    assert SCHEMA_VERSION == "1.0"
+    # 版本已经不是 1.0 了：1.0 → 1.1 是**台阶 3b（D-1(b)）**动的，不是 Phase 5 动的。
+    # 这条用例证明的仍然是"Phase 5 没有往决策载荷里塞东西"（下面这行 evidence 断言），
+    # 只是它现在描述的是"1.1 的第 5 阶段"。
+    assert SCHEMA_VERSION == "1.1"
     assert "evidence" not in ValidationResult.model_fields
     payload = ValidationResult(decision="allow", request_id="req-1").to_decision_dict()
 
@@ -264,6 +267,8 @@ def test_decision_protocol_is_untouched_by_phase_five() -> None:
         "matched_rules",
         "skipped_rules",
         "violations",
+        # 台阶 3b：pending 的独立通道，与 violations 逐字段同形。
+        "pending_findings",
         "required_action",
         "policy_version",
     }

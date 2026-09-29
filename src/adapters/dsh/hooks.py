@@ -112,9 +112,16 @@ EXIT_ALLOW = 0
 EXIT_BLOCK = 2
 
 # 1.1（台阶 3a / H1）：判定记录新增**受控** `decision_reason`（"这次 block 属于哪一类"）。
-# 判定记录是审计协议的一部分，改键集合就按它自己的规则递增版本号——决策协议（1.0）不动：
-# 这个值是**从已有字段派生**的，不是第二份判定（见 `decision_reason`）。
-AUDIT_SCHEMA_VERSION = "1.1"
+# 判定记录是审计协议的一部分，改键集合就按它自己的规则递增版本号——**3a 当时**决策协议
+# （1.0）不动：这个值是**从已有字段派生**的，不是第二份判定（见 `decision_reason`）。
+# （台阶 3b 之后决策协议是 1.1，那是**另一套**协议，与本行的理由无关。）
+#
+# 1.2（台阶 3b / D-1(b)）：判定记录新增 `pending_findings` 通道。为什么必须加这个键：
+# 决策协议的 pending 移出 `violations` 之后，"判定了、有一条待实现"与"判定了、没违规"
+# 在账本上会重新变得一样（两者的 violations 都是空），而这正是 P1 修掉的那类同名两义。
+# 按统一规则（任何协议载荷加键或改语义都递增该协议自己的版本号）递增到 1.2——
+# 决策协议那一侧的 1.0→1.1 是**另一套**协议，两个版本各自演进。
+AUDIT_SCHEMA_VERSION = "1.2"
 
 # 反馈文本长度上限：阻断理由会进入模型上下文，必须足够短且不含敏感内容。
 FEEDBACK_MAX_CHARS = 4000
@@ -176,6 +183,10 @@ LEDGER_OVERRIDE_NOTE = (
 VIOLATIONS_NOTE = (
     "violations 是本次**真的报了违规**的规则；matched_rules 是本次**参与过判定**的规则；"
     "两者不是一回事，warning 命中只产出 allow_with_warnings。"
+    "pending_findings 是第三个、也是唯一一个**不是违规**的通道：「待实现」——选中的测试因"
+    "项目内目标还不存在而没能收集，覆盖它的测试尚未运行。它不阻断，也不进 violations，"
+    "所以一条 allow_with_warnings 记录可能 violations 为空而 pending_findings 非空："
+    "那种记录说的是「这次放行了、但有东西没能查成」，不是「什么都没发生」。"
     "没有 violations 键的记录（context_error / evidence_unavailable / event_replay 等）"
     "表示本次没有做出判定——「没判定」与「判定了、没违规」必须能分开读"
 )
@@ -877,12 +888,29 @@ class DshPreExecuteHook:
             # 也能读到它；它不表示"这条规则本身要求审批"。
             for item in violations:
                 item["required_action"] = decision.required_action.value
+        # 第三通道（台阶 3b / B2）：条目形状与 violations **逐字段相同**（同一个 Evidence
+        # 的字段集合、同一把排序键），只是通道不同——读者不需要为 pending 另学一套形状。
+        pending = [
+            {
+                "rule_id": finding.canonical_id,
+                "severity": finding.severity.value,
+                "message": finding.message,
+                "evidence": finding.evidence.model_dump(exclude_none=True),
+            }
+            for finding in sorted(decision.pending_findings, key=lambda item: item.sort_key)
+        ]
+        if decision.required_action is not None:
+            for item in pending:
+                item["required_action"] = decision.required_action.value
         return {
             "violations": _sanitized(violations, project_root=self.config.project_root),
             "violations_by_severity": _counts_by_severity(
                 violation.severity.value for violation in decision.violations
             ),
             "violations_note": VIOLATIONS_NOTE,
+            # 这个键永远存在（可能是空列表）：与 violations 同一条口径——「判定了、这条通道
+            # 里没有东西」是一个明确的结论，不是一个缺失的键。
+            "pending_findings": _sanitized(pending, project_root=self.config.project_root),
         }
 
     def decision_reason_for_audit(self, decision: ValidationResult) -> Optional[str]:
@@ -1215,6 +1243,13 @@ class DshPreExecuteHook:
             violation.canonical_id
             for violation in decision.violations
         ]
+        # B1：pending 不进 violations，但它同样必须让模型看得见——只读 violations 的话，
+        # "先写测试"的批次在模型眼里会变成 `ALLOWED WITH WARNINGS <tool> <file>:` 后面
+        # **空无一物**（"被警告了，但不知道警告什么"）。带「待实现」后缀是为了让这两种
+        # 条目在同一行里仍然分得开，不与真违规混成一个清单。
+        warnings.extend(
+            f"{finding.canonical_id}（待实现）" for finding in decision.pending_findings
+        )
         stderr = ""
         if decision.decision is Decision.ALLOW_WITH_WARNINGS:
             stderr = (

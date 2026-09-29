@@ -128,4 +128,6 @@ curl.exe -s -X POST http://127.0.0.1:8088/v1/policy/evaluate ^
    这是**故意的**：契约变化必须被看见；
 3. 确认无误后 `python -m policy_api.cli openapi --write` 更新 `api/openapi.json`，
    在同一个提交里说明"为什么变"；
-4. 删字段或改语义 = 新的 `API_SCHEMA_VERSION`，不是"顺手改一下"。
+4. 删字段、**新增键**或改语义 = 新的 `API_SCHEMA_VERSION`，不是"顺手改一下"——
+   统一规则见 AGENTS.md 第 55 条（"只增不改"同样是一次协议变更）；
+   决策载荷自己的版本（`policy.models.SCHEMA_VERSION`）与它无关，各自演进。

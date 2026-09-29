@@ -101,7 +101,11 @@ _RULE_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d+$")
 
 # 决策协议版本。任何字段增删或语义变化都必须显式改这里，
 # 消费方（Phase 2 Adapter / Phase 7 API）只接受 SUPPORTED_SCHEMA_VERSIONS 中的版本。
-SCHEMA_VERSION = "1.0"
+#
+# 1.1（台阶 3b / D-1(b)）：`violations` 的定义被收窄（pending 移出），并新增
+# `pending_findings` 通道。**1.0 的载荷会被拒收**——这是有意的：读者不能靠
+# "violations 里有一条 warning"去猜它是不是 pending（那是同名两义）。
+SCHEMA_VERSION = "1.1"
 SUPPORTED_SCHEMA_VERSIONS: FrozenSet[str] = frozenset({SCHEMA_VERSION})
 
 # 决策载荷里的第二个版本字段：**协议世代名**，只用来给人读"这套载荷是第几代协议"。
@@ -111,7 +115,12 @@ SUPPORTED_SCHEMA_VERSIONS: FrozenSet[str] = frozenset({SCHEMA_VERSION})
 # - schema_version 是唯一兼容轴：字段增删或语义变化时递增，消费方看不懂必须拒绝；
 # - POLICY_VERSION 只与 schema_version 同进同退，**不跟随平台阶段**；
 # - "现在平台走到哪个阶段"看阶段证据的 phase 与 implementation_version，不要回到载荷里找。
-POLICY_VERSION = "phase-1"
+#
+# 为什么世代名写成 `decision-<schema 版本>`（台阶 3b 起，取代 `phase-1`）：
+# 旧名字读起来像一个**平台阶段**，而本条规则明说它不跟随阶段——"证据说 phase-5、
+# 载荷说 phase-1"的事故正是这个名字造成的误读。新名字把"它是哪个协议版本的世代"
+# 写进值本身，平台阶段再怎么走都不会与它混。
+POLICY_VERSION = "decision-1.1"
 
 # scope 中表示"该维度不限制"的显式通配值。没有声明该维度同样表示不限制。
 WILDCARD = "*"
@@ -925,7 +934,18 @@ class SkippedRule(StrictModel):
 
 
 class ValidationResult(StrictModel):
-    """一次 evaluate 的完整结果，可直接序列化为审计证据（Phase 1 决策协议）。"""
+    """一次 evaluate 的完整结果，可直接序列化为审计证据（Phase 1 决策协议）。
+
+    两个**互不替代**的发现通道（台阶 3b / D-1(b)；协议 1.1 起）：
+
+    - `violations`：本次**真的报了违规**的规则（AGENTS 第 46 条钉死的定义）；
+    - `pending_findings`：「待实现」——选中的测试因项目内目标还不存在而没能收集，
+      于是覆盖它的测试**尚未运行**。它不是违规，也不是通过，所以既不进 `violations`
+      （否则第 46 条的定义被同名两义抹平），也不消失（否则"这次没查成"从账本上被删掉）。
+
+    两者共同参与决策：空判定要求**两个通道都空**才给 allow。阻断判定只读 `violations`——
+    pending 条目的 severity 在构造期就被强制为 WARNING，永远进不了 BLOCKING_SEVERITIES。
+    """
 
     schema_version: str = SCHEMA_VERSION
     decision: Decision
@@ -935,6 +955,7 @@ class ValidationResult(StrictModel):
     matched_rules: Tuple[str, ...] = ()
     skipped_rules: Tuple[SkippedRule, ...] = ()
     violations: Tuple[Violation, ...] = ()
+    pending_findings: Tuple[Violation, ...] = ()
     required_action: Optional[RequiredAction] = None
     # 协议世代名，与 SCHEMA_VERSION 同进同退（改这里就等于改协议，必须显式更新快照）
     policy_version: str = POLICY_VERSION
@@ -951,8 +972,27 @@ class ValidationResult(StrictModel):
         return normalized
 
     @model_validator(mode="after")
+    def _pending_findings_are_advisory(self) -> "ValidationResult":
+        """pending 通道的构造期不变量：severity 必须是 WARNING。
+
+        为什么钉在构造期而不是"调用方自觉"：decision 的证明依赖它。阻断判定只读
+        `violations`；如果 pending 能带 error/critical，它就会绕过阻断判定悄悄降低
+        阻断力（"从 violations 搬走 = 放宽"）——那正是 D-1(b) 要避免的事。
+        """
+
+        for item in self.pending_findings:
+            if item.severity is not Severity.WARNING:
+                raise ValueError(
+                    "pending_findings 只承载 severity=warning 的说明："
+                    f"{item.canonical_id} 的 severity 是 {item.severity.value}"
+                )
+        return self
+
+    @model_validator(mode="after")
     def _decision_matches_findings(self) -> "ValidationResult":
-        expected = expected_decision(self.violations, required_action=self.required_action)
+        expected = expected_decision(
+            self.violations, required_action=self.required_action, pending=self.pending_findings
+        )
         if self.decision is not expected:
             raise ValueError(
                 f"decision 与 violations/required_action 不一致：decision={self.decision.value}，"
@@ -966,6 +1006,13 @@ class ValidationResult(StrictModel):
 
     @property
     def severity_counts(self) -> Mapping[str, int]:
+        """**只**统计 `violations` 的严重级别分布。
+
+        pending-only 的批次因此得到 `{}` 而 decision 是 `allow_with_warnings`——
+        这是对的（分布是"违规"的分布），但读者会因此看不懂那行文字输出，所以
+        `check.py` 另有一段 pending 渲染，两者不许互相顶替。
+        """
+
         counts: dict[str, int] = {}
         for violation in self.violations:
             counts[violation.severity.value] = counts.get(violation.severity.value, 0) + 1
@@ -999,6 +1046,18 @@ class ValidationResult(StrictModel):
                 }
                 for violation in self.violations
             ],
+            # 与 violations 条目**逐字段同形**（同一个 _evidence_payload），只是通道不同：
+            # 消费方按同一个解析器读两个通道，不需要为 pending 另写一份形状。
+            "pending_findings": [
+                {
+                    "rule_id": finding.rule_id,
+                    "rule_version": finding.rule_version,
+                    "severity": finding.severity.value,
+                    "message": finding.message,
+                    "evidence": _evidence_payload(finding.evidence),
+                }
+                for finding in self.pending_findings
+            ],
             "required_action": None if self.required_action is None else self.required_action.value,
             "policy_version": self.policy_version,
         }
@@ -1026,20 +1085,31 @@ def _evidence_payload(evidence: Evidence) -> dict[str, Any]:
 
 
 def expected_decision(
-    violations: Tuple[Violation, ...], *, required_action: Optional[RequiredAction] = None
+    violations: Tuple[Violation, ...],
+    *,
+    required_action: Optional[RequiredAction] = None,
+    pending: Tuple[Violation, ...] = (),
 ) -> Decision:
-    """决策表：无违规 → allow；info/warning → allow_with_warnings；error/critical → block。
+    """决策表：无发现 → allow；info/warning/pending → allow_with_warnings；error/critical → block。
 
     需要人工审批时先以 block 表达：授权是前置条件，不能用模糊的 warning 代替。
+
+    `pending`（台阶 3b / D-1(b)）只参与**空判定**：`violations` 与 `pending` 都空才是 allow。
+    阻断判定**一字不动**、且只读 `violations`——pending 的 severity 在构造期被钉成 WARNING，
+    因此把它从 violations 搬到 pending **不可能**造出或消掉一条阻断：
+    改动前后四种 decision 逐个相等（证明与预注册形状见
+    `docs/project/engineering-policy-platform/reviews/governance-capability/15-control-plane-design/13-step3b-d1-field-diff.md` §2/§5.4）。
     """
 
     if required_action is RequiredAction.APPROVAL:
         return Decision.BLOCK
-    return _expected_decision(violations)
+    return _expected_decision(violations, pending)
 
 
-def _expected_decision(violations: Tuple[Violation, ...]) -> Decision:
-    if not violations:
+def _expected_decision(
+    violations: Tuple[Violation, ...], pending: Tuple[Violation, ...] = ()
+) -> Decision:
+    if not violations and not pending:
         return Decision.ALLOW
     if any(violation.severity in BLOCKING_SEVERITIES for violation in violations):
         return Decision.BLOCK

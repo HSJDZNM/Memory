@@ -248,7 +248,7 @@ def test_json_output_matches_policy_decision_contract() -> None:
     assert {"ARCH-001@1", "DOC-001@1", "STYLE-001@1", "STYLE-002@1"} <= set(matched)
     # TESTING-001/002 只在有变更集（operation=create/edit）时参与判断，本次没有 → 必须写明被跳过。
     assert {"TESTING-001@1", "TESTING-002@1"} <= set(skipped_ids)
-    assert result["policy_version"] == "phase-1"
+    assert result["policy_version"] == "decision-1.1"
     assert result["rule_set_hash"] == payload["rule_set"]["identity"]
     violation = result["violations"][0]
     assert violation["rule_id"] == "ARCH-001"

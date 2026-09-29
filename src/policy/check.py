@@ -64,6 +64,7 @@ from .models import (
     PolicyContextError,
     RuleSet,
     ValidationResult,
+    Violation,
     canonical_identifier,
 )
 from .scope import match_scope
@@ -629,25 +630,62 @@ def render_text(
 
     counts = result.severity_counts
     summary = ", ".join(f"{key}={counts[key]}" for key in sorted(counts))
+    if result.pending_findings:
+        # pending **不在** severity_counts 里（那是"违规"的分布，见 ValidationResult）。
+        # 不把它补进这一行，pending-only 的批次就会打出 decision=allow_with_warnings
+        # 配 required_action=None——一行读不出理由的 FAIL（台阶 3b 的 B5）。
+        summary = (summary + ", " if summary else "") + (
+            f"pending_findings={len(result.pending_findings)}"
+        )
     detail = summary or f"required_action={result.required_action.value}"
     lines.append(f"FAIL: decision={result.decision.value}（{detail}）")
     for violation in result.violations:
         lines.append("")
-        evidence = violation.evidence
-        location = f"{evidence.subject} @ {evidence.kind}"
-        if evidence.line is not None:
-            location += f":{evidence.line}"
-        lines.append(f"[{violation.severity.value}] {violation.canonical_id} {location}")
-        lines.append(f"  reason: {violation.message}")
+        lines.extend(_finding_lines(violation))
+    if result.pending_findings:
+        # 同一个渲染函数、另一个段标题：pending 条目的字段与 violations 逐字段同形，
+        # 但**不许**混在同一份清单里——"真的报了违规"与"这次没能查成"必须分开读。
+        lines.append("")
         lines.append(
-            f"  evidence: {evidence.kind}={evidence.value}"
-            + (f" — {evidence.detail}" if evidence.detail else "")
+            "pending_findings（"
+            + str(len(result.pending_findings))
+            + " 条：不是违规，是本次没能查成的说明）:"
         )
-        if evidence.kind == "dependency":
-            lines.append("  expected dependency direction: controller -> service -> repository")
+        for finding in result.pending_findings:
+            lines.append("")
+            lines.extend(_finding_lines(finding))
     if not result.violations:
-        lines.append("（本次没有违规记录：阻断来自授权门禁，不是违规）")
+        if result.required_action is not None:
+            lines.append("（本次没有违规记录：阻断来自授权门禁，不是违规）")
+        elif result.pending_findings:
+            lines.append(
+                "（本次没有违规记录：decision 是 "
+                + result.decision.value
+                + "，理由是上面 pending_findings 那一段，不是违规）"
+            )
     return chr(10).join(lines)
+
+
+def _finding_lines(entry: Violation) -> list[str]:
+    """单条发现的文本渲染：violations 与 pending_findings **共用这一份**。
+
+    两个通道的条目逐字段同形（同一个 _evidence_payload 形状），所以渲染也必须是同一份；
+    分开写两份会让它们将来各自漂移，而"读起来一样"正是这一次要把它们分开的原因。
+    """
+
+    evidence = entry.evidence
+    location = f"{evidence.subject} @ {evidence.kind}"
+    if evidence.line is not None:
+        location += f":{evidence.line}"
+    rendered = [
+        f"[{entry.severity.value}] {entry.canonical_id} {location}",
+        f"  reason: {entry.message}",
+        f"  evidence: {evidence.kind}={evidence.value}"
+        + (f" — {evidence.detail}" if evidence.detail else ""),
+    ]
+    if evidence.kind == "dependency":
+        rendered.append("  expected dependency direction: controller -> service -> repository")
+    return rendered
 
 
 def render_json(
@@ -685,7 +723,8 @@ def render_json(
         "reported_imports": list(imports),
         "evidence": None if report is None else report.to_payload(),
         "exit_code": exit_code,
-        # CLI 包装字段：result 之外的读数，不进决策协议载荷（协议仍是 schema_version 1.0）。
+        # CLI 包装字段：result 之外的读数，不进决策协议载荷（决策协议版本见
+        # policy.models.SCHEMA_VERSION，这里不写死一个字面量）。
         "layer_source": layer_source,
         "result": None if result is None else result.to_decision_dict(),
     }

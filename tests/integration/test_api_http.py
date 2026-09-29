@@ -161,15 +161,21 @@ def test_evaluate_decision_payload_equals_the_core_engine_result(tmp_root: Path)
         "matched_rules",
         "skipped_rules",
         "violations",
+        # 台阶 3b：pending 的独立通道（决策协议 1.1）
+        "pending_findings",
         "required_action",
         "policy_version",
     }
-    assert decision["schema_version"] == "1.0"
+    assert decision["schema_version"] == "1.1"
     assert decision["request_id"] == request_id and decision["trace_id"] == trace_id
     assert decision["decision"] == "block"
     assert body["tenant"] == "alpha"
     assert body["summary"]["decision"] == decision["decision"]
+    # B4（台阶 3b）：summary.violations 只数**真的报了违规**的条数，与决策载荷逐字段一致；
+    # pending 走另一个通道（同一个响应体里的 decision.pending_findings），不计进这个数。
+    # 这里是 block 场景，新通道是一个**明确的空列表**，不是缺失的键。
     assert body["summary"]["violations"] == len(decision["violations"]) == 1
+    assert decision["pending_findings"] == []
     assert body["rule_set"]["hash"] == decision["rule_set_hash"]
     assert body["rule_set"]["hash"].startswith("sha256:")
     assert body["rule_set"]["identity"] == ["ARCH-001@1"]
@@ -715,6 +721,9 @@ def test_validate_runs_the_real_pipeline_and_returns_a_decision(tmp_root: Path) 
     assert body["decision"]["decision"] == "allow"
     assert body["summary"]["decision"] == "allow"
     assert body["decision"]["request_id"] == "it-validate-1"
+    # B4：验证路由（唯一带证据的判定入口）同样给出两个通道；没有待实现时新通道是空列表。
+    assert body["decision"]["pending_findings"] == []
+    assert body["summary"]["violations"] == len(body["decision"]["violations"]) == 0
 
 
 def test_validate_fails_closed_for_a_tenant_without_validators(tmp_root: Path) -> None:

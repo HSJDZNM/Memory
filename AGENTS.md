@@ -15,7 +15,9 @@
   检索层 `src/retrieval/`、语料清单 `knowledge/corpus.yaml`、
   受控执行层 `src/enforcement/`、工具注册表 `registry/`、
   测试 `tests/{unit,contract,integration,security}` 与 CI `.github/workflows/phase-8.yml`；
-- Phase 1 的决策协议为 `SCHEMA_VERSION = "1.0"`，快照在 `tests/fixtures/decisions/`；
+- 决策协议为 `SCHEMA_VERSION = "1.1"`（台阶 3b 起；**1.0 的载荷一律拒收**），
+  世代名 `POLICY_VERSION = "decision-1.1"`（世代名常量在 `src/policy/models.py`，只与
+  `schema_version` 同进同退、不跟随平台阶段），快照在 `tests/fixtures/decisions/`；
 - Phase 2 的 Hook 契约、脱敏事件 fixture 与失败关闭设计分别在 `src/adapters/dsh/README.md`、
   `tests/fixtures/agent_events/dsh/` 与 `docs/project/engineering-policy-platform/phases/phase-2-dsh-adapter.md` 的实施记录里；
   `tools/dsh_sandbox_loop.py` 在 dsh 缺失**或**沙箱禁止管道 stdio（Hook spawn EPERM）时按环境跳过
@@ -242,7 +244,8 @@
     （`python -m policy_api.cli self-check` 与契约测试都会查）。
 31. API 的 DTO 与领域模型分开，且两套版本各自演进：`API_SCHEMA_VERSION`（传输协议）与
     `policy.models.SCHEMA_VERSION` / `POLICY_VERSION`（决策协议与世代）**无关**；
-    后者只能从核心取值，`policy_api` 不许自己算一个；删字段或改语义 = 新 API 版本，
+    后者只能从核心取值，`policy_api` 不许自己算一个；删字段、**新增键**或改语义 = 新 API 版本
+    （统一规则见第 55 条——"只增不改"同样是一次协议变更），
     改完必须 `python -m policy_api.cli openapi --write` 显式更新契约快照（`--check` 是 CI 门禁）。
 32. API 的三条信任规则：**租户只来自令牌**（请求体里的 tenant 只是提示，越权即拒绝）、
     **客户端不能自带证据或决策**（证据只由服务端验证器流水线产出，检索的 `decision_ref`
@@ -375,9 +378,19 @@
     `ValidatorStatus.PENDING_IMPLEMENTATION`（中文「待实现」）这条**显式状态**：
     不产生 Blocker、`failing_tests` **不进** `served_checkers`（没查成的不能记成查过了），
     报告与审计里带上 `pending_implementation` 清单（测试模块 + 缺失目标 + 修复动作），
-    判定侧产出 **warning 级** violation，于是 decision 是 `allow_with_warnings`——
-    「先写测试、再写实现」因此不再被自己的平台拦死，而绕法（把测试先写成不测任何东西的占位）
-    也不再是唯一出路。**反例一条都不许放宽**：第三方包缺失、语法错误、conftest 出错、
+    判定侧**不**把它记成 violation，而是产出 **warning 级**的**独立发现**
+    （`ValidationResult.pending_findings`，审计记录里同名的键），
+    decision 仍是 `allow_with_warnings`——「先写测试、再写实现」因此不再被自己的平台拦死，
+    而绕法（把测试先写成不测任何东西的占位）也不再是唯一出路。
+    **为什么必须独立成通道**（2026-09-29 裁定 D-1(b)，台阶 3b 落地）：第 46 条把
+    `violations` 的定义钉死为"本次**真的报了违规**的规则"，而 pending 不是违规——
+    混在同一个键里就是同名两义（第 50 条）。移出之后 `violations` 一个条目都不多、
+    四种 decision 与改动前**逐个相等**（判据 J1(b)：`violations` 里没有 pending 条目），
+    pending 的可见性改由新通道承接：`pending_findings` 在决策载荷、审计记录与给模型看的
+    stderr 里都出现，**空通道是一个明确的空列表，不是一个缺失的键**。
+    `expected_decision` 的空判定因此要求"两个通道都空"，阻断判定**一字不动**且只读
+    `violations`（pending 的 severity 在**构造期**被强制为 warning，进不了阻断级）。
+    **反例一条都不许放宽**：第三方包缺失、语法错误、conftest 出错、
     断言失败、退出码不是收集失败形态、目标解析不出来——全部保持真违规（规则自己的 severity）
     或原来的失败关闭（crashed/unavailable critical）。这条路**不证明测试最终会通过**：
     它只说明这次的树还在构建中，测试是否通过由后续动作的取证与 PostToolUse 事后核对重新算。
@@ -404,6 +417,21 @@
     （有门禁就必须有数据）。**维护纪律**：改 `adapters/<agent>/manifest.yaml` 之后先
     `python -m adapters.cli approve --reviewer <name>`，**再**在装着真实宿主的机器上跑
     `host-version --record`，把记录的 diff 送评审；版本不一致**不改变任何 allow/block**。
+55. **加键就是改协议**（台阶 3b 的统一规则，2026-09-29 裁定）：任何协议载荷**新增键**或
+    改语义，都必须按**该协议自己的**版本号显式递增，并把写死版本号的引用点（协议快照、
+    契约快照、断言、生成物、跨语言/跨包的副本）在**同一个提交**里改完。
+    **"只增不改、旧消费方还能读"不是跳过升版的理由**：加了键却不升版，会让同一个版本号
+    底下存在两种载荷形状——那是第 50 条"同名两义"在协议层的形态，比一次显式的拒收更难发现。
+    本仓库现有的版本轴（各自独立演进，谁也不跟随平台阶段）：
+    - `policy.models.SCHEMA_VERSION`（决策载荷）与世代名 `POLICY_VERSION`（只与它同进同退）；
+    - `policy.evidence.EVIDENCE_SCHEMA_VERSION` / `validators.pipeline.PIPELINE_SCHEMA_VERSION`；
+    - `adapters.dsh.hooks.AUDIT_SCHEMA_VERSION`（判定记录）；
+    - `policy_api.models.API_SCHEMA_VERSION` 与 `policy_api.observability.REQUEST_LOG_SCHEMA_VERSION`。
+    **历史先例只登记、不回改**：P1（审计记录新增 `violations` / `violations_by_severity` /
+    `violations_note`）与台阶 2（新增 `origin` 一族键）都**加了键而没有递增**
+    `AUDIT_SCHEMA_VERSION`——它们是本规则生效前的既成事实，登记在这里是为了让后来者知道
+    "当时没升版"，**不是可以再犯的先例**；从台阶 3a（`decision_reason` → 审计 1.0→1.1）起
+    已按本规则执行，台阶 3b（`pending_findings` → 审计 1.1→1.2、决策 1.0→1.1）同。
 
 ## 临时文件与产物
 

@@ -339,7 +339,7 @@ adapter 配置里的 `enforcement_ledger` **只在不带 `--audit` 时生效**�
 
 | 阻断类型 | `reason_code` 的取值 | 理由写在哪 | 顶层 `detail` |
 | --- | --- | --- | --- |
-| 规则级 block（Policy Engine 判的） | `policy_block` | 判定字段：`decision` / `violations`（哪几条规则）/ `violations_note` / `matched_rules` / `required_action` | **不出现**（规则级阻断的理由是结构化的，没有一段自由文本） |
+| 规则级 block（Policy Engine 判的） | `policy_block` | 判定字段：`decision` / `violations`（哪几条规则）/ `pending_findings`（待实现）/ `violations_note` / `matched_rules` / `required_action` | **不出现**（规则级阻断的理由是结构化的，没有一段自由文本） |
 | 失败关闭（上下文 / 证据 / 引擎 / 接线 / 重放 / 未知决策） | `context_error` / `evidence_unavailable` / `engine_error` / `policy_timeout` / `config_error` / `internal_error` / `wiring_error` / `event_replay` / `event_id_reuse` / `unknown_decision` | 顶层 **`detail`** | 就是它 |
 | Phase 4 门禁（授权 / 参数 / 审批 / 限流 / pre-check） | `reason_code`（Phase 4 另写入同值的 `enforcement_reason`） | 顶层 **`enforcement_reason` + `enforcement_detail`** | **不出现** |
 
@@ -419,7 +419,10 @@ Phase 4 门禁有 `enforcement_detail` 而没有 `detail`），以及
 
 没有文件维度的受控动作（pwsh / run_code 等）写 `effective_rule_count: 0` +
 `skipped_reason: {"phase1_not_applicable": N}`：Phase 1 一条规则都没跑，不留空让人误读成"查过了"。
-既有字段（`matched_rules` / `skipped_rules` / …）与 `AUDIT_SCHEMA_VERSION = "1.0"` 一律不动。
+既有字段（`matched_rules` / `skipped_rules` / …）只增不改；审计记录协议自己的版本号随
+**键集合**走（统一规则见 AGENTS 第 55 条）：台阶 3a 加 `decision_reason` → `1.1`，
+台阶 3b 加 `pending_findings` → `1.2`。P1 与台阶 2 当时"加键未升版"是既成事实，
+登记在 AGENTS 第 55 条里，不作为可以再犯的先例。
 
 **会失败的检查**：`tests/unit/test_hook_skip_visibility.py`（确定性单测 + 真实产物的字段断言，
 含"既有字段只增不改"的清单与 `skipped_reason` 归类）。
@@ -574,7 +577,8 @@ pre-execute 记录里 `violations` 字段出现 **0 次**）——那份清单�
 | --- | --- |
 | `violations` | 本次**真的报了违规**的规则，逐条 `{rule_id, severity, message, evidence[, required_action]}`；`rule_id` 是 canonical 形态（`ARCH-001@1`），`evidence` 与决策载荷里的 evidence 子对象**逐字段相同**（复用 `Evidence` 自己的字段集合，不另写一份序列化）；排序用 `Violation.sort_key`；判定了但没有违规时是 `[]` |
 | `violations_by_severity` | 上面那份清单按严重级别的条数（与 M3 的 `*_by_severity` 同一口径：键排序、只列出现过的级别） |
-| `violations_note` | 一句话口径：`violations` 是**真的报了违规**的规则，`matched_rules` 是**参与过判定**的规则，两者不是一回事，warning 命中只产出 `allow_with_warnings` |
+| `pending_findings` | 第三个通道（台阶 3b）："待实现"——选中的测试因项目内目标还不存在而没能收集。条目形状与 `violations` **逐字段相同**，`severity` 恒为 `warning`；**不是违规**，所以不进 `violations`，也不阻断。判定了、但这条通道里没有东西时是 `[]`（明确的空列表，不是缺失的键） |
+| `violations_note` | 一句话口径：`violations` 是**真的报了违规**的规则，`matched_rules` 是**参与过判定**的规则，`pending_findings` 是唯一一个**不是违规**的通道，两者与它都不是一回事，warning 命中只产出 `allow_with_warnings` |
 
 `required_action` 是**决策级**字段（审批门禁）：有值时逐条附在违规上（单看一行也能读到
 它），没有值时不写这个键。字符串一律走 `sanitize(..., project_root=...)`：绝对路径与凭据

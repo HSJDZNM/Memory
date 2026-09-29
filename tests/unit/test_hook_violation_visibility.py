@@ -304,6 +304,51 @@ def test_an_allow_decision_says_there_were_no_violations(dsh_config_path):
     # 「判定了、没违规」是一个明确的结论，不是一个缺失的键
     assert visibility["violations"] == []
     assert visibility["violations_by_severity"] == {}
+    # 台阶 3b：pending 通道同样是"明确的空列表"，两条记录在键集合上没有差别。
+    assert visibility["pending_findings"] == []
+
+
+def test_a_pending_only_decision_is_distinguishable_from_a_clean_one(dsh_config_path):
+    """B2（台阶 3b）：账本必须分得开"判定了、有一条待实现"与"判定了、没违规"。
+
+    决策协议的 pending 移出 violations 之后，这两条记录的 `violations` **都是空列表**；
+    没有这条断言，它们在账本上会重新变得一模一样——而 P1 修掉的正是这一类同名两义。
+    注意两个键在两条记录里**都存在**：空通道是一个明确的结论，不是一个缺失的键。
+    """
+
+    hook = visibility_hook(dsh_config_path)
+    clean = hook.violation_visibility(
+        ValidationResult(decision=Decision.ALLOW, request_id="req-1")
+    )
+    pending_only = hook.violation_visibility(
+        ValidationResult(
+            decision=Decision.ALLOW_WITH_WARNINGS,
+            request_id="req-2",
+            pending_findings=(
+                Violation(
+                    rule_id="TESTING-002",
+                    rule_version=1,
+                    severity=Severity.WARNING,
+                    message="待实现（不是测试失败）：覆盖它的测试尚未能运行",
+                    evidence=Evidence(
+                        kind="failing_tests",
+                        subject="tests/test_audit_repository.py",
+                        value="shop.audit_repository:AuditEntry",
+                    ),
+                ),
+            ),
+        )
+    )
+
+    assert clean["violations"] == [] and clean["pending_findings"] == []
+    assert pending_only["violations"] == []
+    assert pending_only["violations_by_severity"] == {}
+    assert [item["rule_id"] for item in pending_only["pending_findings"]] == ["TESTING-002@1"]
+    assert pending_only["pending_findings"][0]["severity"] == "warning"
+    assert "待实现" in pending_only["pending_findings"][0]["message"]
+    assert set(pending_only["pending_findings"][0]["evidence"]) >= {"kind", "subject", "value"}
+    # 两个通道**不是**同一份清单：把 pending 挪回 violations 会让这一行失败。
+    assert pending_only["pending_findings"] != pending_only["violations"]
 
 
 def test_the_note_writes_down_the_two_meanings(dsh_config_path):
@@ -317,6 +362,10 @@ def test_the_note_writes_down_the_two_meanings(dsh_config_path):
     assert "allow_with_warnings" in note
     # 哪些记录没有这个键，必须写在口径旁边，而不是靠读者猜
     assert "没有做出判定" in note
+    # B3（台阶 3b）：第三个通道也必须写进同一段口径——否则读者会把
+    # "violations 是空的"直接读成"什么都没发生"。
+    assert "pending_findings" in note
+    assert "不是违规" in note
 
 
 def test_the_required_action_is_visible_on_every_violation(dsh_config_path):

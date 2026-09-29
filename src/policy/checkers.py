@@ -24,7 +24,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, List, Mapping, Optional, Tuple
+from typing import Callable, List, Mapping, NamedTuple, Optional, Tuple
 
 from .evidence import (
     Blocker,
@@ -49,11 +49,12 @@ __all__ = [
     "UNPROVEN_CHANGED_TEXT",
     "UNPROVEN_DEPENDENCY_TOKENS",
     "UNPROVEN_DYNAMIC_IMPORT",
+    "CheckerFindings",
     "blocker_violation",
     "checker_handler",
     "dependency_forbidden",
     "dependency_words",
-    "pending_implementation_violation",
+    "pending_implementation_finding",
     "uncovered_checker_violation",
     "unproven_dependency_violation",
 ]
@@ -85,7 +86,19 @@ UNPROVEN_REASONS: Mapping[str, str] = {
     ),
 }
 
-Handler = Callable[[Rule, PolicyContext, Optional[EvidenceBundle]], List[Violation]]
+class CheckerFindings(NamedTuple):
+    """一个 checker 在一条规则上交给引擎的**两个**发现通道（台阶 3b / D-1(b)）。
+
+    为什么一个 handler 要一次交回两条流：`decision` 需要它们共同参与（空判定要求
+    两个通道都空），而它们的语义必须分开（详见 ValidationResult 的文档串）。
+    分成两次调用会让"这条规则的两个通道是否自洽"变成调用方的纪律，而不是结构。
+    """
+
+    violations: Tuple[Violation, ...] = ()
+    pending_findings: Tuple[Violation, ...] = ()
+
+
+Handler = Callable[[Rule, PolicyContext, Optional[EvidenceBundle]], CheckerFindings]
 
 
 def dependency_words(value: str) -> Tuple[str, ...]:
@@ -148,26 +161,29 @@ def _finding_violations(
 
 def _evidence_violations(
     rule: Rule, context: PolicyContext, evidence: Optional[EvidenceBundle]
-) -> List[Violation]:
-    """证据类 checker 的统一入口：真的报了违规的证据 + 「待实现」的 warning。
+) -> CheckerFindings:
+    """证据类 checker 的统一入口：两个通道**各产各的**（台阶 3b / D-1(b)）。
 
     两者不会同时出现在同一条规则上：出现「待实现」就意味着本次**没有**取得该 checker 的
     证据（验证器状态是 pending_implementation，不是 findings）——这也正是它必须能读出来的原因。
     """
 
-    violations = _finding_violations(rule, context, evidence)
     if evidence is None:
-        return violations
+        return CheckerFindings()
     checker = rule.enforcement.checker or ""
-    violations.extend(
-        pending_implementation_violation(rule, item)
-        for item in evidence.pending_for(checker)
+    return CheckerFindings(
+        violations=tuple(_finding_violations(rule, context, evidence)),
+        pending_findings=tuple(
+            pending_implementation_finding(rule, item) for item in evidence.pending_for(checker)
+        ),
     )
-    return violations
 
 
-def pending_implementation_violation(rule: Rule, pending: PendingImplementation) -> Violation:
+def pending_implementation_finding(rule: Rule, pending: PendingImplementation) -> Violation:
     """「待实现」：不阻断也不是普通 allow，用 warning 把"覆盖它的测试还跑不了"写进判定。
+
+    **它不再是 violation**（所以名字里不再带 `_violation`，AGENTS 第 50 条"同名两义一律改名"）：
+    它的去处是 ValidationResult.pending_findings，不是 violations。
 
     为什么 severity 固定是 warning、**不取规则自己的级别**（TESTING-002 是 error）：
     这条不是"检查发现了问题"，而是"这次的树还在构建中"。用规则级别会把它重新变成阻断，
@@ -261,7 +277,7 @@ def unproven_dependency_violation(
 
 def _forbidden_dependency(
     rule: Rule, context: PolicyContext, evidence: Optional[EvidenceBundle]
-) -> List[Violation]:
+) -> CheckerFindings:
     """ARCH-001 形态：依赖标识命中 forbidden_dependency 即违规。
 
     三条路径共用同一套匹配语义（policy.checkers.dependency_forbidden）：
@@ -274,13 +290,13 @@ def _forbidden_dependency(
 
     forbidden = tuple(rule.rule.forbidden_dependency)
     if not forbidden:
-        return []
+        return CheckerFindings()
 
     unproven = tuple(
         sorted(name for name in context.dependencies if name in UNPROVEN_DEPENDENCY_TOKENS)
     )
     if unproven:
-        return [unproven_dependency_violation(rule, context, unproven)]
+        return CheckerFindings(violations=(unproven_dependency_violation(rule, context, unproven),))
 
     if evidence is None:
         hits = [
@@ -288,22 +304,24 @@ def _forbidden_dependency(
             for name in context.dependencies
             if any(dependency_forbidden(token, name) for token in forbidden)
         ]
-        return [
-            Violation(
-                rule_id=rule.id,
-                rule_version=rule.version,
-                severity=rule.severity,
-                message=rule.message,
-                evidence=Evidence(
-                    kind="dependency",
-                    subject=context.file,
-                    value=name,
-                    file=context.file,
-                    detail=f"layer={context.layer} 直接依赖 {name}",
-                ),
+        return CheckerFindings(
+            violations=tuple(
+                Violation(
+                    rule_id=rule.id,
+                    rule_version=rule.version,
+                    severity=rule.severity,
+                    message=rule.message,
+                    evidence=Evidence(
+                        kind="dependency",
+                        subject=context.file,
+                        value=name,
+                        file=context.file,
+                        detail=f"layer={context.layer} 直接依赖 {name}",
+                    ),
+                )
+                for name in hits
             )
-            for name in hits
-        ]
+        )
 
     violations: List[Violation] = []
     for fact in evidence.dependencies:
@@ -327,7 +345,9 @@ def _forbidden_dependency(
                 ),
             )
         )
-    return violations
+    # 依赖类 checker 没有 pending 通道：它的证据来自上下文/AST，不来自验证器选择，
+    # 「待实现」描述的是"选中的测试没能收集"，与这条 checker 无关。
+    return CheckerFindings(violations=tuple(violations))
 
 
 def _dependency_detail(context: PolicyContext, fact: DependencyFact) -> str:
@@ -350,8 +370,9 @@ def checker_handler(checker: str) -> Handler:
 
 _HANDLERS: Mapping[str, Handler] = {
     "forbidden_dependency": _forbidden_dependency,
-    # 证据类 checker 共用同一个入口：证据 → 违规，以及「待实现」→ warning。
+    # 证据类 checker 共用同一个入口：证据 → 违规，以及「待实现」→ 独立通道的 warning。
     # 后者由规则自己的 checker 决定归属（pending 记录只在它声明的 checker 上生效）。
+    # 两个通道在同一次调用里一起交回，调用方（引擎）无法只取一半。
     "missing_docstring": _evidence_violations,
     "style_lint": _evidence_violations,
     "type_check": _evidence_violations,

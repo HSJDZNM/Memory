@@ -5,8 +5,11 @@
 1. **防止传输字段污染核心**：`trace_id`、`budget_ms`、`idempotency_key` 属于传输层，
    核心的 PolicyContext 不认识它们；核心改字段也不该自动变成线上协议的变化。
 2. **两套版本各自演进**：`API_SCHEMA_VERSION` 是**传输协议**版本，
-   `policy.models.SCHEMA_VERSION` 是**决策载荷**版本。删一个可选字段是新 API 版本，
-   不是新决策协议；改规则语义是决策协议的事，与 API 版本无关。
+   `policy.models.SCHEMA_VERSION` 是**决策载荷**版本。改 API 的载荷（含**加键**）
+   是新 API 版本，不是新决策协议；改规则语义是决策协议的事，与 API 版本无关。
+   统一规则（AGENTS.md 第 31 条，"任何协议载荷加键或改语义都按该协议自己的版本号递增"）
+   比本包原先只写"删字段或改语义"的口径更严：**加键也要升版**，所以"只增不改"的改动
+   在这里同样是一次 API 协议变更，不是"顺手加一个字段"。
 3. **未知字段一律报错**：`extra="forbid"` + 未知版本拒绝，与核心层同一条纪律。
 
 请求体做成**信封**形态（`api_version` / `credentials` / `request_id` / `trace_id` /
