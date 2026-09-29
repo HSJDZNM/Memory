@@ -294,6 +294,7 @@ Phase 4 之后，受控工具（写类 + 高权限执行类）在 Hook 里多走
     registry_approved:    <仓库>/registry/tool-registry.approved.json   # 已审核哈希
     enforcement_ledger:   .policy/enforcement-ledger.jsonl              # 幂等 / 授权 / 限流台账（可选）
     approval_file:        .policy/approval.json                         # 高风险动作审批（可选）
+    obligations_ledger:   .policy/obligations.jsonl                     # 义务账（可选，台阶 3c）
 
 两条与 Phase 2 不同的行为（都有回归用例）：
 
@@ -301,6 +302,20 @@ Phase 4 之后，受控工具（写类 + 高权限执行类）在 Hook 里多走
   绑定审批时直接阻断；未登记的工具（例如 workflow / str_replace_editor）一律 tool_not_registered；
 - **PostToolUse 不再是"未支持事件"**：它成为事后验证入口，退出码 2 表示"这次执行的结果不可信、
   需要修复"（副作用无法撤销，dsh 只能把工具结果标成错误）。
+
+
+**台阶 3c 的义务账（可选，只记账、不判罚）**：声明了 `obligations_ledger` 之后，判定里出现
+「待实现」（`pending_findings`）时，Hook 会把 `(rule_id, target, missing_target)` 记进那份账本，
+并在 stderr 打一行 `[policy] obligations recorded=N ledger=…`。三条边界写死在实现里：
+
+- **不改判定**：记账失败（路径写不了 / 账本协议读不懂）只打一行
+  `[policy] OBLIGATIONS LEDGER UNAVAILABLE …`，退出码与 decision 一字不变（L5 warn 期）；
+- **不记解除**：解除只认一次**真实** pytest 运行，而这份证据（这次到底选中并执行了哪些测试）
+  在预取证摘要里没有结构化字段 —— 按 `served_checkers` 猜会把"选了一堆用例却一个都没跑起来"
+  读成跑过了。解除由 `python -m policy.check --obligations` 记（它手里有真流水线报告）；
+- **没声明 = 不记账**（不是"没有义务"），账本文件不会被凭空创建。
+
+读数与判罚在 `tools/obligations_gate.py`（L5 试用期：warn + 非零退出，本轮不是门禁的阻断步）。
 
 ### 8.1 台账路径在带 `--audit` 时被派生（N21）
 

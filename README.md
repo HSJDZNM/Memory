@@ -257,7 +257,7 @@ checker 提供证据"时，需要它的规则以 `critical` 违规阻断——�
 
 **证据与判定分离**：验证器只产证据（`ValidationEvidence`），最终 allow / block 仍由 Policy Engine
 决定；证据里带验证器 ID/版本、规则 ID、文件与行列、工具退出码、配置文件哈希，可逐条追溯。
-证据不写进决策协议（协议仍是 `1.0`）：它在 `--json` 的 `evidence` 段与 `validators.cli` 里。
+证据不写进决策协议（决策协议见 `policy.models.SCHEMA_VERSION`，当前 `1.1`）：它在 `--json` 的 `evidence` 段与 `validators.cli` 里。
 
 **外部工具**：Ruff / mypy / pytest 都是"外部工具"而不是本项目的 Python 依赖——版本区间与配置文件
 在 `validation/validators.yaml`（数据）里声明，探针负责发现，缺失即失败关闭。
@@ -269,6 +269,32 @@ checker 提供证据"时，需要它的规则以 `critical` 违规阻断——�
 类型检查端口与失败语义已经就位，但没有启用类型规则：本机与 CI 都没有装 mypy，
 启用它会让所有 Python 文件在缺工具时一次性判红——这是数据决定的事，不是代码决定的。
 逐篇的"哪篇文档变成了哪条规则、哪篇没有"见 `docs/project/architecture/规则转化覆盖报告.md`。
+
+### 义务账（台阶 3c · L5 试用期）
+
+「先写测试、再写实现」时，覆盖它的测试当下还跑不起来（判定载荷里的 `pending_findings`，
+AGENTS 第 51 条）。义务账把这件事**跨会话**记下来，并且**只由一次真实 pytest 运行**解除：
+
+```text
+# 1) 判定时记账：这次判定里的「待实现」写进账本，check_volume 顺带给出 obligations_open
+uv run python -m policy.check src/shop/order_service.py --layer service \
+    --operation edit --changed src/shop/order_service.py \
+    --obligations .tmp/obligations/repo.jsonl --json
+
+# 2) 让测试真的跑一次（同一个账本）—— 解除只认这件事，账本自己推断不出解除
+uv run python -m policy.check src/shop/order_service.py --layer service \
+    --operation edit --changed src/shop/order_service.py \
+    --obligations .tmp/obligations/repo.jsonl --json
+
+# 3) 门禁读数（warn：非零退出只报告，不阻断；**本轮它不是 ci_local 的步骤**）
+uv run python tools/obligations_gate.py --ledger .tmp/obligations/repo.jsonl
+```
+
+**三条口径**：键是 `(rule_id, target, missing_target)`、**不含会话标识**（新会话不许把义务
+清零）；`obligations_open > 0` 时 `check_volume.complete = false`；
+`obligations_open == 0` 必须同时给出「最近一次真实测试运行」—— 给不出就是**没有依据**，
+门禁按命中处理。dsh 会话侧只**记账**（`dsh-adapter.yaml` 里可选的 `obligations_ledger`），
+它不改判定、不阻断；解除仍只由真流水线（`--obligations`）判定。
 
 ### 多 Agent 适配（Phase 6）
 

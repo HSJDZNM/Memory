@@ -54,6 +54,7 @@ from validators.registry import load_test_layout  # noqa: E402
 from .context import build_context, normalize_context, repo_relative_path
 from .engine import EngineError, evaluate
 from .loader import LoaderError, load_rule_set
+from .obligations import ObligationsError
 from .models import (
     BLOCKING_SEVERITIES,
     KNOWN_SCOPE_DIMENSIONS,
@@ -219,6 +220,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--keep-temp",
         action="store_true",
         help="保留本次运行的临时目录（默认用完即删，目录在 .tmp/validators 下）",
+    )
+    parser.add_argument(
+        "--obligations",
+        default=None,
+        metavar="PATH",
+        help=(
+            "义务账本（JSONL）：本次判定里的「待实现」记进去、流水线里真实跑成的 pytest 运行"
+            "记进去并解除对应义务；check_volume 会据此给出 obligations_open。"
+            "不给这一项 = 不记账（不是「没有义务」）"
+        ),
     )
     return parser
 
@@ -465,6 +476,7 @@ def build_check_volume(
     result: ValidationResult,
     *,
     evidence: Any | None = None,
+    obligations: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """把"这次到底查了多少"写成结构化摘要（只读，不改变任何判定）。
 
@@ -484,6 +496,11 @@ def build_check_volume(
     本次上下文的实际取值逐一比较，列出"规则要、上下文没有"的维度名。
     `complete = not missing_dimensions`：声明得够不够全，与"有没有证据"是两条轴。
     `served_checkers` 只认证据报告（EvidenceBundle.served_checkers），不认声明。
+
+    台阶 3c（J1(c)）：调用方**显式**给出义务账摘要时，`complete` 还要再与 `obligations_open == 0`
+    取合取——一份"有规则根本没被查"的读数与一份"有义务还挂着"的读数都不该被读成完整判定。
+    没给账本时**不加任何键**：缺键的意思是"这次没有账本可读"，不是"0 条未结义务"
+    （两者必须能分开读，AGENTS 第 46/50 条）。
     """
 
     canonical = normalize_context(context)
@@ -530,7 +547,7 @@ def build_check_volume(
 
     missing.sort(key=_dimension_sort_key)
     served: tuple[str, ...] = () if evidence is None else tuple(evidence.served_checkers)
-    return {
+    volume = {
         "rule_count": len(rules.rules),
         "effective_rule_count": len(result.matched_rules),
         "skipped_rule_count": len(result.skipped_rules),
@@ -542,6 +559,12 @@ def build_check_volume(
         "complete": not missing,
         "note": CHECK_VOLUME_NOTE,
     }
+    if obligations is not None:
+        open_count = int(obligations["obligations_open"])
+        volume["obligations_open"] = open_count
+        volume["obligations_note"] = str(obligations["note"])
+        volume["complete"] = volume["complete"] and open_count == 0
+    return volume
 
 
 def render_check_volume(volume: Mapping[str, Any]) -> list[str]:
@@ -565,7 +588,7 @@ def render_check_volume(volume: Mapping[str, Any]) -> list[str]:
         f"  served_checkers: {served}",
         f"  missing_dimensions: {missing}",
     ]
-    if not volume["complete"]:
+    if volume["missing_dimensions"]:
         flags = ", ".join(DIMENSION_FLAGS.get(name, name) for name in volume["missing_dimensions"])
         lines.append(
             "INCOMPLETE: 本次有 "
@@ -573,6 +596,17 @@ def render_check_volume(volume: Mapping[str, Any]) -> list[str]:
             f"维度而根本没有被查（缺 {missing}）；补 {flags} 后重跑——"
             "skipped ≠ passed，这个 allow 比完整判定弱"
         )
+    if "obligations_open" in volume:
+        # 台阶 3c：义务账的读数是**单独一行**，不与「缺维度」混成同一句话——
+        # complete 可能因为两个不同的原因变成 false，理由必须说得出来（AGENTS 第 52 条）。
+        lines.append("  obligations_open: " + str(volume["obligations_open"]))
+        if volume["obligations_open"]:
+            lines.append(
+                "OPEN OBLIGATIONS: 本次有 "
+                + str(volume["obligations_open"])
+                + " 条未结义务（覆盖它的测试还没能真的跑起来）；"
+                "解除只由一次真实 pytest 运行判定——让测试真的跑一次，并带上同一个 --obligations 账本"
+            )
     return lines
 
 
@@ -785,6 +819,73 @@ def collect_evidence(
     return run_pipeline(request, config=config, keep_temp=bool(args.keep_temp))
 
 
+def obligation_summary(
+    args: argparse.Namespace,
+    *,
+    context: PolicyContext,
+    result: ValidationResult,
+    report: Any | None,
+) -> Mapping[str, Any]:
+    """台阶 3c：把本次判定与本次流水线的事实记进义务账，并给出摘要。
+
+    记账是**只增**的：它不改变 `result`、不改变退出码（L5 warn 期的口径，方案 §3.3 的
+    "会话内只记账、不判罚"）。但账本读不懂 / 写不了时**失败关闭**（调用方返回退出码 2）——
+    `--obligations` 是调用方显式声明的输入，"声明了却读不懂"与"没声明"必须能分开读。
+
+    `python -m policy.check` 是**本机门禁**这一侧的记账点：它手里同时有判定（pending_findings）
+    与真流水线（这次 pytest 到底跑成没有），因此解除义务的那条 `test_run` 只能在这里记。
+    """
+
+    from .obligations import (
+        PYTEST_VALIDATOR_ID,
+        book_pending_findings,
+        real_pytest_run,
+        record_test_run,
+        summarize,
+    )
+
+    ledger = Path(args.obligations)
+    snapshot = ()
+    if report is not None:
+        snapshot = tuple(report.pending_implementation)
+    book_pending_findings(
+        ledger,
+        findings=result.pending_findings,
+        target=context.file,
+        pending_snapshot=[item.to_payload() for item in snapshot],
+    )
+    if report is not None:
+        record = report.record(PYTEST_VALIDATOR_ID)
+        if record is not None:
+            selected = tuple(
+                sorted({str(item).split("::")[0].replace("\\", "/") for item in selected_nodeids(report)})
+            )
+            record_test_run(
+                ledger,
+                target=context.file,
+                selected_tests=selected,
+                python_tests_executed=real_pytest_run(
+                    pytest_status=record.status.value,
+                    served_checkers=report.served_checkers,
+                    selected_tests=selected,
+                ),
+                source="policy.check",
+            )
+    return summarize(ledger)
+
+
+def selected_nodeids(report: Any) -> tuple[str, ...]:
+    """流水线报告里这次**选中**的测试（`selection.nodeids`；取不到就是空元组，不猜）。"""
+
+    selection = getattr(report, "selection", None)
+    if not isinstance(selection, Mapping):
+        return ()
+    nodeids = selection.get("nodeids")
+    if not isinstance(nodeids, (list, tuple)):
+        return ()
+    return tuple(str(item) for item in nodeids if item)
+
+
 def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
     args = build_parser().parse_args(argv)
     anchor = root if root is not None else repo_root()
@@ -854,8 +955,19 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
         )
 
     # P5：读数与判定必须来自同一次运行——evidence 就是交给引擎的那个证据包。
+    obligations = None
+    if result is not None and args.obligations:
+        try:
+            obligations = obligation_summary(args, context=context, result=result, report=report)
+        except ObligationsError as error:
+            print(f"config error: 义务账本不可用：{error}", file=sys.stderr)
+            return EXIT_ERROR
     volume = (
-        None if result is None else build_check_volume(rules, context, result, evidence=evidence)
+        None
+        if result is None
+        else build_check_volume(
+            rules, context, result, evidence=evidence, obligations=obligations
+        )
     )
 
     if args.json:

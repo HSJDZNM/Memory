@@ -52,6 +52,7 @@ from policy.checkers import CONTEXT_CHECKERS
 from policy.engine import EngineError, evaluate
 from policy.evidence import EvidenceBundle
 from policy.loader import LoaderError, load_rule_set
+from policy.obligations import book_pending_findings
 from policy.models import (
     BLOCKING_SEVERITIES,
     SCHEMA_VERSION,
@@ -918,6 +919,46 @@ class DshPreExecuteHook:
 
         return decision_reason(decision)
 
+    def book_obligations(
+        self, decision: ValidationResult, *, event: PolicyEvent, record: Mapping[str, Any]
+    ) -> None:
+        """台阶 3c：把这次判定的「待实现」记进义务账（方案 §3.3）。
+
+        **只记账、不判罚**：这一段既不产出也不修改 decision，异常也不改变任何 allow/block
+        （L5 warn 期）。但失败必须**显式**写出来 —— 静默失败会让「这次没记上」与「这次没有义务」
+        长得一模一样，而那正是本台阶要消灭的读法。退出码语义因此一字不变：非 0 退出的唯一来源
+        仍是判定本身。
+
+        为什么解除不在这条路径上记：解除只认「一次**真实** pytest 运行」，而这份证据（这次到底
+        选中并执行了哪些测试）在预取证摘要里没有结构化字段。按 served_checkers 猜会把「选了一堆
+        用例却一个都没跑起来」读成跑过了 —— 那是往"义务被悄悄清掉"的方向错。所以 Hook 只记义务，
+        解除由 `python -m policy.check --obligations`（它手里有真流水线报告）记。
+        """
+
+        ledger = self.config.obligations_ledger
+        if ledger is None or not decision.pending_findings or not event.file:
+            return
+        snapshot = (record.get("pre_evidence") or {}).get("pending_implementation") or ()
+        try:
+            written = book_pending_findings(
+                ledger,
+                findings=decision.pending_findings,
+                target=event.file,
+                pending_snapshot=snapshot,
+            )
+        except Exception as error:  # noqa: BLE001 - 只记账：不改判定，但必须说出来
+            print(
+                "[policy] OBLIGATIONS LEDGER UNAVAILABLE "
+                + sanitize(str(error), project_root=self.config.project_root),
+                file=sys.stderr,
+            )
+            return
+        if written:
+            print(
+                "[policy] obligations recorded=" + str(written) + " ledger=" + ledger.name,
+                file=sys.stderr,
+            )
+
     def rule_visibility_not_applicable(self) -> dict[str, Any]:
         """没有文件维度的动作（Phase 4 执行类）：Phase 1 规则引擎完全不适用。
 
@@ -1208,6 +1249,9 @@ class DshPreExecuteHook:
         )
         # P1：判定记录还要答得出"哪几条规则真的报了违规"（新增字段，既有字段不动）。
         record.update(self.violation_visibility(decision))
+        # 台阶 3c：义务账。放在审计内容已经成型之后、任何 gate 之前 —— 义务说的是
+        # "这次判定看见了什么"，与后续授权链路是否放行无关（它不改变判定，见方法注释）。
+        self.book_obligations(decision, event=event, record=record)
 
         if decision.decision is Decision.BLOCK:
             outcome = HookOutcome(

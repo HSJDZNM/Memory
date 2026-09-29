@@ -17,6 +17,7 @@
 | `orchestration_loop.py` | Phase 8 编排闭环：在受控工作区里跑通编排工作流并重放失败 / 恢复路径，结论写到 `.tmp/artifacts/phase-8-orchestration-result.json` | `python tools/orchestration_loop.py` |
 | `validator_loop.py` | Phase 5 验证器闭环：ARCH-001 由 AST 证据判定 / 动态 import 与语法错误失败关闭 / 缺工具失败关闭 / 测试选择与失败 / 证据可重放 / 工具版本与配置可追溯 | `python tools/validator_loop.py` |
 | `provenance_loop.py` | 控制面封条（针脚）闭环：R-e 的五个场景——真判据 + 真声明跑成 pass / 运行期未声明的写者 → external_write 退 3 / 声明命中不到任何文件 → unprovable 退 3 / 空壳声明给不出判据级封条 → unprovable 退 3 / 仪器自证（把比对换成恒 pass 的替身，同一个场景不再报红）；读数写到 `.tmp/artifacts/provenance-loop-result.json` | `python tools/provenance_loop.py` |
+| `obligations_gate.py` | 台阶 3c 的义务账门禁（**L5 试用期：warn + 非零退出，不阻断**，`ci_local.py` 的步骤表里没有它）：读义务账本给出 `obligations_open` / 已解除条数 / 最近一次真实 pytest 运行 / 树摘要；命中 = 有未结义务，或"声称 0 却没有真实运行"这种没有依据的读数；协议不认识的账本退出 2。升格判据 = 跑过 N≥1 次且 0 命中（0 命中必须来自至少一次真实读数） | `python tools/obligations_gate.py --ledger .tmp/obligations/repo.jsonl` |
 | `build_learning_notebook.py` | 生成学习手册 notebook 与纯 Python 版，并逐单元执行校验 | `python tools/build_learning_notebook.py` |
 | `phase6_cells.py` | Phase 6 学习手册的单元内容（被 `build_learning_notebook.py` 引用）；改手册内容改这里，然后运行 `python tools/build_learning_notebook.py --phase phase-6` | `python tools/build_learning_notebook.py --phase phase-6` |
 | `phase7_cells.py` | Phase 7 学习手册的单元内容（被 `build_learning_notebook.py` 引用）；改手册内容改这里，然后运行 `python tools/build_learning_notebook.py --phase phase-7` | `python tools/build_learning_notebook.py --phase phase-7` |

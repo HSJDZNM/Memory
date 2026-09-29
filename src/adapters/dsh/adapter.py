@@ -139,6 +139,7 @@ _CONFIG_FIELDS: Tuple[str, ...] = (
     "trace_id",
     "audit_log",
     "pre_evidence",
+    "obligations_ledger",
 )
 
 
@@ -612,6 +613,10 @@ class AdapterConfig:
     approval_file: Optional[Path] = None
     # G3：动手前取证的声明。None = 保持 Phase 2 契约（没有证据提供者）。
     pre_evidence: Optional[PreEvidenceConfig] = None
+    # 台阶 3c：义务账（方案 §3.3）。声明了才记账——它**只记账、不判罚**：
+    # 记账失败不改判定、不阻断（L5 warn 期），但会显式打一行 stderr；
+    # 没有声明 = 不记账（不是「没有义务」）。
+    obligations_ledger: Optional[Path] = None
 
     @property
     def rule_anchor(self) -> Path:
@@ -923,6 +928,7 @@ def config_from_mapping(document: Mapping[str, Any], *, base_dir: Path) -> Adapt
     registry_approved = document.get("registry_approved")
     enforcement_ledger = document.get("enforcement_ledger")
     approval_file = document.get("approval_file")
+    obligations_ledger = document.get("obligations_ledger")
 
     config = AdapterConfig(
         project_root=project_root,
@@ -971,6 +977,13 @@ def config_from_mapping(document: Mapping[str, Any], *, base_dir: Path) -> Adapt
             None
             if approval_file is None
             else _as_path(approval_file, base_dir=base_dir, where="approval_file")
+        ),
+        obligations_ledger=(
+            None
+            if obligations_ledger is None
+            else _as_path(
+                obligations_ledger, base_dir=base_dir, where="obligations_ledger"
+            )
         ),
     )
 

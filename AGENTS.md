@@ -452,6 +452,22 @@
     `AUDIT_SCHEMA_VERSION`——它们是本规则生效前的既成事实，登记在这里是为了让后来者知道
     "当时没升版"，**不是可以再犯的先例**；从台阶 3a（`decision_reason` → 审计 1.0→1.1）起
     已按本规则执行，台阶 3b（`pending_findings` → 审计 1.1→1.2、决策 1.0→1.1）同。
+56. **义务账只记账、不判罚，解除只认一次真实测试运行**（台阶 3c / 方案 §3.3）：判定载荷里的
+    「待实现」（第 51 条）必须能被**跨会话**读到，否则一个拼错的 import 可以永久待实现下去，
+    而每一次判定都是 `allow_with_warnings`。实现是 `src/policy/obligations.py`（追加写 JSONL，
+    折叠出未结义务），三条口径写死在那里：键是 `(rule_id, target, missing_target)`、**不含
+    `session_id`**（带上它，新会话就把义务清零）；**会话内只记账**（dsh 侧 `dsh-adapter.yaml` 的
+    `obligations_ledger`，可选；写不了只打一行 `OBLIGATIONS LEDGER UNAVAILABLE`，**不改判定、
+    不阻断**）；**判罚与读数只在 `tools/obligations_gate.py`**（**L5 试用期：warn + 非零退出，
+    本轮它不在 `ci_local.py` 的步骤表里**，升格判据是「跑过 N≥1 次且 0 命中」，且 0 命中必须
+    来自至少一次真实读数）。两条会被判据读的后果：`obligations_open > 0` 时
+    `check_volume.complete = false`（J1(c)）；**解除只由一次真实 pytest 运行判定**（J1(d)）——
+    "真实"是**结构化**的三条事实（`tool.pytest` 状态 ∈ `{ok, findings}`、`failing_tests` 在
+    `served_checkers` 里、选中的测试非空），不解析 reasons 文本，也不许由账本推断；
+    `obligations_open == 0` 却给不出「最近一次真实测试运行」= **没有依据**，门禁按命中处理。
+    没给 `--obligations` = **没有账本可读**（不是"0 条义务"）：账本摘要的键按"有没有给账本"
+    出现或缺失，两个读法必须能分开（第 46/50 条）。账本协议自己的版本轴是
+    `policy.obligations.LEDGER_SCHEMA_VERSION`（第 55 条：加键就要动它）。
 
 ## 临时文件与产物
 
