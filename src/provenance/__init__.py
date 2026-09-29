@@ -1,5 +1,21 @@
-"""控制面针脚与边界声明的公开面（方案 §3.1 / §3.5）。"""
+"""控制面针脚、边界声明与归因闭集的公开面（方案 §3.1 / §3.4 / §3.5）。"""
 
+from .origin import (
+    CAUSAL_LINKS,
+    OBJECT_KINDS,
+    OBSERVATION_METHODS,
+    ORIGIN_FAMILIES,
+    ORIGIN_OBJECT_KIND,
+    ORIGIN_VALUES,
+    Origin,
+    OriginError,
+    build_origin,
+    config_path_in,
+    is_known_origin,
+    payload_is_well_formed,
+    unknown_origin,
+)
+from .origin_runtime import ORIGIN_BY_REASON_CODE, origin_from_failure, verification_of_config
 from .worktree import (
     DEFAULT_EXCLUDES,
     LANDING_STATES,
@@ -22,7 +38,23 @@ from .worktree import (
 )
 
 __all__ = [
+    "CAUSAL_LINKS",
     "DEFAULT_EXCLUDES",
+    "OBJECT_KINDS",
+    "OBSERVATION_METHODS",
+    "ORIGIN_BY_REASON_CODE",
+    "ORIGIN_FAMILIES",
+    "ORIGIN_OBJECT_KIND",
+    "ORIGIN_VALUES",
+    "Origin",
+    "OriginError",
+    "build_origin",
+    "config_path_in",
+    "is_known_origin",
+    "origin_from_failure",
+    "payload_is_well_formed",
+    "unknown_origin",
+    "verification_of_config",
     "LANDING_STATES",
     "SEAL_STATES",
     "Digest",

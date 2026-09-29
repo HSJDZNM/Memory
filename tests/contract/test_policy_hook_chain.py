@@ -1232,3 +1232,466 @@ def test_a_blocked_hook_call_writes_one_machine_readable_verdict(dsh_config_path
     )
     assert allowed.returncode == EXIT_ALLOW, allowed.stderr
     assert VERDICT_PREFIX not in allowed.stderr
+
+
+# ------------------------------------------------------------------- 台阶 2：归因闭集与核验前置
+#
+# Q6 修好的是**理由文本**（给模型读的一句中文）。文本有两个弱点：消费方只能写正则去解析它，
+# 而且它说不出"这条归因凭什么成立"。台阶 2 把同一批事实升格成结构化的 `origin`
+# （设计《控制面重构方案》§3.4）：闭集 + 核验前置 + 写不出 fix 的 origin 不许存在。
+#
+# 下面这个探针与 HARNESS 的 Q6 段落同一手法（真 node 驱动真插件、假 ctx 只观察不断言），
+# 差别只有一个：它把 outcome —— 连同新增的 origin —— 整份打成 JSON 交给 Python 侧。
+ORIGIN_FAMILIES = ("platform", "agent_runtime", "host", "project", "unknown_origin")
+ORIGIN_KEYS = {"kind", "origin", "owner", "object", "observation", "fix", "causal_link"}
+ORIGIN_OBJECT_KEYS = {"kind", "value", "source"}
+ORIGIN_OBSERVATION_KEYS = {"method", "result", "verified", "verified_at", "run_scoped"}
+ORIGIN_METHODS = {"stat", "load", "spawn", "read", "none"}
+
+# 场景 → 期望取值（六个拒绝场景，逐条断言；⑦ 反向对照单列一条用例）。
+ORIGIN_SCENARIOS = (
+    ("projectDir 不存在", "origin_missing_project_dir", "project.workdir_missing", "stat"),
+    ("projectDir 是个文件", "origin_project_dir_is_a_file", "project.workdir_missing", "stat"),
+    (
+        "未给 projectDir、会话 cwd 不存在",
+        "origin_missing_session_cwd",
+        "project.workdir_missing",
+        "stat",
+    ),
+    ("目录正常 + spawn ENOENT", "origin_intact_spawn_error", "agent_runtime.spawn_failed", "spawn"),
+    ("竞态：预检后被删", "origin_vanished_before_spawn", "project.workdir_missing", "stat"),
+    ("目录正常 + spawn EPERM", "origin_intact_spawn_eperm", "agent_runtime.spawn_denied", "spawn"),
+)
+
+HARNESS_ORIGIN = '''/**
+ * 台阶 2 探针：用真 node 驱动真插件，观察**结构化归因**（origin）。
+ *
+ * 与 HARNESS 的 Q6 段落同一手法：假 ctx 只观察、不断言，断言全在 Python 侧。
+ * 差别只有一个——它把 outcome（连同新增的 origin）整份打成 JSON 交给 Python。
+ * argv: <plugin.mjs> <存在的目录> <不存在的目录> <会被删掉的目录> <一个文件>
+ */
+import { existsSync, rmSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+
+const { apply, createRunHook } = await import(pathToFileURL(process.argv[2]).href);
+
+const WORKDIR_COMMAND = 'python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml';
+
+function mountForWorkdir(projectDir, sessionCwd) {
+  const state = { exitCode: 0, stderr: '', throwError: '', vanishWorkdir: false };
+  const registrations = {};
+  const calls = [];
+  const localCtx = {
+    on(name, handler) {
+      registrations[name] = handler;
+    },
+    shell: {
+      resolve(request) {
+        return request;
+      },
+      async run(request) {
+        calls.push(request);
+        if (state.vanishWorkdir && request.workdir !== undefined) {
+          // 竞态：预检时目录还在，spawn 之前没了。
+          rmSync(request.workdir, { recursive: true, force: true });
+        }
+        if (state.throwError !== '') {
+          throw new Error(state.throwError);
+        }
+        if (request.workdir !== undefined && !existsSync(request.workdir)) {
+          // 真实 Node：cwd 不存在 → ENOENT，但报的是**可执行文件**。
+          throw new Error('spawn ' + process.execPath + ' ENOENT');
+        }
+        return { exitCode: state.exitCode, stderr: { text: state.stderr } };
+      },
+    },
+  };
+  const config = { command: WORKDIR_COMMAND, timeoutMs: 30000, projectDir };
+  apply(localCtx, config);
+  // runHook 的返回值里带着 origin，而 dsh 只认 handler 转译出来的 deny / block：
+  // 这里用同一个假 ctx 再装配一次，直接观察那条返回值（插件为此导出了 createRunHook）。
+  const runHook = createRunHook(localCtx, config);
+  const exec = {
+    name: 'edit',
+    callId: 'call-origin',
+    arguments: { file_path: 'src/shop/order_controller.py', old_string: 'a', new_string: 'b' },
+    signal: undefined,
+    agent: { session: { header: { id: 'sess-origin', cwd: sessionCwd } } },
+  };
+  const drive = async (event, result) => {
+    let nextCalls = 0;
+    const next = async () => {
+      nextCalls += 1;
+      return { kind: 'enter' };
+    };
+    const before = calls.length;
+    const outcome =
+      event === 'pre'
+        ? await registrations['tools/pre-execute'](exec, next)
+        : await registrations['tools/post-execute'](exec, result, next);
+    return { outcome, nextCalls, spawnAttempts: calls.length - before };
+  };
+  const driveHook = async () => {
+    const before = calls.length;
+    const outcome = await runHook(exec, { hookEvent: 'PreToolUse', fields: {} });
+    return { outcome, spawnAttempts: calls.length - before };
+  };
+  return {
+    state,
+    drivePre: () => drive('pre', undefined),
+    drivePost: (result) => drive('post', result),
+    driveHook,
+  };
+}
+
+const existingWorkdir = process.argv[3];
+const missingWorkdir = process.argv[4];
+const vanishingWorkdir = process.argv[5];
+const notADir = process.argv[6];
+
+const observations = {};
+
+// ① projectDir 不存在 → 目录这一侧（证据必须是那次真执行的 stat）
+const missingProjectDir = mountForWorkdir(missingWorkdir, existingWorkdir);
+observations.origin_missing_project_dir = await missingProjectDir.driveHook();
+
+// ② projectDir 是个文件：同属"工作目录不可用"，但不是"不存在"
+observations.origin_project_dir_is_a_file = await mountForWorkdir(
+  notADir,
+  existingWorkdir,
+).driveHook();
+
+// ③ 未给 projectDir、会话 cwd 不存在：来源必须写明是会话 cwd
+observations.origin_missing_session_cwd = await mountForWorkdir(
+  undefined,
+  missingWorkdir,
+).driveHook();
+
+// ④ 目录正常 + spawn 抛 ENOENT（真机上那个会把人带偏的报错）→ 指控不许指向目录
+const intactSpawnError = mountForWorkdir(existingWorkdir, existingWorkdir);
+intactSpawnError.state.throwError = 'spawn ' + process.execPath + ' ENOENT';
+observations.origin_intact_spawn_error = await intactSpawnError.driveHook();
+
+// ⑤ 竞态：预检通过之后目录被删掉 → catch 分支复查后仍然归到目录这一侧
+const vanished = mountForWorkdir(vanishingWorkdir, vanishingWorkdir);
+vanished.state.vanishWorkdir = true;
+observations.origin_vanished_before_spawn = await vanished.driveHook();
+
+// ⑥ 目录正常 + spawn 抛 EPERM（受限沙箱禁止管道 stdio）：不是目录那一侧的问题
+const intactEperm = mountForWorkdir(existingWorkdir, existingWorkdir);
+intactEperm.state.throwError = 'spawn EPERM';
+observations.origin_intact_spawn_eperm = await intactEperm.driveHook();
+
+// ⑦ 反向对照：一切正常（放行）→ **不许**给放行的调用编造归因
+observations.origin_allowed_control = await mountForWorkdir(
+  existingWorkdir,
+  existingWorkdir,
+).driveHook();
+
+// 接线形状：dsh 真正读到的是 handler 的两种形状（deny / block），它与 runHook 的返回值分开观察。
+observations.wire_deny = await mountForWorkdir(missingWorkdir, existingWorkdir).drivePre();
+observations.wire_block = await mountForWorkdir(missingWorkdir, existingWorkdir).drivePost({
+  content: [],
+});
+observations.wire_allow_pre = await mountForWorkdir(existingWorkdir, existingWorkdir).drivePre();
+observations.wire_allow_post = await mountForWorkdir(
+  existingWorkdir,
+  existingWorkdir,
+).drivePost({ content: [{ type: 'text', text: 'ok' }] });
+
+process.stdout.write(JSON.stringify(observations));
+'''
+
+
+def run_origin_harness(tmp_root: Path, plugin: Path | None = None) -> dict:
+    """驱动 origin 探针：真 node + 真插件（plugin 参数用来喂一棵变异过的临时副本）。"""
+
+    script = tmp_root / "plugin_origin_harness.mjs"
+    script.write_text(HARNESS_ORIGIN, encoding="utf-8", newline=chr(10))
+    missing = tmp_root / "missing-workdir"
+    shutil.rmtree(missing, ignore_errors=True)
+    vanishing = tmp_root / "vanishing-workdir"
+    vanishing.mkdir(parents=True, exist_ok=True)
+    not_a_dir = tmp_root / "not-a-dir.txt"
+    not_a_dir.write_text("我是一个文件，不是目录" + chr(10), encoding="utf-8", newline="")
+    completed = subprocess.run(
+        [
+            _require_node(),
+            str(script),
+            str(PLUGIN if plugin is None else plugin),
+            str(tmp_root),
+            str(missing),
+            str(vanishing),
+            str(not_a_dir),
+        ],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
+def _origin_of(observed: dict, key: str) -> dict:
+    """取 runHook 那条返回值里的 origin：台阶 2 的断言都落在它上面。
+
+    为什么不是 handler 那条：dsh 只认 deny / block 两种形状，handler 也只转译 reason——
+    origin 只能在 runHook 的返回值上观察。插件为此导出了 createRunHook 这个显式接缝
+    （apply 的返回值与两种形状都没变）。
+    """
+
+    outcome = observed[key]["outcome"]
+    assert outcome["allowed"] is False, (key, outcome)
+    # runHook 的返回值只多一个 origin 键；origin 不许混进 reason 里冒充别的东西
+    assert set(outcome) == {"allowed", "reason", "origin"}, sorted(outcome)
+    return outcome["origin"]
+
+
+def _assert_origin_shape(origin: dict) -> None:
+    """形状是跨语言契约：多一个键、少一个键都算违约（与 Python 侧同一份判据）。"""
+
+    import datetime
+
+    assert isinstance(origin, dict), origin
+    assert set(origin) == ORIGIN_KEYS, sorted(origin)
+    assert origin["kind"] == "platform.attribution"
+    assert isinstance(origin["owner"], str) and origin["owner"] != ""
+    assert set(origin["object"]) == ORIGIN_OBJECT_KEYS, sorted(origin["object"])
+    observation = origin["observation"]
+    assert set(observation) == ORIGIN_OBSERVATION_KEYS, sorted(observation)
+    assert observation["method"] in ORIGIN_METHODS, observation
+    assert isinstance(observation["result"], str) and observation["result"] != ""
+    assert observation["run_scoped"] is True
+    # verified_at 必须来自真实调用 new Date().toISOString()：能解析、带时区、而且是"刚刚"
+    parsed = datetime.datetime.fromisoformat(str(observation["verified_at"]).replace("Z", "+00:00"))
+    assert parsed.tzinfo is not None, observation["verified_at"]
+    now = datetime.datetime.now(datetime.timezone.utc)
+    assert abs((now - parsed).total_seconds()) < 600, observation["verified_at"]
+    # 闭集：unknown_origin，或者"族.后缀"（族必须是五族之一、后缀非空）
+    value = origin["origin"]
+    if value != "unknown_origin":
+        family, _, suffix = value.partition(".")
+        assert family in ORIGIN_FAMILIES and suffix != "", value
+    # fix 非空，而且必须是可执行的**具体**动作（"请联系管理员"不是修复动作）
+    assert isinstance(origin["fix"], str) and origin["fix"].strip() != "", origin
+    assert "联系管理员" not in origin["fix"]
+    assert origin["causal_link"] in {"proven", "unproven"}
+
+
+def test_every_workdir_denial_carries_a_verified_origin_from_the_closed_set(tmp_root):
+    """台阶 2：六个工作目录场景各带一条 origin——形状、闭集、核验与因果链逐条对上。
+
+    修前这些事实只活在一句中文理由里：消费方要写正则去解析它，解析出来也不知道
+    "这条归因凭什么成立"。这里断言的是同一批事实的机读形态。
+    """
+
+    observed = run_origin_harness(tmp_root)
+
+    for label, key, expected, method in ORIGIN_SCENARIOS:
+        origin = _origin_of(observed, key)
+        _assert_origin_shape(origin)
+        assert origin["origin"] == expected, (label, origin)
+        assert origin["observation"]["method"] == method, (label, origin)
+        # 每条指控都真的核验过（stat / spawn 真执行），而且因果链是建立起来的
+        assert origin["observation"]["verified"] is True, (label, origin)
+        assert origin["causal_link"] == "proven", (label, origin)
+        assert origin["fix"].strip() != "", (label, origin)
+
+
+def test_a_missing_project_dir_origin_is_earned_by_a_stat_before_it_is_alleged(tmp_root):
+    """Q6 的文本归因升格：说"目录不存在"之前先 statSync 它，证据进 observation。"""
+
+    observed = run_origin_harness(tmp_root)
+    origin = _origin_of(observed, "origin_missing_project_dir")
+
+    assert origin["origin"] == "project.workdir_missing"
+    assert origin["observation"]["method"] == "stat"
+    assert origin["observation"]["verified"] is True
+    assert "ENOENT" in origin["observation"]["result"], origin
+    assert origin["object"]["kind"] == "workdir", origin
+    assert origin["object"]["value"] == "missing-workdir", origin
+    assert origin["object"]["source"] == "config.projectDir", origin
+    # 预检就拦下了：真机上那一次 spawn 只会给出误导的 ENOENT
+    assert observed["origin_missing_project_dir"]["spawnAttempts"] == 0
+
+
+def test_a_project_dir_that_is_a_file_is_the_same_side_with_a_different_observation(tmp_root):
+    """同属"工作目录不可用"（usable=false），但观测结果不同：路径在、只是不是目录。"""
+
+    observed = run_origin_harness(tmp_root)
+    origin = _origin_of(observed, "origin_project_dir_is_a_file")
+
+    assert origin["origin"] == "project.workdir_missing"
+    assert origin["observation"]["method"] == "stat"
+    assert "不是一个目录" in origin["observation"]["result"], origin
+    assert origin["object"]["value"] == "not-a-dir.txt", origin
+    assert observed["origin_project_dir_is_a_file"]["spawnAttempts"] == 0
+
+
+def test_a_missing_session_cwd_names_the_session_cwd_as_the_source(tmp_root):
+    """来源必须写对：这一次没有 config.projectDir，工作目录来自会话 cwd。"""
+
+    observed = run_origin_harness(tmp_root)
+    origin = _origin_of(observed, "origin_missing_session_cwd")
+
+    assert origin["origin"] == "project.workdir_missing"
+    assert "会话 cwd" in origin["object"]["source"], origin
+    assert origin["object"]["value"] == "missing-workdir", origin
+    assert observed["origin_missing_session_cwd"]["spawnAttempts"] == 0
+
+
+def test_an_intact_workdir_never_gets_blamed_for_a_spawn_error(tmp_root):
+    """核验前置：目录这一侧被证伪之后，指控只能落在「要启动的命令」这一侧。"""
+
+    observed = run_origin_harness(tmp_root)
+    origin = _origin_of(observed, "origin_intact_spawn_error")
+
+    assert origin["origin"] == "agent_runtime.spawn_failed"
+    assert origin["observation"]["method"] == "spawn"
+    assert origin["observation"]["verified"] is True
+    assert "ENOENT" in origin["observation"]["result"], origin
+    # 被指控的对象是**命令**，不是目录——照抄 spawn 的 ENOENT 就会指错对象
+    assert origin["object"]["kind"] == "command", origin
+    assert origin["object"]["value"] == WORKDIR_COMMAND, origin
+    assert origin["object"]["source"] == "config.command", origin
+    assert observed["origin_intact_spawn_error"]["spawnAttempts"] == 1
+
+
+def test_a_workdir_that_vanishes_after_the_precheck_is_re_verified(tmp_root):
+    """竞态：预检通过之后目录被删掉，catch 分支复查一次，归因仍然指向那个目录。"""
+
+    observed = run_origin_harness(tmp_root)
+    origin = _origin_of(observed, "origin_vanished_before_spawn")
+
+    assert origin["origin"] == "project.workdir_missing"
+    assert origin["observation"]["method"] == "stat"
+    assert origin["observation"]["verified"] is True
+    assert origin["object"]["value"] == "vanishing-workdir", origin
+    # 这一次真的去 spawn 了：是 catch 分支复查出来的，不是预检
+    assert observed["origin_vanished_before_spawn"]["spawnAttempts"] == 1
+
+
+def test_spawn_eperm_is_attributed_to_the_sandbox_not_to_the_workdir(tmp_root):
+    """受限沙箱禁止管道 stdio：EPERM 属于 agent_runtime 那一侧，不是目录的毛病。"""
+
+    observed = run_origin_harness(tmp_root)
+    origin = _origin_of(observed, "origin_intact_spawn_eperm")
+
+    assert origin["origin"] == "agent_runtime.spawn_denied"
+    assert "EPERM" in origin["observation"]["result"], origin
+    assert origin["object"]["kind"] == "command", origin
+    assert observed["origin_intact_spawn_eperm"]["spawnAttempts"] == 1
+
+
+def test_an_allowed_call_carries_no_origin_at_all(tmp_root):
+    """反向对照：不许给放行的调用编造归因——"没有失败"不等于"有一条归因"。"""
+
+    observed = run_origin_harness(tmp_root)
+
+    control = observed["origin_allowed_control"]
+    assert control["outcome"] == {"allowed": True, "reason": ""}
+    assert "origin" not in control["outcome"]
+    assert control["spawnAttempts"] == 1
+
+    # handler 路径同样一个字没多：pre 委托给下一个监听者，post 原样放行
+    allow_pre = observed["wire_allow_pre"]
+    assert allow_pre["outcome"] == {"kind": "enter"}
+    assert allow_pre["nextCalls"] == 1
+    assert allow_pre["spawnAttempts"] == 1
+    allow_post = observed["wire_allow_post"]
+    assert allow_post["outcome"] == {"kind": "enter"}
+    assert allow_post["nextCalls"] == 1
+
+
+def test_deny_and_block_keep_their_wire_shape_without_origin(tmp_root):
+    """接线只多一个键：runHook 的返回值多 origin，dsh 认的 deny / block 形状一个字不改。"""
+
+    observed = run_origin_harness(tmp_root)
+
+    # pre：拒绝，handler 交回给 dsh 的仍然是 {kind:'deny', reason}
+    deny = observed["wire_deny"]["outcome"]
+    assert set(deny) == {"kind", "reason"}, sorted(deny)
+    assert deny["kind"] == "deny"
+    assert deny["reason"].startswith("policy-hook: Hook 无法执行（")
+    assert observed["wire_deny"]["nextCalls"] == 0
+    assert observed["wire_deny"]["spawnAttempts"] == 0
+
+    # post：副作用已发生，只能是 {kind:'block', feedback:[...]}，origin 不许塞进去
+    block = observed["wire_block"]["outcome"]
+    assert set(block) == {"kind", "feedback"}, sorted(block)
+    assert block["kind"] == "block"
+    assert block["feedback"][0]["type"] == "text"
+    assert "工作目录不存在" in block["feedback"][0]["text"]
+    assert observed["wire_block"]["nextCalls"] == 0
+
+
+def _tampered_plugin(tmp_root: Path, filename: str, needle: str, replacement: str) -> Path:
+    """在**临时副本**上做变异：仓库源码一个字不动（与既有那条"措辞变异"用例同一纪律）。"""
+
+    source = PLUGIN.read_text(encoding="utf-8")
+    assert needle in source, needle
+    mutated = source.replace(needle, replacement)
+    assert mutated != source, needle
+    target = tmp_root / filename
+    target.write_text(mutated, encoding="utf-8", newline=chr(10))
+    return target
+
+
+def test_an_origin_without_an_executable_fix_falls_back_to_unknown_origin(tmp_root):
+    """硬规则的自证：fix 为空时插件**不许**产出那条指控，只能落 unknown_origin。
+
+    证明方式是显式变异：把 FIX_WORKDIR_MISSING 清空（只在临时副本上），同一个探针重跑。
+    对照是未变异那一次的读数——它必须是 project.workdir_missing。
+    """
+
+    import re
+
+    observed = run_origin_harness(tmp_root)
+    control = _origin_of(observed, "origin_missing_project_dir")
+    assert control["origin"] == "project.workdir_missing"
+
+    source = PLUGIN.read_text(encoding="utf-8")
+    assert "const FIX_WORKDIR_MISSING = " in source
+    tampered_source, count = re.subn(
+        r"^const FIX_WORKDIR_MISSING = .*$",
+        "const FIX_WORKDIR_MISSING = '';",
+        source,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    assert count == 1, "变异没有生效：FIX_WORKDIR_MISSING 的写法变了？"
+    tampered = tmp_root / "policy-hook.plugin.no-fix.mjs"
+    tampered.write_text(tampered_source, encoding="utf-8", newline=chr(10))
+
+    mutated = run_origin_harness(tmp_root, plugin=tampered)
+    origin = _origin_of(mutated, "origin_missing_project_dir")
+    _assert_origin_shape(origin)
+    assert origin["origin"] == "unknown_origin", origin
+    # 作废是整体的：因果链、核验、fix 一起降级，fix 仍然是一条**具体动作**
+    assert origin["causal_link"] == "unproven", origin
+    assert origin["observation"]["verified"] is False, origin
+    assert "修复动作" in origin["fix"], origin
+    # 文字契约不受影响：机读孪生降级了，给模型的那句话一个字没变
+    assert (
+        mutated["origin_missing_project_dir"]["outcome"]["reason"]
+        == observed["origin_missing_project_dir"]["outcome"]["reason"]
+    )
+
+
+def test_an_origin_value_outside_the_closed_set_falls_back_to_unknown_origin(tmp_root):
+    """闭集的自证：把取值改成一个闭集外的字符串，插件**不许**把它原样吐出来。"""
+
+    tampered = _tampered_plugin(
+        tmp_root,
+        "policy-hook.plugin.out-of-set.mjs",
+        "origin: 'project.workdir_missing',",
+        "origin: 'project.workdir_who_knows',",
+    )
+    observed = run_origin_harness(tmp_root, plugin=tampered)
+    origin = _origin_of(observed, "origin_missing_project_dir")
+
+    _assert_origin_shape(origin)
+    assert origin["origin"] == "unknown_origin", origin
+    assert "who_knows" not in json.dumps(origin, ensure_ascii=False), origin

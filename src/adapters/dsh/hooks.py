@@ -60,6 +60,8 @@ from policy.models import (
     RuleSet,
     ValidationResult,
 )
+from provenance.origin import Origin
+from provenance.origin_runtime import ORIGIN_BY_REASON_CODE, origin_from_failure
 
 from .adapter import (
     HOOK_EVENT_POST_TOOL_USE,
@@ -79,6 +81,7 @@ __all__ = [
     "EXIT_ALLOW",
     "EXIT_BLOCK",
     "AUDIT_SCHEMA_VERSION",
+    "ORIGIN_PREFIX",
     "PRE_EVIDENCE_STATUSES",
     "VERDICT_PREFIX",
     "VERDICT_SCHEMA_VERSION",
@@ -97,6 +100,7 @@ __all__ = [
     "EFFECTIVE_PATHS_PREFIX",
     "effective_paths",
     "effective_paths_line",
+    "origin_line",
     "run_hook",
     "sanitize",
     "verdict_line",
@@ -120,6 +124,14 @@ FEEDBACK_MAX_CHARS = 4000
 # 一律阻断，解析失败也一样（没有判定行 = 未知状态 = 失败关闭）。
 VERDICT_SCHEMA_VERSION = "1.0"
 VERDICT_PREFIX = "[policy] VERDICT "
+
+# 台阶 2（方案 §3.4 / R-g）：归因闭集的**机读**出口。
+#
+# 为什么不塞进 VERDICT 行：VERDICT 是 N18 的既有协议，消费方（JS 插件）按精确版本号读，
+# 改它的键集合就必须同步改两侧并让"版本不认识 → 未知状态"这条失败关闭重新走一遍。
+# 归因是**诊断**，不是判定：另起一行，读不到就只是读不到，任何一侧的不认识都不会改
+# allow/block。这一行的载荷形状由 provenance.origin 冻结（跨语言契约）。
+ORIGIN_PREFIX = "[policy] ORIGIN "
 
 # N21：带 --audit 时台账路径由审计路径派生，adapter 配置里的 enforcement_ledger 被覆盖。
 # 派生本身是对的（Phase 2 的记录与 Phase 4 的链要落在同一份证据里，两种 JSONL 协议不能
@@ -351,6 +363,9 @@ class HookOutcome:
     event: Optional[PolicyEvent] = None
     executed: bool = False
     elapsed_ms: int = 0
+    # 台阶 2（§3.4）：失败时的结构化归因。默认 None = 这次没有归因（或不需要）。
+    # 它**不是**判定的一部分：allow/block 只看 exit_code 与 reason_code。
+    origin: Optional[Origin] = None
 
     @property
     def blocked(self) -> bool:
@@ -557,6 +572,10 @@ class DshPreExecuteHook:
     bridge: Optional[EnforcementBridge] = None
     # G3/M2：动手前取证的提供者。None = 按配置决定（声明并启用时用 Phase 5 真实现）。
     evidence_provider: Optional[EvidenceProvider] = None
+    # 台阶 2（§3.4 核验前置）：本次判定真正读的那份 adapter 配置，以及它是从哪来的。
+    # 有了它，"配置读不到"这条理由才有对象可核验；没有它就只能落 unknown_origin。
+    config_path: Optional[Path | str] = None
+    config_source: str = "未声明（调用方没有给出配置路径）"
 
     def __post_init__(self) -> None:
         """没有显式注入桥接层时，按配置自己装配一次。
@@ -928,9 +947,12 @@ class DshPreExecuteHook:
                 started=started, base_record=base_record,
             )
         except (LoaderError, OSError) as error:
+            detail = sanitize(str(error), project_root=self.config.project_root)
             return self._fail(
-                "config_error", sanitize(str(error), project_root=self.config.project_root),
+                "config_error", detail,
                 started=started, base_record=base_record,
+                # 台阶 2（R-g）：先把这条指控的证伪判据跑掉，再把它写进理由。
+                origin=self._origin_for("config_error", detail),
             )
         except Exception as error:  # noqa: BLE001 - 未知异常也必须失败关闭
             return self._fail(
@@ -1043,6 +1065,7 @@ class DshPreExecuteHook:
                     "拒绝在证明不了的情况下放行（绝不把「跳过」当成「通过」）",
                     started=started,
                     base_record=record,
+                    origin=self._origin_for("evidence_unavailable", detail),
                 )
             bundle = getattr(result, "bundle", None)
             if not isinstance(bundle, EvidenceBundle):
@@ -1376,8 +1399,14 @@ class DshPreExecuteHook:
         *,
         started: float,
         base_record: Mapping[str, Any],
+        origin: Optional[Origin] = None,
     ) -> HookOutcome:
-        """失败关闭：任何无法安全判定的情况都阻断，并给出可诊断但不含敏感信息的原因。"""
+        """失败关闭：任何无法安全判定的情况都阻断，并给出可诊断但不含敏感信息的原因。
+
+        台阶 2（§3.4）：带上 `origin` 时，一条**结构化归因**同时进审计与机读诊断行。
+        它是**诊断**不是判定——核验记录无权威，消费者不得据它 allow/block（所以它既不进
+        `decision` 也不进 `violations`）。归属由调用方给出（`_origin_for`），本函数不猜。
+        """
 
         event = None
         outcome = HookOutcome(
@@ -1387,9 +1416,30 @@ class DshPreExecuteHook:
                 reason_code=reason_code, event=event, decision=None, detail=detail
             ),
             elapsed_ms=int((self.clock() - started) * 1000),
+            origin=origin,
         )
-        self._audit({**base_record, "detail": detail}, outcome=outcome)
+        record: dict[str, Any] = {**base_record, "detail": detail}
+        if origin is not None:
+            record["origin"] = origin.to_payload()
+        self._audit(record, outcome=outcome)
         return outcome
+
+    def _origin_for(self, reason_code: str, detail: str) -> Optional[Origin]:
+        """失败码 + 失败原文 → 结构化归因（**核验前置已执行**）。
+
+        本台阶只覆盖配置族：其余原因码由 `origin_from_failure` 显式落 `unknown_origin`
+        （"这条理由目前没有可执行的证伪判据"）——那本身就是一个要能被读出来的结论。
+        归因**绝不影响** allow/block：调用点拿到的仍然是同一个 reason_code 与 exit 2。
+        """
+
+        if reason_code not in ORIGIN_BY_REASON_CODE:
+            return None
+        return origin_from_failure(
+            reason_code=reason_code,
+            detail=detail,
+            config_path=self.config_path,
+            config_source=self.config_source,
+        )
 
 
 def _utc_now() -> str:
@@ -1518,6 +1568,11 @@ def run_hook(
     已经在 main() 里显式传 False。
     """
 
+    # 台阶 2 的纪律（R-d 的一条推论）：**不改判定的形状**。配置加载失败在库里仍然原样
+    # 抛出（生产入口 main() 把它翻成 reason_code=startup_error 的那条既有路径），归因由
+    # main() 用同一个 origin_from_failure 算——那里才拿得到 args.config。曾经在这里加过
+    # 一层 try/except 把它改写成 config_error：那是**改变判定载荷**，不属于本台阶的授权
+    # 范围，已撤回（字段级差集的口径见 10 号 §2）。
     config = load_config(config_path)
     rules = load_rule_set(config.rule_dirs, repo_root=config.rule_anchor)
 
@@ -1550,6 +1605,9 @@ def run_hook(
         "ledger": ledger,
         "capture_dir": None if capture_dir is None else Path(capture_dir),
         "bridge": bridge,
+        # 台阶 2：核验前置要的是"这次真的读的是哪份配置、从哪来"，不是重新拼一个路径。
+        "config_path": config_path,
+        "config_source": "--config（本次调用显式给出的 adapter 配置）",
     }
     if executor is not None:
         kwargs["executor"] = executor
@@ -1566,7 +1624,18 @@ def run_hook(
     )
     if report:
         outcome = hook._fail(  # noqa: SLF001 - 接线错误必须走同一条失败关闭路径
-            "wiring_error", report, started=hook.clock(), base_record={}
+            "wiring_error",
+            report,
+            started=hook.clock(),
+            base_record={},
+            # 接线族的对象是 hooks.json（不是 adapter 配置）：把**那一个**路径交进去，
+            # 归因才会指着读者真正该改的东西。
+            origin=origin_from_failure(
+                reason_code="wiring_error",
+                detail=report,
+                config_path=hooks_config_path,
+                config_source="--hooks-config（本次调用显式给出的接线配置）",
+            ),
         )
     elif (
         isinstance(raw_payload, Mapping)
@@ -1804,6 +1873,16 @@ def check_wiring(
     return ""
 
 
+def origin_line(origin: Origin) -> str:
+    """归因的机读行（台阶 2）。
+
+    与 `verdict_line` 分开：判定行是**契约**（消费方按精确版本号读，读不到按未知状态
+    失败关闭），归因行是**诊断**（读不到只是读不到，不改任何 allow/block）。
+    """
+
+    return ORIGIN_PREFIX + json.dumps(origin.to_payload(), ensure_ascii=False, sort_keys=True)
+
+
 def verdict_line(
     *, reason_code: str, exit_code: int = EXIT_BLOCK, hook_event: Optional[str] = None
 ) -> str:
@@ -1920,6 +1999,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (DshEventError, LoaderError, OSError, ValueError) as error:
         print(f"[policy] BLOCKED (startup_error) detail: {error}", file=sys.stderr)
         print(verdict_line(reason_code="startup_error"), file=sys.stderr)
+        # 台阶 2（R-g）：这里正是配置族最常被误归因的地方——"起不来"很容易被读成
+        # "运行时没装"。核验前置先看一眼被点名的配置到底怎么了（路径不存在 / 是个目录 /
+        # 不是 UTF-8 / 其实好好的），再决定这条理由指着谁；核验证伪了自己人就落
+        # unknown_origin，**绝不**换一个对象继续指控。归因只进这一行诊断，不进判定。
+        print(
+            origin_line(
+                origin_from_failure(
+                    reason_code="startup_error",
+                    detail=str(error),
+                    config_path=args.config,
+                    config_source="--config（本次 Hook 进程显式给出的 adapter 配置）",
+                )
+            ),
+            file=sys.stderr,
+        )
         return EXIT_BLOCK
 
     try:
@@ -1938,6 +2032,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         print(verdict_line(reason_code="startup_error", hook_event=hook_event), file=sys.stderr)
+        # 归因**总要**给出一条：给不出对象时它就是 unknown_origin（写明"没有对象可核验"），
+        # 而不是缺席——缺席会让读者把"这次没归因"读成"这次归因没问题"。
+        # 函数内 import：config_path_in 只在异常路径上用得上，别给正常路径加依赖。
+        from provenance.origin import config_path_in
+
+        named = config_path_in(str(error))
+        print(
+            origin_line(
+                origin_from_failure(
+                    reason_code="startup_error",
+                    detail=str(error),
+                    config_path=named,
+                    config_source=(
+                        "从失败原文里取回（配置：--config " + str(args.config) + "）"
+                        if named is not None
+                        else "失败原文与 --config 都没有指名可核验的对象"
+                    ),
+                )
+            ),
+            file=sys.stderr,
+        )
         return EXIT_BLOCK
 
     if outcome.stderr:
