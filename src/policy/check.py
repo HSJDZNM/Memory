@@ -17,10 +17,16 @@ Phase 5 起默认走**验证器流水线**：先由 AST / 依赖图 / 外部工�
         验证器注册表不可用，以及"声明了 --changed 却没有 --operation"这种自相矛盾调用）
 
 CLI 输出面向人（--json 时输出面向机器），Engine 结果始终保持结构化。
---json 的顶层是 CLI 包装（context / rule_set / reported_imports / evidence / exit_code /
-layer_source / check_volume），其中 result 就是完整的 PolicyDecision 协议载荷，可被
-policy.parse_decision 直接消费；evidence 是本次验证器运行的完整事实
+--json 的顶层是 CLI 包装（output_schema_version / context / rule_set / reported_imports /
+evidence / exit_code / layer_source / check_volume），其中 result 就是完整的 PolicyDecision
+协议载荷，可被 policy.parse_decision 直接消费；evidence 是本次验证器运行的完整事实
 （验证器状态、工具版本与配置哈希、依赖、发现、阻断点）。
+
+**包装层也有自己的协议版本**（2026-09-30 裁定）：output_schema_version 只描述**外层包装**的形状，
+与决策协议（policy.models.SCHEMA_VERSION）各自演进、谁也不跟随谁。1.0 是**追认**的
+——它指"台阶 3c 之前的形状"（那时 check_volume 里还没有 obligations_open / obligations_note
+两个键，见台阶 3c 记录 §2.5）；当前形状记为 1.1。给包装加键 / 改语义都要按 AGENTS 第 55 条
+递增这个版本，因为消费方（脚本、门禁、手册）按它读键集合。
 
 两个**只增不改**的读数（07 号报告 P4 / P5）：
 
@@ -78,6 +84,7 @@ __all__ = [
     "LAYER_SOURCE_DECLARED",
     "LAYER_SOURCE_FILENAME_GUESS",
     "LAYER_SOURCE_PLATFORM_TEST_LAYOUT",
+    "OUTPUT_SCHEMA_VERSION",
     "SKIP_REASON_EVIDENCE_NOT_COLLECTED",
     "SKIP_REASON_MISSING_DIMENSION",
     "SKIP_REASON_SCOPE_MISMATCH",
@@ -102,6 +109,15 @@ __all__ = [
 EXIT_ALLOWED = 0
 EXIT_VIOLATION = 1
 EXIT_ERROR = 2
+
+# --json **外层包装**自己的协议版本（它不等于决策协议版本，也不跟随平台阶段）。
+# 1.0 是追认的形状：台阶 3c 给 check_volume 加了 obligations_open / obligations_note 两个键
+# （J1(c)），按 AGENTS 第 55 条"加键就是改协议"本应同批递增，当时只在记录里写了理由
+# （台阶 3c 记录 §2.5：把它当 CLI 包装、不是跨进程协议载荷）而没有版本号。2026-09-30 的裁定
+# 把这件事定下来：**1.0 = 台阶 3c 之前的形状，当前形状 = 1.1**，并登记进 AGENTS 第 55 条。
+# 消费方（脚本 / 门禁 / 学习手册）按它判断"外层键集合是哪一版"；决策载荷仍是 result 里的
+# SCHEMA_VERSION，两者互不代替。
+OUTPUT_SCHEMA_VERSION = "1.1"
 
 DEFAULT_RULE_DIRS = ("policies",)
 
@@ -760,6 +776,9 @@ def render_json(
         # CLI 包装字段：result 之外的读数，不进决策协议载荷（决策协议版本见
         # policy.models.SCHEMA_VERSION，这里不写死一个字面量）。
         "layer_source": layer_source,
+        # 包装自己的版本（加键 / 改语义就要动它，AGENTS 第 55 条）：
+        # 它说的是"外层这些键是哪一版形状"，不替代 result 的 schema_version。
+        "output_schema_version": OUTPUT_SCHEMA_VERSION,
         "result": None if result is None else result.to_decision_dict(),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)

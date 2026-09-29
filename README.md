@@ -77,8 +77,12 @@ site-packages，而是靠 `PYTHONPATH=src`（CI 的 workflow 里就是这条）�
 退出码：`0` 通过（allow）、`1` 发现违规（block / allow_with_warnings，含需要人工审批的 block）、
 `2` 配置或执行错误（规则不可读、规则损坏、上下文不完整、未知 checker）。
 
-加 `--json` 得到机器可读输出：顶层是 CLI 包装（`context` / `rule_set` / `reported_imports` / `exit_code`），
+加 `--json` 得到机器可读输出：顶层是 CLI 包装（`output_schema_version` / `context` / `rule_set` /
+`reported_imports` / `evidence` / `exit_code` / `layer_source` / `check_volume`），
 其中 `result` 就是带 `schema_version` 的决策协议载荷，可被 `policy.parse_decision` 原样解析回来。
+**包装有自己的版本轴**：`output_schema_version`（当前 `1.1`；`1.0` 是追认的"台阶 3c 之前的形状"，
+那时 `check_volume` 还没有 `obligations_open` / `obligations_note`）只描述外层键集合，
+与决策协议的 `schema_version` 各自演进（AGENTS 第 55 条）。
 
 常用参数：`--layer`（安全关键维度，不传时按文件名推断并在输出中标明）、`--module`（只接受显式传入）、
 `--operation`（受控枚举）、`--trace-id`（串联检索/决策/执行，不传即留空）、`--task`、`--agent`、`--project`。

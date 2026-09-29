@@ -426,6 +426,9 @@
     不是这张表在不在；各自独立演进，谁也不跟随平台阶段）：
     - 判定与证据：`policy.models.SCHEMA_VERSION`（决策载荷）与世代名 `POLICY_VERSION`（只与它同进同退）；
       `policy.evidence.EVIDENCE_SCHEMA_VERSION` / `validators.pipeline.PIPELINE_SCHEMA_VERSION`；
+      `policy.check.OUTPUT_SCHEMA_VERSION`（`--json` 的**外层包装**，不是决策载荷：1.0 是**追认**的
+      ——台阶 3c 之前的形状（那时 `check_volume` 还没有 `obligations_open` / `obligations_note`），
+      1.1 = 现形状；2026-09-30 裁定见 `src/policy/check.py` 的常量注释）；
     - 多 Agent 协议：`adapters.models.CANONICAL_EVENT_SCHEMA_VERSION`（规范事件）与
       `ADAPTER_MANIFEST_SCHEMA_VERSION`（manifest）；`adapters.base.ADAPTER_CONFIG_SCHEMA_VERSION`
       （adapter 配置）与 `APPROVED_SCHEMA_VERSION`（已审核哈希）；`adapters.runtime.AGENT_RUNTIME_SCHEMA_VERSION`；

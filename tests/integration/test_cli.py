@@ -15,6 +15,7 @@ from policy.check import (
     EXIT_ALLOWED,
     EXIT_ERROR,
     EXIT_VIOLATION,
+    OUTPUT_SCHEMA_VERSION,
     default_rule_dirs,
     exit_code_for,
     infer_layer,
@@ -209,18 +210,22 @@ def test_json_output_matches_policy_decision_contract() -> None:
     payload = json.loads(completed.stdout)
 
     # P4/P5 起顶层多了两个**只增不改**的 CLI 包装字段：
-    # layer_source（这次的分层从哪来）与 check_volume（这次到底查了多少）。
-    # 它们属于包装层，不进决策协议载荷 result（协议仍是 schema_version 1.0）。
+    # layer_source（这次的分层从哪来）与 check_volume（这次到底查了多少）；
+    # 2026-09-30 裁定又加了 output_schema_version —— 包装层自己的版本轴
+    # （1.0 = 追认的"台阶 3c 之前的形状"，1.1 = 现形状）。
+    # 它们属于包装层，不进决策协议载荷 result（决策协议见 SCHEMA_VERSION，1.1）。
     assert set(payload) == {
         "check_volume",
         "context",
         "evidence",
         "exit_code",
         "layer_source",
+        "output_schema_version",
         "reported_imports",
         "result",
         "rule_set",
     }
+    assert payload["output_schema_version"] == OUTPUT_SCHEMA_VERSION
     # Phase 5：--json 里带完整证据（依赖来自显式声明，因为本次传了 --dependencies）
     assert payload["evidence"]["dependencies"][0]["name"] == "repository"
     assert payload["evidence"]["dependencies"][0]["resolution"] == "declared"
