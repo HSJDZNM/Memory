@@ -247,4 +247,70 @@ item-1 改过的那条用例。**不证明**：CI（Linux / UTF-8）侧同样绿
 判定记录里的 `pre_evidence.tree.tree_digest`：① `sha256:f0552be78425abe4…`、② `sha256:94a4ef473d002287…`。
 ---
 
+## 9.1 Q7 对照探针：真的写了测试（导入一个还不存在的目标）再写实现（2026-09-29，树 `d4ebc45`）
+
+**本节只记录，不修任何东西。** 与 §9（空占位那一侧）并列：同一棵树、同一入口（`python -m adapters.dsh.hooks` 的
+PreToolUse、真 stdin 事件、`--hooks-config` 过接线自检、`pre_evidence.enabled = true`）、同一份配置模板、
+同一批夹具（`tests/fixtures/validators/project` 的副本），解释器同为本树 `.venv`（3.13.11）。
+
+| 台阶 | 动作（审计里的 target / operation / layer） | Hook 退出码 | decision | reason_code | violations | served_checkers | pending_implementation |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ① | `tests/test_order_service.py` / `create` / `test` | **0（放行）** | `allow` | `allow` | 0 条 | `[failing_tests, missing_docstring, missing_tests, style_lint]` | `[]` |
+| ② | `src/shop/order_service.py` / `edit` / `service` | **0（放行）** | **`allow_with_warnings`** | `allow_with_warnings` | **1 条（warning）**：`TESTING-002@1` | `[missing_docstring, missing_tests, style_lint]`（**没有** `failing_tests`） | **1 条**：`missing_targets=[shop.order_service:cancel_order]` |
+
+**① 为什么是 allow**：pytest 验证器给的理由是 `变更集里没有生产文件，测试选择不适用`——动作的目标是测试文件本身，
+选择阶段**没有对象**，`failing_tests` 由「没有对象 + 验证器给出对象判定」那条分支服务（§6 已写明台阶 1 **没有**动那条分支）。
+所以①的 allow 只能读成「平台允许先把测试写出来」。
+
+**② 台阶 1 之后的判定（本节的判据读数）**：pytest 的原话是
+
+> 待实现：选中的测试 tests/test_order_service.py 在收集期就失败了——它 import 的
+> shop.order_service:cancel_order 属于项目内、但在本次取证树里还不存在。这不是测试失败（断言一条都没跑），
+> 而是这次的树还在构建中；本次写入被放行，覆盖它的测试尚未能运行
+
+`failing_tests` 因此**不在** `served_checkers` 里（没查成的不能记成查过了），判定侧按 AGENTS 第 51 条产出
+**warning 级** violation，decision 是 `allow_with_warnings`——**「先写测试、再写实现」没有被自己的平台拦死**。
+这正是 §9 那一侧结论里说的「Q7 那一侧」的读数。
+
+**Q7 与空占位两侧的差别（唯一的差别）**：名字缺失发生在**收集期**（`from shop.order_service import cancel_order`），
+所以 pytest 退出码是 2、输出里有 `ERROR collecting`，`diagnose_collection_failure` 才走得进「待实现」那支；
+空占位那一侧的同名测试**收集成功、零个用例执行**（退出码 5），走的是 H4/R-f 那条分支（`failing_tests` 不进 served、
+按 critical 阻断）。两条路的读数是两回事，本文件把它们并排列在这里，不做任何合并。
+
+**探针里刻意换过一次测试的形状（同一次会话内的诊断）**：最初写的测试是
+`from shop.order_service import OrderService` 再调用 `service.cancel(...)`。那种形状**不产生收集失败**，
+产生的是**真的断言失败**（`AttributeError: 'OrderService' object has no attribute 'cancel'`，我在同一份影子树上用
+平台原样的 pytest 命令行复跑过：`rc=1`），因此**不会**走到「待实现」，而是按普通 `failing_tests` 违规处理。
+两种形状的差别就是 AGENTS 第 51 条说的「收集期失败」与「断言失败」的差别；本节的读数用的是前者（收集期）。
+
+**证据**（`.tmp/ctl-probe-q7/out/`，`tools/cleanup.py` 之后不可复核）：
+
+| 证据 | sha256[:16] | 字节 |
+| --- | --- | --- |
+| `probe-report.json` | `6c903327302596cb` | 21250 |
+| `step-a.decision.json` | `0b680f5a0686c353` | 7619 |
+| `step-b.decision.json` | `81d1c5b9a7ec7d47` | 9917 |
+| `step-a-write-real-test.audit.jsonl` | `512c8357e5d18609` | 18928 |
+| `step-b-write-implementation.audit.jsonl` | `ae241975f8e75625` | 40922 |
+| `step-b-write-implementation.stderr.txt`（`[policy] ALLOWED WITH WARNINGS edit src/shop/order_service.py: TESTING-002@1`） | `6a77cb99f24df9cf` | 77 |
+| `self-check.stderr.txt` | `62bacc6f93a298d0` | 295 |
+
+两次取证的 `pre_evidence.tree.tree_digest`：① `sha256:f68c5fcb3290523e…`、② `sha256:cd26f2f4f92d73c7…`（树不同，
+因为①之后测试文件已落盘）；② 的 `target_sha256` = `sha256:89ad360c160e26a2…`（正是提议内容的那一份）。
+
+**本节不证明什么 / 未核实**：
+
+- **不证明 Q7 的整体承诺**（AGENTS 第 51 条）：本节只跑了「收集期缺名字」这一种形状；「第三方包缺失 / 语法错误 /
+  conftest 出错 / 断言失败」这些**反例**由既有用例守住，本节没有重跑它们。
+- **不证明①的 allow 是「安全」的**：①的 allow 依据是「没有对象」，与「测试查过了」是两回事（§9 已写明同一条口径）。
+- **未核实（方法学，写下来免得被读成结论）**：诊断过程中有一次**用同一个探针驱动、但把 pytest 参数留在父进程里观测**
+  的运行，给出 `tool.pytest` 理由 = `选中的测试全部通过`（与本节 ② 的读数矛盾）。我在**同一份影子树上**用平台原样的
+  pytest 命令行手工复跑得到 `rc=1`（断言失败），且删掉 `src/validators/**/__pycache__` 后重跑探针仍稳定复现本节 ② 的读数。
+  那次矛盾读数的**机制未能定位**（是探针侧的观测方式问题还是别的），因此**本节所有结论只取自上面那份 `probe-report.json`
+  与两份 `decision.json`**，不取自那次观测；排查用的临时脚本与中间产物在 `Memory\.tmp\ctl-staging\` 下，属一次性证据。
+- **未核实**：本机沙箱的强制点实现（与 §6 / §8.2 同一条）。
+
+
+---
+
 **签署口径**：本文件每个数字都能用上面的命令重算；凡我没亲自跑出来的，都标了「未核实」。
