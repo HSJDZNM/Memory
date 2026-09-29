@@ -422,11 +422,31 @@
     契约快照、断言、生成物、跨语言/跨包的副本）在**同一个提交**里改完。
     **"只增不改、旧消费方还能读"不是跳过升版的理由**：加了键却不升版，会让同一个版本号
     底下存在两种载荷形状——那是第 50 条"同名两义"在协议层的形态，比一次显式的拒收更难发现。
-    本仓库现有的版本轴（各自独立演进，谁也不跟随平台阶段）：
-    - `policy.models.SCHEMA_VERSION`（决策载荷）与世代名 `POLICY_VERSION`（只与它同进同退）；
-    - `policy.evidence.EVIDENCE_SCHEMA_VERSION` / `validators.pipeline.PIPELINE_SCHEMA_VERSION`；
-    - `adapters.dsh.hooks.AUDIT_SCHEMA_VERSION`（判定记录）；
-    - `policy_api.models.API_SCHEMA_VERSION` 与 `policy_api.observability.REQUEST_LOG_SCHEMA_VERSION`。
+    本仓库现有的版本轴（**列举，不是穷尽**——判据是"这个载荷的键集合或语义变没变"，
+    不是这张表在不在；各自独立演进，谁也不跟随平台阶段）：
+    - 判定与证据：`policy.models.SCHEMA_VERSION`（决策载荷）与世代名 `POLICY_VERSION`（只与它同进同退）；
+      `policy.evidence.EVIDENCE_SCHEMA_VERSION` / `validators.pipeline.PIPELINE_SCHEMA_VERSION`；
+    - 多 Agent 协议：`adapters.models.CANONICAL_EVENT_SCHEMA_VERSION`（规范事件）与
+      `ADAPTER_MANIFEST_SCHEMA_VERSION`（manifest）；`adapters.base.ADAPTER_CONFIG_SCHEMA_VERSION`
+      （adapter 配置）与 `APPROVED_SCHEMA_VERSION`（已审核哈希）；`adapters.runtime.AGENT_RUNTIME_SCHEMA_VERSION`；
+      `adapters.wiring.WIRING_SCHEMA_VERSION`（接线报告）；`adapters.conformance.CONFORMANCE_SCHEMA_VERSION`
+      （一致性套件报告）；`adapters.host_version.HOST_VERSION_SCHEMA_VERSION`（报告载荷）与
+      `HOST_VERSION_RECORD_SCHEMA_VERSION`（提交进仓库的观测记录）；
+    - dsh Hook：`adapters.dsh.hooks.AUDIT_SCHEMA_VERSION`（判定记录）；`VERDICT_SCHEMA_VERSION`
+      （阻断判定行——**跨语言**：Python 与 `policy-hook.plugin.mjs` 必须同批改，插件按精确版本号读，
+      不认识就回到"未知状态"）；
+    - 受控执行与编排：`enforcement.models.ENFORCEMENT_SCHEMA_VERSION` / `REGISTRY_SCHEMA_VERSION`、
+      `enforcement.registry.APPROVED_SCHEMA_VERSION`、`enforcement.ledger.LEDGER_SCHEMA_VERSION`、
+      `enforcement.approvals.APPROVAL_SCHEMA_VERSION`、`orchestration.checkpoint.CHECKPOINT_SCHEMA_VERSION`；
+    - API 与服务：`policy_api.models.API_SCHEMA_VERSION`、`policy_api.observability.REQUEST_LOG_SCHEMA_VERSION`、
+      `policy_api.config.API_CONFIG_SCHEMA_VERSION`、`policy_api.idempotency.IDEMPOTENCY_SCHEMA_VERSION`、
+      `policy_api.contract.SNAPSHOT_SCHEMA_VERSION`；
+    - 检索与针脚：`retrieval.models.INDEX_SCHEMA_VERSION` 与 `CHUNKER_VERSION`（分块语义）、
+      `provenance.cli.RECEIPT_SCHEMA_VERSION`、`provenance.wiring_scope.SCHEMA_VERSION`。
+    **不是版本轴的同名字段**（别照这张表改）：`orchestration.langgraph_engine.MIN_LANGGRAPH_VERSION`
+    是依赖下界；`adapters/<id>/manifest.yaml` 的 `agent_version` / `protocol_version` 是产品与协议
+    **声明**（改了要重新审核并重录宿主观测，见第 54 条），不是载荷版本。
+    **新增一条轴时，把它登记进这张表**：表里没有的载荷不等于可以不加版本号。
     **历史先例只登记、不回改**：P1（审计记录新增 `violations` / `violations_by_severity` /
     `violations_note`）与台阶 2（新增 `origin` 一族键）都**加了键而没有递增**
     `AUDIT_SCHEMA_VERSION`——它们是本规则生效前的既成事实，登记在这里是为了让后来者知道
