@@ -461,9 +461,10 @@
     折叠出未结义务），三条口径写死在那里：键是 `(rule_id, target, missing_target)`、**不含
     `session_id`**（带上它，新会话就把义务清零）；**会话内只记账**（dsh 侧 `dsh-adapter.yaml` 的
     `obligations_ledger`，可选；写不了只打一行 `OBLIGATIONS LEDGER UNAVAILABLE`，**不改判定、
-    不阻断**）；**判罚与读数只在 `tools/obligations_gate.py`**（**L5 试用期：warn + 非零退出，
-    本轮它不在 `ci_local.py` 的步骤表里**，升格判据是「跑过 N≥1 次且 0 命中」，且 0 命中必须
-    来自至少一次真实读数）。两条会被判据读的后果：`obligations_open > 0` 时
+    不阻断**）；**判罚与读数只在 `tools/obligations_gate.py`**（**L5 试用期：warn + 非零退出**；
+    2026-09-30 起它作为 `ci_local.py` 的**只报告步骤**（`REPORT_ONLY_STEPS`，带到期日）被本机门禁
+    执行——**非零退出只打印命中数、不计入门禁失败**；升格判据是「跑过 N≥1 次且 0 命中」，
+    且 0 命中必须来自至少一次真实读数）。两条会被判据读的后果：`obligations_open > 0` 时
     `check_volume.complete = false`（J1(c)）；**解除只由一次真实 pytest 运行判定**（J1(d)）——
     "真实"是**结构化**的三条事实（`tool.pytest` 状态 ∈ `{ok, findings}`、`failing_tests` 在
     `served_checkers` 里、选中的测试非空），不解析 reasons 文本，也不许由账本推断；
