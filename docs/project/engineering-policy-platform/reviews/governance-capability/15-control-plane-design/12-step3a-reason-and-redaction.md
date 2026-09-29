@@ -120,7 +120,7 @@ wiring / pre_evidence 都有 `assert str(x) not in dumped` 这类「缺席断言
 | 步骤 | `改动文件 776 个；执行 33 步（本机跳过 11 步，登记豁免 2 步）`；**33/33 `rc=0`** |
 | 结论行 | `本机检查全部通过（33 步）`；进程 exit **0** |
 | 墙钟 | 表内**合计 8m 01.3s**；最贵 pytest 5m 07.5s（63.9%）、Learning notebooks 1m 02.7s、Orchestration closed loop 1m 01.7s |
-| 测试 | `1942 passed, 1 skipped, 3 warnings in 305.38s`（本台阶之前是 1932 passed：新增 10 条） |
+| 测试 | `1942 passed, 1 skipped, 3 warnings in 305.38s`（台阶 2 门禁原文是 `1934 passed`：**新增 8 条**） |
 | 证据 | `.tmp/ci-full-step3a-run2.log`（168714 B，sha256[:16] `E4CD484BA6134D3F`）；`.tmp/artifacts/tests-all-report.xml`（259463 B，`BF118B1A7F9F8C5B`）、`phase-8-evidence.json`（47941 B，`39F73B18EF043135`） |
 
 **第一次跑是红的，红因在文本规范**（不是本台阶的源码改动）：`Text conventions` `rc=1`，报
