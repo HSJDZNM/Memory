@@ -33,6 +33,31 @@
 | `install_hooks.py` | 安装 / 卸载 pre-push 钩子（调用 `ci_local.py --hook`，红了阻断推送；`git push --no-verify` 可跳过） | `python tools/install_hooks.py` |
 | `secret_scan.py` | 凭据扫描门禁：扫仓库自有文本文件里的确定形态凭据（与 `enforcement/audit.py` 共用一份模式定义），默认跳过逐字复制上游的离线镜像 | `python tools/secret_scan.py` |
 
+## 门禁退出码（控制面重构方案 §5.3 · 2026-09-30 写进数据）
+
+这一张表说的是**门禁判据**的退出码语义。它写在这里 = 写进数据：不要在脚本里各写一套
+（台阶 4 的"写声明"5 条之一，本轮只写声明、不建机制）。
+
+| 码 | 含义 |
+| --- | --- |
+| `0` | 全部判据 pass 且封条一致 |
+| `1` | 判据 fail（含反退化与差集非空） |
+| `2` | **用法错误**（保留给 CLI 惯例，与 Hook 的 `block` 无关） |
+| `3` | **封条失效**：`external_write`（`pre ≠ post`）或 `unprovable` |
+
+- **不与 Hook 的退出码复用**：Hook 的 `exit 2` 是**阻断**（AGENTS 第 10 条）；
+  这里的 `2` 只是"命令行用错了"，两套语义各自成文。
+- **编排器自己的退出码**（`tools/ci_local.py`）：`0` = 全部步骤通过；
+  `1` = 有步骤失败 / 拿不到排他锁 / workflow 里有未登记的步骤；
+  `2` = argparse 的用法错误。**它不返回 3**——`3` 由封条命令
+  （`python -m provenance.cli seal …`）给出，见 `src/provenance/cli.py` 的模块 docstring。
+- **只报告步骤**（`ci_local.py` 的 `REPORT_ONLY_STEPS`，见下）的非零退出**不改变**上面的结论：
+  它们只打印命中读数。
+- **门禁步骤表**（本机跑什么）由 `python tools/ci_local.py --list` 给出，分四类：
+  会跑（workflow 步骤，红了即退出 1）、本机跳过（bash-only，CI 上执行）、
+  登记豁免（`NOT_RUN_ON_HOST`，装环境类）、**只报告**（`REPORT_ONLY_STEPS`，带到期日）。
+  四类都必须逐条打印出来——"哪一步没跑"必须是一个能读到的结论，不是沉默。
+
 ## 不属于本项目的脚本
 
 `mirror_docs.py`、`learn_site.py`、`pep_site.py`、`dora_site.py`、`owasp_cheatsheets/` 是**离线文档镜像**流水线，

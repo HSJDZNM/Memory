@@ -42,6 +42,17 @@ Python 的 tempfile 会回退到 os.getcwd()，0 字节的 tmpXXXXXXXX 会落进
 （方案 §5.2 R-b 的同一纪律）；**到期检查只报告**——到期前 14 天提醒、过期标红（`RED`），
 两者都不改退出码（读数由 `tools/exemption_expiry.py` 给出，规则只有那一份实现）。
 
+**门禁退出码**（完整表在 `tools/README.md`，这里只记本脚本自己返回什么，免得两处各说一套）：
+
+| 码 | 本脚本的含义 |
+| --- | --- |
+| `0` | 全部步骤通过（**只报告步骤的非零退出不算失败**） |
+| `1` | 有 workflow 步骤失败 / 拿不到排他锁 / workflow 里有未登记的步骤 |
+| `2` | argparse 的用法错误 |
+
+`3`（封条失效：`external_write` / `unprovable`）属于 `python -m provenance.cli seal` 的
+封条语义，**本脚本不返回 3**——两套语义不要混读（方案 §5.3）。
+
 只用标准库 + PyYAML（已在锁定依赖里）。bash-only 的步骤（heredoc、set +e、grep -q、
 cat > /tmp）在 Windows 上无法直接执行，脚本会**显式跳过并打印原因**，不假装跑过。
 workflow 里新增了步骤却没有登记进分组时，脚本**失败关闭**（退出码 1）而不是悄悄少跑——
