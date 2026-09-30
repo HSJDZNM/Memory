@@ -18,7 +18,7 @@
 一次 `python tools/cleanup.py` 之后原件即消失——那样这份长期文档的「现在是这样」就无法复核。
 本归档把**最小证据**（结论、计数、可重算的入口）落进已跟踪目录；**不复制原件全文**。
 
-## 文件清单（01–08 是本轮原归档；09–11 是台阶 −1/1/2 的补记；12–17 是台阶 3a/3b/小修/3c 与 §3.6 评估的补记；18 是 2026-09-30 裁定的执行）
+## 文件清单（01–08 是本轮原归档；09–11 是台阶 −1/1/2 的补记；12–17 是台阶 3a/3b/小修/3c 与 §3.6 评估的补记；18 是 2026-09-30 裁定的执行；19 是第 17 轮的登记、遗留与门禁读数）
 
 | 文件 | 来源（sha256[:16]） | 支撑什么 |
 | --- | --- | --- |
@@ -39,6 +39,7 @@
 | [15-small-fixes.md](15-small-fixes.md) | `.tmp/verdict-check/` 的 4 个产物（逐个 sha256） | **小修**：VERDICT 行在 `6fa800e → 466a75b` 的字段级差集 **0 条**（14 个用例 + 调用点/取值域读数 → **不升** `VERDICT_SCHEMA_VERSION`）；`warnings` 为何不触发这条轴；AGENTS 第 55 条版本轴清单；B4 正例（经 API 的 pending + 请求级 JSONL 行） |
 | [16-step3c-obligation-ledger.md](16-step3c-obligation-ledger.md) | `.tmp/step3c/` 的 R-d 读数与 `readings.json`（逐个 sha256） | **台阶 3c 义务账**：三条口径与账本协议（新版本轴 `LEDGER_SCHEMA_VERSION`）、R-d 差集 **0 条**、J1(c)/(d) 读数、**L5 一轮：2 个账本 / 3 次门禁 / 命中 1 次**、预算对账（src 714 / tests 872 / 工具 137） |
 | [18-round16-rulings-execution.md](18-round16-rulings-execution.md) | `.tmp/step4/` 的 R-d 读数与两条只报告步骤的实跑读数（该文件 §3 逐个 sha256） | **2026-09-30 裁定的执行（第 16 轮）**：合并 feat 的读数（**Already up to date**，feat 已是祖先）、`tool.pytest` 第 55 条核查（**不升**，证据段能读到 `validators.yaml` 摘要；Hook 审计摘要的缺口登记）、`output_schema_version = "1.1"`（1.0 追认）、义务门禁接进 `ci_local` 的**只报告**路径、台阶 4 的**五条写声明** + 只报告到期检查、R-d 差集 **0 条**、预算对账与未核实清单 |
+| [19-round17-registrations.md](19-round17-registrations.md) | `.tmp/step5/` 的 R-d 读数与两次 `--full` 门禁日志（该文件 §2/§5 给出处） | **第 17 轮**：合并 `origin/perf/ci-local` 的**前置不成立**（本仓库没有这个 ref，五条读数）、义务门禁"账本不存在 = 不适用"（`REPORT_SCHEMA_VERSION` 1.0→1.1）与 R-d 差集 **0 条**、台阶 4 `reading_context` **两项登记**（Hook 侧 `tool.pytest` 追溯缺口 → `AUDIT_SCHEMA_VERSION` 1.2→1.3；JS 侧真实 dsh 端到端 = skipped）、`check_arch_style` 既有红进**遗留**、`--full` 门禁 **退出码 0 / 8m 09.4s / 33 步** |
 | [17-step4-5-scope-assessment.md](17-step4-5-scope-assessment.md) | 本次实跑 `adapters.cli wiring --json`、`ci_local.py --list`、两份测试路径声明与各数据文件（逐条来源写在表里） | **§3.6 前置评估**：台阶 4–5 的两份**整数清单**（已声明不治理 **2** 条；在范围内 **4 组 + 5 组**）与逐条"建机制 / 写声明 / 只报告"结论（台阶 4：5/5/0；台阶 5：4/2/1）；D-2 冻结下**只交清单** |
 | [11-step2-origin-closure.md](11-step2-origin-closure.md) | `provenance/origin.py` `43d301bd547f1428`、`origin_runtime.py` `4bd867cf875cbb81`、`hooks.py` `75a0f52e7ac2bf83`、插件 `26ABA823F6DD9949`、契约用例 `1AC992EFDBE11336`；R-d 读数在 `.tmp/rd-diff/` | **台阶 2（归因闭集与核验前置，判据 R-g）**：五族闭集 + 每族必备字段 + 「写不出 fix 的 origin 不许存在」；核验前置与「证伪自己人落 unknown_origin」；配置族（Python）与 spawn 输入族（JS）的读数；R-d 字段级差集（11 个 fixture：0 条判定变化、3 条新增 `origin`、4 条墙钟漂移） |
 
