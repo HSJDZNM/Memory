@@ -196,3 +196,204 @@ before 侧 `.tmp/step7/wrapper-before.json`（58325 B，`0d5c0f5351257151…`）
 拿它当"已验证"更错。放宽的是**执行它的环境**，不是任何一条检查的口径。
 
 **事后必记**：实际用了什么模式、删了什么（数量）、退出码、耗时、快照比对结果（见 §4.2 / §4.3）。
+
+
+### 4.2 这次放宽**实际是怎么发生的**（事后记录，照 4.1 的承诺）
+
+4.1 写下的计划是"申请一次显式放宽"。**实际过程与计划不同，照实记**：
+
+| # | 动作 | 结果 |
+| --- | --- | --- |
+| 1 | 带 `danger-full-access` 的放宽请求（后台启动门禁，deadline 120s） | **挂到 deadline**：请求没有被应答，命令**没有启动**。副作用清点：无日志、无作业、`.tmp/tmp/pytest-of-ZNM` 原样、`git status` 空 |
+| 2 | 同一条命令重试（deadline 600s） | 同上：**挂到 deadline，什么都没发生**（残留目录仍在、无 `.tmp/step7/ci-local-full-r20.log`、`job_list` 里没有新作业） |
+| 3 | 探针（`Write-Output`，deadline 60s） | 挂到 deadline——**放宽通道在这一刻不可达** |
+| 4 | **程序级**放宽 + 短 deadline | 返回了，且沙箱报告是 `mode=danger-full-access`：**这一刻放宽生效**。用它做了两件事之一——删掉 `.tmp/tmp/pytest-of-ZNM`（`still there? False`，`removed=1 / kept=0`） |
+| 5 | 使用者把会话文件策略改成 **danger-full-access**（审批提示关闭） | 门禁在这个上下文里跑；**此后我没有再申请任何放宽** |
+
+**放宽用在了哪两件事上**：① 删除 pytest 的 ACL 残留 `.tmp/tmp/pytest-of-ZNM`（它是第 3 步
+`getbasetemp()` 崩溃的直接原因，**只动 pytest 的落点目录**）；② 跑**一次**全量门禁。
+**没有**用在任何仓库文件的写入上：本轮所有代码 / 文档 / 测试改动**只用 `write` / `edit` 落树**，
+按路径暂存，没有 `--no-verify`、没有强推、没有 `cleanup.py`、没有直接跑 `tools/dsh_sandbox_loop.py`。
+
+**为什么不是"为了让门禁变绿才放宽"**：4.1 第 1–3 条是**独立测出来**的——
+`os.mkdir(path, 0o700)` 建出来的目录**同进程内**就写不进去、连 `os.scandir` 都被拒
+（`.tmp/step7/mode_probe.py`，同一目录下 `mkdir` 默认 mode 全绿而 `0o700` 全红）；
+`pytest -n auto` 因此**在收集期**`INTERNALERROR`（`PermissionError [WinError 5]` 指向那个残留目录），
+不是任何一条用例失败。**"跑不起来"既不是通过也不是失败**，把它读成"门禁红了"是错的。
+
+### 4.3 门禁读数（`--full`）
+
+**命令**（逐字）：`python tools/ci_local.py --full --python .venv/Scripts/python.exe`
+**树**：HEAD = `45b9962`（工作树干净、无并发：跑前 `git status --porcelain -uall` 为空、`job_list` 里没有别的门禁作业）。
+
+| 项 | 读数 |
+| --- | --- |
+| **显式退出码** | **0** —— `本机检查全部通过（31 步）；只报告 2 步（非零退出不计入失败）` |
+| **耗时** | 门禁自己的汇总行 **5m 02.9s**（`=== 执行耗时（合计 5m 02.9s，33 步，最慢 5 步）===`）；外层秒表 **303.7 s** |
+| 选组 | `改动文件 811 个；执行 31 步（本机跳过 11 步，登记豁免 2 步，只报告 2 步）` |
+| 大头 | pytest **1m 52.0s**（37.0%）→ notebooks **1m 18.5s**（25.9%）→ 编排闭环 **1m 08.9s**（22.8%）→ 阶段验收证据 8.1s → 验证器闭环 7.5s |
+| 与第 19 轮对照 | 同一条命令在 `d2b906f` 上是 **4m 32.6s / 31 步**；本轮 **5m 02.9s / 31 步**（**不相减**：改动面、机器负载都不同）。**能对照的是同一步**：pytest 1m45.7s → 1m52.0s（+6.3s）、notebooks 1m05.9s → 1m18.5s（+12.6s）——两处都含 `reading_context` 新引入的树摘要开销（每次 `--json` 走一次轮次级封条，实测 961 文件 / 1.84s），**远小于事前担心的量级**，因为 pytest 是按文件并行、这笔开销落在多个 worker 上 |
+| 只报告步骤 1 | 义务门禁：0 命中（退出码 0），读数 `hits=0 / 1 个账本（不适用 1：没有账本可读，不算一次真实读数）` |
+| 只报告步骤 2 | 豁免到期：0 命中（退出码 0），读数 `HITS: 0 / declared=8 due=0 expired=0 unprovable=0` |
+| 日志 | `.tmp/step7/ci-local-full-r20.log`（4956 B，sha256 `cbae49f88f7ae8d51f0f7982d0d5b7667d741fa2c380f49e6b4fcad15a61d3be`）+ `.tmp/ci-local-logs/` 下 **33 个**分步日志 |
+| 第 9 步（沙箱闭环） | `ok 1.7s`；产物 `result=skipped`、`environment_skipped=true`、`dsh_startup_denied_kind=profile_write_denied` —— **受限上下文里的读数，不是真机读数**（见 §4.5） |
+
+### 4.4 跑前快照 → 跑后逐个文件比对（第 9 步必然跑 `tools/dsh_sandbox_loop.py`）
+
+**禁令照样遵守**：**没有**直接跑 `tools/dsh_sandbox_loop.py`；它只作为门禁第 9 步被执行。
+跑前快照 `.tmp/e2e/before-gate-r20/20260930T204619/manifest.json`（受控目录 43 个文件的
+路径 / 字节 / mtime / sha256 + 产物副本 + HEAD + `git status`），跑后逐文件比对：
+
+| 项 | 读数 |
+| --- | --- |
+| 受控目录 | before/after 都是 **43 个文件**；**逐字节相同 41、内容变了 2、新增 0、消失 0** |
+| 变了的两个 | `.tmp/phase-2-sandbox/logs/{allow-run,block-run}.txt`：`2ab540972f1d1a75… → 2dc1a97ba8eea1c8…`（**两份内容相同**：都是这次 dsh 子进程的原样输出）。第 9 步这次真的起了 dsh（`profile_write_denied` 要在 dsh 启动后才能在日志里读出来），所以日志被重写；第 19 轮那次 `dsh_argv()` 直接返回 None，没起 dsh，所以这两个文件没动 |
+| 仓库侧 | HEAD 仍 `45b9962`；`git status --porcelain -uall` **空** |
+| 这一步证明什么 | 门禁**没有动仓库**、**没有动受控项目的源码与配置**；它**不**证明端到端闭环跑通了（那是环境跳过） |
+
+### 4.5 R4 在**真产物**上的对照：4 条 = 2 条预注册 + **2 条环境归因漂移**
+
+合成探针（同一环境、两边都固定）给出的是预注册的 **2 条**。这里再补一次**真产物**对照——
+before 是门禁前那份（`.tmp/e2e/before-gate-r20/…/phase-2-sandbox-result.before.json`），
+after 是门禁第 9 步刚写出的那份：
+
+| # | 差集 | 判定 |
+| --- | --- | --- |
+| 1 | `reading_context: 新增` | **预注册** |
+| 2 | `schema_version: "1.1" → "1.2"` | **预注册** |
+| 3 | `dsh_startup_denied_home_root_evidence[0].source: "default:$HOME/.dsh" → "env:DSH_HOME"` | **预期外**——环境归因漂移 |
+| 4 | `…[0].evidence: "$HOME/.dsh（平台默认）" → "环境变量 DSH_HOME"` | 同上 |
+
+**第 3、4 条不是这次改动带来的**，证明是一台两分钟的归因实验
+（`.tmp/step7/probe_home_root_attribution.py`，读数 `.tmp/step7/home-root-attribution.json`）：
+**同一段日志、同一份代码**，只改 `DSH_HOME` 在不在——
+
+| 条件 | `source` | `evidence` | 被拒路径 / 类别 |
+| --- | --- | --- | --- |
+| `DSH_HOME` 在 | `env:DSH_HOME` | 环境变量 DSH_HOME | `C:\\Users\\ZNM\\.dsh` / `profile_write_denied` |
+| `DSH_HOME` 不在 | `default:$HOME/.dsh` | `$HOME/.dsh（平台默认）` | **同上（不一样）** |
+
+before 那份产物的来源是使用者本机 pre-push 钩子那次运行（当时 env 里没有 `DSH_HOME`），
+after 是本次门禁第 9 步（本会话的 env 里有 `DSH_HOME=C:\\Users\\ZNM\\.dsh`）。
+
+**这条要评审裁定**：21 号 §5 的 R4 预注册写的是"每份 2 条"，而它没有声明"两份产物必须在**同一个环境**里采"。
+真产物对照做不到这一点（before 是别的上下文写的），于是"环境变了"会以**诊断键**的形式出现在差集里——
+**这恰好是 `reading_context` 存在的理由，却也让"差集条数"这个判据在真产物上不可用**。
+两个可选处置（都不由本线单方面决定）：① 预注册补一句"真产物对照必须同环境，否则按合成探针为准"；
+② R4 在真产物上只做**弱对照**（只查硬约束那几个字段在不在差集里）。
+
+
+---
+
+## 5 未核实 / 没做 / 请评审裁定
+
+### 5.1 未核实（逐条）
+
+1. **真机 pass 的原件字节**：原件已被 pre-push 那次 skipped 运行覆盖，不可复原；登记的是
+   **转录件**（§2）。因此"pass 侧的 `reading_context`"**没有真机产物**——它只有合成探针（R4 的
+   `pass` 路径）与源码两处证据；**"真机上跑一遍会写出 `host.sandbox=unrestricted`"这件事本轮没有实测**。
+2. **`host.sandbox` 在 POSIX 上的判据**：21 号 §9 第 4 条把这条列在未核实里，本轮**仍然是未核实**——
+   只在 Windows ACL 沙箱上采到读数（`profile_write_denied` / `sandbox_pipe_stdio_denied`）。
+3. **受限判据比 21 号 §3 宽了一档**：§3 写的是"本次是否发生过**写工作区之外被拒**"，
+   本轮把 `sandbox_pipe_stdio_denied`（禁止命名管道，spawn EPERM）**也算 restricted**。
+   理由写在 `sandbox_state()` 的 docstring 里：把它记成 `unrestricted` 是一句没有依据的话；
+   但这是**我加宽的**，请评审确认或改回。
+4. **本轮的门禁读数只属于这台机器这个上下文**：CI 上没有 `.tmp/tmp/pytest-of-*` 的 ACL 残留，
+   §4.1 那三条前置读数**没有在 CI 上复核过**。
+5. **`tools/phase_evidence.py` 的键集合探针没有重跑**：它按固定键复制子载荷这件事是第 19 轮的读数
+   （`.tmp/step2/probe_phase_evidence_keys.py`），本轮没有重跑，也没有动它（裁定③）。
+6. **没有在`--hook`形态下跑过**：门禁只跑了 `--full`；pre-push 钩子的行为本轮没有实测。
+
+### 5.2 没做（裁定④与本轮禁令的落点）
+
+| 项 | 状态 | 依据 |
+| --- | --- | --- |
+| 覆盖账（`adapters.wiring.WIRING_SCHEMA_VERSION`） | **一个字没动**（仍是 1.1） | 裁定④：留到下一轮 |
+| Hook 审计记录（`AUDIT_SCHEMA_VERSION` 1.2 → 1.3） | **一个字没动**（仍是 1.2） | 裁定④：放最后，本轮不做 |
+| 阶段证据透传（`tools/phase_evidence.py`） | **一个字没动** | 裁定③：归 CI 线 |
+| `REPORT-ONLY:` 控制台行（`tools/ci_local.py`） | **一个字没动** | 裁定② + 文件归属（CI 线） |
+| `tools/ci_local.py` / `tests/unit/test_ci_local*.py` | **一个字没动** | 文件归属（CI 线） |
+| `git push` / `git fetch` | **没有** | 指令：不要尝试 push/fetch |
+| `git add -f` / `--no-verify` / 强推 / `tools/cleanup.py` | **没有** | 纪律 |
+
+### 5.3 请评审裁定
+
+1. **`reading_context.run` 要不要留在 `policy.check --json` 这一份里**（§3.5）：留＝与 21 号 §2.1
+   的键表一致、代价是 `--json` 不再是输入的纯函数；不留（写 `not_applicable`）＝保住纯函数、
+   但 21 号 §2.1 的键表要改一笔。
+2. **R4 的预注册要不要补"真产物对照必须同环境"**（§4.5）：补＝真产物对照的"条数"判据才成立；
+   不补＝真产物上只能做弱对照（只查硬约束字段在不在差集里），条数交给合成探针。
+3. **`host.sandbox` 的受限判据要不要收回到"只有写被拒才算"**（§5.1 第 3 条）。
+4. **`check` 路径的 `host.sandbox` 恒为 `unknown`**：CLI 不探测沙箱（探测要有副作用），
+   所以那里永远是 `unknown`。若评审要求它可读，需要一条**显式声明**（环境变量或配置），
+   本线不擅自猜。
+
+### 5.4 预算对账（`git show --numstat`，口径 = 新增行）
+
+| 桶 | 21 号 §8 的已花 | 本轮（A–E1 五个提交） | 台阶 4 累计 | 复核线（1.5×） | 硬上限（×2.5） |
+| --- | --- | --- | --- | --- | --- |
+| src | 0 | **463** | **463** | 1 950 | 3 250 |
+| tests | 598 | **543** | **1 141** | 2 100 | 3 500 |
+| tools | 641 | **221** | **862** | ——（方案 §7 的表里没有这一桶，照旧单列） | —— |
+| 数据 / 文档 | 128 | 274 | 402 | —— | —— |
+
+**逐提交**：`3848e36` docs 93；`d742775` src 380 / tests 364 / tools 120 / docs 10；
+`f6b5a4b` tests 92 / tools 92 / docs 8；`3683761` src 83 / tests 87 / tools 9 / docs 32；
+`45b9962` docs 131。**都在复核线之内**，没有触发"超过 1.5 倍就停下复核"。
+
+---
+
+## 6 复现命令（只读或只写 `.tmp`）
+
+```powershell
+# 0 环境自检 + 合并读数（应为 0：feat 上没有新提交）
+git rev-list --count HEAD..origin/feat/rules-and-os-platform
+
+# 1 仪器的自证（三个"自己对自己"，都应 0 条）
+.venv\Scripts\python.exe .tmp/step7/volatile.py --before .tmp/step7/wrapper-before.json --after .tmp/step7/wrapper-before.json --before-path entries.allow.first --after-path entries.allow.second
+.venv\Scripts\python.exe .tmp/step7/volatile.py --before .tmp/step7/e2e-before.json --after .tmp/step7/e2e-before-run2.json --before-path cases.pass --after-path cases.pass
+
+# 2 R1（决策载荷 0 条）与硬约束
+.venv\Scripts\python.exe .tmp/step3b/probe_decisions.py --out .tmp/step7/decisions-after.json
+.venv\Scripts\python.exe .tmp/step3b/json_field_diff.py --before .tmp/step7/decisions-before.json --after .tmp/step7/decisions-after.json
+.venv\Scripts\python.exe .tmp/step7/check_forbidden.py
+
+# 3 R2（check 包装层；三个入口各 2 条）与 R4（端到端四条路径各 2 条）
+.venv\Scripts\python.exe .tmp/step7/probe_check_wrapper.py --out .tmp/step7/wrapper-after-D.json
+.venv\Scripts\python.exe .tmp/step7/probe_e2e_payload.py --out .tmp/step7/e2e-after-B.json
+.venv\Scripts\python.exe .tmp/step7/volatile.py --before .tmp/step7/e2e-before.json --after .tmp/step7/e2e-after-B.json --before-path cases.pass --after-path cases.pass
+
+# 4 只报告三条出口 + 归因实验
+.venv\Scripts\python.exe .tmp/step7/probe_report_tools.py --out .tmp/step7/report-after-C.json
+.venv\Scripts\python.exe .tmp/step7/probe_home_root_attribution.py
+
+# 5 门禁（本轮读数：退出码 0 / 5m 02.9s / 33 步）
+python tools/ci_local.py --full --python .venv/Scripts/python.exe
+
+# 6 跑前快照 / 跑后比对
+.venv\Scripts\python.exe .tmp/step7/snapshot_before_gate.py
+.venv\Scripts\python.exe .tmp/step7/compare_after_gate.py
+```
+
+---
+
+## 7 本轮改动的文件（按提交）
+
+| 提交 | 文件 | 说明 |
+| --- | --- | --- |
+| `3848e36` | 21 号设计稿（§9.1 + 抬头补记）、23 号（新建）、设计目录 `README.md` | 四条裁定落进 21 号 §9.1；真机读数登记 |
+| `d742775` | **`src/provenance/reading_context.py`（新）**、`tools/dsh_sandbox_loop.py`、`tests/unit/test_reading_context.py`（新）、`tests/contract/test_reading_context_digest_parity.py`（新）、`tests/integration/test_dsh_sandbox_loop.py`、`AGENTS.md`、`tools/README.md` | 统一形状**只有一份实现**；端到端两条写盘路径 |
+| `f6b5a4b` | `tools/obligations_gate.py`、`tools/exemption_expiry.py`、`tests/integration/test_obligations_gate.py`、`tests/unit/test_exemption_expiry.py`、`AGENTS.md`、`tools/README.md` | 只报告两处；豁免到期**首建版本轴** |
+| `3683761` | `src/policy/check.py`、`tests/integration/test_cli.py`、`README.md`、`docs/project/architecture/使用说明.md`、`tools/build_learning_notebook.py`、`docs/project/learning/phase-0/walkthrough.{py,ipynb}`、`AGENTS.md` | `--json` 外层包装 + 生成物重跑（`--check` 通过） |
+| `45b9962` | 23 号、设计目录 `README.md` | R-d 读数与门禁前置说明（**跑门禁之前**提交） |
+| 本提交 | 23 号（§4.2–§4.5、§5–§7）、设计目录 `README.md` | 门禁读数、放宽的事后记录、未核实与评审点 |
+
+**没有碰过的文件**（列出来是为了说明"一个字都没动"）：`tools/ci_local.py`、
+`tests/unit/test_ci_local*.py`、`tools/phase_evidence.py`、`src/adapters/wiring.py`、
+`src/adapters/dsh/hooks.py`、`AGENTS.md` 的其余条目、`.github/workflows/*`、
+`requirements*`、`validation/validators.yaml`。
+
+---
+
+**本文件的两半是两次提交**：§1–§4.1 在 `45b9962`（门禁之前），§4.2–§7 在本提交（门禁之后）。
+切开写是刻意的：§4.1 是**事先**写下的放宽理由，事后补写就变成了"先射箭再画靶"。
