@@ -159,7 +159,12 @@ validators:
       version_args: ["--version"]
       version_pattern: 'pytest ([0-9][0-9A-Za-z.\-+]*)'
       version_requirement: ">=8"
+      # --confcutdir {workspace}：-c 指向 validation/ 时 pytest 会把 confcutdir 定在 validation/，
+      # 被测工作区之上的每一层目录都成了收集起点、其中的 conftest 会被加载——结论随"工作区放在哪"
+      # 变化，违背 validation/pytest.ini 的约定。把收集范围钉在工作区内（回归用例：
+      # tests/integration/test_validator_pipeline.py::test_conftest_above_the_workspace_is_not_part_of_the_run）。
       argv:
         ["-c", "{config}", "-q", "-rf", "-p", "no:cacheprovider", "--no-header",
-         "-o", "addopts=", "--rootdir", "{workspace}", "{nodeids}"]
+         "-o", "addopts=", "--rootdir", "{workspace}", "--confcutdir", "{workspace}",
+         "{nodeids}"]
       config: validation/pytest.ini

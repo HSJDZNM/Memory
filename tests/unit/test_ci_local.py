@@ -309,3 +309,176 @@ def test_timings_summary_survives_a_red_run(monkeypatch, capsys, tmp_root):
     printed = capsys.readouterr().out
     assert "执行耗时" in printed
     assert "Module import probe" in printed
+
+
+# --------------------------------------------------------------------------- 推迟到 --full
+#
+# 学习手册同步只在 --full 下执行：默认 / --hook 被改动选中时必须**点名跳过并写明原因**，
+# 不能静默消失；--full 下必须真的进执行计划。GitHub CI 不受影响（它不经过 ci_local）。
+
+HANDBOOK_SYNC = "Learning notebooks are in sync"
+
+
+def _handbook_plan(monkeypatch, full: bool):
+    ci_local = _load_ci_local()
+    monkeypatch.setattr(
+        ci_local,
+        "_steps",
+        lambda: [
+            (HANDBOOK_SYNC, ".venv/bin/python tools/build_learning_notebook.py --check"),
+            ("Learning notebook structure", ".venv/bin/python tools/check_notebook.py a.ipynb"),
+        ],
+    )
+    # 模拟"改了 src/"：手册组被改动范围选中
+    monkeypatch.setattr(ci_local, "_changed_paths", lambda: ["src/policy/engine.py"])
+    return ci_local, ci_local._plan_steps(full)
+
+
+def test_handbook_sync_is_deferred_by_default_and_named_with_a_reason(monkeypatch):
+    ci_local, (plan, skipped, _not_run) = _handbook_plan(monkeypatch, full=False)
+
+    planned = [name for name, _ in plan]
+    assert HANDBOOK_SYNC not in planned
+    assert "Learning notebook structure" in planned  # 只推迟这一步，同组其余照跑
+    reasons = dict(skipped)
+    assert HANDBOOK_SYNC in reasons
+    assert "--full" in reasons[HANDBOOK_SYNC]
+
+
+def test_handbook_sync_runs_under_full(monkeypatch):
+    _ci_local, (plan, skipped, _not_run) = _handbook_plan(monkeypatch, full=True)
+
+    assert HANDBOOK_SYNC in [name for name, _ in plan]
+    assert HANDBOOK_SYNC not in dict(skipped)
+
+
+def test_deferred_step_is_listed_as_not_run(monkeypatch, capsys):
+    ci_local, _ = _handbook_plan(monkeypatch, full=False)
+    monkeypatch.setattr(ci_local, "unregistered_steps", lambda: [])
+
+    assert ci_local.main(["--list"]) == 0
+    out = capsys.readouterr().out
+    assert HANDBOOK_SYNC in out.split("本机跳过")[1]
+
+
+def test_every_full_only_step_exists_in_the_workflow():
+    """推迟表里的名字必须对得上 workflow。
+
+    改了步骤名而这里没跟上，推迟会悄悄失效（反而每次都跑）。
+    """
+
+    ci_local = _load_ci_local()
+    names = [name for name, _ in ci_local._steps()]
+    for prefix in ci_local.FULL_ONLY_STEPS:
+        assert any(name.startswith(prefix) for name in names), prefix
+
+
+# --------------------------------------------------------------------------- 控制台输出
+#
+# 默认把步骤输出写进 .tmp/ci-local-logs/，控制台每步一行；失败打日志尾部；--verbose 原样直连。
+# 守住的不变量：判定只看退出码（输出去向不改变结论）；失败时的原因不会被藏起来；
+# 钩子成功时除开头一行"运行中"外不打印任何东西。
+
+NOISY_STEP = (
+    "Noisy step",
+    '.venv/bin/python -c "import sys; [print(i) for i in range(500)]; '
+    "print('arrow \\u21c4'); sys.stderr.write('to-stderr' + chr(10))\"",
+)
+FAILING_STEP = (
+    "Failing step",
+    '.venv/bin/python -c "import sys; print(\'before-fail\'); '
+    "sys.stderr.write('boom-reason' + chr(10)); raise SystemExit(3)\"",
+)
+
+
+def _load_quiet_ci_local(monkeypatch, tmp_root, steps):
+    ci_local = _load_ci_local()
+    monkeypatch.setattr(ci_local, "ROOT", tmp_root)
+    monkeypatch.setattr(ci_local, "_steps", lambda: list(steps))
+    monkeypatch.setattr(ci_local, "_selected_names", lambda full: [])
+    monkeypatch.setattr(ci_local, "_changed_paths", lambda: [])
+    monkeypatch.setattr(ci_local, "unregistered_steps", lambda: [])
+    # 这组用例只验控制台输出的形态：真实的只报告步骤（义务门禁 / 豁免到期）会在单测里真跑、
+    # 多写日志，与这里无关；它们与精简输出的配合由 test_ci_local_report_only.py 单独钉住。
+    monkeypatch.setattr(ci_local, "REPORT_ONLY_STEPS", ())
+    return ci_local
+
+
+def test_default_mode_prints_one_line_per_step_and_keeps_the_full_output_in_a_log(
+    monkeypatch, capfd, tmp_root
+):
+    ci_local = _load_quiet_ci_local(monkeypatch, tmp_root, [NOISY_STEP])
+
+    assert ci_local.main(["--full", "--python", sys.executable]) == 0
+    out, _err = capfd.readouterr()
+    assert "[ 1/1] Noisy step ... ok" in out
+    assert "499" not in out  # 步骤自己的 500 行输出没有进控制台
+    logs = sorted((tmp_root / ".tmp" / "ci-local-logs").glob("*.log"))
+    assert [item.name for item in logs] == ["01-noisy-step.log"]
+    text = logs[0].read_text(encoding="utf-8")
+    assert "499" in text and "to-stderr" in text  # stdout 与 stderr 都在日志里
+    assert "arrow ⇄" in text  # GBK 以外的字符按 UTF-8 写进日志，不会让步骤假红
+    assert text.startswith("$ ")  # 日志开头记着实际执行的命令
+
+
+def test_a_failing_step_shows_its_log_tail_and_still_exits_1(monkeypatch, capfd, tmp_root):
+    ci_local = _load_quiet_ci_local(monkeypatch, tmp_root, [FAILING_STEP])
+
+    assert ci_local.main(["--full", "--python", sys.executable]) == 1
+    out, err = capfd.readouterr()
+    assert "Failing step ... FAIL rc=3" in out
+    assert "boom-reason" in out and "before-fail" in out  # 失败原因不藏在日志文件里
+    assert "日志最后" in out and "ci-local-logs/01-failing-step.log" in out
+    assert "Failing step -> 退出码 3" in err
+
+
+def test_verbose_streams_step_output_to_the_console_and_writes_no_log(
+    monkeypatch, capfd, tmp_root
+):
+    ci_local = _load_quiet_ci_local(monkeypatch, tmp_root, [NOISY_STEP])
+
+    assert ci_local.main(["--full", "--verbose", "--python", sys.executable]) == 0
+    out, err = capfd.readouterr()
+    assert "=== Noisy step ===" in out and "499" in out
+    assert "to-stderr" in err
+    assert not (tmp_root / ".tmp" / "ci-local-logs").exists()
+
+
+def test_hook_mode_is_quiet_on_success_and_loud_on_failure(monkeypatch, capfd, tmp_root):
+    ci_local = _load_quiet_ci_local(monkeypatch, tmp_root, [NOISY_STEP])
+    assert ci_local.main(["--hook", "--python", sys.executable]) == 0
+    out, err = capfd.readouterr()
+    assert out == ""
+    assert err.count(chr(10)) == 1 and "运行中" in err  # 只有开头那一行
+
+    monkeypatch.setattr(ci_local, "_steps", lambda: [FAILING_STEP])
+    assert ci_local.main(["--hook", "--python", sys.executable]) == 1
+    out, err = capfd.readouterr()
+    assert out == ""
+    assert "boom-reason" in err and "阻断推送" in err
+
+
+def test_each_run_starts_with_an_empty_log_directory(monkeypatch, capfd, tmp_root):
+    """旧日志不能留到下一次：否则读到的"失败原因"可能是上一次的。"""
+
+    stale = tmp_root / ".tmp" / "ci-local-logs" / "07-from-last-run.log"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("old", encoding="utf-8")
+    ci_local = _load_quiet_ci_local(monkeypatch, tmp_root, [NOISY_STEP])
+
+    assert ci_local.main(["--full", "--python", sys.executable]) == 0
+    capfd.readouterr()
+    assert not stale.exists()
+
+
+def test_timing_summary_can_be_limited_to_the_slowest_steps(monkeypatch, capsys, tmp_root):
+    ci_local = _load_ci_local()
+    monkeypatch.setattr(ci_local, "ROOT", tmp_root)
+    entries = [("Step %d" % index, "cmd", float(index), 0) for index in range(1, 9)]
+
+    ci_local.report_timings(entries, changed=0, hook=False, write_json=True, top=3)
+    printed = capsys.readouterr().out
+    assert "最慢 3 步" in printed
+    assert "Step 8" in printed and "Step 6" in printed and "Step 5" not in printed
+    payload = json.loads((tmp_root / ".tmp" / "ci-local-timings.json").read_text(encoding="utf-8"))
+    assert len(payload["entries"]) == 8  # JSON 始终是全量

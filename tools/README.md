@@ -29,7 +29,7 @@
 | `run_notebook_in_kernel.py` | 在**真实 Jupyter 内核**里跑一遍 notebook，逐单元报告耗时与错误 | `python tools/run_notebook_in_kernel.py docs/project/learning/phase-0/walkthrough.ipynb` |
 | `lock_requirements.py` | 从 pip 报告生成 `requirements.lock` | 见脚本模块说明 |
 | `check_repo_consistency.py` | 仓库一致性门禁：依赖锁（requirements.in / pyproject.toml / requirements.lock 三者一致且锁版本满足区间）、文档与配置（workflow 引用、uv.lock 是否存在、testpaths 与测试目录）、工具清单 | `python tools/check_repo_consistency.py` |
-| `ci_local.py` | 在本机按 CI 的顺序跑同一批检查：从 workflow 读出步骤，按"这次改了什么"选范围，bash-only 的步骤显式跳过并说明原因；`.venv` 不可用时可显式覆盖解释器；**同一工作树同时只允许一个实例真正执行**：排他锁落在 `.tmp/ci-local.lock`，第二个实例报出持锁者 pid 与起始时间后立刻退出 1（`--hook` 下即阻断推送），进程死掉锁由操作系统释放、不会留陈旧锁；执行路径**总是**在最后打印按耗时降序的汇总表（`--hook` 保持安静），`--timings` 另写 `.tmp/ci-local-timings.json` | `python tools/ci_local.py`（`--full` / `--list` / `--hook` / `--timings` / `--python <path>`） |
+| `ci_local.py` | 在本机按 CI 的顺序跑同一批检查：从 workflow 读出步骤，按"这次改了什么"选范围，bash-only 的步骤显式跳过并说明原因；`.venv` 不可用时可显式覆盖解释器；**同一工作树同时只允许一个实例真正执行**：排他锁落在 `.tmp/ci-local.lock`，第二个实例报出持锁者 pid 与起始时间后立刻退出 1（`--hook` 下即阻断推送），进程死掉锁由操作系统释放、不会留陈旧锁；默认每步只在控制台打一行（进度 / 结论 / 耗时），步骤自己的输出写进 `.tmp/ci-local-logs/<序号>-<步骤名>.log`（每次先清空），失败步骤打日志最后 40 行并给出全文路径，`--verbose` 恢复原样滚动；最后打印最慢 5 步的耗时汇总（`--hook` 只在开头打一行"运行中"，成功时保持安静），`--timings` 另写全量的 `.tmp/ci-local-timings.json` | `python tools/ci_local.py`（`--full` / `--list` / `--hook` / `--verbose` / `--timings` / `--python <path>`） |
 | `install_hooks.py` | 安装 / 卸载 pre-push 钩子（调用 `ci_local.py --hook`，红了阻断推送；`git push --no-verify` 可跳过） | `python tools/install_hooks.py` |
 | `secret_scan.py` | 凭据扫描门禁：扫仓库自有文本文件里的确定形态凭据（与 `enforcement/audit.py` 共用一份模式定义），默认跳过逐字复制上游的离线镜像 | `python tools/secret_scan.py` |
 

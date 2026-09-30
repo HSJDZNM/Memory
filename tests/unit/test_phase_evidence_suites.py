@@ -136,3 +136,24 @@ def test_no_reports_means_run_the_suites(tmp_root, monkeypatch) -> None:
     assert source == "pytest"
     assert ran == list(pe.SUITES)
     assert reports == []
+
+
+def test_summary_line_names_the_result_and_which_suites_failed(tmp_root: Path) -> None:
+    """门禁只把失败日志的尾部打到控制台：结论行必须自己说清"为什么红"，而不是 JSON 的尾巴。"""
+
+    suites = pe.suites_from_reports([_report(tmp_root)])
+    payload = {
+        "result": "fail",
+        "cases": 5,
+        "failures": 1,
+        "suites": suites,
+        "test_suite_source": "junit-report",
+    }
+
+    line = pe.summary_line(payload, pe.REPO_ROOT / ".tmp" / "artifacts" / "phase-8-evidence.json")
+
+    assert line.startswith("phase_evidence: result=fail cases=5 failures=1")
+    assert "tests/security 1" in line
+    assert "tests/unit" not in line  # 只列有失败的套件
+    assert "source=junit-report" in line
+    assert line.endswith("-> .tmp/artifacts/phase-8-evidence.json")

@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -210,11 +212,26 @@ def test_unimplemented_validator_is_rejected_fail_closed(tmp_root: Path) -> None
     assert "py.ghost" in str(error.value)
 
 
-def test_temp_directories_are_isolated_per_validator() -> None:
+def test_temp_directories_are_isolated_per_validator(monkeypatch) -> None:
+    # 定位"本次运行"的目录靠记下 pipeline 自己生成的 run_id，而不是取 .tmp/validators 下排序最后的
+    # 那一个：目录名是随机 uuid，排序与创建先后无关；门禁的 pytest 按文件并行时，别的进程也在同一
+    # 目录下建运行目录，"最后一个"可能是别人的。断言内容不变：本次运行按验证器分目录。
+    import validators.pipeline as pipeline
+
+    issued: list[uuid.UUID] = []
+    real_uuid4 = uuid.uuid4
+
+    def recording_uuid4() -> uuid.UUID:
+        value = real_uuid4()
+        issued.append(value)
+        return value
+
+    monkeypatch.setattr(pipeline, "uuid", SimpleNamespace(uuid4=recording_uuid4))
     report = run_for("src/shop/order_controller_bad.py", keep_temp=True)
 
-    runs = sorted((REPO_ROOT / ".tmp" / "validators").glob("*"))
-    latest = runs[-1]
+    assert len(issued) == 1, "一次流水线运行应当恰好生成一个 run_id"
+    latest = REPO_ROOT / ".tmp" / "validators" / issued[0].hex[:12]
+    assert latest.is_dir(), "keep_temp=True 必须留下本次运行的临时目录"
     directories = {item.name for item in latest.iterdir() if item.is_dir()}
 
     assert {"py.source", "py.ast"} <= directories

@@ -10,3 +10,5 @@ uvicorn>=0.27,<1
 # 只有 src/orchestration/langgraph_engine.py 在构造引擎时导入，并校验主版本。
 langgraph>=1.2,<2
 pytest>=8.3,<10
+# 门禁的 pytest 步骤按文件并行（-n auto --dist loadfile）；只影响调度，不影响用例集合与断言。
+pytest-xdist>=3.6,<4

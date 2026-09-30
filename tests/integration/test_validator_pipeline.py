@@ -8,6 +8,7 @@ import subprocess
 import sys
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -175,32 +176,44 @@ def test_pipeline_is_deterministic_for_the_same_target() -> None:
     )
 
 
-def test_temp_directories_are_cleaned_up() -> None:
-    """用完即删：默认运行不得在 .tmp/validators 下留下新的目录。
+def test_temp_directories_are_cleaned_up(monkeypatch) -> None:
+    """用完即删：默认运行不得在 .tmp/validators 下留下本次运行的目录。
 
     先用 keep_temp=True 证明"这次运行确实建了临时目录、且目录按验证器分开"，
-    再用默认参数跑一次比对前后集合——否则"没有残留"可能只是"从来没建过"：
-    把 pipeline 里的 finally 去掉，这条用例照样是绿的。
+    再用默认参数跑一次，确认**那一次运行自己的**目录已经不在——否则"没有残留"可能只是
+    "从来没建过"：把 pipeline 里的 finally 去掉，这条用例照样是绿的。
+
+    本次运行的目录靠记下 pipeline 自己生成的 run_id 来定位，而不是比对 .tmp/validators 前后的
+    目录集合：门禁的 pytest 按文件并行时，别的进程也在同一目录下建 / 删运行目录，集合差会把
+    别人的目录算进来（假红）。只看自己的 run_id，结论与并行无关，判定强度不变。
     """
 
+    import validators.pipeline as pipeline
+
     runs_root = CONFIG.root / ".tmp" / "validators"
+    issued: list[str] = []
+    real_uuid4 = pipeline.uuid.uuid4
 
-    def entries() -> set[str]:
-        return {item.name for item in runs_root.iterdir()} if runs_root.is_dir() else set()
+    def recording_uuid4():
+        value = real_uuid4()
+        issued.append(value.hex[:12])
+        return value
 
-    before = entries()
+    monkeypatch.setattr(pipeline, "uuid", SimpleNamespace(uuid4=recording_uuid4))
+
     kept = run_pipeline_for("src/shop/order_controller_bad.py", keep_temp=True)
-    created = entries() - before
-
-    assert len(created) == 1, "keep_temp=True 必须留下恰好一个本次运行的临时目录"
-    run_root = runs_root / next(iter(created))
+    assert len(issued) == 1, "一次流水线运行应当恰好生成一个 run_id"
+    run_root = runs_root / issued[0]
+    assert run_root.is_dir(), "keep_temp=True 必须留下本次运行的临时目录"
     assert {item.name for item in run_root.iterdir() if item.is_dir()} >= {"py.ast", "py.source"}
     assert kept.target is not None
 
     try:
         report = run_pipeline_for("src/shop/order_controller_bad.py")
-        leftovers = entries() - (before | created)
-        assert leftovers == set(), "默认运行结束后不得留下新的临时目录：" + ", ".join(sorted(leftovers))
+        assert len(issued) == 2, "第二次运行应当生成自己的 run_id"
+        assert issued[1] != issued[0]
+        leftover = runs_root / issued[1]
+        assert not leftover.exists(), "默认运行结束后不得留下本次运行的临时目录：" + leftover.name
         assert report.target is not None
     finally:
         shutil.rmtree(run_root, ignore_errors=True)
@@ -430,6 +443,38 @@ def test_related_tests_are_selected_and_run(tmp_root: Path) -> None:
     selection = report.selection
     assert selection["level"] == "related"
     assert selection["nodeids"] == ["tests/test_order_service.py"]
+
+
+def test_conftest_above_the_workspace_is_not_part_of_the_run(tmp_root: Path) -> None:
+    """被测项目的收集范围只由它自己决定：工作区**之上**的 conftest 不得被加载。
+
+    validation/pytest.ini 的约定是"被测项目的收集范围只由它自己与命令行参数决定"。但 `-c` 指向
+    validation/ 时，pytest 把 confcutdir 定在 validation/，被测工作区之上的每一层目录都会被当成
+    收集起点、其中的 conftest 会被加载——取证结论于是依赖"工作区碰巧放在哪"。Windows 上还会对
+    这些上层目录里的兄弟项逐个 lstat：门禁并行时别的进程正在删它们，嵌套 pytest 随之报
+    FileNotFoundError，三条流水线用例在本机 -n auto 下假红。
+
+    反例构造：在工作区的父目录放一个一导入就失败的 conftest。修前它会被加载 -> 收集失败；
+    修后（argv 带 --confcutdir {workspace}）它不在范围内，相关测试照常通过。
+    """
+
+    workspace = copy_validator_project(tmp_root)
+    (tmp_root / "conftest.py").write_text(
+        "raise RuntimeError('ancestor conftest must not be loaded')" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    report = run_pipeline_for(
+        "src/shop/order_service.py",
+        workspace=workspace,
+        changed_files=("src/shop/order_service.py",),
+        operation="edit",
+    )
+
+    record = report.record("tool.pytest")
+    assert record is not None
+    assert record.status is ValidatorStatus.OK, record.reason
 
 
 def test_failing_related_tests_block(tmp_root: Path) -> None:
