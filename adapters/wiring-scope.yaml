@@ -62,39 +62,45 @@ scope:
     kind: agent_runtime
     owner: host
     reason: >-
-      dsh:web（Web GUI 通道）接不接策略桥：**待使用者确认接线与否**。确认之前本仓库不替
-      使用者决定要不要接，也不把它的缺席算成缺口。
+      使用者暂不建设前端页面；Web GUI 通道与 desktop-entry-points 同口径，不治理；建设前端时改判
     consequence: >-
       只报告：它的接线事实出现在 python -m adapters.cli wiring 的清点里，仓库不为它
       签发任何 allow / block，也不把"没接"读成"通过"。
-    expires_at: "2026-10-31"
-    renewals: []
+    expires_at: "2026-12-31"
+    renewals:
+      - at: "2026-10-01"
+        note: >-
+          使用者授权评审方定夺，理由见 24 号 §8。
 
   - id: dsh-headless-channel
     decision: out_of_scope
     kind: agent_runtime
     owner: host
     reason: >-
-      dsh:headless（无界面通道）接不接策略桥：**待使用者确认接线与否**。这条通道的服务对象
-      可能是脚本化调用，接不接线是使用者的部署决定。
+      用户侧 headless 基础 profile 属于使用者日常入口，按 agent-channel-inventory-report-mode 的裁定不治理；平台自己的 headless 调用（dsh_sandbox_loop）每次都用 --patch 挂策略 Hook，已在受控范围内
     consequence: >-
       只报告：接线事实出自 python -m adapters.cli wiring 的清点，仓库不为它签发
       allow / block；到期日到了必须续期或改判。
-    expires_at: "2026-10-31"
-    renewals: []
+    expires_at: "2026-12-31"
+    renewals:
+      - at: "2026-10-01"
+        note: >-
+          使用者授权评审方定夺，理由见 24 号 §8。
 
   - id: dsh-verify-dead-channel
     decision: out_of_scope
     kind: agent_runtime
     owner: host
     reason: >-
-      dsh:verify-dead（清点里"看着像死掉"的验证通道）接不接策略桥：**待使用者确认接线与否**。
-      它是不是真的废弃、要不要清掉，属于使用者那一侧的配置决定。
+      早先治理能力验证轮（verify-* 一组）留下的测试 profile，不是真实入口；仓库内没有任何引用；如果使用者删除该 profile，须同批删除本声明
     consequence: >-
       只报告：清点会照实报它 not_wired，但仓库不据此拦任何东西，也不把这条读数
       当成"平台少查了一步"；到期日到了必须续期或改判。
-    expires_at: "2026-10-31"
-    renewals: []
+    expires_at: "2026-12-31"
+    renewals:
+      - at: "2026-10-01"
+        note: >-
+          使用者授权评审方定夺，理由见 24 号 §8。
 
   # 只写在 CI 注释里的那条边界裁定（.github/workflows/phase-8.yml:266-272）收进数据。
   # 它说的不是"某条通道接没接"（那由 governed-session-hook 与 desktop-entry-points 承接），
