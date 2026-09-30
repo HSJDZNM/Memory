@@ -17,6 +17,13 @@ r"""豁免到期检查（**只报告**）：控制面重构方案 §4 台阶 4 /
 - 两者都**不计入门禁失败**：本脚本退出码**恒为 0**（用法错误除外），
   读不到就写 `unprovable`，绝不把"读不到"变成阻断，也不把它读成"没有到期日"。
 
+**默认输出的机器行**：`HITS: <已过期条数> / declared=<n> due=<n> expired=<n> unprovable=<n>`
+—— `tools/ci_local.py` 的「只报告」读数就是按这一行取命中数的（`report_only_hits()` 的文本回退，
+这一步的 args 里没有 `--json`），所以这一行是**跨文件契约**、格式必须稳定：
+`hits` **只数已过期**（`due` 是提醒、`unprovable` 是读不到，两者都另列、都不计入命中）。
+`--json` 载荷本轮**一个键都没有加**：它没有版本轴，按 AGENTS 第 55 条，给载荷加键要先裁定
+（是否给它建一条版本轴）——所以机器读数走文本行，不走改载荷。
+
 为什么要有它：每一处"不治理 / 不阻断 / 只报告"都必须带到期日，否则就是一张**永不过期的
 空白支票**（方案 §3.5 / §5.2 R-b）。这个脚本是那份到期日的读数；
 它**不**改变任何 allow / block，也不改 `adapters/wiring-scope.yaml` 的加载结果
@@ -210,6 +217,21 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             + item["expires_at"]
             + "）—— 这条豁免不再成立，请续期或升格（本步不阻断门禁）"
         )
+    # 机器行（跨文件契约）：ci_local 的只报告读数按它取命中数。hits **只数已过期**；
+    # due / unprovable 另列、不计入——"提醒"与"读不到"都不是"这张豁免已经不成立"。
+    # 下面那行 counts 保留原样：第 16 轮的读数引用的是它的子串，删掉会让旧读数对不上。
+    print(
+        "  HITS: "
+        + str(len(expired))
+        + " / declared="
+        + str(len(entries))
+        + " due="
+        + str(len(due))
+        + " expired="
+        + str(len(expired))
+        + " unprovable="
+        + str(len(unprovable))
+    )
     print(
         "  counts: declared="
         + str(len(entries))

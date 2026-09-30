@@ -111,3 +111,92 @@ def test_the_repository_declarations_are_readable_today(capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["counts"]["unprovable"] == 0
     assert payload["counts"]["declared"] >= 4
+
+
+# --- 第 18 轮：默认输出里的机器行（ci_local 按它取命中数） -------------------------------
+#
+# 第 17 轮门禁暴露的缺口：这一步的 args 里没有 --json，而 report_only_hits 只认 --json 的
+# `hits` 或文本里的 `HITS:` 行 —— 于是读数打成"读不出命中数"。修法**只在这份实现里**：
+# 默认输出多一行稳定的 `HITS:`（hits = 已过期条数，due / unprovable 另列），
+# ci_local.py 一个字节都不改。
+
+
+def _load_ci_local():
+    """按文件路径加载 ci_local（与 test_ci_local_report_only.py 同一套配方）。"""
+
+    spec = importlib.util.spec_from_file_location(
+        "ci_local_for_expiry_contract",
+        REPO_ROOT / "tools" / "ci_local.py",
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _exemption_step(ci_local):
+    """ci_local 里那一条豁免到期步骤——**真的那一条**，不是复刻一个。"""
+
+    for step in ci_local.REPORT_ONLY_STEPS:
+        if any("exemption_expiry.py" in argument for argument in step.args):
+            return step
+    raise AssertionError("ci_local 的 REPORT_ONLY_STEPS 里没有 exemption_expiry 那一条")
+
+
+def test_ci_local_reads_the_hits_line_from_the_default_output(tmp_root, capsys):
+    """跨侧契约：真的解析器读真的默认输出（这一步没有 --json，走的是文本行）。"""
+
+    scope = tmp_root / "wiring-scope.yaml"
+    scope.write_text(EXPIRED_SCOPE, encoding="utf-8")
+    module = _load()
+    assert module.run(["--scope", str(scope), "--today", "2026-09-30"]) == 0
+    out = capsys.readouterr().out
+
+    ci_local = _load_ci_local()
+    step = _exemption_step(ci_local)
+    assert "--json" not in step.args, "这一步没有 --json：读数判据是文本行，不是载荷"
+    reading = ci_local.report_only_hits(step, out)
+    assert reading.startswith("HITS:"), reading
+    assert "读不出命中数" not in reading
+    assert "expired=1" in reading and "due=0" in reading and "unprovable=0" in reading
+    assert int(reading.split(":", 1)[1].split("/", 1)[0].strip()) == 1, "hits 就是已过期条数"
+
+
+def test_hits_counts_only_expired_and_lists_due_separately(tmp_root, capsys):
+    """due 是提醒、不是命中：它在同一行里可读，但**不计进** hits。"""
+
+    scope = tmp_root / "wiring-scope.yaml"
+    scope.write_text(DUE_SCOPE, encoding="utf-8")
+    module = _load()
+    assert module.run(["--scope", str(scope), "--today", "2026-09-30"]) == 0
+    out = capsys.readouterr().out
+    line = next(text.strip() for text in out.splitlines() if text.strip().startswith("HITS:"))
+    assert line.startswith("HITS: 0 /"), line
+    assert "due=1" in line and "expired=0" in line
+
+
+def test_json_payload_keeps_its_key_set(tmp_root, capsys):
+    """本次**没有**给 --json 载荷加键：它没有版本轴，加键要先按 AGENTS 第 55 条裁定。
+
+    这条用例就是那份裁定的钉子：谁要加键，就得同时决定版本轴怎么走（并显式改这里），
+    而不是让同一个载荷在同一个形状下悄悄多出几种键集合。
+    """
+
+    scope = tmp_root / "wiring-scope.yaml"
+    scope.write_text(EXPIRED_SCOPE, encoding="utf-8")
+    module = _load()
+    assert module.run(["--scope", str(scope), "--today", "2026-09-30", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload) == {
+        "mode",
+        "note",
+        "today",
+        "lead_days",
+        "entries",
+        "due",
+        "expired",
+        "unprovable",
+        "counts",
+    }
+    assert set(payload["counts"]) == {"declared", "due", "expired", "unprovable"}
+    assert not [key for key in payload if key.endswith("schema_version")]
