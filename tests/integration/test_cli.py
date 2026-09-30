@@ -6,7 +6,6 @@ import json
 import os
 import subprocess
 import sys
-import uuid
 from pathlib import Path
 
 import pytest
@@ -110,25 +109,6 @@ def test_scope_mismatch_is_reported_as_skip_reason() -> None:
     assert "ARCH-001" + "@" + "1" not in matched_line, matched_line
 
 
-def normalise_run_identity(text: str) -> tuple[str, dict]:
-    """把 reading_context.run 里**声明为随运行变化**的两个字段换成占位符。
-
-    为什么必须这么剥（台阶 4，21 号 §2.1）：--json 顶层多了一份 reading_context，其中
-    run.id / run.started_at 是"本次进程生成"的读数，于是这份包装**不再是输入的纯函数**——
-    "两次运行逐字节相同"这条断言必须改成"**除这两个字段外**逐字节相同"。
-    剥掉的值必须由调用方**单独再断言一次**（存在、形状对），免得"剥"变成"不看了"。
-    这不是"放宽断言"：归一化之后的文本仍然逐字节比对，多出来的键、变了的键照样会红。
-    """
-
-    payload = json.loads(text)
-    values = {}
-    for key in ("id", "started_at"):
-        values[key] = payload["reading_context"]["run"][key]
-        payload["reading_context"]["run"][key] = "<volatile>"
-    # 与 render_json 的格式化逐字相同（ensure_ascii=False / indent=2 / sort_keys=True）。
-    return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + chr(10), values
-
-
 def test_cli_is_reproducible() -> None:
     args = (BAD_EXAMPLE, "--dependencies", "repository", "--request-id", "req-fixed")
 
@@ -136,17 +116,21 @@ def test_cli_is_reproducible() -> None:
     second = run_cli(*args)
 
     assert first.returncode == second.returncode == EXIT_VIOLATION
-    # 这条讲的是**文本输出**：它没有 reading_context，因此仍然逐字节可重现。
-    # --json 的对应性质见下面的 test_json_output_is_reproducible_modulo_the_run_identity。
+    # 文本输出与 --json 都必须是输入的纯函数：这一条讲文本，下一条讲 --json。
     assert first.stdout == second.stdout
     assert first.stderr == second.stderr
 
 
-def test_json_output_is_reproducible_modulo_the_run_identity() -> None:
-    """--json 的两次运行：**除 reading_context.run 那两个字段外**逐字节相同（台阶 4）。
+def test_json_output_is_reproducible() -> None:
+    """--json 的两次运行**逐字节相同**（2026-09-30 裁定①）。
 
-    这不是把断言放宽：归一化之后的文本仍然逐字节比对，多出来的键、变了的键照样会红；
-    多出来的只是"这一步归一化"本身，因为 --json 现在带上了"本次运行"的标识（21 号 §2.1）。
+    台阶 4 曾给这份包装加上 reading_context.run，于是"两次运行逐字节相同"只能改成
+    "除那两个字段外逐字节相同"。裁定①把它去掉了：CLI 包装层保持"输入的纯函数"
+    （AGENTS 第 19 条的同一条纪律），而这个字段当时没有任何消费方。
+    这条用例因此是**严格**的：不归一化、不剥离，一个字节不同就红。
+
+    出口那一侧同样要能读出来"这一份没有 run"——否则将来有人顺手加回去，
+    "两次相同"会先红（run 每次不同），但红的原因得写在断言里才读得懂。
     """
 
     args = (BAD_EXAMPLE, "--dependencies", "repository", "--request-id", "req-fixed", "--json")
@@ -155,13 +139,9 @@ def test_json_output_is_reproducible_modulo_the_run_identity() -> None:
     second = run_cli(*args)
 
     assert first.returncode == second.returncode == EXIT_VIOLATION
-    first_text, first_run = normalise_run_identity(first.stdout)
-    second_text, second_run = normalise_run_identity(second.stdout)
-    assert first_text == second_text, "剥掉 run 身份之后必须逐字节相同"
-    # 剥掉的那两个字段单独看：存在、形状对、而且**确实每次都不同**（否则这条用例成了空转）。
-    assert first_run["id"] != second_run["id"]
-    uuid.UUID(first_run["id"])
-    assert first_run["started_at"].endswith("Z")
+    assert first.stdout == second.stdout, "同一份输入的两次 --json 必须逐字节相同"
+    payload = json.loads(first.stdout)
+    assert "run" not in payload["reading_context"], "这一份不带 run（裁定①）"
 
 
 def test_missing_rule_directory_exits_2(tmp_root: Path) -> None:
@@ -361,8 +341,8 @@ def test_trace_id_is_recorded_and_not_invented() -> None:
 def test_python_module_entry_points_agree() -> None:
     """python -m policy 与 python -m policy.check 必须给出同一条结论。
 
-    台阶 4 之后这两个入口的 stdout 里各有一份 reading_context，其中 run.id / run.started_at
-    每次运行都不同——所以这里也走 normalise_run_identity：**除那两个字段外**逐字节相同。
+    两个入口的 stdout 里各有一份 reading_context，而这一份**不带 run**（2026-09-30 裁定①），
+    所以两次运行的输出仍然**逐字节相同**——这里不需要任何归一化。
     """
 
     env = _env()
@@ -379,13 +359,12 @@ def test_python_module_entry_points_agree() -> None:
     second = run_cli(*args)
 
     assert first.returncode == second.returncode == EXIT_VIOLATION, first.stderr
-    first_text, _first_run = normalise_run_identity(first.stdout)
-    second_text, _second_run = normalise_run_identity(second.stdout)
-    assert first_text == second_text
+    assert first.stdout == second.stdout, "两个入口的输出都必须逐字节可重现"
 
     # 两个入口都真的带上了 reading_context，并且都是 cli：这条协议不是"某个入口专有"。
     payload = json.loads(second.stdout)
     assert payload["reading_context"]["source"] == "cli"
+    assert "run" not in payload["reading_context"], "这一份不带 run（裁定①）"
 
 
 def test_run_function_is_reentrant(capsys: pytest.CaptureFixture[str]) -> None:
@@ -807,7 +786,9 @@ def test_json_reading_context_names_the_entry_the_tree_and_the_declarations() ->
     assert context["tree"]["digest"].startswith("sha256:")
     assert len(context["tree"]["revision"]) == 40
     assert context["host"]["sandbox"] == "unknown", "CLI 不探测沙箱（探测要有副作用），不猜"
-    assert context["run"]["id"] and context["run"]["started_at"].endswith("Z")
+    # 2026-09-30 裁定①：**这一份不带 run**——CLI 包装层要保持"输入的纯函数"。
+    # 端到端结果与只报告两处保留 run（那两份的读者要问"这次读数什么时候算的"）。
+    assert "run" not in context, "CLI 包装层的 reading_context 不带 run（裁定①）"
 
     declarations = context["declarations"]
     assert declarations["adapter_config"] == {"status": "not_applicable"}, "CLI 路径不读 adapter 配置"

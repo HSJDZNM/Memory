@@ -82,19 +82,23 @@ Phase 2 Hook、Phase 6 Runtime、Policy API 与学习手册共用，产物却长
   "source": "cli",                     // cli | hook | phase6-runtime | api | library | gate
   "tree": {"scope": "workspace", "digest": "sha256:…", "revision": "<40 hex>"},
   "declarations": {"registry": "sha256:…", "test_layout": "sha256:…", "adapter_config": "sha256:…"},
-  "host": {"platform": "Windows-11", "python": "3.13.11", "sandbox": "restricted"},
-  "run": {"id": "<uuid>", "started_at": "<ISO-8601 Z>"}
+  "host": {"platform": "Windows-11", "python": "3.13.11", "sandbox": "restricted"}
+  // 没有 run：2026-09-30 裁定①——这一份要保持"输入的纯函数"，见下面的键表与 §9.2
 }
 ```
+
+> **2026-09-30 裁定① 之后的实际形状**：这一份 `reading_context` 只有 **4 个键**
+> （`source` / `tree` / `declarations` / `host`）——其余五处读数仍是 §3 的 5 个键。
+> 判据与落地读数见 23 号 §8 / §9。
 
 | 键 | 取值来源（不许另算） | 备注 |
 | --- | --- | --- |
 | `source` | 调用点显式传入的枚举 | 默认 `library`；**不猜**（AGENTS 核心约束 6：上下文只接受显式字段） |
-| `tree.digest` / `tree.revision` | `provenance.worktree.evidence_tree_digest`（工作区侧 `strict=False`，与 `pre_evidence` 同一份实现）+ `git rev-parse HEAD` | 取不到写 `status: unavailable` + 原因 |
+| `tree.digest` / `tree.revision` | `provenance.worktree.workspace_tree_digest`（轮次级封条，带**声明的排除项**；**不是** `evidence_tree_digest`——后者不带排除项，实测在本仓库要走 20339 个文件 / 53.6 s，且 `.tmp` 一写指纹就变）+ `git rev-parse HEAD` | 取不到写 `status: unavailable` + 原因（2026-09-30 与实现对齐，见 §9.2 末行） |
 | `declarations.registry` | `validators.pipeline` 的 `config_digest()`（`sha256:` 前缀，契约测试已钉） | 与 `evidence.configs.registry` **同一个值来源** |
 | `declarations.test_layout` / `adapter_config` | 同名配置文件的摘要 | Hook 路径才有；CLI 路径可为 `not_applicable` |
 | `host.sandbox` | `restricted` / `unrestricted` / `unknown` | **只报事实**：判据见 §2.4（受限 = 写工作区外被拒） |
-| `run.id` / `started_at` | 本次进程生成 | 只在**读数层**；不进证据（§2.7） |
+| `run.id` / `started_at` | 本次进程生成 | **这一份不带它**（2026-09-30 裁定①：加上它 `--json` 就不再是输入的纯函数，而 CLI 包装层被要求逐字节可重现，且没有消费方读它）；其余五处读数保留；无论哪一份都**不进证据**（§2.7） |
 
 **版本轴**：`policy.check.OUTPUT_SCHEMA_VERSION` **1.1 → 1.2**（顶层加键 = 改协议，第 55 条）。
 **同批要改的引用点**：`tests/integration/test_cli.py`（3 处断言）、`README.md`（2 处）、
@@ -232,6 +236,7 @@ tech-detail 生成器、账本读者（人 / 评审 / 事故复盘）。
 | 规则 | 内容 |
 | --- | --- |
 | **命名** | 只用上表这 5 个键名（`source` / `tree` / `declarations` / `host` / `run`）；子键名一律复用既有词汇（`scope` / `digest` / `revision` / `platform` / `python`），不发明同义新词 |
+| **run 是有条件的**（2026-09-30 裁定①） | 五个键里只有 `run` 随运行变化：凡是被要求"相同输入得到逐字节相同的输出"的载荷，调用点必须显式 **不带 run**（`provenance.reading_context.build(include_run=False)`）；唯一一份这样的是 `policy.check --json`，其余五处照旧带 |
 | **三态** | 每个可取不到的子块带 `status ∈ {available, unavailable, not_applicable}`；`unavailable` 必须带 `reason`（一句话，可读），`not_applicable` 不带 |
 | **不猜** | `source` 由调用点显式传入；推导不出来的字段写 `unknown` / `unavailable`，**不许**从文件名、目录或宿主名反推（核心约束 6） |
 | **脱敏** | 路径一律仓库相对；工作区之外的根写 `<outside-workspace>`（第 16/34 条）；不放凭据、不放正文 |
@@ -239,8 +244,11 @@ tech-detail 生成器、账本读者（人 / 评审 / 事故复盘）。
 | **不进判定** | `reading_context` 不参与 `policy.engine.evaluate` 的任何输入；判定路径不得读它 |
 
 **新增枚举**（本稿唯一的新词）：`host.sandbox ∈ {restricted, unrestricted, unknown}`；
-判据方向：本次运行中**是否发生过「写工作区之外被拒」**（受限 = 是）。这条判据在 Windows ACL 沙箱上
-有现场读数（19 号 §3.1），在 POSIX 上的判定**未核实**（§9 第 4 条）。
+判据方向：本次运行中**是否发生过「沙箱 / 宿主拒绝了工作区之外的操作」**（受限 = 是）。
+**2026-09-30 裁定③ 同步**：把**禁止管道 stdio 的 spawn 拒绝**（`sandbox_pipe_stdio_denied`，
+Hook spawn EPERM）也算进 `restricted`——把它记成 `unrestricted` 是一句没有依据的话
+（原判据只写"写被拒"，实现比它宽一档，这里按实现收口）。这条判据在 Windows ACL 沙箱上
+有现场读数（19 号 §3.1、23 号 §3.4），在 POSIX 上的判定**未核实**（§9 第 4 条）。
 
 ---
 
@@ -274,6 +282,13 @@ tech-detail 生成器、账本读者（人 / 评审 / 事故复盘）。
 | R2 | `policy.check --json` 包装层（**需要新增一台探针**：同一份输入跑 CLI 入口，采集整份 JSON） | 至少 3 个入口（allow / block / 带证据） | 每个入口 **2 条**：`payload.reading_context: 新增`、`payload.output_schema_version: "1.1" → "1.2"` | 除这两条外多出任何键 = 预期外改动 |
 | R3 | Hook 审计记录（真 Hook 路径，`pre_evidence` 开启） | 一次 allow、一次 block | 每条 **3 条**：`pre_evidence.registry: 新增`、`reading_context: 新增`、`audit_schema_version: "1.2" → "1.3"` | `decision` / `violations` / `pending_findings` / `served_checkers` / `pending_implementation` **不得出现**在差集里 |
 | R4 | 端到端结果 | 真机 pass / 受限沙箱 skipped 两份 | 每份 **2 条**：`reading_context: 新增`、`schema_version: "1.1" → "1.2"` | `result` / `environment_skipped` / 两个 scenario 的 `passed` / 全部诊断键**不得出现**在差集里 |
+
+**2026-09-30 裁定② 补记（R4 的真产物对照）**：R4 是四把尺子里唯一一把要拿**真产物**比的
+（端到端结果由别的上下文写出：pre-push 钩子、另一次会话的门禁）。**补一条硬要求：真产物对照
+必须同环境**——两份产物若来自不同上下文，`DSH_HOME` 在不在之类的环境差异会以**诊断键**的形式
+出现在差集里（23 号 §4.5 的读数就是 4 条 = 2 条预注册 + 2 条环境归因漂移）。**做不到同环境时，
+条数判据以合成探针为准**，真产物上只做弱对照（硬约束那几个字段在不在差集里）——
+"差集几条"这个判据在跨环境的真产物上不成立，把它当成改动带来的差异是错的。
 
 **共同的硬约束（违反即回退该步）**：四个尺子的差集里出现
 `decision` / `violations` / `pending_findings` / `matched_rules` / `skipped_rules` / `required_action`
@@ -397,6 +412,22 @@ tech-detail 生成器、账本读者（人 / 评审 / 事故复盘）。
 "这份读数属于哪里"，**不进判定**（§1.3）；**受限宿主不单独设状态轴**不等于"受限宿主可以不写"
 ——它必须能从 `host.sandbox` 与既有的 `result` / `environment_skipped` 一起读出来（第 45 条：
 环境跳过不是通过）。
+
+### 9.2 裁定（2026-09-30 · 第二轮，四项 + 一项对齐）
+
+§9.1 落地（第 20 轮）之后，评审就**落地读数**又裁了四项（问题原文在 23 号 §5.3，
+执行读数在 23 号 §8 / §9）。逐条如下，**原问题与 §9.1 一字不动地留在上面**：
+
+| # | 问题（出处） | 裁定 | 对本文的影响 |
+| --- | --- | --- | --- |
+| ① | `policy.check --json` 里的 `reading_context.run` 留不留（23 号 §5.3 第 1 条） | **去掉**：它违反 AGENTS 第 19 条的同一条纪律（包装层要保持"输入的纯函数"），且没有消费方；1.2 **尚未发布**，所以**在 1.2 内修、不升版**。端到端结果与只报告两处**保留** `run` | §2.1 键表与 §3 的"5 个键"按此收窄成 4 个（见 §2.1 的补记与 §3 的"run 是有条件的"一行）；实现是 `provenance.reading_context.build(include_run=False)`，六处载荷里唯一的一份 |
+| ② | R4 预注册要不要补"真产物对照必须同环境"（23 号 §5.3 第 2 条） | **补**：不补的话，跨环境采来的两份真产物会把环境差异算成改动（§5 的 R4 行加补记） | §5 的 R4 判据补一条硬要求；做不到同环境时条数以合成探针为准 |
+| ③ | `host.sandbox` 的受限判据要不要收回"只有写被拒才算"（23 号 §5.3 第 3 条） | **不收回**：spawn 拒绝（`sandbox_pipe_stdio_denied`）也算 `restricted` | §3 的判据句同步改（见上） |
+| ④ | `check` 路径的 `host.sandbox` 恒为 `unknown`（23 号 §5.3 第 4 条） | **接受**：CLI 不探测沙箱（探测要有副作用），不擅自猜；要让它可读必须另给一条**显式声明**（环境变量或配置），本线不做 | §2.1 的 `host.sandbox` 行不变 |
+| 另 | `tree.digest` 的取值口径（与实现对齐） | 用 `workspace_tree_digest`（轮次级封条、带声明的排除项），**不是** `evidence_tree_digest` | §2.1 的 `tree.digest` 行同步改（见上） |
+
+**这五项都不改任何 allow / block、不新增阻断步骤、不改任何退出码**：① 是包装层一个键的收窄，
+②③④ 与"另"是口径、判据与预注册措辞的收口。
 
 ---
 

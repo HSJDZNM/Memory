@@ -28,7 +28,7 @@ reading_context 只回答**归属**，不回答**结论**：它不进 policy.eng
         "test_layout": {"status": "not_applicable"}
       },
       "host": {"platform": "Windows-11", "python": "3.13.11", "sandbox": "unknown"},
-      "run": {"id": "<uuid>", "started_at": "<ISO-8601 Z>"}
+      "run": {"id": "<uuid>", "started_at": "<ISO-8601 Z>"}   # 有条件的，见下
     }
 
 四条纪律（21 号 §1.3 / §3）：
@@ -51,6 +51,12 @@ reading_context 只回答**归属**，不回答**结论**：它不进 policy.eng
 - **不是版本轴**：reading_context 是一个**形状**，不是一个载荷，因此它自己没有版本号；
   它的形状变更随**各载荷自己的**版本轴走（AGENTS 第 55 条：OUTPUT_SCHEMA_VERSION /
   REPORT_SCHEMA_VERSION / SANDBOX_RESULT_SCHEMA_VERSION …）。
+
+还有一条**边界**（2026-09-30 裁定①，写下来免得下一个人顺手加回去）：
+
+- **run 是有条件的**：五个顶层键里只有它随运行变化。凡是被要求"相同输入得到逐字节相同的输出"
+  的载荷，调用点必须显式 `include_run=False`——落点是 `policy.check --json`（AGENTS 第 19 条
+  的同一条纪律，且没有一个消费方读 run）。其余读数保留 run："这份读数什么时候算的"仍然可读。
 
 失败语义（本模块**不抛异常**）
 ==============================
@@ -366,15 +372,26 @@ def build(
     declarations: Mapping[str, Mapping[str, Any]] | None = None,
     host: Mapping[str, Any] | None = None,
     run: Mapping[str, Any] | None = None,
+    include_run: bool = True,
 ) -> dict:
-    """按统一形状组装一份 reading_context（五个顶层键，顺序无关）。"""
+    """按统一形状组装一份 reading_context（顺序无关）。
+
+    source / tree / declarations / host 四个恒定；第五个 `run` 是**有条件的**：它带"本次运行"
+    的标识，凡是被要求"相同输入得到逐字节相同输出"的载荷都必须显式 `include_run=False`
+    （2026-09-30 裁定①；落点是 policy.check --json）。默认 True，其余读数照旧带 run。
+    给了 run 又要求不带它 = 自相矛盾：**报错**，不静默丢掉调用方给的值。
+    """
 
     if source not in SOURCES:
         raise ValueError("未知 source " + repr(source) + "：只接受 " + " / ".join(SOURCES))
-    return {
+    if not include_run and run is not None:
+        raise ValueError("include_run=False 与 run=... 自相矛盾：不带 run 的载荷不该有人传 run")
+    block: dict[str, Any] = {
         "source": source,
         "tree": dict(tree) if tree is not None else unavailable("调用点没有给出树归属"),
         "declarations": {str(name): dict(value) for name, value in (declarations or {}).items()},
         "host": dict(host) if host is not None else host_block(),
-        "run": dict(run) if run is not None else run_block(),
     }
+    if include_run:
+        block["run"] = dict(run) if run is not None else run_block()
+    return block

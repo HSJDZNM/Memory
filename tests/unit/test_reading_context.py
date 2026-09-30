@@ -136,6 +136,36 @@ def test_build_has_exactly_the_five_keys(tmp_root):
         reading.host_block(sandbox="nope")
 
 
+def test_build_can_leave_the_run_block_out(tmp_root):
+    """裁定①：要求"逐字节可复现"的载荷显式不带 run（policy.check --json 就是这一份）。
+
+    不带 run 不是"少写一个键"，而是**这份载荷的性质**：同一份输入两次组装必须逐字节相同。
+    给了 run 又要求不带它 = 自相矛盾，直接报错——静默丢掉调用方给的值会让"我明明传了"消失。
+    """
+
+    def assemble():
+        return reading.build(
+            source=reading.SOURCE_CLI,
+            tree=reading.tree_block(tmp_root),
+            declarations={"adapter_config": reading.not_applicable()},
+            host=reading.host_block(),
+            include_run=False,
+        )
+
+    block = assemble()
+    assert sorted(block) == ["declarations", "host", "source", "tree"]
+    assert "run" not in block, "这一份不带 run"
+    # 两次组装逐字节相同——这正是"不带 run"要保住的那条性质。
+    assert json.dumps(block, sort_keys=True) == json.dumps(assemble(), sort_keys=True)
+
+    with pytest.raises(ValueError):
+        reading.build(
+            source=reading.SOURCE_CLI,
+            run=reading.run_block(),
+            include_run=False,
+        )
+
+
 def test_no_value_in_the_context_is_an_absolute_path(tmp_root):
     target = tmp_root / "validators.yaml"
     target.write_text("validators: []\n", encoding="utf-8")

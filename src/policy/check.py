@@ -23,14 +23,16 @@ PolicyDecision 协议载荷，可被 policy.parse_decision 直接消费；eviden
 （验证器状态、工具版本与配置哈希、依赖、发现、阻断点）。
 
 reading_context（台阶 4 / 21 号 §2.1）回答的是**归属**：这份 JSON 是哪个入口（source）、在哪棵树
-（tree：轮次级封条 + git 修订号）、哪一套声明（declarations：registry / test_layout 的摘要，
-与 evidence.configs.* 同源；adapter_config 在 CLI 路径上不适用）、哪个宿主（host，**不探测沙箱**，
-一律 unknown）、哪一次运行（run）。它不进 evaluate 的任何输入，也不改变 result / exit_code。
+（tree：workspace_tree_digest 的轮次级封条 + git 修订号）、哪一套声明（declarations：
+registry / test_layout 的摘要，与 evidence.configs.* 同源；adapter_config 在 CLI 路径上不适用）、
+哪个宿主（host，**不探测沙箱**，一律 unknown）。它不进 evaluate 的任何输入，也不改变
+result / exit_code。
 
-**它有一个代价，必须知道**：run 里是"本次运行"的标识，所以 --json 的输出**不再是输入的纯函数**。
-要逐字节比对两份 --json，先剥掉 reading_context.run.id / run.started_at（tests/integration/test_cli.py
-的 normalise_run_identity 就是这么做的，并且把"剥掉的字段确实每次都不同"单独断言了一次）；
-**文本输出不受影响**，它没有这两个字段，仍然逐字节可重现。证据载荷**不能**带它——
+**这一份不带 run**（2026-09-30 裁定①）：run 里是"本次运行"的标识，加上它 --json 就不再是输入的
+纯函数——而 CLI 包装层被要求"相同输入得到逐字节相同的输出"（AGENTS 第 19 条的同一条纪律），
+且当时没有任何消费方读它。所以这里显式 include_run=False：**同一份输入的两次 --json 逐字节相同**，
+由 tests/integration/test_cli.py 的 test_json_output_is_reproducible 钉住；文本输出本来就没有
+这两个字段。其余读数（端到端结果、只报告两处）保留 run。证据载荷**不能**带它——
 那两份要求"相同输入得到逐字节相同的证据"（21 号 §2.7）。
 
 **包装层也有自己的协议版本**（2026-09-30 裁定）：output_schema_version 只描述**外层包装**的形状，
@@ -135,6 +137,9 @@ EXIT_ERROR = 2
 # 这份 JSON 是**被哪个入口**在**哪棵树**上算出来的。同一个 render_json 被 CLI 与学习手册共用，
 # 产物过去长得一模一样，读的人分不出"哪一份是哪来的"。source 由调用点显式传入
 # （默认 library，不猜）；它只加旁注，result / exit_code / check_volume 一个都不由它决定。
+# 2026-09-30 裁定①：**这一份 reading_context 不带 run**——包装层要保持"输入的纯函数"，
+# 而 run 带"本次运行"的标识（那是消费方读不到的字段，却让它不再是纯函数）。1.2 **尚未发布**，
+# 所以形状在 1.2 内一次修完、**不升版**；裁定与落地读数见 23 号 §8 / §9。
 OUTPUT_SCHEMA_VERSION = "1.2"
 
 DEFAULT_RULE_DIRS = ("policies",)
@@ -763,7 +768,10 @@ def build_reading_context(
     report: Any | None = None,
     config_root: Path | None = None,
 ) -> dict:
-    """这份 --json 读数属于哪里（21 号 §2.1）：树 / 三处声明 / 宿主 / 本次运行。
+    """这份 --json 读数属于哪里（21 号 §2.1）：树 / 三处声明 / 宿主——**不带"本次运行"**。
+
+    它是六处载荷里唯一显式 include_run=False 的一份（2026-09-30 裁定①）：CLI 包装层要保持
+    "相同输入得到逐字节相同的输出"，run 里那两个字段恰恰每次都不同，而没有任何消费方读它。
 
     声明摘要的来源与验证器流水线**同源**：有证据段时直接取 report.configs 里那几个值
     （与 evidence.configs.* 逐字符相同，test_cli.py 里有断言），没有证据段时按**同一批文件**
@@ -798,6 +806,8 @@ def build_reading_context(
         tree=reading.tree_block(anchor),
         declarations=declarations,
         host=reading.host_block(),
+        # 裁定①：这一份不带 run（保持"输入的纯函数"）；其余读数照旧带。
+        include_run=False,
     )
 
 
@@ -847,6 +857,7 @@ def render_json(
         "output_schema_version": OUTPUT_SCHEMA_VERSION,
         # 台阶 4：这份包装属于哪个入口、哪棵树、哪一套声明（21 号 §2.1）。
         # source 由调用点显式传入（默认 library——**不猜**，AGENTS 核心约束 6）。
+        # 它**不带 run**（2026-09-30 裁定①）：--json 因此仍是输入的纯函数，见 build_reading_context。
         "reading_context": build_reading_context(
             source=source,
             anchor=anchor if anchor is not None else repo_root(),
