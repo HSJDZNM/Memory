@@ -18,6 +18,9 @@
 `dsh_startup_denied_kind` 与 `dsh_startup_denied_path` 里写明是哪条路径被拒；
 归不了因的权限错误**不产生跳过**（宁可红着，也不把它洗成环境限制）。
 `--require-dsh` 让**任何**环境跳过都失败，跳过也绝不写成 pass。
+**配置失败**是第三类：有名字、按**真失败**收场。目前认出的是「Windows ACL 临时根落在工作区内」
+（`acl_temp_root_failure()`）——临时根是我们自己交给 dsh 的（`TEMP`/`TMP`，或
+`--isolated-home` 指到的目录），所以它既不是环境限制，也不是策略判定。
 
 诊断字段 `dsh_startup_denied_home_roots` 逐条带来源（`dsh_startup_denied_home_root_evidence`）：
 URL 形态（`file:///…`）与普通路径**分开解析**，畸形候选按写明规则丢弃——真实日志里的
@@ -29,10 +32,22 @@ URL 形态（`file:///…`）与普通路径**分开解析**，畸形候选按�
     python tools/dsh_sandbox_loop.py                 # 构建并跑完整闭环
     python tools/dsh_sandbox_loop.py --require-dsh   # 任何环境跳过都视为失败
     python tools/dsh_sandbox_loop.py --keep          # 保留上一轮的审计与采集，不重建项目
+    python tools/dsh_sandbox_loop.py --isolated-home # 只在 dsh 子进程的 env 里换掉下面三个变量
+
+`--isolated-home` **只改 dsh 子进程的环境**（本进程与仓库其它部分不受影响；不给这个开关时
+行为一字不变）：`DSH_HOME` → `.tmp/phase-2-sandbox/dsh-home`、`TEMP`/`TMP` →
+`.tmp/phase-2-sandbox/dsh-tmp`。受限宿主上 dsh 起不来的两个位置正是这两处
+（`$DSH_HOME` 下的 `profiles/*.yml` 写不进去、系统 temp 下的 `mkdtemp` 被拒），
+把它们指到仓库内可写目录之后，这条闭环在受限宿主上也能真跑。
+**注意**：`dsh-tmp` 与受控项目 `demo-shop` 必须是**兄弟目录**——dsh 的 Windows ACL 沙箱
+要求「ACL 临时根在工作区之外」（`assertTempRootOutsideWorkspace`），把隔离根放进项目里面
+会被 dsh 拒绝启动；那条失败由分类器归成有名字的**配置失败**，不按环境跳过收场。
 
 产物写在 .tmp/ 下（可随时删除并由本脚本重建）：
 
     .tmp/phase-2-sandbox/demo-shop/           受控项目（含 .policy/ 配置与审计）
+    .tmp/phase-2-sandbox/dsh-home/            --isolated-home 时的 $DSH_HOME
+    .tmp/phase-2-sandbox/dsh-tmp/             --isolated-home 时的 TEMP/TMP（spill 与 ACL 锁）
     .tmp/phase-2-sandbox/logs/                dsh 的原始输出
     .tmp/artifacts/phase-2-sandbox-result.json 结构化结论（供阶段证据引用）
 """
@@ -281,6 +296,22 @@ HOME_ROOT_SOURCE_INJECTED = "injected:homes"
 PROFILE_WRITE_DENIED = "profile_write_denied"
 OTHER_PATH_DENIED = "other_path_denied"
 
+# 第三类：**配置失败**（有名字、按真失败收场）。dsh 的 Windows ACL 沙箱在**启动期**就拒绝
+# 「ACL 临时根落在工作区内」——原文出自本机安装的 dsh 包
+# （`@deepseek-ai/dsh-sandbox-windows-acl` 的 `assertTempRootOutsideWorkspace()`，
+# 判据是 `containsDirectory(workspaceRoot, tempRoot)`）：
+#     Windows ACL temp root must be outside the workspace: workspace=<…>; temp=<…>
+# 为什么算**配置**失败：临时根是使用者与本脚本自己交给 dsh 的（`TEMP`/`TMP`，或
+# `--isolated-home` 指到的目录），改一个变量就能过；而门禁给每一步的临时根恰好是**仓库内**的
+# `.tmp/tmp`（`tools/ci_local.py` 的 `temp_root()`）——只要 dsh 把工作区算成仓库根，这条就会命中。
+# 把它读成「这台机器跑不了 dsh」，与把 projectDir 配错读成沙箱限制，是同一个错误。
+ACL_TEMP_ROOT_MARKER = "Windows ACL temp root must be outside the workspace"
+ACL_TEMP_ROOT_INSIDE_WORKSPACE = "acl_temp_root_inside_workspace"
+
+# `--isolated-home` 的两个隔离根：与受控项目 demo-shop **平级**（不是它的子目录，见模块 docstring）。
+ISOLATED_HOME = SANDBOX / "dsh-home"
+ISOLATED_TMP = SANDBOX / "dsh-tmp"
+
 # 被拒路径的三种原文形态（都要求路径带引号，避免把 syscall/errno 当成路径）：
 #   Node   EPERM: operation not permitted, mkdtemp 'C:\...\Temp\dsh-spill-XXXXXX'
 #   Node   EACCES: permission denied, open '/home/x/.dsh/profiles/headless/cordis.yml'
@@ -352,6 +383,20 @@ class HookSpawnFailure:
     kind: str
     workdir: str | None = None
     evidence: str = ""
+
+
+@dataclass(frozen=True)
+class ConfigFailure:
+    """一次**可归因的配置失败**：dsh 拒绝启动，而原因是**我们自己**交给它的配置。
+
+    `workspace` / `temp` 是原文里 `workspace=` / `temp=` 两个诊断字段（**同一行**解析，
+    且必须先是合法路径）；取不到就留 None —— 名字照样成立，只是细节读不出。
+    """
+
+    kind: str
+    evidence: str = ""
+    workspace: str | None = None
+    temp: str | None = None
 
 
 def _norm_path(value: str) -> str:
@@ -766,10 +811,89 @@ def hook_workdir_missing_reason(failure: HookSpawnFailure) -> str:
     )
 
 
-def run_dsh(prompt: str, log_name: str) -> int:
+_ACL_WORKSPACE = re.compile(r"workspace=(?P<value>[^;\n]+)")
+_ACL_TEMP = re.compile(r"temp=(?P<value>[^;\n]+)")
+
+
+def _acl_root(pattern: re.Pattern[str], line: str) -> str | None:
+    """从原文里取一个诊断根；**不像路径就返回 None**（畸形候选按写明规则丢弃）。
+
+    丢弃规则只有一条：正则切出来的片段必须先是"一条像样的路径"（`_looks_like_path`）。
+    宁可留空，也不把一个读不出的值写进诊断——从日志里推出来的根必须先是合法的路径
+    （AGENTS 第 53 条）。
+    """
+
+    match = pattern.search(line)
+    if match is None:
+        return None
+    value = match.group("value").strip().strip("'\"")
+    return value if _looks_like_path(value) else None
+
+
+def classify_acl_temp_root(text: str) -> ConfigFailure | None:
+    """在一段日志里认出「ACL 临时根落在工作区内」这条**配置失败**（认不出返回 None）。
+
+    判据是**同一行**里出现原文标记，且 `workspace=` / `temp=` 也从**这一行**解析：
+    dsh 的 `throw` 把整句（含两个诊断字段）放在一行里；跨行的组合不算归因
+    （与 `classify_startup_denial` 的崩溃块同一纪律：宁可让真失败保持红）。
+    """
+
+    for line in text.splitlines():
+        if ACL_TEMP_ROOT_MARKER not in line:
+            continue
+        return ConfigFailure(
+            kind=ACL_TEMP_ROOT_INSIDE_WORKSPACE,
+            evidence=line.strip()[:200],
+            workspace=_acl_root(_ACL_WORKSPACE, line),
+            temp=_acl_root(_ACL_TEMP, line),
+        )
+    return None
+
+
+def acl_temp_root_failure() -> ConfigFailure | None:
+    """扫 dsh 的原始日志，返回第一条这条配置失败（一条都读不到就返回 None：不猜）。"""
+
+    for text in _log_texts():
+        failure = classify_acl_temp_root(text)
+        if failure is not None:
+            return failure
+    return None
+
+
+def acl_temp_root_reason(failure: ConfigFailure) -> str:
+    """把「ACL 临时根落在工作区内」写成 reason：说清**改成什么形态就能过**，且不许推给环境。"""
+
+    detail = ""
+    if failure.workspace or failure.temp:
+        detail = "（日志写的 workspace=" + str(failure.workspace) + "；temp=" + str(failure.temp) + "）"
+    return (
+        "dsh 拒绝启动：Windows ACL 沙箱要求 **ACL 临时根在工作区之外**，而这次交给它的临时根"
+        "落在工作区里面" + detail + "。这是**配置**失败——临时根来自 TEMP/TMP（或本脚本的 "
+        "--isolated-home），不是这台机器的限制，不是策略判定，也不是本仓库的缺陷。"
+        "改成什么形态就能过：把 TEMP/TMP 指到**工作区之外**的可写目录再重跑；"
+        "用 --isolated-home 时，隔离根必须留在受控项目 demo-shop 的外面"
+        "（默认的 .tmp/phase-2-sandbox/dsh-tmp 就是它的兄弟目录）。"
+    )
+
+
+def isolated_home_env() -> dict[str, str]:
+    """`--isolated-home` 要设的三条环境变量（**只给 dsh 子进程**，不改进程自己的环境）。
+
+    两个隔离根与受控项目 demo-shop 平级：dsh 的 Windows ACL 沙箱要求临时根在工作区之外，
+    把隔离根放进项目里面会被 dsh 拒绝启动（见 `classify_acl_temp_root()`）。
+    """
+
+    temp = str(ISOLATED_TMP)
+    return {"DSH_HOME": str(ISOLATED_HOME), "TEMP": temp, "TMP": temp}
+
+
+def run_dsh(prompt: str, log_name: str, *, isolated_home: bool = False) -> int:
     argv = dsh_argv()
     assert argv is not None
     env = dict(os.environ)
+    if isolated_home:
+        # 只往**子进程**的 env 上叠加：默认（False）走不到这一支，父进程的环境一个字不动。
+        env.update(isolated_home_env())
     env["PYTHONPATH"] = str(REPO_ROOT / "src")
     env["PYTHONIOENCODING"] = "utf-8"
     completed = subprocess.run(
@@ -971,6 +1095,14 @@ def main(argv: list[str] | None = None) -> int:
         help="任何环境跳过（dsh 不可用 / Hook 进程起不来 / dsh 自身被环境挡住）都视为失败",
     )
     parser.add_argument("--keep", action="store_true", help="保留上一轮审计与采集")
+    parser.add_argument(
+        "--isolated-home",
+        action="store_true",
+        help=(
+            "只在 dsh 子进程的 env 里把 DSH_HOME/TEMP/TMP 指到 .tmp/phase-2-sandbox 下的"
+            "可写目录（默认行为不变）"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if dsh_argv() is None:
@@ -995,7 +1127,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- 场景 1：bad 编辑必须被阻断，文件哈希不变 -------------------------------
     block_before = sha256(controller)
-    block_exit = run_dsh(BLOCK_PROMPT, "block-run.txt")
+    block_exit = run_dsh(BLOCK_PROMPT, "block-run.txt", isolated_home=args.isolated_home)
     block_after = sha256(controller)
     records = audit_records()
     block_record = last_governed(records, "edit")
@@ -1011,7 +1143,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- 场景 2：good 编辑必须放行，且只发生一次预期变更 -------------------------
     allow_before = sha256(controller)
-    allow_exit = run_dsh(ALLOW_PROMPT, "allow-run.txt")
+    allow_exit = run_dsh(ALLOW_PROMPT, "allow-run.txt", isolated_home=args.isolated_home)
     allow_after = sha256(controller)
     records = audit_records()
     allow_record = last_governed(records, "edit")
@@ -1067,7 +1199,25 @@ def main(argv: list[str] | None = None) -> int:
             "以及 dsh 侧是否启用了 patch.yml 的进程内转发插件"
         )
         failure = hook_spawn_failure()
-        if failure is not None and failure.kind == HOOK_WORKDIR_UNUSABLE:
+        config_failure = acl_temp_root_failure()
+        if config_failure is not None:
+            # 配置失败排在最前：三类同时出现时，报出的是**我们自己能改**的那一件
+            # （结论都是真失败，差别只在理由给得对不对——AGENTS 第 52 条）。
+            payload["result"] = "fail"
+            payload["environment_skipped"] = False
+            payload["dsh_config_failure_kind"] = config_failure.kind
+            payload["dsh_config_failure_evidence"] = config_failure.evidence
+            payload["diagnosis"] = (
+                "dsh 在启动期拒绝启动：Windows ACL 沙箱的临时根落在工作区之内"
+                "（**配置**问题，不是环境限制，也不是策略判定）"
+            )
+            payload["reason"] = acl_temp_root_reason(config_failure)
+            payload["reproduce"] = (
+                "把 TEMP/TMP 指到**工作区之外**的可写目录再重跑："
+                "python tools/dsh_sandbox_loop.py --require-dsh"
+                "（用 --isolated-home 时，隔离根必须留在受控项目 demo-shop 的外面）"
+            )
+        elif failure is not None and failure.kind == HOOK_WORKDIR_UNUSABLE:
             # 归因是"工作目录不可用"= 接线/配置错误：**不产生环境跳过**（与 14 号文档 §2.2
             # 「归不了因就不跳过」同一口径）。洗成 skipped 会让"配错了"看起来像"这台机器不允许"，
             # 而两者要改的地方完全不同。

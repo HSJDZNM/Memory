@@ -19,6 +19,7 @@ r"""tools/dsh_sandbox_loop.py 的「dsh 起不来」归因检查（不依赖本�
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -206,8 +207,14 @@ def drive_main(
     log_text: str,
     *,
     require_dsh: bool,
+    isolated_home: bool = False,
+    seen: list[bool] | None = None,
 ) -> tuple[int, dict]:
-    """把 main() 的判定路径整条驱动一遍：假 dsh、假项目、真日志。"""
+    """把 main() 的判定路径整条驱动一遍：假 dsh、假项目、真日志。
+
+    `seen` 非空时按顺序记下每次 `run_dsh` 拿到的 `isolated_home`（两个场景各一次）：
+    `--isolated-home` 的接线因此不必真起 dsh 也能被钉住。
+    """
 
     project = tmp_root / "demo-shop"
     logs = tmp_root / "logs"
@@ -224,12 +231,16 @@ def drive_main(
     monkeypatch.setattr(loop, "build_project", lambda *, keep: None)
     monkeypatch.setattr(loop, "dsh_argv", lambda: ["dsh"])
 
-    def fake_run(prompt: str, log_name: str) -> int:
+    def fake_run(prompt: str, log_name: str, *, isolated_home: bool = False) -> int:
+        if seen is not None:
+            seen.append(isolated_home)
         (logs / log_name).write_text(log_text, encoding="utf-8")
         return 1
 
     monkeypatch.setattr(loop, "run_dsh", fake_run)
     argv = ["--require-dsh"] if require_dsh else []
+    if isolated_home:
+        argv.append("--isolated-home")
     code = loop.main(argv)
     return code, json.loads(artifact.read_text(encoding="utf-8"))
 
@@ -842,3 +853,198 @@ def test_main_does_not_launder_unattributable_hook_failure_into_skip(
     assert "读不出原因" in payload["reason"]
     # 读不出原因时不许给出沙箱那一类的因果断言
     assert "受限沙箱禁止管道 stdio，而 dsh 的 ctx.shell" not in payload["reason"]
+
+
+# --- 第 18 轮：`--isolated-home` 与「ACL 临时根落在工作区内」这一类**配置失败** -------------
+#
+# 原文是**外部契约**（dsh 自己的包，不参与本仓库回归，所以这里把原句钉成夹具）：
+#   @deepseek-ai/dsh-sandbox-windows-acl 的 assertTempRootOutsideWorkspace()
+#   throw new Error(`Windows ACL temp root must be outside the workspace: workspace=${workspaceRoot}; temp=${tempRoot}`);
+# 判据是 containsDirectory(workspaceRoot, tempRoot)。它是**配置**失败（临时根来自 TEMP/TMP
+# 或 --isolated-home），所以必须：有名字、按真失败收场、且不许被同一份日志里的
+# "环境跳过"证据洗成 skipped。
+
+ACL_WORKSPACE = "C:/work/demo-shop"
+ACL_TEMP_INSIDE = "C:/work/demo-shop/.tmp"
+
+
+def log_acl_temp_root_inside_workspace() -> str:
+    """dsh 启动期拒绝：ACL 临时根落在工作区内（原句 + 两个诊断字段，同一行）。"""
+
+    return (
+        "Error: Windows ACL temp root must be outside the workspace: "
+        f"workspace={ACL_WORKSPACE}; temp={ACL_TEMP_INSIDE}\n"
+        "    at assertTempRootOutsideWorkspace (file:///C:/x/npm/node_modules/"
+        "@deepseek-ai/dsh-sandbox-windows-acl/lib/index.js:513:41)\n"
+    )
+
+
+def log_acl_temp_root_with_skip_evidence() -> str:
+    """同一份日志里既有配置失败原文、又有"环境跳过"的证据（真机上两者可能挨在一起）。"""
+
+    return log_acl_temp_root_inside_workspace() + log_real_temp_spill()
+
+
+def log_acl_marker_without_parsable_roots() -> str:
+    """认得出名字，但两个诊断字段是空的：**仍然是有名字的配置失败**，细节留空。"""
+
+    return "Error: Windows ACL temp root must be outside the workspace: workspace=; temp=\n"
+
+
+class _Completed:
+    """subprocess.run 的最小替身：run_dsh 只读 stdout / stderr / returncode。"""
+
+    stdout = ""
+    stderr = ""
+    returncode = 0
+
+
+def capture_child_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_root: Path, *, isolated_home: bool
+) -> dict:
+    """截下 run_dsh 交给子进程的 env（不起任何进程）。"""
+
+    logs = tmp_root / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    seen: dict = {}
+
+    class _FakeSubprocess:
+        @staticmethod
+        def run(argv, **kwargs):
+            seen["argv"] = argv
+            seen["env"] = kwargs["env"]
+            return _Completed()
+
+    monkeypatch.setattr(loop, "LOGS", logs)
+    monkeypatch.setattr(loop, "dsh_argv", lambda: ["dsh"])
+    monkeypatch.setattr(loop, "subprocess", _FakeSubprocess)
+    assert loop.run_dsh("prompt", "block-run.txt", isolated_home=isolated_home) == 0
+    return seen["env"]
+
+
+def test_acl_temp_root_message_is_a_named_config_failure():
+    failure = loop.classify_acl_temp_root(log_acl_temp_root_inside_workspace())
+    assert failure is not None
+    assert failure.kind == loop.ACL_TEMP_ROOT_INSIDE_WORKSPACE
+    assert failure.workspace == ACL_WORKSPACE, "两个诊断根必须逐字读出来"
+    assert failure.temp == ACL_TEMP_INSIDE
+    assert loop.ACL_TEMP_ROOT_MARKER in failure.evidence
+
+
+def test_acl_temp_root_without_parsable_roots_keeps_the_name():
+    """读不出细节不等于归不了因：名字照给，路径留空——不从别的行里猜。"""
+
+    failure = loop.classify_acl_temp_root(log_acl_marker_without_parsable_roots())
+    assert failure is not None and failure.kind == loop.ACL_TEMP_ROOT_INSIDE_WORKSPACE
+    assert failure.workspace is None and failure.temp is None
+
+
+def test_acl_temp_root_reason_names_the_fix_and_does_not_blame_the_environment():
+    failure = loop.classify_acl_temp_root(log_acl_temp_root_inside_workspace())
+    assert failure is not None
+    reason = loop.acl_temp_root_reason(failure)
+    assert ACL_TEMP_INSIDE in reason, "理由要带上日志里的两个路径"
+    assert "TEMP/TMP" in reason and "--isolated-home" in reason, "必须说清改成什么形态就能过"
+    assert "不是这台机器的限制" in reason, "不许把配置失败推给环境"
+
+
+def test_acl_scan_reads_the_log_dir_and_ignores_other_logs(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    logs = tmp_root / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(loop, "LOGS", logs)
+    (logs / "block-run.txt").write_text(log_no_permission_error(), encoding="utf-8")
+    assert loop.acl_temp_root_failure() is None
+    (logs / "allow-run.txt").write_text(log_acl_temp_root_inside_workspace(), encoding="utf-8")
+    failure = loop.acl_temp_root_failure()
+    assert failure is not None and failure.kind == loop.ACL_TEMP_ROOT_INSIDE_WORKSPACE
+
+
+def test_main_reports_acl_temp_root_as_config_failure(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """dsh 拒绝启动 + 原因是我们的配置 → 真失败（退出码 1），且**不是**环境跳过。"""
+
+    code, payload = drive_main(
+        tmp_root, monkeypatch, log_acl_temp_root_inside_workspace(), require_dsh=False
+    )
+    assert code == 1, "配置失败不给环境跳过：给不给 --require-dsh 都是失败"
+    assert payload["result"] == "fail"
+    assert payload["environment_skipped"] is False
+    assert payload.get("sandbox_blocked_spawn") is None
+    assert payload.get("dsh_startup_denied") is None, "配置失败不是「环境拒绝」那一族"
+    assert payload["dsh_config_failure_kind"] == loop.ACL_TEMP_ROOT_INSIDE_WORKSPACE
+    assert loop.ACL_TEMP_ROOT_MARKER in payload["dsh_config_failure_evidence"]
+    assert ACL_TEMP_INSIDE in payload["reason"]
+    assert "不是这台机器的限制" in payload["reason"]
+    assert "TEMP/TMP" in payload["reason"], "拒绝理由必须说清改成什么形态就能过"
+
+
+def test_main_does_not_launder_acl_config_failure_into_skip(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """同一份日志里还有"环境跳过"的证据时，**我们自己能改的那一类**必须胜出。"""
+
+    code, payload = drive_main(
+        tmp_root, monkeypatch, log_acl_temp_root_with_skip_evidence(), require_dsh=False
+    )
+    assert code == 1
+    assert payload["result"] == "fail", "有配置失败原文时不许报成 skipped"
+    assert payload["environment_skipped"] is False
+    assert payload["dsh_config_failure_kind"] == loop.ACL_TEMP_ROOT_INSIDE_WORKSPACE
+
+
+def test_isolated_home_paths_are_siblings_of_the_project():
+    """隔离根与受控项目必须平级：放进 demo-shop 里面会被 dsh 的 ACL 沙箱拒绝启动。"""
+
+    assert loop.ISOLATED_HOME.parent == loop.SANDBOX
+    assert loop.ISOLATED_TMP.parent == loop.SANDBOX
+    assert loop.PROJECT not in loop.ISOLATED_HOME.parents
+    assert loop.PROJECT not in loop.ISOLATED_TMP.parents
+
+
+def test_isolated_home_sets_the_three_child_env_vars(
+    monkeypatch: pytest.MonkeyPatch, tmp_root: Path
+):
+    """三条变量只落在**子进程**的 env 里：值来自两个隔离根，既有接线不受影响。"""
+
+    isolated = tmp_root / "phase-2-sandbox"
+    monkeypatch.setattr(loop, "ISOLATED_HOME", isolated / "dsh-home")
+    monkeypatch.setattr(loop, "ISOLATED_TMP", isolated / "dsh-tmp")
+    env = capture_child_env(monkeypatch, tmp_root, isolated_home=True)
+    assert env["DSH_HOME"] == str(isolated / "dsh-home")
+    assert env["TEMP"] == str(isolated / "dsh-tmp")
+    assert env["TMP"] == str(isolated / "dsh-tmp")
+    assert env["PYTHONPATH"] == str(loop.REPO_ROOT / "src"), "既有接线不许被这条开关带坏"
+    assert env["PYTHONIOENCODING"] == "utf-8"
+
+
+def test_default_run_does_not_touch_home_or_temp(monkeypatch: pytest.MonkeyPatch, tmp_root: Path):
+    """默认行为不变：不给开关时，这三条变量与父进程完全一致（一个字都不改）。"""
+
+    env = capture_child_env(monkeypatch, tmp_root, isolated_home=False)
+    for key in ("DSH_HOME", "TEMP", "TMP"):
+        assert env.get(key) == os.environ.get(key), key + " 在默认路径上被改了"
+
+
+def test_main_passes_isolated_home_to_both_children(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`--isolated-home` 要真的到达两个场景的 dsh 子进程（接线用例，不起 dsh）。"""
+
+    seen: list[bool] = []
+    code, payload = drive_main(
+        tmp_root,
+        monkeypatch,
+        log_no_permission_error(),
+        require_dsh=False,
+        isolated_home=True,
+        seen=seen,
+    )
+    assert seen == [True, True], "两个场景的 dsh 子进程都要拿到这个开关"
+    assert code == 1 and payload["result"] == "fail", "这份日志本身不是配置失败"
+
+    default: list[bool] = []
+    drive_main(tmp_root, monkeypatch, log_no_permission_error(), require_dsh=False, seen=default)
+    assert default == [False, False], "不给开关时不许悄悄打开隔离"
