@@ -179,6 +179,8 @@
 
 ## 8 补记（2026-09-30，第 17 轮登记）：`reading_context` 的待建项
 
+### 8.1 第 17 轮登记（2026-09-30）
+
 §2.3 第 2 条把 `reading_context` 判成"**建机制（薄）**"，但"薄"到什么程度当时没有写下。
 第 17 轮把两项登记进来（**只登记，不动手**；§5 的"只交清单"边界不变）：
 
@@ -190,6 +192,32 @@
 **判据检查（§3.6 第 2 条）**：这两项服务的对象是**台阶 4 机制自己的读数**，
 而不是某个"已声明 `out_of_scope`"的通道 —— 它们的红不是"让已声明不治理的对象不再红"，
 所以处置方向**不是**写一条收缩声明；第 2 项落在"建机制"还是"只报告"，请评审裁定。
+
+---
+
+### 8.2 补记（2026-10-01）：三条未声明通道的**改判**（使用者授权评审方定夺）
+
+§2.3 第 9 条把 `dsh:web` / `dsh:headless` / `dsh:verify-dead` 三条未声明通道的处置判成
+**写声明**（第 16 轮已落地为三条 `out_of_scope`）。本轮由使用者 2026-10-01 授权评审方定夺：
+**三条的判决不变**（仍是 `out_of_scope`），改的是**理由与到期日**——理由从"待使用者确认"
+改成**结论性**的；到期日 `2026-10-31 → 2026-12-31`，各加一条 `renewals`（`at=2026-10-01`，
+note 写明"使用者授权评审方定夺，理由见 24 号 §8"）。
+
+| 通道 | 新理由（一句话） | 可复核的旁证 |
+| --- | --- | --- |
+| `dsh-web-channel` | 使用者暂不建设前端页面；Web GUI 通道与 `desktop-entry-points` 同口径，不治理；建设前端时改判 | 与 §2.1 第 1 行同口径 |
+| `dsh-headless-channel` | 用户侧 headless 基础 profile 属于使用者日常入口，按 `agent-channel-inventory-report-mode` 的裁定不治理；平台自己的 headless 调用**在受控范围内** | `tools/dsh_sandbox_loop.py:1007` 的 `--profile headless --patch …/.policy/patch.yml`（本机 grep 复核） |
+| `dsh-verify-dead-channel` | 早先治理能力验证轮（`verify-*` 一组）留下的测试 profile，不是真实入口；仓库内没有任何引用；使用者删除该 profile 时须同批删除本声明 | 本机 grep：`verify-dead` 只出现在评估/登记文档与本声明自己里，**没有代码引用** |
+
+**落地与读数**（提交 `26bf07b`，只改 `adapters/wiring-scope.yaml`）：
+
+| 判据 | 读数 |
+| --- | --- |
+| `python -m provenance.cli wiring-scope --check` | 退出码 **0**；`by_decision` 分布**不变**（`in_scope 1 / out_of_scope 5 / expected_absent 1`） |
+| `python tools/exemption_expiry.py` | `HITS: 0 / declared=8 due=0 expired=0 unprovable=0` |
+| decision / 退出码 | **全部不变**（本轮只动理由与日期；`adapters.cli wiring` 的通道状态逐字相同） |
+
+完整裁定与偏离登记见 24 号 §8.3（第 0.5 条）。
 
 ---
 
