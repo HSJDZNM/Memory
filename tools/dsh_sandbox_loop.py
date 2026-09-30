@@ -75,6 +75,21 @@ PROJECT = SANDBOX / "demo-shop"
 LOGS = SANDBOX / "logs"
 ARTIFACT = REPO_ROOT / ".tmp" / "artifacts" / "phase-2-sandbox-result.json"
 
+# 结论载荷的版本轴（AGENTS 第 55 条：加键就是改协议）。
+#
+# 1.0（**追认**、从未在载荷里出现过字面量）= **第 13 轮之前**的形状：那时载荷里既没有
+# `schema_version` 本身，也没有后来那三族诊断键——第 14 轮（`c75886e`）的
+# `dsh_startup_denied_` 一族、第 15 轮（`b9d3b11`）的 `hook_spawn_denied_` 一族、
+# 第 18 轮（`09322b0`）的 `dsh_config_failure_` 一族（三族键的引入点由 `git show` 逐版读出）。
+# 第 13 轮的树（`b2c1255`）里这个文件只有一个 `dsh_startup_denied` 布尔位，
+# 「哪条路径被拒」还读不出来；那棵树上也没有 `schema_version`。
+# 1.1 = 现形状：**两条写盘路径（完整跑 / dsh 不可用）都带这个键**，各自的诊断键按路径出现或缺失。
+#
+# 消费方：`tools/phase_evidence.py` 的 `sandbox_loop()`（逐键 `.get()`，**不依赖键集合**）
+# 与 `.tmp/e2e/` 下的人工复核副本。读这份载荷的代码不必认全键，但「这份读数属于哪一代
+# 形状」必须能读出来——这就是本轴存在的理由；下一族诊断键落地时，这里跟着递增。
+SANDBOX_RESULT_SCHEMA_VERSION = "1.1"
+
 AGENT_VERSION = "0.1.5-rc.1"
 RULE_ID = "ARCH-001@1"
 
@@ -1112,6 +1127,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         write(ARTIFACT, json.dumps(
             {
+                # 最小跳过载荷与完整载荷**共用同一条版本轴**（两条写盘路径都带 schema_version）：
+                # 消费者据此知道「这份读数属于哪一代形状」，而不是靠某个键在不在来猜。
+                "schema_version": SANDBOX_RESULT_SCHEMA_VERSION,
                 "phase": 2,
                 "result": "skipped",
                 "environment_skipped": True,
@@ -1159,6 +1177,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     payload = {
+        "schema_version": SANDBOX_RESULT_SCHEMA_VERSION,
         "phase": 2,
         "agent": "dsh",
         "agent_version": AGENT_VERSION,

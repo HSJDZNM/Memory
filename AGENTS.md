@@ -452,7 +452,15 @@
     - 检索与针脚：`retrieval.models.INDEX_SCHEMA_VERSION` 与 `CHUNKER_VERSION`（分块语义）、
       `provenance.cli.RECEIPT_SCHEMA_VERSION`、`provenance.wiring_scope.SCHEMA_VERSION`；
     - 本机门禁与仪器：`tools.obligations_gate.REPORT_SCHEMA_VERSION`（义务账门禁的报告载荷——
-      账本不存在时从"没有依据的命中"改成"不适用"那一档，1.0 → 1.1）。
+      账本不存在时从"没有依据的命中"改成"不适用"那一档，1.0 → 1.1）；
+      `tools.dsh_sandbox_loop.SANDBOX_RESULT_SCHEMA_VERSION`（沙箱闭环结论载荷
+      `.tmp/artifacts/phase-2-sandbox-result.json`——**1.0 追认为第 13 轮之前的形状**：那时它既没有
+      `schema_version` 本身，也没有第 14/15/18 轮那三族诊断键（`dsh_startup_denied_*` /
+      `hook_spawn_denied_*` / `dsh_config_failure_*`）；1.1 = 现形状，**两条写盘路径**
+      （完整跑 / dsh 不可用）都带这个键，消费者不必靠"某个键在不在"猜代际）。
+    **已登记、但还没有版本轴的载荷**（第一次改键时必须引入 1.1——不许"只加一个键"了事）：
+    `tools/exemption_expiry.py --json`（豁免到期的机器读数；`ci_local.py` 读的是**默认输出**里的
+    `HITS:` 文本行，那条是跨文件契约，与这个载荷各走各的）。
     **不是版本轴的同名字段**（别照这张表改）：`orchestration.langgraph_engine.MIN_LANGGRAPH_VERSION`
     是依赖下界；`adapters/<id>/manifest.yaml` 的 `agent_version` / `protocol_version` 是产品与协议
     **声明**（改了要重新审核并重录宿主观测，见第 54 条），不是载荷版本。
