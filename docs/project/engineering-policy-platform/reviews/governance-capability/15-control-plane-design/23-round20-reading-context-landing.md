@@ -709,7 +709,184 @@ D-2 冻结的部分（`account` / `differences` / `governs` 轴）照旧不动�
 
 ---
 
-**本文件是七次提交**：§1–§4.1 在 `45b9962`（门禁之前），§4.2–§7 是第 20 轮门禁之后的补记，
+**本文件是八次提交**：§1–§4.1 在 `45b9962`（门禁之前），§4.2–§7 是第 20 轮门禁之后的补记，
 §8–§9 是 2026-09-30 第二轮的裁定与落地读数；§10 是 `15be129`（第 22 轮的背景登记），
-§11 是本提交（第 22 轮的门禁之后的落地读数）。切开写是刻意的：§4.1 是**事先**写下的放宽理由，
-事后补写就变成了"先射箭再画靶"；§9 与 §11 的读数则在**跑完门禁之后**才写。
+§11 是第 22 轮门禁之后的落地读数；§12 是本提交（第 23 轮：第三轮裁定与 `declarations.test_layout`
+的改正读数）。切开写是刻意的：§4.1 是**事先**写下的放宽理由，事后补写就变成了"先射箭再画靶"；
+§9 / §11 / §12 的读数则在**跑完门禁之后**才写。
+
+---
+
+## 12 第 23 轮 · 2026-09-30 第三轮裁定与 `declarations.test_layout` 的改正（1.3 内，不升版）
+
+- **执行**：2026-10-01（本机）；控制面重构会话（**唯一写者**）。
+- **树**：起点 HEAD = `92a6dd1`（工作树干净）；改正提交 `096cb0d`；门禁在 `096cb0d` 上跑
+  （跑前快照记的 HEAD 就是它）。
+- **依据**：§11.8 的两条"请评审裁定"与一条"没搬"；AGENTS 第 45（仪器要能失败）/ 48（读数属于哪棵树）/
+  50（口径诚实）/ 55（加键就是改协议）条。
+- **仪器落点**：`.tmp/step10/`（不提交）。**before 侧在动手之前采集**
+  （`decisions-before.json` / `verdict-before.json` / `audit-before.json` /
+  `audit-before-run2.json`，采集时刻 00:34:34–00:34:54）。
+
+### 12.1 裁定（2026-09-30 · 第三轮，三项）
+
+§11.8 的原问题**一字不动地留在 §11.8**，便于复核"裁定的是不是当初问的那件事"：
+
+| # | §11.8 的问题 | 裁定 | 落地 |
+| --- | --- | --- | --- |
+| ① | `reading_context.tree` 只有 `status` / `scope` / `digest`，没有 `revision` | **接受**：`git rev-parse HEAD` 单次实测 48.4 ms，一项就吃掉 50 ms 的增量预算；受控项目常常不是 git 工作树，取不到会是常态 | 不改（口径已写在 `hooks.reading_context_for_record` 的 docstring 里） |
+| ② | `host.sandbox` 恒为 `unknown` | **接受**：Hook 不探测沙箱（探测要有副作用），与 21 号 §9.2 裁定④对 `check` 路径的口径相同 | 不改 |
+| ③ | `declarations.test_layout` 写 `not_applicable` | **不接受——它与事实不符**：取证流水线**确实读过** `validation/test-layout.yaml`，`validators.pipeline` 已经算了它的摘要（`report.configs["test_layout"]`）。`AUDIT_SCHEMA_VERSION` 的 `1.3` **尚未发布**，因此**在 1.3 内改正、不升版** | 本轮唯一改动（§12.2） |
+
+**三条都不改任何 allow / block、不新增阻断步骤、不改任何退出码。** 第 ③ 条是**协议形状的更正**：
+"没搬"此前被写成了"没有"（§11.8 第 2 条自己写着"它是『没搬』而不是『没有』"）——改正之后，
+"这条路径上没有这份声明"与"这次没搬"在记录里才分得开（第 50 条：同名两义一律改名）。
+
+### 12.2 改动（提交 `096cb0d`，单独提交）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `src/adapters/dsh/pre_evidence.py` | `_summary()` 新增 `test_layout`：`{path, digest, declared_in}`；`digest` 取自 `report.configs["test_layout"]`（**一个字节都不重算**），`path` 取自 `validators.registry.DEFAULT_TEST_LAYOUT` |
+| `src/adapters/dsh/hooks.py` | `declarations.test_layout` 照 registry 那一支的做法取**同一份**摘要（`available` / `unavailable` / `not_applicable` 三态不变）；docstring 里那句"这条记录本身不依赖那份声明"删掉，换成裁定的口径与不升版的理由 |
+| `tests/unit/test_hook_audit_reading_context.py` | 两条新用例：三处摘要同源；"不另算"的**会失败**检查（变异证明见下）+ 两处三态断言各一条 |
+| `src/adapters/dsh/README.md` | §12.10 的键表加一行 `pre_evidence.test_layout`，`declarations` 一栏同步 |
+
+**registry 那一支一个字节都没动**（刻意不抽公共函数，理由写在代码注释里）：R3 的差集里因此
+没有 registry 的噪声——"不动"是被读出来的，不是被声明的。
+
+**变异证明（AGENTS 第 45 条）**：把摘要侧接回 `validators.registry.config_digest`（= "另算一次"），
+`test_the_test_layout_digest_is_not_computed_a_second_time` 立刻变红
+（`AssertionError: [('pipeline', '…\\validation\\test-layout.yaml'), ('registry', 'validation/test-layout.yaml')]`；
+`assert 2 == 1`）；撤回变异后 7 passed。**这条用例在"没做错"时是绿的，在"另算"时是红的。**
+
+### 12.3 R-d 逐条（21 号 §5 的预注册形状 + 本轮指令）
+
+**预注册形状（采集之前写下）**：本轮只允许两处变化——
+① `pre_evidence.test_layout` **新增**；② `reading_context.declarations.test_layout` 的**状态变化**
+（`not_applicable` → `available` + `path` + `digest`，或 → `unavailable` + `reason`）。
+除此之外：**决策载荷 0 条差异、VERDICT 判定行 0 条差异**；六个判定字段
+（`decision` / `violations` / `pending_findings` / `matched_rules` / `skipped_rules` / `required_action`）
+一个都不许出现在任何差集里。
+
+**仪器的时间线（照实写）**：`.tmp/step10/compare_r3.py` 的 `CreationTime` = `2026-10-01T00:34:24`，
+早于 before 采集（00:34:44）与 after 采集（00:36:58）；采集完成之后只**追加**了一条
+"digest 必须等于 `validation/test-layout.yaml` 的 sha256"的对照检查（`LastWriteTime` 00:37:38），
+它**不放松任何判据**（只会更严）。
+
+**仪器的自证（"自己对自己"必须 0 条）**：
+
+| 对照 | 读数 |
+| --- | --- |
+| R3 before vs before-run2（残差口径） | `cases=24 diffs=0 unexpected=0 residual_mismatch=0 forbidden=0 same_source_mismatch=0 digest_mismatch=0` |
+| R3 after vs after-run2（残差口径） | 同上，全 0 |
+| R1 决策载荷 自证（`same_tree_rerun_identical`） | `True`（两次逐字节相同） |
+
+| # | 尺子 | before | after | 差集 |
+| --- | --- | --- | --- | --- |
+| R1 | 决策载荷（10 个场景，四把尺子里唯一不碰包装层的一把） | 23992 B、`cfad8c32c59a57a4…` | **逐字节相同**（同 23992 B、同 sha256，与第 19/22 轮记的同一个值） | **0 条** |
+| R2' | VERDICT 判定行（144 行矩阵 + 插件侧按精确版本号读的字面量） | 24403 B、`8b0f538e4bb97f1c…` | **逐字节相同**（24403 B、同 sha256） | **0 条**；`VERDICT_SCHEMA_VERSION` 仍 `1.0`，插件里的字面量仍 `1.0` |
+| R3 | Hook 审计记录（11 个 fixture × 5 次 × 3 个模式；before/after 各 **51 条**记录） | 最大单条 7519 B | 最大单条 7823 B | **21 条，全部预注册**：`unexpected=0`、残差 **0** 条不符、六个判定字段 **0** 命中、`pre_evidence.test_layout.digest == declarations.test_layout.digest` **0** 处不符、digest 与文件 sha256 **0** 处不符 |
+
+**21 条的分解**（脚本逐条给出，`R3-diff.json`）：
+
+| 条数 | 差集 | 落在哪 |
+| --- | --- | --- |
+| 5 | `pre_evidence.test_layout: 新增` | 取证**收上来**的 5 条记录（`evidence.pre-tool-use-write-{allow,block}`、`paired.paired-{allow,block}`、`paired.paired-allow` 的第二条） |
+| 5 + 5 | `declarations.test_layout.path: 新增`、`.status: not_applicable -> available` | 同上 5 条 |
+| 3 + 3 | `.status: not_applicable -> unavailable`、`.reason: 新增` | `reason_code=evidence_unavailable` 的 3 条（**声明了取证却失败**：三态里的 unavailable，与 registry 同一口径） |
+
+**一条必须写下来的口径**：`declarations.test_layout.digest` 在**字段级差集里看不见**
+（`json_field_diff` 的 UNSTABLE 后缀名单里就有 `digest`）。它是靠**两条更严的尺子**抓的：
+(a) 残差逐字节（把 after 的两处还原成 before 的形态后必须逐字节相同）；
+(b) "digest 必须等于 `validation/test-layout.yaml` 的 sha256"这条对照。
+第 22 轮记过同一件事（`origin.observation.verified_at`），这里再记一次：
+**字段级差集不是全部，"差集里没有"不等于"没有变化"。**
+
+### 12.4 三条硬约束（重新测一遍）
+
+**① 延迟（增量不得超过 50 ms）**
+
+| 尺子 | 读数 |
+| --- | --- |
+| **直接测**（n=200，本轮树） | `reading_context_for_record` **0.6203 ms**（中位数；其中 `declaration_block`（adapter 配置）0.5593 ms、`host_block` 0.0007 ms）；第 22 轮同口径是 0.5258 ms —— 差值是噪声量级，新增的那两处都是"取已有的值"（复制字符串），没有新计算 |
+| **配对 A/B**（同一进程交替开关，11 个 fixture × 5 轮 × 2 臂） | evidence 模式增量中位数 **+2.104 ms**、最大 **+9.658 ms**；plain 模式中位数 **+1.178 ms**、最大 **+3.011 ms**；**0/11 + 0/11** 个 fixture 超过 50 ms |
+| before/after 两轮采集（每 fixture 5 次 × 各侧两轮） | min 估计：中位数 **−7.7 ms**、最大 **+9.5 ms**；median 估计：中位数 **−20.0 ms**、最大 **+4.0 ms**、最小 −79.3 ms；**两种口径下 0/24 个点超过 50 ms** |
+| 自证噪声包络 | before vs before-run2：−32.0 … +26.4 ms；after vs after-run2：−5.0 … +2.7 ms；交叉对照 before vs after-run2：−78.7 … +4.8 ms |
+| **被否掉的选项的代价**（口径沿用第 22 轮） | `git rev-parse HEAD` **48.99 ms**（中位数，n=200）——它一项就吃掉整个 50 ms 预算，这就是 `tree` 不填 `revision` 的读数 |
+
+**结论**：before→after 的最大增量（+9.5 ms）落在自证噪声带（同机同代码两次采集自身能差 −32.0 ms）之内，
+且**没有一个点超过 50 ms**；直接测的新增工作是复制两个字符串。
+
+**② 大小（失败关闭上限的余量不得低于 30%）**
+
+| 项 | before | after | 余量 |
+| --- | --- | --- | --- |
+| 最大单条记录（Phase 2 审计记录，UTF-8 字节） | **7519 B** | **7823 B**（+304 B） | `16384 − 7823 = 8561 B` → **52.25%**（下限 30%） |
+| 51 条记录的增量分布 | —— | 最小 **−1 B**、最大 **+305 B** | —— |
+| 上限来源 | `enforcement.audit.DEFAULT_MAX_RECORD_BYTES = 16384`（AGENTS 第 16 条） | | |
+
+**口径诚实**（与第 22 轮同一条）：Hook 侧写审计用的是 `hooks.AuditLedger.append`，它**自己不设**
+字节上限——那条上限是**审计链**（`FileAuditSink`）的失败关闭阈值。所以这里报的是"离那条被登记的
+上限还有多远"，不是"已经被它拦住过"。最小增量是 **−1 B**（`elapsed_ms` 的位数变化），
+与本次改动无关，照实写出来。
+
+**③ 兼容（1.2 不回写 · 1.2 与 1.3 混排的链必须过校验）**
+
+| 判据 | 读数 |
+| --- | --- |
+| 已有 1.2 记录不回写 | `tests/unit/test_hook_audit_reading_context.py::test_a_1_2_record_is_not_rewritten_and_a_mixed_chain_still_verifies`：**1 passed**（`audit.read_bytes().startswith(before_bytes)`，第 1 行与写入前逐字节相同） |
+| 1.2 与 1.3 混排的链 | 同一条用例里 `FileAuditSink(audit).verify() == ()`；两类 Phase 2 记录都被算作**外来行**（`foreign_records()` 计数），不静默收编 |
+| 本轮 51 条记录的链 | 24 个用例的 `chain_issues` **全为空**；`foreign_records` 计数 1–3（Phase 4 的链记录，与第 22 轮同口径） |
+| 版本断言 | `AUDIT_SCHEMA_VERSION` 仍 `1.3`（裁定：未发布，在 1.3 内改正、不升版） |
+
+### 12.5 门禁（`--full`）
+
+**命令（逐字）**：`python tools/ci_local.py --full --python .venv/Scripts/python.exe`
+**树**：HEAD = `096cb0d`（跑前 `git status --porcelain -uall` 空；`.tmp/ci-local.lock` 未被持有，
+本会话没有别的门禁作业）。
+
+| 项 | 读数 |
+| --- | --- |
+| **显式退出码** | **0** —— `本机检查全部通过（31 步）；只报告 2 步（非零退出不计入失败）` |
+| **耗时** | 门禁自己的汇总行 **4m 58.6s**（`=== 执行耗时（合计 4m 58.6s，33 步，最慢 5 步）===`）；外层秒表 **299.2 s** |
+| 选组 | `改动文件 812 个；执行 31 步（本机跳过 11 步，登记豁免 2 步，只报告 2 步）` |
+| 大头 | pytest **2m 05.2s**（41.9%）→ notebooks **1m 10.1s**（23.5%）→ 编排闭环 **1m 03.4s**（21.2%）→ 阶段验收证据 7.4s → 验证器闭环 6.3s |
+| 与第 22 轮对照 | 同一条命令在 `7f8f77a` 上 **5m 00.1s / 33 步**，本轮 **4m 58.6s / 33 步**（**不相减**：改动面与机器负载都不同）。同一步能对照的是 pytest 2m09.2s → 2m05.2s（**−4.0s，未归因**）与 notebooks 1m08.8s → 1m10.1s（+1.3s） |
+| 只报告步骤 1 | 义务门禁：0 命中（退出码 0），读数 `hits=0 / 1 个账本（不适用 1：没有账本可读，不算一次真实读数）` |
+| 只报告步骤 2 | 豁免到期：0 命中（退出码 0），读数 `HITS: 0 / declared=8 due=0 expired=0 unprovable=0` |
+| 日志 | `.tmp/step10/ci-local-full-r23.log`（**4956 B**，sha256 `8325075EE74596855C57CE7E2C388E9032DFB1ED4FD1030771311DF7700B2367`）+ `.tmp/ci-local-logs/` 下 **33 个**分步日志 |
+| 第 9 步（沙箱闭环） | `ok 1.6s`；产物 `result=skipped`、`environment_skipped=true`、`dsh_startup_denied_kind=profile_write_denied`、`host.sandbox=restricted`、`tree.revision=096cb0d…` —— **受限上下文里的读数，不是真机读数**（第 45 条：环境跳过不是通过） |
+
+### 12.6 跑前快照 → 跑后逐个文件比对（第 9 步必然跑 `tools/dsh_sandbox_loop.py`）
+
+**禁令照样遵守**：**没有**直接跑 `tools/dsh_sandbox_loop.py`；它只作为门禁第 9 步被执行。
+跑前快照 `.tmp/e2e/before-gate-r23/20261001T003844/manifest.json`（受控目录 69 个文件的
+路径 / 字节 / mtime / sha256 + 产物副本 + HEAD + `git status`），跑后逐文件比对：
+
+| 项 | 读数 |
+| --- | --- |
+| 受控目录 | before/after 都是 **69 个文件**；逐字节相同 **67**、内容变了 **2**、新增 0、消失 0 |
+| 变了的两个 | `.tmp/phase-2-sandbox/logs/{allow-run,block-run}.txt`：`2ab540972f1d1a75… → 2dc1a97ba8eea1c8…`（两份内容相同：这次 dsh 真的起了进程，日志被重写） |
+| 内容相同但 mtime 变了 | **6** 个（受控项目的 `dsh-adapter.yaml` / `hooks.json` / `patch.yml` / `AGENTS.md` / `order_controller.py` / `order_service.py`）——受控目录每次由闭环重建，**"内容没变"不等于"没被重写"**，两件事分开报 |
+| 产物 | `3122 B → 3121 B`；两边都 `result=skipped` / `environment_skipped=true`；`reading_context.host.dsh_home`：`<unset>` → `<outside-workspace>`；`tree.revision`：`92a6dd1…` → `096cb0d…`——**这正是 `reading_context` 要回答的问题**：两份读数不属于同一棵树、也不属于同一个环境 |
+| 仓库侧 | HEAD 仍 `096cb0d`；`git status --porcelain -uall` **空** |
+| 这一步证明什么 | 门禁**没有动仓库**、**没有动受控项目的源码与配置**；它**不**证明端到端闭环跑通了（那是环境跳过） |
+
+### 12.7 未核实 / 待评审
+
+1. **真机端到端仍未在本轮采到**：第 9 步与第 22 轮一样是 `profile_write_denied` 的环境跳过；
+   `host.sandbox=unrestricted` 的真机原件仍是 §10.1 那份（`7864dd2`），不是本轮树上的。
+2. **pytest 的 −4.0s 未归因**：两次门禁的差不是归因；本轮没有逐用例计时。
+3. **`declarations.test_layout` 的 `path` 取自常量而不是流水线实际加载路径**：
+   取证路径上 `load_validation_config(root=anchor)` 用的就是 `anchor / DEFAULT_TEST_LAYOUT`，
+   所以两者今天必然一致；但**声明里换一个 `test_layout` 路径**这种情形本台阶不支持
+   （`pre_evidence` 只声明 `registry_root` 一个锚点）——要支持就得先有声明位。**未核实**。
+4. **延迟读数只属于这台机器这个上下文**：配对 A/B 抵消了时间漂移，机器负载本身没有独立取证。
+5. **本轮没有跑 `--hook` 形态**：只跑了 `--full`。
+6. **`tools/ci_local.py` / `tests/unit/test_ci_local*.py` / `tools/phase_evidence.py` 一个字都没动**
+   （文件归属）；`git push` / `git fetch` 没有做。
+7. **待评审**：① `evidence_unavailable` 那 3 条记录把 `declarations.test_layout` 从
+   `not_applicable` 改成 `unavailable` —— 它与 registry 那一支口径一致，但**它是本轮差集里
+   除了"5 条 available"之外的第二类变化**，请确认这条也在预注册的"状态变化"之内；
+   ② 本条改正落在 1.3 内、没有升版（与 2026-09-30 裁定①对 `OUTPUT_SCHEMA_VERSION` 1.2 的处置同型），
+   请确认口径一致。
