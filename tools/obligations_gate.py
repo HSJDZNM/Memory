@@ -30,7 +30,12 @@ r"""义务账门禁（台阶 3c / 方案 §3.3，按 **L5 上线闸**以 warn �
 至少一次**真实读数** —— `applicable_ledgers == 0` 的那一次没有任何账本被读到，凑不了这个判据。
 
 **载荷版本**：本报告的键集合按 AGENTS 第 55 条自带版本轴 `REPORT_SCHEMA_VERSION`
-（1.0 = 台阶 3c 的形状：账本不存在也按"没有依据"记成命中；1.1 = 现形状：不适用单独成档）。
+（1.0 = 台阶 3c 的形状：账本不存在也按"没有依据"记成命中；1.1 = 不适用单独成档；
+1.2 = 现形状：顶层多一份 `reading_context`——哪棵树 / 哪个宿主 / 读的是哪个账本）。
+
+**`reading_context` 只是旁注**（台阶 4 / 21 号 §3）：它不进任何判定，也不决定 `hits` /
+`applicable` / `exit_code`；账本不存在时它写 `declarations.obligations_ledger.status =
+"not_applicable"`，与报告里 `applicable=false` 同一口径。
 
 **L5 试用期：它不是任何门禁的阻断步** —— `tools/ci_local.py` 把它登记成**只报告步骤**
 （`REPORT_ONLY_STEPS`，带到期日 2026-10-31）：本机门禁会跑它、会打印命中数，
@@ -51,12 +56,16 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from policy.obligations import ObligationsError, describe, summarize  # noqa: E402
+from provenance import reading_context as reading  # noqa: E402
 
 # 本报告的载荷版本（AGENTS 第 55 条：新增键或改语义都要动它）。
 # 1.0 = 台阶 3c 的形状（账本不存在时也按"没有依据"给出命中，报告里没有"不适用"这一档）；
-# 1.1 = 现形状：账本不存在 = `applicable=false` + 不适用（不算命中），
-#       并新增 `applicable_ledgers` / `not_applicable_ledgers` 两个整数。
-REPORT_SCHEMA_VERSION = "1.1"
+# 1.1 = 账本不存在 = `applicable=false` + 不适用（不算命中），
+#       并新增 `applicable_ledgers` / `not_applicable_ledgers` 两个整数；
+# 1.2 = 现形状（台阶 4 第二件）：顶层多一份 `reading_context`（21 号 §3 的统一形状）——
+#       这份读数属于哪棵树、哪个宿主、**读的是哪个账本**。它只加旁注：
+#       `hits` / `applicable` / `exit_code` 一个都不由它决定（21 号 §0）。
+REPORT_SCHEMA_VERSION = "1.2"
 
 WARN_NOTE = (
     "L5 试用期：本次读数以 warn 形式给出（非零退出只报告，不阻断任何东西）；"
@@ -97,6 +106,42 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tree", default=str(REPO), help="树摘要的根（默认仓库根）")
     parser.add_argument("--json", action="store_true", help="输出机器可读结果")
     return parser
+
+
+def ledger_declaration(item: str, *, index: int) -> tuple[str, dict]:
+    """账本在 `reading_context.declarations` 里的那一块（第 1 个叫 obligations_ledger，
+    第 2 个起加下标——**账本路径本身就是"读的是哪一份输入"**，所以它记在这里，不记在 tree 里）。
+
+    账本文件不存在 = **不适用**（与报告里 `applicable=false` 同一口径，AGENTS 第 56 条）：
+    这不是"读不到"，是"这次没有账本可读"。
+    """
+
+    path = Path(item)
+    name = reading.DECLARATION_OBLIGATIONS_LEDGER
+    if index > 1:
+        name = name + "_" + str(index)
+    if not path.is_file():
+        return name, reading.not_applicable()
+    return name, reading.declaration_block(path, root=REPO)
+
+
+def build_reading_context(*, tree: Path, digest: str, ledgers: Sequence[str]) -> dict:
+    """这份读数属于哪里（21 号 §2.3 第 a 行）：树 / 账本 / 宿主 / 本次运行。
+
+    `digest` 是**调用方已经算过的那个值**（本文件上面那次 `tree_digest()`）——不另算一遍，
+    免得同一份报告里出现两个"树摘要"。其余子块取不到一律降级（provenance.reading_context
+    的设计：旁注不该让整份读数写不出来）。
+    """
+
+    declarations = dict(
+        ledger_declaration(item, index=index) for index, item in enumerate(ledgers, start=1)
+    )
+    return reading.build(
+        source=reading.SOURCE_GATE,
+        tree=reading.tree_block(tree, digest=digest),
+        declarations=declarations,
+        host=reading.host_block(),
+    )
 
 
 def ledger_report(item: str, *, tree: Path, digest: str) -> dict:
@@ -162,6 +207,11 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         "not_applicable_ledgers": not_applicable,
         "hits": hits,
         "exit_code": 1 if hits else 0,
+        # 台阶 4：旁注（哪棵树 / 哪个宿主 / 读的是哪个账本）。升格判据要读的
+        # "这次读数算不算一次真实读数"就靠它说清归属；它**不改**上面的 hits / exit_code。
+        "reading_context": build_reading_context(
+            tree=tree, digest=digest, ledgers=args.ledger
+        ),
     }
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))

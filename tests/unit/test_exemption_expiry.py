@@ -175,11 +175,12 @@ def test_hits_counts_only_expired_and_lists_due_separately(tmp_root, capsys):
     assert "due=1" in line and "expired=0" in line
 
 
-def test_json_payload_keeps_its_key_set(tmp_root, capsys):
-    """本次**没有**给 --json 载荷加键：它没有版本轴，加键要先按 AGENTS 第 55 条裁定。
+def test_json_payload_key_set_and_its_version_axis(tmp_root, capsys):
+    """谁给 --json 载荷加键，就得同时决定版本轴怎么走（AGENTS 第 55 条）。
 
-    这条用例就是那份裁定的钉子：谁要加键，就得同时决定版本轴怎么走（并显式改这里），
-    而不是让同一个载荷在同一个形状下悄悄多出几种键集合。
+    台阶 4 第二件做了这件事：这个载荷原先**没有版本轴**，第一次改键就按第 55 条**建轴**
+    （`EXEMPTION_REPORT_SCHEMA_VERSION = "1.1"`），键集合与版本号在同一个提交里显式改。
+    这条用例就是那次的钉子——**不是**"以后可以随便加键"的许可。
     """
 
     scope = tmp_root / "wiring-scope.yaml"
@@ -188,6 +189,8 @@ def test_json_payload_keeps_its_key_set(tmp_root, capsys):
     assert module.run(["--scope", str(scope), "--today", "2026-09-30", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert set(payload) == {
+        "report_schema_version",
+        "reading_context",
         "mode",
         "note",
         "today",
@@ -199,4 +202,26 @@ def test_json_payload_keeps_its_key_set(tmp_root, capsys):
         "counts",
     }
     assert set(payload["counts"]) == {"declared", "due", "expired", "unprovable"}
-    assert not [key for key in payload if key.endswith("schema_version")]
+    assert payload["report_schema_version"] == module.EXEMPTION_REPORT_SCHEMA_VERSION == "1.1"
+    context = payload["reading_context"]
+    assert context["source"] == "gate"
+    assert context["tree"]["status"] == "available"
+    assert context["tree"]["digest"].startswith("sha256:")
+    declarations = context["declarations"]
+    assert declarations["wiring_scope"]["path"].endswith("wiring-scope.yaml")
+    assert not Path(declarations["wiring_scope"]["path"]).is_absolute()
+    assert declarations["wiring_scope"]["digest"].startswith("sha256:")
+    assert declarations["report_only_steps"]["path"] == "tools/ci_local.py"
+    assert declarations["report_only_steps"]["digest"].startswith("sha256:")
+
+
+def test_the_default_text_output_is_a_cross_file_contract_and_did_not_change(tmp_root, capsys):
+    """台阶 4 只给 --json 加键：默认输出（`ci_local` 按前缀读的那条 HITS: 行）一个字符都不改。"""
+
+    scope = tmp_root / "wiring-scope.yaml"
+    scope.write_text(EXPIRED_SCOPE, encoding="utf-8")
+    module = _load()
+    assert module.run(["--scope", str(scope), "--today", "2026-09-30"]) == 0
+    out = capsys.readouterr().out
+    assert "HITS: 1 / declared=" in out
+    assert "reading_context" not in out

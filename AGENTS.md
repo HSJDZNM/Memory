@@ -458,7 +458,11 @@
       `host.sandbox ∈ {restricted, unrestricted, unknown}`（受限 = 本次运行里真的发生过
       "工作区之外的操作被沙箱 / 宿主拒绝"，读不到写 `unknown`——**它不是"没有沙箱"**）；
     - 本机门禁与仪器：`tools.obligations_gate.REPORT_SCHEMA_VERSION`（义务账门禁的报告载荷——
-      账本不存在时从"没有依据的命中"改成"不适用"那一档，1.0 → 1.1）；
+      账本不存在时从"没有依据的命中"改成"不适用"那一档，1.0 → 1.1；
+      1.2 = 现形状：顶层多一份 `reading_context`）；
+      `tools.exemption_expiry.EXEMPTION_REPORT_SCHEMA_VERSION`（豁免到期读数的 `--json` 载荷——
+      **1.1 = 首次建轴**（台阶 4 第二件给它加了 `reading_context`）；`ci_local.py` 读的是
+      **默认输出**里的 `HITS:` 机器行，那条是跨文件契约，与这个载荷各走各的、不随它动）；
       `tools.dsh_sandbox_loop.SANDBOX_RESULT_SCHEMA_VERSION`（沙箱闭环结论载荷
       `.tmp/artifacts/phase-2-sandbox-result.json`——**1.0 追认为第 13 轮之前的形状**：那时它既没有
       `schema_version` 本身，也没有第 14/15/18 轮那三族诊断键（`dsh_startup_denied_*` /
@@ -467,8 +471,9 @@
       1.2 = 现形状：两条路径都多一份 `reading_context`（台阶 4 第一件），其中 `host.sandbox` 是
       2026-09-30 裁定①的落点——**不单独设状态轴**，只加这一个枚举）。
     **已登记、但还没有版本轴的载荷**（第一次改键时必须引入 1.1——不许"只加一个键"了事）：
-    `tools/exemption_expiry.py --json`（豁免到期的机器读数；`ci_local.py` 读的是**默认输出**里的
-    `HITS:` 文本行，那条是跨文件契约，与这个载荷各走各的）。
+    **台阶 4 第二件之后这一档是空的**——原先登记在这里的 `tools/exemption_expiry.py --json`
+    已按本条首次建轴（`EXEMPTION_REPORT_SCHEMA_VERSION = "1.1"`，见上）。
+    下一次新增"还没有版本号的载荷"时，登记回这里。
     **不是版本轴的同名字段**（别照这张表改）：`orchestration.langgraph_engine.MIN_LANGGRAPH_VERSION`
     是依赖下界；`adapters/<id>/manifest.yaml` 的 `agent_version` / `protocol_version` 是产品与协议
     **声明**（改了要重新审核并重录宿主观测，见第 54 条），不是载荷版本。

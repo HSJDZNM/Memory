@@ -72,7 +72,7 @@ def test_an_open_obligation_is_a_hit_with_a_nonzero_exit(tmp_root: Path) -> None
 
     assert completed.returncode == 1, completed.stderr
     payload = json.loads(completed.stdout)
-    assert payload["report_schema_version"] == "1.1"
+    assert payload["report_schema_version"] == "1.2"
     assert payload["mode"] == "warn"
     assert payload["hits"] == 1
     assert payload["exit_code"] == 1
@@ -222,3 +222,64 @@ def test_a_not_applicable_ledger_does_not_hide_another_ledgers_hit(tmp_root: Pat
     assert payload["not_applicable_ledgers"] == 1
     assert payload["hits"] == 1
     assert [item["applicable"] for item in payload["ledgers"]] == [False, True]
+
+
+def test_the_payload_says_which_tree_and_which_ledger_it_read(tmp_root: Path) -> None:
+    """台阶 4：读数必须说得出"属于哪棵树、读的是哪个账本"（21 号 §2.3 第 a 行）。
+
+    它只是旁注：hits / applicable / exit_code 一个都不由它决定——升格判据要读的
+    "这次算不算一次真实读数"靠它说清归属（第 56 条）。
+    """
+
+    ledger = open_ledger(tmp_root / "open.jsonl")
+
+    completed = run_gate("--ledger", str(ledger), "--json")
+
+    assert completed.returncode == 1
+    payload = json.loads(completed.stdout)
+    context = payload["reading_context"]
+    assert context["source"] == "gate"
+    assert context["tree"]["status"] == "available"
+    assert context["tree"]["scope"] == "workspace"
+    assert context["tree"]["digest"] == payload["tree_digest"], "与报告里的树摘要同一个值，不另算一遍"
+    assert len(context["tree"]["revision"]) == 40
+    assert context["host"]["sandbox"] == "unknown", "不探测沙箱：探测要有副作用，取不到事实就写 unknown"
+    declaration = context["declarations"]["obligations_ledger"]
+    assert declaration["status"] == "available"
+    assert declaration["path"].endswith("open.jsonl")
+    assert not Path(declaration["path"]).is_absolute(), "读数里不放绝对路径"
+    assert declaration["digest"].startswith("sha256:")
+
+
+def test_a_missing_ledger_is_not_applicable_inside_the_reading_context(tmp_root: Path) -> None:
+    """账本不存在 = **不适用**（与报告里 applicable=false 同一口径），不是"读不到"。"""
+
+    completed = run_gate("--ledger", str(tmp_root / "never-written.jsonl"), "--json")
+
+    payload = json.loads(completed.stdout)
+    assert payload["hits"] == 0 and payload["exit_code"] == 0
+    assert payload["reading_context"]["declarations"]["obligations_ledger"] == {
+        "status": "not_applicable"
+    }
+
+
+def test_two_ledgers_are_both_named_in_the_reading_context(tmp_root: Path) -> None:
+    first = open_ledger(tmp_root / "repo.jsonl")
+    second = tmp_root / "tmp-instance.jsonl"
+    record_test_run(
+        second,
+        target="src/shop/order_service.py",
+        selected_tests=("tests/test_order_service.py",),
+        python_tests_executed=True,
+        source="test",
+        at="2026-09-29T02:00:00Z",
+    )
+
+    completed = run_gate("--ledger", str(first), "--ledger", str(second), "--json")
+
+    payload = json.loads(completed.stdout)
+    declarations = payload["reading_context"]["declarations"]
+    assert sorted(declarations) == ["obligations_ledger", "obligations_ledger_2"], (
+        "两个账本各自留一块：读的人要知道这份读数读的是哪几份输入"
+    )
+    assert all(item["status"] == "available" for item in declarations.values())

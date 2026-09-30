@@ -21,8 +21,10 @@ r"""豁免到期检查（**只报告**）：控制面重构方案 §4 台阶 4 /
 —— `tools/ci_local.py` 的「只报告」读数就是按这一行取命中数的（`report_only_hits()` 的文本回退，
 这一步的 args 里没有 `--json`），所以这一行是**跨文件契约**、格式必须稳定：
 `hits` **只数已过期**（`due` 是提醒、`unprovable` 是读不到，两者都另列、都不计入命中）。
-`--json` 载荷本轮**一个键都没有加**：它没有版本轴，按 AGENTS 第 55 条，给载荷加键要先裁定
-（是否给它建一条版本轴）——所以机器读数走文本行，不走改载荷。
+`--json` 载荷按 AGENTS 第 55 条**自带版本轴** `report_schema_version`（1.1 = 现形状：
+台阶 4 第二件给它加了 `reading_context`——哪棵树 / 哪个宿主 / 读的是哪两处声明）。
+**默认输出一个字符都不改**：`HITS:` 那条机器行是跨文件契约（`ci_local` 按它取命中数），
+与这个载荷各走各的。
 
 为什么要有它：每一处"不治理 / 不阻断 / 只报告"都必须带到期日，否则就是一张**永不过期的
 空白支票**（方案 §3.5 / §5.2 R-b）。这个脚本是那份到期日的读数；
@@ -43,7 +45,13 @@ from typing import Any, Optional, Sequence
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
+from provenance import reading_context as reading  # noqa: E402
 from provenance.wiring_scope import WiringScopeError, load_wiring_scope  # noqa: E402
+
+# 本载荷的版本轴（AGENTS 第 55 条；**首次引入**——这个载荷原先没有版本号，
+# 所以第一次改键就必须建轴，不许"只加一个键"了事）。
+# 1.1 = 现形状：顶层多一个 `report_schema_version` 与一份 `reading_context`（21 号 §3 的统一形状）。
+EXEMPTION_REPORT_SCHEMA_VERSION = "1.1"
 
 DEFAULT_SCOPE = REPO / "adapters" / "wiring-scope.yaml"
 DEFAULT_LEAD_DAYS = 14
@@ -124,6 +132,28 @@ def ci_local_entries(*, today: _datetime.date, lead_days: int) -> list[dict]:
     ]
 
 
+def build_reading_context(*, scope: Path) -> dict:
+    """这份读数属于哪里（21 号 §2.3 第 b 行）：树 / 两处声明的摘要 / 宿主 / 本次运行。
+
+    两处载体都登记进去，因为它们合起来才是"这套豁免是哪一套"：
+    `wiring_scope` = 边界声明（YAML），`report_only_steps` = `tools/ci_local.py` 里那张
+    只报告步骤表（代码里的那份表，路径写出来、摘要写出来，读的人不必猜是哪一版）。
+    它**不改**任何到期状态，也不动退出码（本步恒为 0）。
+    """
+
+    return reading.build(
+        source=reading.SOURCE_GATE,
+        tree=reading.tree_block(REPO),
+        declarations={
+            reading.DECLARATION_WIRING_SCOPE: reading.declaration_block(scope, root=REPO),
+            reading.DECLARATION_REPORT_ONLY_STEPS: reading.declaration_block(
+                REPO / "tools" / "ci_local.py", root=REPO
+            ),
+        },
+        host=reading.host_block(),
+    )
+
+
 def _display(path: Path) -> str:
     """读数里的路径一律仓库相对（AGENTS 第 19 条同一口径）。"""
 
@@ -155,8 +185,12 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     expired = [item for item in entries if item["state"] == STATE_EXPIRED]
     unprovable = [item for item in entries if item["state"] == STATE_UNPROVABLE]
     payload = {
+        "report_schema_version": EXEMPTION_REPORT_SCHEMA_VERSION,
         "mode": "report-only",
         "note": "只报告：不改任何退出码、不影响任何判定；到期前 " + str(args.lead_days) + " 天提醒，过期标红",
+        # 台阶 4：旁注（哪棵树 / 哪个宿主 / 读的是哪两处声明）。它**只进 --json**：
+        # 默认输出那条 HITS: 机器行是跨文件契约，一个字符都不改。
+        "reading_context": build_reading_context(scope=Path(args.scope)),
         "today": today.isoformat(),
         "lead_days": args.lead_days,
         "entries": entries,
