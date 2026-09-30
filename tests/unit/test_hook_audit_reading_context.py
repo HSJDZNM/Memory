@@ -1,10 +1,13 @@
-"""台阶 4 / 21 号 §2.2：Hook 审计记录的 `reading_context` 与 `pre_evidence.registry`。
+"""台阶 4 / 21 号 §2.2：Hook 审计记录的 `reading_context` 与 `pre_evidence` 声明摘要。
 
 三件事各有用例，每条都写成"会失败"的形状（不是复述实现）：
 
 1. **形状与归属**：真 Hook 路径（`run_hook` + 声明并启用 pre_evidence）写出的记录里，
    `reading_context.tree` **引用本记录取证树**的那组值、`declarations.registry.digest` 与
    `pre_evidence.registry.digest` 是同一个值、且与验证器层的 config_digest 逐字符相同；
+   `declarations.test_layout` 同理（2026-09-30 裁定：`not_applicable` 与事实不符——流水线
+   确实读过 `validation/test-layout.yaml`，`report.configs["test_layout"]` 里就有它的摘要；
+   1.3 尚未发布，所以在 1.3 内改正、不升版）；
    整条记录里不出现绝对路径；
 2. **延迟硬约束的结构化版本**：把 `provenance.reading_context.workspace_tree_digest` 换成
    "一调就炸"，一次真 Hook 调用仍然成功——"每次调用不许计算整棵树的摘要"因此是一条
@@ -163,6 +166,81 @@ def test_reading_context_names_the_evidence_tree_and_the_registry(tmp_root: Path
     assert str(config) not in text
 
 
+def test_reading_context_names_the_test_layout_the_pipeline_actually_read(tmp_root: Path) -> None:
+    """2026-09-30 裁定：`declarations.test_layout` 不许再写 `not_applicable`。
+
+    这条用例会失败的形状有两处：把它改回 `not_applicable`（status 断言红）；
+    或者让记录里那一份与流水线算好的那一份不是同一个值（`pre_evidence.test_layout.digest`
+    与 `declarations.test_layout.digest`、以及文件自己的 sha256 三方对不上）。
+    """
+
+    project, config = evidence_config(tmp_root)
+    audit = tmp_root / "audit.jsonl"
+
+    outcome = run_hook(payload(project), config_path=config, audit_path=audit)
+    assert outcome.exit_code == EXIT_BLOCK  # DOC-900 命中：取证真的发生了
+
+    record = decision_record(audit)
+    layout = REPO_ROOT / "validation" / "test-layout.yaml"
+    # pre_evidence 摘要里那一份：路径取自 DEFAULT_TEST_LAYOUT，digest 取自流水线的 configs
+    assert record["pre_evidence"]["test_layout"] == {
+        "path": "validation/test-layout.yaml",
+        "digest": config_digest(layout),
+        "declared_in": "pre_evidence.registry_root",
+    }
+    # reading_context 里那一份与它**同源**：同名同义（第 50 条），一个字节都不重算
+    assert record["reading_context"]["declarations"]["test_layout"] == {
+        "status": "available",
+        "path": "validation/test-layout.yaml",
+        "digest": config_digest(layout),
+    }
+
+
+def test_the_test_layout_digest_is_not_computed_a_second_time(tmp_root: Path, monkeypatch) -> None:
+    """「从流水线已算好的那一份取，不另算」要是一条**会失败**的检查（AGENTS 第 45 条）。
+
+    口径：流水线自己**必须**算一次（`validators.pipeline` 的 `configs` 里就有它，那次是
+    预期内的）；记录侧如果再算一次，无论走哪个入口都会被这里的计数器抓到——
+    `validators.pipeline.config_digest`、`validators.registry.config_digest`（直接调用）、
+    `provenance.reading_context.declaration_digest`（借道 `declaration_block`）。
+    """
+
+    from validators import pipeline as pipeline_module
+    from validators import registry as registry_module
+
+    calls: list[tuple[str, str]] = []
+    real_pipeline_digest = pipeline_module.config_digest
+    real_registry_digest = registry_module.config_digest
+    real_declaration_digest = reading.declaration_digest
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "config_digest",
+        lambda path: (calls.append(("pipeline", str(path))), real_pipeline_digest(path))[1],
+    )
+    monkeypatch.setattr(
+        registry_module,
+        "config_digest",
+        lambda path: (calls.append(("registry", str(path))), real_registry_digest(path))[1],
+    )
+    monkeypatch.setattr(
+        reading,
+        "declaration_digest",
+        lambda path: (calls.append(("reading", str(path))), real_declaration_digest(path))[1],
+    )
+
+    project, config = evidence_config(tmp_root)
+    audit = tmp_root / "audit.jsonl"
+    outcome = run_hook(payload(project), config_path=config, audit_path=audit)
+    assert outcome.exit_code == EXIT_BLOCK
+
+    layout_calls = [(tag, path) for tag, path in calls if "test-layout.yaml" in path.replace("\\", "/")]
+    assert len(layout_calls) == 1, layout_calls
+    assert layout_calls[0][0] == "pipeline", layout_calls
+    # 反真空：adapter 配置那份摘要确实还走 declaration_digest（否则上面的计数器没在量东西）
+    assert any(tag == "reading" for tag, _ in calls), calls
+
+
 def test_a_declared_but_uncollected_evidence_marks_the_tree_unavailable(tmp_root: Path) -> None:
     """取证失败时不是"没有树"，而是"树读不到"——三态必须分得开（not_applicable ≠ unavailable）。"""
 
@@ -188,6 +266,9 @@ def test_a_declared_but_uncollected_evidence_marks_the_tree_unavailable(tmp_root
     assert context["tree"]["status"] == "unavailable"
     assert context["tree"]["reason"]
     assert context["declarations"]["registry"]["status"] == "unavailable"
+    # 取证失败 ≠ 没有这份声明：三态在这里也必须分得开（unavailable 带 reason）
+    assert context["declarations"]["test_layout"]["status"] == "unavailable"
+    assert context["declarations"]["test_layout"]["reason"]
 
 
 def test_reading_context_never_recomputes_a_whole_tree_digest(tmp_root: Path, monkeypatch) -> None:
@@ -223,8 +304,11 @@ def test_no_evidence_declaration_means_no_tree_to_reference(tmp_root: Path) -> N
     context = record["reading_context"]
     assert context["tree"] == {"status": "not_applicable"}
     assert context["declarations"]["registry"] == {"status": "not_applicable"}
+    # 没声明取证 = 这条路径上没有读过那份数据：not_applicable（不是 unavailable）
+    assert context["declarations"]["test_layout"] == {"status": "not_applicable"}
     assert context["declarations"]["adapter_config"]["status"] == "available"
     assert "registry" not in record.get("pre_evidence", {})
+    assert "test_layout" not in record.get("pre_evidence", {})
 
 
 def test_a_1_2_record_is_not_rewritten_and_a_mixed_chain_still_verifies(tmp_root: Path) -> None:

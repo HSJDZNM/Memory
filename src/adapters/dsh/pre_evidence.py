@@ -243,7 +243,10 @@ def _collect_evidence(
     # validation/validators.yaml"，否则同一条 tool.pytest@1.0 在账本里对应三种行为。
     # 路径取自 validators.registry 的 DEFAULT_REGISTRY（与流水线真正加载的那条路径**同一个
     # 来源**，不在这里另写一份字面量），显示成仓库相对路径（脱敏纪律：不放绝对路径）。
-    from validators.registry import DEFAULT_REGISTRY
+    # 2026-09-30 裁定：test_layout 同办——取证流水线**确实读过** validation/test-layout.yaml，
+    # 它的摘要就在 report.configs["test_layout"] 里；路径同样取自常量 DEFAULT_TEST_LAYOUT
+    # （与流水线真正加载的那条路径同一个来源），不在这里另写一份字面量。
+    from validators.registry import DEFAULT_REGISTRY, DEFAULT_TEST_LAYOUT
 
     bundle = report.bundle
     summary = _summary(
@@ -256,6 +259,7 @@ def _collect_evidence(
         repo_path=event.file,
         tree=tree,
         registry_path=Path(DEFAULT_REGISTRY).as_posix(),
+        test_layout_path=Path(DEFAULT_TEST_LAYOUT).as_posix(),
     )
     return PreEvidenceResult(bundle=bundle, summary=summary)
 
@@ -656,6 +660,7 @@ def _summary(
     repo_path: str,
     tree: Mapping[str, Any],
     registry_path: str,
+    test_layout_path: str,
 ) -> Mapping[str, Any]:
     """审计用的脱敏摘要：验证器怎么跑成、证据覆盖了哪些 checker、目标内容是哪一份。
 
@@ -675,6 +680,15 @@ def _summary(
         "registry": {
             "path": registry_path,
             "digest": (getattr(report, "configs", None) or {}).get("registry"),
+            "declared_in": "pre_evidence.registry_root",
+        },
+        # 2026-09-30 裁定：`declarations.test_layout = not_applicable` 与事实不符——取证流水线
+        # 确实读过这份声明（`validators.pipeline` 已经算好它的摘要）。照 registry 的做法
+        # **直接取** `report.configs["test_layout"]`，一个字节都不重算；`declared_in` 指向
+        # 决定"读的是哪一份平台数据"的那个声明（与 registry 同一处）。
+        "test_layout": {
+            "path": test_layout_path,
+            "digest": (getattr(report, "configs", None) or {}).get("test_layout"),
             "declared_in": "pre_evidence.registry_root",
         },
         "validators_requested": list(pre.validators),

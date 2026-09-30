@@ -963,7 +963,8 @@ python .tmp/round-07/harness/probe_pre_evidence.py --json .tmp/round-07/evidence
 | 键 | 位置 | 它回答什么 | 取值来源（**不另算**） |
 | --- | --- | --- | --- |
 | `pre_evidence.registry` | `pre_evidence` 摘要内 | 本次取证读的是**哪一版**注册表（18 号 §2 的 R4：没有它，同一条 `tool.pytest@1.0` 在账本里对应三种行为） | `{path, digest, declared_in}`；`digest` 就是 `validators.pipeline` 已经算好的 `report.configs["registry"]`，`path` 取自 `validators.registry.DEFAULT_REGISTRY` 这个常量 |
-| `reading_context` | 记录顶层 | 这条记录属于**哪棵树 / 哪一套声明 / 哪台宿主**（台阶 4 的统一形状，实现只有 `provenance.reading_context` 一份） | `tree` **引用**本记录 `pre_evidence.tree` 的 `scope` / `tree_digest`；`declarations.registry` 用同一个 digest；`declarations.adapter_config` 是这一个配置文件的 sha256 |
+| `pre_evidence.test_layout` | `pre_evidence` 摘要内 | 本次取证读的是**哪一版** `validation/test-layout.yaml`（"哪些路径算测试"只有一份声明，AGENTS 第 49 条）；2026-09-30 裁定：此前 `declarations.test_layout` 写 `not_applicable` 与事实不符——流水线确实读过它，1.3 尚未发布，于是在 1.3 内改正、不升版 | `{path, digest, declared_in}`；`digest` 就是 `validators.pipeline` 已经算好的 `report.configs["test_layout"]`，`path` 取自 `validators.registry.DEFAULT_TEST_LAYOUT` 这个常量 |
+| `reading_context` | 记录顶层 | 这条记录属于**哪棵树 / 哪一套声明 / 哪台宿主**（台阶 4 的统一形状，实现只有 `provenance.reading_context` 一份） | `tree` **引用**本记录 `pre_evidence.tree` 的 `scope` / `tree_digest`；`declarations.registry` 与 `declarations.test_layout` 各用上面那两处**同一个** digest；`declarations.adapter_config` 是这一个配置文件的 sha256 |
 
 三条**硬约束**（落地时逐条测过，读数见 23 号 §10）：
 
@@ -978,7 +979,9 @@ python .tmp/round-07/harness/probe_pre_evidence.py --json .tmp/round-07/evidence
   `enforcement.audit.FileAuditSink.verify()`（两类 Phase 2 记录都是"外来行"，被计数而不是被收编）。
 
 **会失败的检查**：`tests/unit/test_hook_audit_reading_context.py`（形状与归属、三态、
-"把 `workspace_tree_digest` 换成『一调就炸』后调用仍必须成功"、1.2/1.3 混排的链校验）。
+"把 `workspace_tree_digest` 换成『一调就炸』后调用仍必须成功"、1.2/1.3 混排的链校验，
+以及两条 test_layout 用例：三处摘要必须同源，且 `test_layout` 在一次 Hook 调用里**只被流水线算一次**
+——"另算"的变异会让它红，见 23 号 §12）。
 
 ## 13. 声明版本 vs 宿主实际版本：一条能失败的检查（R14 / 缺陷 2）
 

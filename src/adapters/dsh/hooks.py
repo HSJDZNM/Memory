@@ -704,8 +704,9 @@ class DshPreExecuteHook:
            同一组值（\`scope\` / \`tree_digest\`）——既不遍历工作区，也不重复算指纹。
            拿不到取证树时写 \`unavailable\`（取证失败）或 \`not_applicable\`（这条路径上没有
            取证），**绝不**退回去自己算一棵树：那正是"每次调用多出一次全树遍历"的来源；
-        2. **只放已有的声明摘要**：\`registry\` 用 \`pre_evidence.registry\` 里**同一个**
-           digest（由 validators.pipeline 算好的那一份），这里一个字节都不重算；
+        2. **只放已有的声明摘要**：\`registry\` 与 \`test_layout\` 都用 \`pre_evidence\` 摘要里
+           **同一个** digest（由 validators.pipeline 算好的那一份：\`report.configs["registry"]\`
+           与 \`report.configs["test_layout"]\`），这里一个字节都不重算；
            \`adapter_config\` 是这一个配置文件的 sha256（单文件，不遍历目录）；
         3. **不进判定**：判定路径不读它，只有 \`_audit()\` 调用本方法。
 
@@ -719,8 +720,12 @@ class DshPreExecuteHook:
         - \`host.sandbox\` 恒为 \`unknown\`：Hook 不探测沙箱（探测要有副作用），
           这一条与 21 号 §9.2 裁定④对 \`check\` 路径的口径相同——不猜。
 
-        \`declarations.test_layout\` 写 \`not_applicable\`：这条记录本身不依赖那份声明；
-        取证流水线读过的那一份不在 21 号 §2.2 预注册的搬运范围内。
+        \`declarations.test_layout\` **取自取证流水线已经算好的那一份**
+        （\`report.configs["test_layout"]\` → \`pre_evidence.test_layout\`）：2026-09-30 裁定——
+        此前的 \`not_applicable\` 与事实不符（流水线确实读过 \`validation/test-layout.yaml\`，
+        \`validators.pipeline\` 已经算了它的摘要），而 \`AUDIT_SCHEMA_VERSION\` 的 \`1.3\` 尚未
+        发布，因此**在 1.3 内改正、不升版**。三态照旧：取证收上来了写 \`available\`，
+        取证失败写 \`unavailable\`，这条路径上没有取证写 \`not_applicable\`。
         """
 
         pre = record.get("pre_evidence")
@@ -758,7 +763,21 @@ class DshPreExecuteHook:
             if self.config_path is None
             else reading.declaration_block(self.config_path, root=self.config.project_root)
         )
-        declarations[reading.DECLARATION_TEST_LAYOUT] = reading.not_applicable()
+        # 与上面 registry 那一支同形（2026-09-30 裁定）。刻意**不抽公共函数**：registry 支
+        # 不在本轮改动面内，保持它逐字节不变比少写几行更重要——R-d 的差集里少一条噪声。
+        raw_layout = pre_block.get("test_layout")
+        if isinstance(raw_layout, Mapping) and raw_layout.get("digest"):
+            declarations[reading.DECLARATION_TEST_LAYOUT] = {
+                "status": reading.STATUS_AVAILABLE,
+                "path": raw_layout.get("path"),
+                "digest": raw_layout.get("digest"),
+            }
+        elif status == "unavailable":
+            declarations[reading.DECLARATION_TEST_LAYOUT] = reading.unavailable(
+                "本次取证失败：测试布局摘要没有取到"
+            )
+        else:
+            declarations[reading.DECLARATION_TEST_LAYOUT] = reading.not_applicable()
 
         return reading.build(
             source=reading.SOURCE_HOOK,
