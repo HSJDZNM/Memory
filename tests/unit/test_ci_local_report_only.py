@@ -9,8 +9,13 @@ from __future__ import annotations
 
 import datetime as _datetime
 import importlib.util
+import json
+import os
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -107,6 +112,89 @@ def test_report_only_step_that_cannot_be_read_says_so(monkeypatch, capsys, tmp_r
     out = capsys.readouterr().out
     assert "退出码 7" in out
     assert "读不出命中数" in out
+
+
+@pytest.mark.parametrize(
+    "body, extra_args",
+    [
+        # 文本读数：exemption_expiry 的形态——退出码恒为 0，命中只在 HITS: 行里
+        ("print('HITS: 2 / 8 条豁免（到期提醒 1，过期 1）')", ()),
+        # 结构化读数：退出码 0 也不许把 hits 覆盖成 0
+        ("import json; print(json.dumps({'hits': 2, 'ledger_count': 3}))", ("--json",)),
+    ],
+    ids=["hits-line", "json-hits"],
+)
+def test_exit_code_zero_with_hits_is_not_reported_as_zero_hits(
+    monkeypatch, capsys, tmp_root, body, extra_args
+):
+    """退出码 0 ≠ 0 命中：结论里的命中数必须取自读数（第 13 轮发现）。
+
+    过去结论写死"退出码 0 ⇒ 0 命中（退出码 0）"，而 exemption_expiry 的退出码永远是 0——
+    有豁免到期 / 过期时，REPORT-ONLY 行会同时写着"0 命中"和一条 HITS>0 的读数。
+    """
+
+    ci_local = _load_ci_local()
+    _prepare(ci_local, monkeypatch, tmp_root)
+    probe = _probe(ci_local, body)
+    monkeypatch.setattr(
+        ci_local,
+        "REPORT_ONLY_STEPS",
+        (probe._replace(args=(*probe.args, *extra_args)),),
+    )
+
+    assert ci_local.main(["--full", "--python", sys.executable]) == 0
+    lines = [line for line in capsys.readouterr().out.splitlines() if "REPORT-ONLY" in line]
+    assert len(lines) == 1, lines
+    assert "—— 2 命中（退出码 0）" in lines[0]
+    assert "—— 0 命中" not in lines[0]
+
+
+def _run_expiry_step(step, *extra: str) -> "subprocess.CompletedProcess[str]":
+    """按 REPORT_ONLY_STEPS 里**那一条真实步骤**的 args 起子进程（与门禁同一条命令）。"""
+
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(REPO_ROOT / "src")
+    environment["PYTHONIOENCODING"] = "utf-8"
+    return subprocess.run(
+        [sys.executable, *step.args, *extra],
+        cwd=str(REPO_ROOT),
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+
+
+def test_real_exemption_expiry_output_yields_an_integer_hit_count():
+    """真实输出喂给真实解析器：tools/exemption_expiry.py 的默认输出必须读出**整数**命中数。
+
+    这条用例不复刻输出格式：子进程跑的就是 ci_local 登记的那条命令（仓库真实的豁免声明），
+    再用同一天的 `--json` 载荷交叉核对——命中数 = 已过期条数（HITS 行的契约）。
+    格式一旦漂移（HITS 行被删 / 改名 / 数字不再在冒号后面），这里就会红，
+    而不是让门禁悄悄退回"命中数读不出"。
+    """
+
+    ci_local = _load_ci_local()
+    step = next(
+        item for item in ci_local.REPORT_ONLY_STEPS
+        if any("exemption_expiry.py" in argument for argument in item.args)
+    )
+    assert "--json" not in step.args  # 这一步读的是默认文本输出
+    today = _datetime.date.today().isoformat()  # 两次运行钉同一天，避免跨午夜读数不一致
+
+    text = _run_expiry_step(step, "--today", today)
+    assert text.returncode == 0, text.stdout + text.stderr
+    count, reading = ci_local.report_only_reading(step, text.stdout + text.stderr)
+    assert isinstance(count, int) and not isinstance(count, bool), reading
+    assert reading.startswith("HITS: %d " % count), reading
+
+    payload = _run_expiry_step(step, "--today", today, "--json")
+    assert payload.returncode == 0, payload.stdout + payload.stderr
+    expired = json.loads(payload.stdout)["counts"]["expired"]
+    assert count == expired, (count, expired, reading)
+    assert ci_local.report_only_verdict(text.returncode, count) == "%d 命中（退出码 0）" % count
 
 
 def test_report_only_steps_are_listed_with_their_expiry(monkeypatch, capsys, tmp_root):

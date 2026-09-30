@@ -162,7 +162,10 @@ REPORT_ONLY_STEPS: tuple[ReportOnlyStep, ...] = (
         ),
         expires_at="2026-12-31",
         adopted="2026-09-30",
-        reads="--json 的 due / expired 两份清单（只报告，不改退出码）",
+        reads=(
+            "默认文本输出里的 HITS: 行（不带 --json；退出码恒为 0，命中数只能从这一行读，"
+            "输出里没有这一行时读数为「读不出命中数」）"
+        ),
     ),
 )
 
@@ -864,12 +867,16 @@ def json_objects(output: str) -> list[dict]:
     return found
 
 
-def report_only_hits(step: ReportOnlyStep, output: str) -> str:
-    """取"命中数"：结构化优先（`--json` 的 `hits` / `ledger_count`），其次 `HITS:` 文本行。
+_HITS_LINE_RE = re.compile(r"^HITS:\s*(\d+)")
 
+
+def report_only_reading(step: ReportOnlyStep, output: str) -> tuple[int | None, str]:
+    """取读数：`(命中数, 读数文本)`；命中数读不出时为 None（**不许**当成 0）。
+
+    结构化优先（`--json` 的 `hits` / `ledger_count`），其次 `HITS:` 文本行。
     为什么允许读文本行：`obligations_gate.py` 的文本读数里 `HITS: n / m` 是**稳定的机器行**
     （它由同一份 `hits` 计算得出，不是"解析 reasons 文本"那类口径）；给 `--json` 的步骤
-    仍然优先走结构化字段。
+    仍然优先走结构化字段。命中数与读数文本出自同一次解析，结论行与读数不会各说一套。
     """
 
     if "--json" in step.args:
@@ -883,15 +890,36 @@ def report_only_hits(step: ReportOnlyStep, output: str) -> str:
                     if not_applicable
                     else ""
                 )
-                return "hits=%s / %s 个账本%s" % (
-                    payload.get("hits"),
-                    payload.get("ledger_count"),
-                    suffix,
-                )
+                hits = payload.get("hits")
+                text = "hits=%s / %s 个账本%s" % (hits, payload.get("ledger_count"), suffix)
+                count = hits if isinstance(hits, int) and not isinstance(hits, bool) else None
+                return count, text
     for line in output.splitlines():
-        if line.strip().startswith("HITS:"):
-            return line.strip()
-    return "读不出命中数（重跑上面那条命令看原始输出）"
+        stripped = line.strip()
+        match = _HITS_LINE_RE.match(stripped)
+        if match:
+            return int(match.group(1)), stripped
+        if stripped.startswith("HITS:"):
+            return None, stripped  # 有 HITS: 行但读不出整数：照原文给，命中数不猜
+    return None, "读不出命中数（重跑上面那条命令看原始输出）"
+
+
+def report_only_hits(step: ReportOnlyStep, output: str) -> str:
+    """读数文本（见 report_only_reading）。"""
+
+    return report_only_reading(step, output)[1]
+
+
+def report_only_verdict(returncode: int, count: int | None) -> str:
+    """REPORT-ONLY 行的结论段：命中数取自读数，**不由退出码推断**。
+
+    有的只报告步骤退出码恒为 0（`exemption_expiry.py`），命中只在读数里；
+    过去"退出码 0 ⇒ 0 命中"会把一次有命中的读数写成"0 命中"。读不出命中数时照实说。
+    """
+
+    if count is None:
+        return "退出码 %s（命中数读不出）" % returncode
+    return "%s 命中（退出码 %s）" % (count, returncode)
 
 
 def run_report_only_steps(
@@ -954,11 +982,14 @@ def run_report_only_steps(
         if hook:
             # 钩子的契约是"成功时保持安静"：只报告步骤不改结论，因此它红也不出声。
             continue
-        verdict = "0 命中（退出码 0）" if returncode == 0 else "退出码 %s" % returncode
+        # 结论里的命中数取自读数，不由退出码推断：退出码恒为 0 的步骤（exemption_expiry）
+        # 命中只在 HITS: 行里，写死"退出码 0 ⇒ 0 命中"会把有命中的读数报成 0。
+        count, reading = report_only_reading(step, output)
+        verdict = report_only_verdict(returncode, count)
         where = "（日志：%s）" % _display_path(log_path) if log_path is not None else ""
         print(
             "REPORT-ONLY: %s —— %s；读数 %s；豁免到期 %s（不计入门禁失败）%s"
-            % (step.name, verdict, report_only_hits(step, output), step.expires_at, where),
+            % (step.name, verdict, reading, step.expires_at, where),
             flush=True,
         )
     return entries
