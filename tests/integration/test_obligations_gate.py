@@ -1,8 +1,15 @@
 """台阶 3c：义务账门禁的读数与退出码（L5 试用期：warn + 非零退出，不阻断）。
 
 门禁的价值全在"它会不会红"：一条永远绿的读数等于没有读数（AGENTS 第 45 条）。
-因此这里逐条驱动**会命中**的形态（未结义务 / 声称 0 却没有真实运行 / 账本读不懂），
-再给一条**不该命中**的形态（义务已由真实运行解除）。
+因此这里逐条驱动**会命中**的形态（未结义务 / 账本存在却没有真实运行 / 账本读不懂 /
+账本根本不存在但位置给错了），再给两条**不该命中**的形态（义务已由真实运行解除；
+账本不存在 = 不适用）。
+
+**"账本不存在"与"账本存在但空"必须分开**（2026-09-30 小修）：前者是**没有账本可读** →
+不适用、不算命中；后者是**没有依据** → 仍然按命中处理（AGENTS 第 56 条）。
+`test_a_ledger_with_no_real_run_cannot_claim_zero` 曾经把这两种情形混在一起
+（用例名说"空账本"，传的却是一个从来没被创建的路径），于是"什么都没读到"也能占住
+升格判据里的"0 命中"名额。
 """
 
 from __future__ import annotations
@@ -65,10 +72,14 @@ def test_an_open_obligation_is_a_hit_with_a_nonzero_exit(tmp_root: Path) -> None
 
     assert completed.returncode == 1, completed.stderr
     payload = json.loads(completed.stdout)
+    assert payload["report_schema_version"] == "1.1"
     assert payload["mode"] == "warn"
     assert payload["hits"] == 1
     assert payload["exit_code"] == 1
+    assert payload["applicable_ledgers"] == 1
+    assert payload["not_applicable_ledgers"] == 0
     [report] = payload["ledgers"]
+    assert report["applicable"] is True
     assert report["obligations_open"] == 1
     assert report["claim_supported"] is False
     assert report["hit"] is True
@@ -77,12 +88,48 @@ def test_an_open_obligation_is_a_hit_with_a_nonzero_exit(tmp_root: Path) -> None
     assert payload["tree_digest"] == report["tree_digest"]
 
 
-def test_a_ledger_with_no_real_run_cannot_claim_zero(tmp_root: Path) -> None:
-    """空账本 = 0 条义务，但**没有依据**（没有一次真实 pytest 运行）→ 同样算命中。"""
+def test_a_missing_ledger_is_not_applicable_and_not_a_hit(tmp_root: Path) -> None:
+    """账本文件**不存在** = 没有账本可读 → **不适用**：不算命中，也不许冒充"0 条义务"。"""
 
-    completed = run_gate("--ledger", str(tmp_root / "absent.jsonl"))
+    completed = run_gate("--ledger", str(tmp_root / "never-written.jsonl"), "--json")
 
-    assert completed.returncode == 1, completed.stderr
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["hits"] == 0
+    assert payload["exit_code"] == 0
+    assert payload["ledger_count"] == 1
+    assert payload["applicable_ledgers"] == 0
+    assert payload["not_applicable_ledgers"] == 1
+    [report] = payload["ledgers"]
+    assert report["applicable"] is False
+    assert report["hit"] is False
+    # 不适用不是一个读数：没有账本就没有这些键（第 46/50 条，两个读法必须能分开）。
+    assert "obligations_open" not in report
+    assert "claim_supported" not in report
+    assert "last_real_test_run" not in report
+    assert "tree_digest" not in report
+    assert "没有账本可读" in report["note"]
+
+
+def test_a_missing_ledger_is_labelled_in_the_text_reading(tmp_root: Path) -> None:
+    """文本读数也要报"不适用"：读的人不许把它读成"跑过了、0 命中"。"""
+
+    completed = run_gate("--ledger", str(tmp_root / "never-written.jsonl"))
+
+    assert completed.returncode == 0, completed.stderr
+    assert "不适用" in completed.stdout
+    assert "HITS: 0 / 1 个账本（0 命中）；不适用 1 个" in completed.stdout
+
+
+def test_a_present_but_empty_ledger_still_cannot_claim_zero(tmp_root: Path) -> None:
+    """账本**存在**（空文件）= 0 条义务，但**没有依据** → 仍然按命中处理（AGENTS 第 56 条）。"""
+
+    ledger = tmp_root / "empty.jsonl"
+    ledger.write_text("", encoding="utf-8")
+
+    completed = run_gate("--ledger", str(ledger))
+
+    assert completed.returncode == 1, completed.stdout + completed.stderr
     assert "没有依据" in completed.stdout
     assert "HITS: 1 / 1" in completed.stdout
 
@@ -106,6 +153,7 @@ def test_a_real_run_clears_the_hit(tmp_root: Path) -> None:
     payload = json.loads(completed.stdout)
     assert payload["hits"] == 0
     [report] = payload["ledgers"]
+    assert report["applicable"] is True
     assert report["obligations_open"] == 0
     assert report["obligations_closed"] == 1
     assert report["claim_supported"] is True
@@ -123,6 +171,15 @@ def test_an_unreadable_ledger_is_a_usage_error(tmp_root: Path) -> None:
 
     assert completed.returncode == 2
     assert "读不懂" in completed.stderr
+
+
+def test_a_ledger_path_that_is_a_directory_is_a_usage_error(tmp_root: Path) -> None:
+    """路径存在但不是文件：这是用法错误（2），不许被读成"不适用"而滑过去。"""
+
+    completed = run_gate("--ledger", str(tmp_root))
+
+    assert completed.returncode == 2
+    assert "不是一个文件" in completed.stderr
 
 
 def test_two_instances_are_reported_side_by_side(tmp_root: Path) -> None:
@@ -144,5 +201,24 @@ def test_two_instances_are_reported_side_by_side(tmp_root: Path) -> None:
     assert completed.returncode == 1, completed.stderr
     payload = json.loads(completed.stdout)
     assert payload["ledger_count"] == 2
+    assert payload["applicable_ledgers"] == 2
     assert payload["hits"] == 1
     assert [item["hit"] for item in payload["ledgers"]] == [True, False]
+
+
+def test_a_not_applicable_ledger_does_not_hide_another_ledgers_hit(tmp_root: Path) -> None:
+    """不适用与命中各数各的：一条不适用 + 一条有未结义务 → 命中 1，退出码仍然是 1。"""
+
+    ledger = open_ledger(tmp_root / "open.jsonl")
+
+    completed = run_gate(
+        "--ledger", str(tmp_root / "never-written.jsonl"), "--ledger", str(ledger), "--json"
+    )
+
+    assert completed.returncode == 1, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["ledger_count"] == 2
+    assert payload["applicable_ledgers"] == 1
+    assert payload["not_applicable_ledgers"] == 1
+    assert payload["hits"] == 1
+    assert [item["applicable"] for item in payload["ledgers"]] == [False, True]

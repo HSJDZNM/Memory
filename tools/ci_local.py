@@ -139,7 +139,7 @@ REPORT_ONLY_STEPS: tuple[ReportOnlyStep, ...] = (
         ),
         expires_at="2026-10-31",
         adopted="2026-09-30",
-        reads="--json 的 hits / ledger_count 与每个账本的 obligations_open",
+        reads="--json 的 hits / ledger_count / not_applicable_ledgers 与每个账本的 obligations_open",
     ),
     ReportOnlyStep(
         name="Exemption expiry report (report only)",
@@ -696,7 +696,19 @@ def report_only_hits(step: ReportOnlyStep, output: str) -> str:
             except ValueError:
                 continue
             if isinstance(payload, dict) and "hits" in payload:
-                return "hits=%s / %s 个账本" % (payload.get("hits"), payload.get("ledger_count"))
+                # 账本不存在 = 不适用：0 命中**不是**一次真实读数，读数里必须看得出这一档，
+                # 否则"什么都没读到"会被读成"跑过了、0 命中"（升格判据就靠这句话）。
+                not_applicable = payload.get("not_applicable_ledgers")
+                suffix = (
+                    "（不适用 %s：没有账本可读，不算一次真实读数）" % not_applicable
+                    if not_applicable
+                    else ""
+                )
+                return "hits=%s / %s 个账本%s" % (
+                    payload.get("hits"),
+                    payload.get("ledger_count"),
+                    suffix,
+                )
     for line in output.splitlines():
         if line.strip().startswith("HITS:"):
             return line.strip()

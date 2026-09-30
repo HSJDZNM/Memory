@@ -445,7 +445,9 @@
       `policy_api.config.API_CONFIG_SCHEMA_VERSION`、`policy_api.idempotency.IDEMPOTENCY_SCHEMA_VERSION`、
       `policy_api.contract.SNAPSHOT_SCHEMA_VERSION`；
     - 检索与针脚：`retrieval.models.INDEX_SCHEMA_VERSION` 与 `CHUNKER_VERSION`（分块语义）、
-      `provenance.cli.RECEIPT_SCHEMA_VERSION`、`provenance.wiring_scope.SCHEMA_VERSION`。
+      `provenance.cli.RECEIPT_SCHEMA_VERSION`、`provenance.wiring_scope.SCHEMA_VERSION`；
+    - 本机门禁与仪器：`tools.obligations_gate.REPORT_SCHEMA_VERSION`（义务账门禁的报告载荷——
+      账本不存在时从"没有依据的命中"改成"不适用"那一档，1.0 → 1.1）。
     **不是版本轴的同名字段**（别照这张表改）：`orchestration.langgraph_engine.MIN_LANGGRAPH_VERSION`
     是依赖下界；`adapters/<id>/manifest.yaml` 的 `agent_version` / `protocol_version` 是产品与协议
     **声明**（改了要重新审核并重录宿主观测，见第 54 条），不是载荷版本。
@@ -470,8 +472,11 @@
     `served_checkers` 里、选中的测试非空），不解析 reasons 文本，也不许由账本推断；
     `obligations_open == 0` 却给不出「最近一次真实测试运行」= **没有依据**，门禁按命中处理。
     没给 `--obligations` = **没有账本可读**（不是"0 条义务"）：账本摘要的键按"有没有给账本"
-    出现或缺失，两个读法必须能分开（第 46/50 条）。账本协议自己的版本轴是
-    `policy.obligations.LEDGER_SCHEMA_VERSION`（第 55 条：加键就要动它）。
+    出现或缺失，两个读法必须能分开（第 46/50 条）。**门禁这一侧同一条纪律**：账本**文件不存在**
+    = **不适用**（`applicable=false`，不算命中，也**不算一次真实读数** —— 它凑不了升格判据里的
+    "0 命中"）；账本**存在**（哪怕是个空文件）却拿不出最近一次真实运行，仍按命中处理（见上句）。
+    账本协议自己的版本轴是 `policy.obligations.LEDGER_SCHEMA_VERSION`（第 55 条：加键就要动它），
+    门禁**报告**自己的版本轴是 `tools.obligations_gate.REPORT_SCHEMA_VERSION`。
 
 ## 临时文件与产物
 
