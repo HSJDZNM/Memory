@@ -843,7 +843,7 @@ D-2 冻结的部分（`account` / `differences` / `governs` 轴）照旧不动�
 
 **命令（逐字）**：`python tools/ci_local.py --full --python .venv/Scripts/python.exe`
 **树**：HEAD = `096cb0d`（跑前 `git status --porcelain -uall` 空；`.tmp/ci-local.lock` 未被持有，
-本会话没有别的门禁作业）。
+本会话没有别的门禁作业）。**文档提交之后在最终树 `6718e8f` 上又跑了一次，读数见 §12.7。**
 
 | 项 | 读数 |
 | --- | --- |
@@ -872,7 +872,38 @@ D-2 冻结的部分（`account` / `differences` / `governs` 轴）照旧不动�
 | 仓库侧 | HEAD 仍 `096cb0d`；`git status --porcelain -uall` **空** |
 | 这一步证明什么 | 门禁**没有动仓库**、**没有动受控项目的源码与配置**；它**不**证明端到端闭环跑通了（那是环境跳过） |
 
-### 12.7 未核实 / 待评审
+### 12.7 第二次门禁：文档提交之后（**最终树**）
+
+**为什么再跑一次**：§12.5 那次跑在 `096cb0d` 上（改正提交之后）；本轮另外两个提交
+（`025465a` 23 号 §12、`6718e8f` 24 号设计稿 + 索引）**都是文档**，但评审要拿到的最终树是
+`6718e8f`——"最后一次门禁跑的不是最终树"这件事本身就该被消掉。
+
+**命令（逐字）**：`python tools/ci_local.py --full --python .venv/Scripts/python.exe`
+**树**：HEAD = `6718e8f`（跑前 `git status --porcelain -uall` 空；无并发门禁）。
+
+| 项 | 读数 |
+| --- | --- |
+| **显式退出码** | **0** —— `本机检查全部通过（31 步）；只报告 2 步（非零退出不计入失败）` |
+| **耗时** | 门禁汇总行 **4m 54.7s**（33 步）；外层秒表 **295.4 s** |
+| 选组 | `改动文件 813 个；执行 31 步（本机跳过 11 步，登记豁免 2 步，只报告 2 步）`（比上一次多 1 = 24 号那个新文件） |
+| 大头 | pytest **2m 02.6s** → notebooks **1m 10.2s** → 编排闭环 **1m 02.5s** → 阶段验收证据 7.2s → 验证器闭环 6.2s |
+| 只报告两步 | 与 §12.5 逐字相同（义务门禁 `hits=0`；豁免到期 `HITS: 0 / declared=8 due=0 expired=0 unprovable=0`） |
+| 日志 | `.tmp/step10/ci-local-full-r23b.log`（4956 B，sha256 `AD1290E918990DCE6C52AE90D82D72ED653CD45A2647A9221BC05824EB8CEB46`）+ `.tmp/ci-local-logs/` 下 **33 个**分步日志 |
+| 第 9 步（沙箱闭环） | `ok 1.5s`；产物 `result=skipped`、`environment_skipped=true`、`host.sandbox=restricted`、`tree.revision=6718e8f…` |
+
+**跑前快照 → 跑后比对**：`.tmp/e2e/before-gate-r23/20261001T004718/manifest.json`（受控目录 69 个文件）：
+
+| 项 | 读数 |
+| --- | --- |
+| 受控目录 | before/after 都是 **69 个文件**；**逐字节相同 69**、内容变了 0、新增 0、消失 0 |
+| 内容相同但 mtime 变了 | **8** 个（受控项目 6 个 + 两个日志）——"没变"与"没跑"分开报 |
+| 产物 | `3121 B → 3121 B`；两边都 `result=skipped` / `environment_skipped=true`；`tree.revision`：`096cb0d…` → `6718e8f…`；`reading_context.run.id` 变了（**这一份保留 run**） |
+| 仓库侧 | HEAD 仍 `6718e8f`；`git status --porcelain -uall` **空** |
+
+**两次门禁的对照（不相减）**：`096cb0d` 上 **4m 58.6s / 31 步** → `6718e8f` 上 **4m 54.7s / 31 步**；
+同一步能对照的是 pytest 2m05.2s → 2m02.6s（**−2.6s，未归因**）。**两次的显式退出码都是 0。**
+
+### 12.8 未核实 / 待评审
 
 1. **真机端到端仍未在本轮采到**：第 9 步与第 22 轮一样是 `profile_write_denied` 的环境跳过；
    `host.sandbox=unrestricted` 的真机原件仍是 §10.1 那份（`7864dd2`），不是本轮树上的。
