@@ -188,6 +188,39 @@ def test_report_only_reading_parses_an_indented_json_payload(monkeypatch, capsys
     assert "不适用 1" in out
 
 
+def test_quiet_default_still_parses_the_full_output_and_keeps_it_in_a_log(
+    monkeypatch, capsys, tmp_root
+):
+    """默认的精简输出（步骤输出写日志、控制台每步一行）不能让读数变短。
+
+    载荷故意做得比失败尾部（TAIL_LINES）长得多、`hits` 放在最前面：读数解析拿到的
+    必须是子进程的**完整** stdout，而不是控制台上截出来的尾巴；完整输出另存一份日志。
+    """
+
+    ci_local = _load_ci_local()
+    _prepare(ci_local, monkeypatch, tmp_root)
+    body = (
+        "import json; print(json.dumps({'hits': 4, 'ledger_count': 2,"
+        " 'rows': list(range(%d))}, indent=2)); raise SystemExit(1)" % (ci_local.TAIL_LINES * 5)
+    )
+    probe = _probe(ci_local, body)
+    monkeypatch.setattr(
+        ci_local,
+        "REPORT_ONLY_STEPS",
+        (probe._replace(args=(*probe.args, "--json")),),
+    )
+
+    assert ci_local.main(["--full", "--python", sys.executable]) == 0
+    out = capsys.readouterr().out
+    assert "hits=4 / 2 个账本" in out
+    assert "=== Probe report only（只报告） ===" not in out  # 精简模式不打标题块
+    logs = sorted((tmp_root / ".tmp" / "ci-local-logs").glob("*probe-report-only.log"))
+    assert [item.name for item in logs] == ["02-probe-report-only.log"]  # 序号接在 workflow 步骤后
+    assert "ci-local-logs/02-probe-report-only.log" in out
+    text = logs[0].read_text(encoding="utf-8")
+    assert '"hits": 4' in text and text.startswith("$ ")
+
+
 def test_report_only_step_shows_when_a_ledger_was_not_applicable(monkeypatch, capsys, tmp_root):
     """账本不存在时读数里必须看得出"不适用"：0 命中不等于"读到过一次真实读数"。"""
 

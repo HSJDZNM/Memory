@@ -16,6 +16,13 @@ PR 变红"的形态会重新变成可能——代价是推送前少等约 2.5 �
     python tools/ci_local.py --hook       # pre-push 钩子用：更简短、失败即退出码 1
     python tools/ci_local.py --full --python C:\\path\\to\\python.exe
     python tools/ci_local.py --full --timings   # 另把每步耗时写成 .tmp/ci-local-timings.json
+    python tools/ci_local.py --full --verbose   # 步骤输出原样打到控制台（排查时用）
+
+控制台输出：默认每步只打一行（`[ 3/31] 步骤名 ... ok  1m 23.9s`），步骤自己的 stdout+stderr
+写进 `.tmp/ci-local-logs/<序号>-<步骤名>.log`（每次运行先清空）；失败的那一步把日志最后
+40 行打出来并给出全文路径；最后的耗时汇总只列最慢 5 步（--timings 的 JSON 仍是全量）。
+--hook 在开头打一行"运行中"，成功时不再打任何东西，失败时打日志尾部与阻断原因。
+通过 / 失败只由退出码决定，与输出去向无关；--verbose 下子进程直连控制台，与过去逐字相同。
 
 耗时可见性：一次全量本机门禁要二十多分钟，而“为什么是二十多分钟”过去只能靠猜——步骤是串行的，
 墙钟时间就是各步之和，却没有任何一步报出自己的耗时。所以执行路径**总是**在最后打印一张按耗时降序的
@@ -67,6 +74,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -231,7 +239,8 @@ ORCHESTRATION_STEPS = (
 # 守的是"手册与实现同步"，不是产品行为；HANDBOOK_PREFIXES 又含 src/，几乎每次改代码都会选中它。
 FULL_ONLY_STEPS = {
     "Learning notebooks are in sync": (
-        "推迟到 --full：学习手册同步要执行全部阶段手册代码单元，合并前用 --full 跑（GitHub CI 照跑）"
+        "推迟到 --full：学习手册同步要执行全部阶段手册代码单元，"
+        "合并前用 --full 跑（GitHub CI 照跑）"
     ),
 }
 
@@ -395,11 +404,17 @@ def temp_root() -> Path:
     return directory
 
 
-def _step_environment() -> dict[str, str]:
+def _step_environment(*, capture: bool = False) -> dict[str, str]:
     """每个步骤子进程的环境：换掉 PYTHONPATH，并把临时根钉在仓库内 .tmp/tmp/。
 
     三个变量都设：tempfile 依次看 TMPDIR / TEMP / TMP，少设一个就可能在别的平台上又回退；
     子进程（pytest、外部工具、闭环脚本）无论怎么再派生，都拿得到这个可写目录。
+
+    capture=True（输出写进日志文件，见 LOG_DIR_NAME）时另设两项，都只影响输出、不影响判定：
+    PYTHONIOENCODING=utf-8——stdout 不再是控制台时，Windows 上的 Python 会改用区域编码（cp936）
+    写输出，GBK 以外的字符（仓库里有 ⇄ ↔ ⊆ 这类）会让步骤以 UnicodeEncodeError 假红；
+    PYTHONUNBUFFERED=1——重定向到文件后 stdout 变成块缓冲，traceback（stderr）会跑到它前面的
+    正常输出之前，日志读起来前后颠倒。--verbose 直连控制台，环境与过去逐字相同。
     """
 
     environment = os.environ.copy()
@@ -408,7 +423,105 @@ def _step_environment() -> dict[str, str]:
     environment["TMPDIR"] = root
     environment["TEMP"] = root
     environment["TMP"] = root
+    if capture:
+        environment["PYTHONIOENCODING"] = "utf-8"
+        environment["PYTHONUNBUFFERED"] = "1"
     return environment
+
+
+# --------------------------------------------------------------------------- 步骤输出
+#
+# 默认把每一步的 stdout+stderr 原样写进 `.tmp/ci-local-logs/<序号>-<步骤名>.log`，控制台每步只留
+# 一行（进度 + 结论 + 耗时）；失败的那一步再把日志尾部打出来，并给出全文路径。
+# 为什么：一次全量门禁在控制台上是两千多行，其中约 1800 行是"阶段验收证据"打印的 JSON，
+# 真正要看的"哪步红了、为什么"被淹没在里面。通过 / 失败只由退出码决定，与输出去向无关——
+# 这里只改"打到哪"，不改"跑什么、怎么判"。要看原样滚动的输出用 --verbose。
+LOG_DIR_NAME = "ci-local-logs"
+TAIL_LINES = 40
+TIMING_TOP = 5
+
+
+def log_dir() -> Path:
+    """步骤日志目录：`ROOT / ".tmp" / LOG_DIR_NAME`（ROOT 取调用时刻的值，单测会替换它）。"""
+
+    return Path(ROOT) / ".tmp" / LOG_DIR_NAME
+
+
+def _reset_log_dir() -> Path:
+    """建好日志目录并清掉上一次的 *.log：目录里只有本次运行的日志，不会读到旧的。"""
+
+    directory = log_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    for stale in directory.glob("*.log"):
+        try:
+            stale.unlink()
+        except OSError:
+            pass  # 删不掉的旧日志不影响本次：本次的文件名按序号覆盖写
+    return directory
+
+
+def _log_name(index: int, name: str) -> str:
+    """`03-unit-contract-integration-and-security-tests.log`：序号保证按执行顺序排列。"""
+
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-").lower()[:60] or "step"
+    return "%02d-%s.log" % (index, slug)
+
+
+def _display_path(path: Path) -> str:
+    """仓库内的路径报成仓库相对（正斜杠），仓库外报绝对路径。"""
+
+    try:
+        return path.resolve().relative_to(Path(ROOT).resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _run_line(line: str, *, env: dict[str, str], log: IO[bytes] | None) -> int:
+    """执行一行 workflow 命令；log 为 None 时输出直连控制台（--verbose），否则写进日志文件。"""
+
+    if log is not None:
+        log.write(("$ %s\n" % line).encode("utf-8"))
+        log.flush()
+    # shell=True 是这里唯一能表达语义的写法：`line` 来自仓库自己的
+    # .github/workflows 的 run 块，是 **shell 语法**（`-c "import x"` 的引号由 shell
+    # 解释）。改成列表参数就必须自己实现一遍引号规则：shlex 的 posix 模式会吃掉
+    # Windows 路径里的反斜杠，posix=False 又会把引号留在参数里；
+    # tests/unit/test_ci_local.py 正好用 `-c "import ci_local_probe"` 钉住了这个形态。
+    # 注入面已经关闭：_looks_unsafe 要求每一行都必须以本项目解释器开头，
+    # 且不含 BASH_ONLY_MARKERS（heredoc / set +e / grep -q / cat > / /tmp）。
+    completed = subprocess.run(  # noqa: S602 - 见上：命令来自仓库 workflow，非外部输入
+        line,
+        cwd=str(ROOT),
+        env=env,
+        shell=True,
+        stdout=log,
+        stderr=subprocess.STDOUT if log is not None else None,
+    )
+    return completed.returncode
+
+
+def _print_log_tail(path: Path, *, stream: IO[str]) -> None:
+    """把失败步骤日志的最后 TAIL_LINES 行打出来，并给出全文路径。"""
+
+    try:
+        text = path.read_bytes().decode("utf-8", "replace")
+    except OSError as error:
+        print("  （读不到日志 %s：%s）" % (_display_path(path), error), file=stream)
+        return
+    lines = text.splitlines()
+    shown = lines[-TAIL_LINES:]
+    print(
+        "  ---- 日志最后 %d 行（共 %d 行，全文：%s）----"
+        % (len(shown), len(lines), _display_path(path)),
+        file=stream,
+    )
+    # 本进程的 stdout 被重定向时（例如 `> run.txt`），Windows 上它的编码是区域编码（cp936）：
+    # 日志里 GBK 以外的字符按 replace 降级，别让"打印失败日志"这一步自己抛异常。
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    for item in shown:
+        safe = ("  " + item).encode(encoding, "replace").decode(encoding, "replace")
+        print(safe, file=stream)
+    print("  ----", file=stream, flush=True)
 
 
 PlanGroups = tuple[list[tuple[str, list[str]]], list[tuple[str, str]], list[tuple[str, str]]]
@@ -659,19 +772,28 @@ def report_timings(
     changed: int,
     hook: bool,
     write_json: bool,
+    top: int | None = None,
 ) -> Path | None:
     """打印（并可写出）逐步耗时。只观察，不参与任何通过 / 失败的判定。
 
     为什么默认就打印：门禁是**串行**的，墙钟时间等于各步之和；过去一次全量跑二十多分钟，
     输出里却没有一个字说明时间花在哪，于是“为什么这么慢”只能靠猜。这里把事实摆在最后。
     钩子模式（--hook）保持安静：它成功时不打印任何东西是既有的行为契约。
+    top 给定时只列最贵的前 top 步（默认模式下每步的耗时已经在它自己那一行里，汇总只需点出大头）；
+    --timings 写出的 JSON 始终是全量。
     """
 
     total = sum(item[2] for item in entries)
     output: Path | None = None
     if not hook and entries:
-        print("\n=== 执行耗时（合计 %s，%d 步）===" % (_format_duration(total), len(entries)))
-        for name, _command, seconds, returncode in sorted(entries, key=lambda item: -item[2]):
+        ranked = sorted(entries, key=lambda item: -item[2])
+        shown = ranked if top is None else ranked[:top]
+        suffix = "" if len(shown) == len(ranked) else "，最慢 %d 步" % len(shown)
+        print(
+            "\n=== 执行耗时（合计 %s，%d 步%s）==="
+            % (_format_duration(total), len(entries), suffix)
+        )
+        for name, _command, seconds, returncode in shown:
             share = (100.0 * seconds / total) if total else 0.0
             print("%9s  %5.1f%%  rc=%-3s %s" % (_format_duration(seconds), share, returncode, name))
     if write_json:
@@ -773,21 +895,35 @@ def report_only_hits(step: ReportOnlyStep, output: str) -> str:
 
 
 def run_report_only_steps(
-    steps: Sequence[ReportOnlyStep], *, hook: bool
+    steps: Sequence[ReportOnlyStep],
+    *,
+    hook: bool,
+    logs: Path | None = None,
+    first_index: int = 1,
 ) -> list[tuple[str, str, float, int]]:
     """跑只报告步骤，返回耗时明细（与 workflow 步骤进同一张表）。
 
     退出码**只被打印、不被判罚**：任何非零（含启动失败）都不进 failures。
     `--hook` 模式下**什么都不打印**：只报告步骤的非零退出不改变门禁结论，
     而钩子的行为契约是"成功时保持安静"——读数留给常规（非钩子）的门禁运行与 `--list`。
+
+    读数解析始终拿子进程的**完整** stdout+stderr（capture_output，不截断）。
+    logs 给定时（默认的精简输出）：不打印 `=== … ===` 标题块，完整输出另写进
+    `logs/<序号>-<步骤名>.log`，控制台只留 REPORT-ONLY 那一行并附日志路径；
+    logs 为 None（--verbose）时与过去逐字相同。
     """
 
     entries: list[tuple[str, str, float, int]] = []
-    environment = _step_environment()
-    for step in steps:
+    # 子进程输出被管道接住、按 UTF-8 解码：子进程也必须按 UTF-8 写，否则 Windows 上它会用
+    # 区域编码（cp936）写中文，GBK 以外的字符还会让它自己抛 UnicodeEncodeError。
+    environment = _step_environment(capture=True)
+    for offset, step in enumerate(steps):
         command = [PYTHON, *step.args]
         display = " ".join(command)
-        if not hook:
+        log_path = (
+            logs / _log_name(first_index + offset, step.name) if logs is not None else None
+        )
+        if not hook and log_path is None:
             print("\n=== %s（只报告） ===\n$ %s" % (step.name, display), flush=True)
         started = time.perf_counter()
         try:
@@ -806,13 +942,23 @@ def run_report_only_steps(
             returncode = -1
             output = "启动失败：" + str(error)
         entries.append((step.name, display, time.perf_counter() - started, returncode))
+        if log_path is not None:
+            # 完整输出落盘（钩子模式也写：读数虽然不出声，事后要能查）。
+            # 写失败只影响留档，不影响读数。
+            try:
+                log_path.write_text(
+                    "$ %s\n%s" % (display, output), encoding="utf-8", newline=chr(10)
+                )
+            except OSError:
+                log_path = None
         if hook:
             # 钩子的契约是"成功时保持安静"：只报告步骤不改结论，因此它红也不出声。
             continue
         verdict = "0 命中（退出码 0）" if returncode == 0 else "退出码 %s" % returncode
+        where = "（日志：%s）" % _display_path(log_path) if log_path is not None else ""
         print(
-            "REPORT-ONLY: %s —— %s；读数 %s；豁免到期 %s（不计入门禁失败）"
-            % (step.name, verdict, report_only_hits(step, output), step.expires_at),
+            "REPORT-ONLY: %s —— %s；读数 %s；豁免到期 %s（不计入门禁失败）%s"
+            % (step.name, verdict, report_only_hits(step, output), step.expires_at, where),
             flush=True,
         )
     return entries
@@ -825,6 +971,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--full", action="store_true", help="跑全部能在本机跑的步骤")
     parser.add_argument("--list", action="store_true", help="只列出会跑哪些步骤")
     parser.add_argument("--hook", action="store_true", help="pre-push 钩子模式：更简短")
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help=(
+            "步骤输出原样打到控制台"
+            "（默认写进 .tmp/ci-local-logs/，控制台每步一行，失败才打日志尾部）"
+        ),
+    )
     parser.add_argument(
         "--timings",
         action="store_true",
@@ -917,45 +1072,84 @@ def main(argv: list[str] | None = None) -> int:
                     print("  - 未执行 %s：%s" % (name, why))
 
         failures: list[str] = []
-        step_environment = _step_environment()
+        # 默认（含 --hook）把步骤输出写进日志文件，控制台只留每步一行；--verbose 恢复原样滚动。
+        # 判定只看退出码，两种模式跑的是同一批命令、同一个判定。
+        capture = not args.verbose
+        step_environment = _step_environment(capture=capture)
+        logs = _reset_log_dir() if capture else None
+        if capture and args.hook:
+            # 钩子模式成功时不逐步打印；只留一行，免得推送时两三分钟毫无动静、被当成卡死。
+            print(
+                "ci_local: 本机门禁运行中（%d 步，输出写进 %s/）…"
+                % (len(plan), _display_path(logs)),
+                file=sys.stderr,
+                flush=True,
+            )
         # 逐步计时：门禁是串行的，墙钟时间 = 各步之和，所以“哪一步最贵”是可直接测量的量。
         timings: list[tuple[str, str, float, int]] = []
-        for name, lines in plan:
-            for line in lines:
-                if not args.hook:
-                    print("\n=== %s ===\n$ %s" % (name, line), flush=True)
-                started = time.perf_counter()
-                # shell=True 是这里唯一能表达语义的写法：`line` 来自仓库自己的
-                # .github/workflows 的 run 块，是 **shell 语法**（`-c "import x"` 的引号由 shell
-                # 解释）。改成列表参数就必须自己实现一遍引号规则：shlex 的 posix 模式会吃掉
-                # Windows 路径里的反斜杠，posix=False 又会把引号留在参数里；
-                # tests/unit/test_ci_local.py 正好用 `-c "import ci_local_probe"` 钉住了这个形态。
-                # 注入面已经关闭：_looks_unsafe 要求每一行都必须以本项目解释器开头，
-                # 且不含 BASH_ONLY_MARKERS（heredoc / set +e / grep -q / cat > / /tmp）。
-                completed = subprocess.run(  # noqa: S602 - 见上：命令来自仓库 workflow，非外部输入
-                    line,
-                    cwd=str(ROOT),
-                    env=step_environment,
-                    shell=True,
+        for index, (name, lines) in enumerate(plan, start=1):
+            log_path = logs / _log_name(index, name) if logs is not None else None
+            if capture and not args.hook:
+                # 先打步骤名再跑：长步骤（pytest 一分多钟）期间看得出卡在哪一步。
+                print("[%2d/%d] %s ..." % (index, len(plan), name), end="", flush=True)
+            step_started = time.perf_counter()
+            step_code = 0
+            # buffering=0：本进程写的 "$ 命令" 行与子进程写的输出共用同一个文件位置，
+            # 不能让本进程的缓冲区把顺序打乱（多行步骤会交替写）。
+            log = open(log_path, "wb", buffering=0) if log_path is not None else None  # noqa: SIM115
+            try:
+                for line in lines:
+                    if log is None and not args.hook:
+                        print("\n=== %s ===\n$ %s" % (name, line), flush=True)
+                    started = time.perf_counter()
+                    returncode = _run_line(line, env=step_environment, log=log)
+                    timings.append((name, line, time.perf_counter() - started, returncode))
+                    if returncode != 0:
+                        step_code = returncode
+                        break
+            finally:
+                if log is not None:
+                    log.close()
+            elapsed = _format_duration(time.perf_counter() - step_started)
+            if capture and not args.hook:
+                if step_code == 0:
+                    print(" ok  %s" % elapsed)
+                else:
+                    print(" FAIL rc=%s  %s" % (step_code, elapsed))
+            if step_code == 0:
+                continue
+
+            where = "（日志：%s）" % _display_path(log_path) if log_path is not None else ""
+            failures.append("%s -> 退出码 %s%s" % (name, step_code, where))
+            if log_path is not None:
+                _print_log_tail(log_path, stream=sys.stderr if args.hook else sys.stdout)
+            if args.hook:
+                print("ci_local: 阻断推送 —— %s" % failures[-1], file=sys.stderr)
+                print(
+                    "ci_local: 修好再推；确需跳过用 git push --no-verify",
+                    file=sys.stderr,
                 )
-                timings.append((name, line, time.perf_counter() - started, completed.returncode))
-                if completed.returncode != 0:
-                    failures.append("%s -> 退出码 %s" % (name, completed.returncode))
-                    if args.hook:
-                        print("ci_local: 阻断推送 —— %s" % failures[-1], file=sys.stderr)
-                        print(
-                            "ci_local: 修好再推；确需跳过用 git push --no-verify",
-                            file=sys.stderr,
-                        )
-                        return 1
-                    break
+                return 1
 
         # 只报告步骤在所有 workflow 步骤之后跑：它们的非零退出**不进 failures**，
         # 因此顺序不影响通过 / 失败的判定，只影响读数出现的先后。
-        timings.extend(run_report_only_steps(REPORT_ONLY_STEPS, hook=args.hook))
+        # 日志序号接在 workflow 步骤之后，同一目录里按执行顺序排列。
+        timings.extend(
+            run_report_only_steps(
+                REPORT_ONLY_STEPS, hook=args.hook, logs=logs, first_index=len(plan) + 1
+            )
+        )
 
         # 无论红绿都先把耗时摆出来：红了的时候“卡在哪一步”与“哪一步最贵”同样重要。
-        report_timings(timings, changed=len(changed), hook=args.hook, write_json=args.timings)
+        report_timings(
+            timings,
+            changed=len(changed),
+            hook=args.hook,
+            write_json=args.timings,
+            top=TIMING_TOP if capture else None,
+        )
+        if logs is not None and not args.hook:
+            print("步骤日志: %s/" % _display_path(logs))
 
         if failures:
             print("\n失败 %d 处：" % len(failures), file=sys.stderr)

@@ -1048,7 +1048,32 @@ def main(argv: list[str] | None = None) -> int:
         newline=chr(10),
     )
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    # 结论行放在 JSON 之后：门禁只把失败步骤日志的**最后几十行**打到控制台，
+    # 上千行 JSON 的尾巴说明不了"为什么红"。这一行是给人读的摘要，不进证据文件、不改退出码。
+    print(summary_line(payload, output), file=sys.stderr)
     return 0 if payload["result"] == "pass" else 1
+
+
+def summary_line(payload: dict, output: Path) -> str:
+    """证据结论的一行摘要：结果、用例 / 失败数、按套件的失败分布、测试来源与证据文件。"""
+
+    failed = [
+        "%s %s" % (name, item.get("failures"))
+        for name, item in (payload.get("suites") or {}).items()
+        if item.get("failures")
+    ]
+    try:
+        where = output.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    except ValueError:
+        where = str(output)
+    return "phase_evidence: result=%s cases=%s failures=%s%s source=%s -> %s" % (
+        payload.get("result"),
+        payload.get("cases"),
+        payload.get("failures"),
+        "（%s）" % "，".join(failed) if failed else "",
+        payload.get("test_suite_source"),
+        where,
+    )
 
 
 if __name__ == "__main__":
