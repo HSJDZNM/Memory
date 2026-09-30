@@ -709,12 +709,13 @@ D-2 冻结的部分（`account` / `differences` / `governs` 轴）照旧不动�
 
 ---
 
-**本文件是九次提交**：§1–§4.1 在 `45b9962`（门禁之前），§4.2–§7 是第 20 轮门禁之后的补记，
+**本文件是十次提交**：§1–§4.1 在 `45b9962`（门禁之前），§4.2–§7 是第 20 轮门禁之后的补记，
 §8–§9 是 2026-09-30 第二轮的裁定与落地读数；§10 是 `15be129`（第 22 轮的背景登记），
 §11 是第 22 轮门禁之后的落地读数；§12 是第 23 轮（第三轮裁定与 `declarations.test_layout`
-的改正读数）；**§13 是本提交**（第 24 轮：背景登记、已知偏差与两条裁定登记）。切开写是刻意的：
-§4.1 是**事先**写下的放宽理由，事后补写就变成了"先射箭再画靶"；
-§9 / §11 / §12 的读数则在**跑完门禁之后**才写。
+的改正读数）；§13 是第 24 轮的背景登记与两条裁定登记（`c0652b8`）；
+**§14 是本提交**（第 24 轮的落地读数：R-d、待写声明清单、预算与未核实；门禁读数见 §14.7）。
+切开写是刻意的：§4.1 是**事先**写下的放宽理由，事后补写就变成了"先射箭再画靶"；
+§9 / §11 / §12 / §14 的读数则在**跑完门禁之后**才写（§14.7）。
 
 ---
 
@@ -1010,4 +1011,211 @@ D-2 冻结的部分（`account` / `differences` / `governs` 轴）照旧不动�
 **裁定：接受。** 口径与 registry 那一支一致——"声明了取证却失败"就是三态里的 `unavailable`，
 不是 `not_applicable`（后者是"这条路径上没有这份声明"）。§12.8 第 7 条②（1.3 内改正、不升版）
 本轮由 §13.2 的规则**部分覆盖**：当时的前提（1.3 尚未发布）事后不成立，但按"不追溯"处置。
+
+---
+
+## 14 第 24 轮 · `governs` 轴与声明差集落地读数（R-d）、待写声明清单与预算
+
+- **执行**：2026-10-01（本机）；控制面重构会话（**唯一写者**）。
+- **树**：R-d 的 **before 侧在动手之前**采集于 `1e9df8c`（工作树干净）；落地提交 **`76a7847`**
+  （`src/` + `tests/` + 数据 + 文档同批），after 侧在 `76a7847` 上采集。本轮提交链：
+  `26bf07b`（第 0.5 条：三条通道改判）→ `c0652b8`（§13 背景登记）→ `5b8e1c9`（24 号 §8.3 + 17 号 §8.2）
+  → `76a7847`（本件落地）。
+- **依据**：24 号设计稿 §2 / §3 / §5 / §6 与 **§8.3 的五条裁定 + 第 0.5 条**；AGENTS 第 45（仪器要能失败）/
+  48（读数属于哪棵树）/ 50（口径诚实）/ 55（加键就是改协议）条。
+- **仪器落点**：`.tmp/step11/`（不提交）。本节所有读数都可按 §14.8 的命令重采。
+
+### 14.0 仪器、自证，与"仪器第一版是错的"
+
+| 仪器 | 作用 | 出处 |
+| --- | --- | --- |
+| `probe_wiring_entries.py`（新） | R5/R6/R7：三个入口 × 两侧各跑两次（自证）+ 默认形态退出码 ×2 + 声明读数 ×2 | `.tmp/step11/` |
+| `scan_R5.py`（新） | 第一把尺子（字段级）的差集**逐条分类** + 硬约束的**逐字段**核对 | `.tmp/step11/` |
+| `scan_R5_raw.py`（新） | **第二把尺子**：不剔除任何叶子的残差比对（23 号 §12.3 的教训） | `.tmp/step11/` |
+| `summarize_wiring.py`（新） | 把一份载荷压成可比的表（人读用，不参与判定） | `.tmp/step11/` |
+| `probe_decisions.py`（沿用 3b） | R1：只调 `policy.engine.evaluate`，读决策载荷本身 | `.tmp/step3b/` |
+| `probe_verdict_lines.py`（沿用第 22 轮） | R2'：144 行判定行矩阵 + 插件侧字面量 | `.tmp/step9/` |
+| `json_field_diff.py` + `volatile.py`（沿用） | 字段级差集与已声明的随运行变化字段剥离 | `.tmp/step3b/`、`.tmp/step7/` |
+
+**仪器第一版是错的（记下来）**：`probe_wiring_entries.py` 第一版把 `-m provenance.cli` 传了两遍
+（`python -m provenance.cli -m provenance.cli wiring-scope …`），before 侧的声明读数因此是 **`rc=2`**
+加一行 `invalid choice: provenance.cli`。它**当场就红了**（不是静默的 0）：改掉那一行 argv、重采，
+`rc=0` 且两次逐字节相同。留在这里的理由与 §3.0 / §11.0 一样——**仪器错了，读数就会骗人**。
+
+**自证（"自己对自己"必须 0 条）**：
+
+| 对照 | 读数 |
+| --- | --- |
+| R5 before vs before-run2（字段级） | **0 / 0 / 0**（`default` / `check` / `require-runtime`） |
+| R5 after vs after-run2（字段级） | **0 / 0 / 0** |
+| R6 声明读数 两次 | 375 B（before 侧）/ 474 B（after 侧），两次**逐字节相同**（`selfcontrol_identical=True`） |
+| R1 决策载荷 `same_tree_rerun_identical` | `True`（两侧都是 23992 B、`cfad8c32c59a57a4…`） |
+| R2' VERDICT 两次 | 24403 B、`8B0F538E4BB97F1C…`（两侧相同） |
+
+### 14.1 R-d 逐条（24 号 §5 的预注册形状）
+
+| # | 尺子 | before | after | 差集 |
+| --- | --- | --- | --- | --- |
+| R1 | 决策载荷（10 个场景） | 23992 B、`cfad8c32c59a57a4…` | **逐字节相同**（同 23992 B、同 sha256） | **0 条** |
+| R2' | VERDICT 判定行（144 行矩阵 + 插件字面量） | 24403 B、`8B0F538E4BB97F1C…` | **逐字节相同** | **0 条**；`VERDICT_SCHEMA_VERSION` 仍 `1.0`，插件字面量仍 `1.0` |
+| R5 | 覆盖账 `--json`（三个入口，**新尺子**） | 23299 B | 46460 B | 每份 **18 条**（第一把尺子）= **17 条预注册** + 1 条例外（§14.2①）；残差尺子每份 **22 条** = 17 + 5 处归属读数（§14.2②） |
+| R6 | 声明文件读数（`wiring-scope --check --json`） | 375 B（schema `"1"`） | 474 B（schema `"2"`） | **4 条**：`schema_version: "1" -> "2"`、`channel_kinds` / `covers` / `governs_tree` **新增**；`declared` / `by_decision` / `ids` **一条不动** |
+| R7 | 门禁第 24 步（默认形态 `adapters.cli wiring`） | 退出码 **0 / 0** | 退出码 **0 / 0** | **0 条** |
+
+**三个入口的退出码（两侧逐字相同）**：默认 **0**、`--check` **1**、`--require-runtime` **1**。
+补充读数（默认会话观察，不进 R5 差集）：`wiring --json` 24131 B → 47292 B。
+
+**硬约束（24 号 §5）逐条核对**：
+
+| 判据 | 读数 |
+| --- | --- |
+| 差集里出现 `result` / `failures` / `counts` / `fact_counts` / `probe` / `tools` / `channels[].status` / `.wiring_status` / `.freshness_status` | **0 命中**（`scan_R5.py` 的分类器逐条扫三个入口） |
+| 上述字段的**逐字段**相等（不靠差集反推） | 三个入口**全部 OK** |
+| `reading_context` | **键骨架相同**；除五处归属读数外**逐字段相同**（§14.2②）；`run` 保留（裁定①只对 `check --json` 生效） |
+| `--check` 的判据 | 仍只读 `failures`：`report.result == "fail"` → 1；`red_conditions` **一个字段都不读** |
+
+**载荷增量（口径诚实）**：23299 → 46460 B（**+99.4%**）。新增四块的**紧凑 JSON**（不含缩进）合计
+**10 591 B**（`differences` 9398 / `red_conditions` 487 / `account` 422 / `headline` 284），
+12 个通道的 `governs` 合计 **+5 202 B**（紧凑口径）；`differences.declaration_conflicts` 一项就占 **8 421 B**
+（12 条通道 × 6 个候选）。这份载荷没有体积上限，但"翻倍"必须写下来。
+
+### 14.2 五处必须评审的偏离（逐条给出理由与备选）
+
+**① R5 每份 18 条，不是预注册的 17 条。** 第 18 条是
+`reading_context.tree.revision: "1e9df8c…" -> "76a7847…"`。预注册里那条"`reading_context` 一个都不许进差集"
+按"**旁注的形状与内容不动**"读：before 与 after 本来就是**两棵树**，树身份 `revision` 换树是
+`reading_context` 存在的理由本身（AGENTS 第 48 条）——把 `revision` 也剥掉，就等于让"这份读数属于哪棵树"
+不可见。**请评审确认这条读法**（备选：把它也剥掉，R5 回到 17 条，代价是 after 侧读数不再自证属于 `76a7847`）。
+
+**② 第二把尺子（残差，不剔除任何叶子）每份 22 条** = 17 条预注册 + 5 处**归属读数**：
+`tree.revision`（换树）、`tree.digest`（树被改过）、`declarations.wiring_scope.digest`（声明文件升 schema `"2"`）、
+`run.id` / `run.started_at`（本次运行）。第一把尺子（字段级）把后四个当"不稳定"剔掉了——
+这正是 §12.3 记过的同一件事：**字段级差集不是全部**。第二把尺子存在的意义就是让它们**逐条可见**。
+
+**③ `red_conditions.in_scope_not_wired.is_red` 取 `count > 0`，不是设计稿例子里的恒 `true`。**
+24 号 §2.3 的例子里 `count: 0` 与 `is_red: true` 并排；落地取"此刻是否真的红着"，
+因为恒 `true` 与 `count: 0` 并排会被读成"现在就红着"。"这是一条红条件"由**块本身的存在**、
+`red_when` 与 `enforced: false` 表达。**请评审确认**（要改回恒 `true` 是一次显式的载荷语义变更）。
+
+**④ "有意治理另一棵树"的默认值边界。** 裁定③ 对今天的 12 个通道都成立：**没有一条声明能绑定它们**
+（`declaration_conflicts = 12`），因此 `tree.declared` 全是 `unknown`。但落地口径还定义了另一种情形：
+**某条声明用 `covers` 覆盖了通道、却没写 `governs_tree`** → `declared` 取 schema 默认值 `self`
+（24 号 §2.1 的字段表）。那时若 `relation = other`，通道行会同时出现"声明说治理本仓库这棵树"与
+"证据说目标在探测根之外"这对**矛盾**，而按 §2.1 的边界它**不进五个差集**。今天没有这样的通道；
+**要不要让"覆盖但没写 `governs_tree`"也取 `unknown`**（或给它第六格），请评审裁定。
+
+**⑤ 第 0.5 条的读数在 `wiring-scope` 载荷里看不见。** 那三条改判改了 `reason` / `expires_at` / `renewals`，
+而 `wiring-scope --check --json` 只报 `schema_version` / `declared` / `by_decision` / `ids`：
+**0.5 前后这份载荷逐字节相同**（`R6-diff-step05.json` = **0 条**）；`adapters.cli wiring` 的载荷
+同样逐字节相同（`-r05` 三份都是 23299 B）。0.5 的可见读数是：YAML 的 diff（18 + / 12 −）、
+`wiring-scope --check` 退出码 **0**、`tools/exemption_expiry.py` 的 `HITS: 0 / declared=8 due=0 expired=0
+unprovable=0`（与改动前逐字相同）。**"改判了却看不见"是一个缺口**，登记在此，不另建机制（本轮不新增载荷键）。
+
+### 14.3 两条指令要求的用例 + 全量 pytest
+
+| 用例 | 位置 | 判据 |
+| --- | --- | --- |
+| a) schema `"1"` 的声明文件仍能加载 | `tests/unit/test_provenance_wiring_scope.py::test_a_schema_1_declaration_still_loads` | `schema_version == "1"`、`channel_kinds == {}`、新字段落在默认值上 |
+| b) 空 home 时三数不是 0 | `tests/contract/test_wiring_inventory.py::test_the_three_numbers_are_unavailable_not_zero_when_nothing_is_enumerated` | `discovered` / `measured` 都是 `unavailable` + `value: null` + reason；**对照节**证明"profiles 目录存在但是空的"是**真的 0** |
+
+另外五条（本轮共新增 **7** 条）：显式 `covers` 优先并把没接线的 `in_scope` 通道记进红条件、同档冲突不猜、
+`load_declared_scope` 读不到时的三态与绝对路径脱敏、无声明时 `account.declared` 不是 0、
+schema `"2"` 新字段与未知取值拒绝。
+
+**全量 pytest（本机，门禁之前的那一次）**：`2059 passed, 1 skipped in 125.36 s`（`-n auto --dist loadfile`；
+skip 是既有的"Windows 不允许建符号链接"）。
+
+### 14.4 待写声明清单（裁定③ 的交付物：**列出来，不替使用者写**）
+
+**8 个"目标在工作区之外"的通道**（`<external>/…` 是 `wiring.py` 既有的渲染口径）：
+
+| 通道 | 接线 / 留痕 | 证据字段（渲染成 `<external>/…` 的） | 今天 `tree.declared` |
+| --- | --- | --- | --- |
+| `dsh:governed` | wired / fresh | `hooks_config`、`audit_path`、`bridge.entry` | `unknown` |
+| `dsh:governed-grade` | wired / fresh | 同上 | `unknown` |
+| `dsh:governed-grade-approval` | wired / fresh | 同上 | `unknown` |
+| `dsh:governed-wmsvc` | wired / fresh | 同上 | `unknown` |
+| `dsh:verify-bc` | wired / never_written | 同上 | `unknown` |
+| `dsh:verify-exit2` | hooks_config_missing / unevaluated | `bridge.entry` | `unknown` |
+| `dsh:verify-gov` | wired / fresh | 同上（三处） | `unknown` |
+| `dsh:verify-manual` | wired / fresh | 同上（三处） | `unknown` |
+
+**另外 4 个通道三个目标一个都读不到**（patch 里根本没有桥）→ `tree.relation = unknown`：
+`dsh:desktop`、`dsh:headless`、`dsh:verify-dead`、`dsh:web`（四个都是 `not_wired`）。
+
+**今天 12/12 个通道的 `decision` 都是 `undeclared`**：声明文件里有 **6 条 `agent_runtime` 声明**
+（`in_scope` 1 / `out_of_scope` 4 / `expected_absent` 1）落在同一个 kind 档，判决不一致，
+而**没有任何一条写 `covers`**——按 §2.1 规则 3 不挑一个，12 条都进 `differences.declaration_conflicts`。
+**要定夺某条通道，声明侧的最小形态是**：
+
+```yaml
+covers: ["dsh:governed", "dsh:governed-*"]   # 显式覆盖（优先于 kind 档）
+governs_tree: other                          # 若这条通道**有意**治理另一棵树
+tree_ref: <outside-workspace>                # 或仓库相对路径；只放指针、不放正文、不放绝对路径
+```
+
+若某条通道其实该由本仓库治理，则 `decision: in_scope` + `governs_tree: self`（默认，可不写）；
+这两条路都会立刻在 `differences` 里显出后果（`out_of_scope_active` / `in_scope_not_wired`）。
+**本轮一个字节都不替使用者写**（裁定③）。
+
+### 14.5 预算对账（`git show --numstat`，口径 = 新增行，按路径前缀分桶）
+
+| 桶 | 24 号 §6 的估算（本件） | 本轮实际 | 台阶 4 累计 | 复核线（1.5×） | 余量 |
+| --- | --- | --- | --- | --- | --- |
+| src | 60–120 | **701** | **1426** | 1 950 | **524**（用到 73%） |
+| tests | 80–150 | **321** | **1933** | 2 100 | **167**（用到 92%） |
+| tools | —— | 0 | 893 | —— | —— |
+| 数据 / 文档 | —— | 191 | **1575** | —— | —— |
+
+**超估算 3–6 倍（src）/ 2–4 倍（tests），必须写清楚花在哪**：`src/adapters/wiring.py` **633 行**
+（新机制 + 口径注释与 docstring），`tests/contract/test_wiring_inventory.py` **225 行**，
+`src/provenance/wiring_scope.py` 55 行，`src/adapters/cli.py` 13 行。这四份文件的 926 行新增里：
+空行 109、纯注释 66，其余是代码与中文 docstring（口径注释在这个仓库里是交付物的一部分，不另计）。
+
+**tests 桶到复核线还有 167 行（92%）**：本轮**没有**越过 2.1k 的复核线，因此不触发"停下来复核"；
+但下一轮（R-h 仪器自证的设计稿）**只写文档**，不占 tests；若 R-h 之后还要给 governs 加用例，
+必须先按 21 号 §8 的口径重算并请评审。
+
+### 14.6 未核实 / 待评审
+
+1. **`--observe-sessions` 被钉死为 0**：R5 的三份读数因此**不覆盖**"扫描 `$DSH_HOME/sessions`"那条路径
+   （`tools` 块恒等是**钉死的**结果，不是"这条路径没变"的证明）。默认形态的补充读数（24131 → 47292 B）
+   带着真实的会话观察，但两次采集之间会话记录会变，因此**不进差集**；
+2. **载荷翻倍（+99.4%）**：没有体积上限，也没有为它设上限——记下来供评审决定要不要设；
+3. **`covers` 的 glob 只认 `*`**（`?` 与 `[seq]` 当字面量）：没有实测"用户写了别的元字符"时的行为，
+   只写清了口径（写错的 pattern 会落进 `discovered_not_declared`，不会静默生效）；
+4. **同档冲突只在 `differences.declaration_conflicts` 里可见**，加载期不拒绝（本稿口径）。
+   要改成加载期拒绝就是**新的 FATAL**，按 L5 得先有一轮 warn；
+5. **真机端到端本轮没有新读数**：§13.1 登记的两份原件仍是最新的真机 pass（`92a6dd1` / `1e9df8c`）；
+6. **`--hook` 形态本轮没跑**：门禁只跑 `--full`（§14.7）；
+7. **`tools/ci_local.py` / `tests/unit/test_ci_local*.py` / `tools/phase_evidence.py` 一个字都没动**（文件归属）；
+   `git push` / `git fetch` 没有做（`origin/refactor/control-plane` 这个远端跟踪引用仍指向 `1e9df8c`，
+   "远端此刻的状态"**未核实**）；
+8. **待评审**：§14.2 的五条（R5 的 18 vs 17、`is_red` 口径、`governs_tree` 默认值边界、0.5 的可见性缺口、
+   预算超估算）。
+
+### 14.8 复现命令（只读或只写 `.tmp`）
+
+```powershell
+# R5/R6/R7 的 before/after 采集（各自跑两次取自证）
+.venv\Scripts\python.exe .tmp\step11\probe_wiring_entries.py --side before
+.venv\Scripts\python.exe .tmp\step11\probe_wiring_entries.py --side after
+
+# 第一把尺子（字段级）与它的分类 + 硬约束逐字段核对
+.venv\Scripts\python.exe .tmp\step7\volatile.py --before .tmp/step11/wiring-default-before.json `
+    --after .tmp/step11/wiring-default-after.json --out .tmp/step11/R5-diff-default.json
+.venv\Scripts\python.exe .tmp\step11\scan_R5.py
+
+# 第二把尺子（残差，不剔除任何叶子）
+.venv\Scripts\python.exe .tmp\step11\scan_R5_raw.py
+
+# R1 / R2 撇 / R6
+.venv\Scripts\python.exe .tmp\step3b\probe_decisions.py --out .tmp/step11/decisions-after.json
+.venv\Scripts\python.exe .tmp\step9\probe_verdict_lines.py --out .tmp/step11/verdict-after.json
+.venv\Scripts\python.exe .tmp\step7\volatile.py --before .tmp/step11/scope-r05.json `
+    --after .tmp/step11/scope-after.json --out .tmp/step11/R6-diff.json
+
+# 预算对账
+.venv\Scripts\python.exe .tmp\step11\budget.py 26bf07b c0652b8 5b8e1c9 76a7847
+```
 
