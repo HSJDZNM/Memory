@@ -239,6 +239,12 @@ def _collect_evidence(
         # 用完必删：副本是被治理项目的一份拷贝，留下来就是一份没人管的代码。
         shutil.rmtree(shadow, ignore_errors=True)
 
+    # 18 号 §2 的 R4（Hook 侧 tool.pytest 的追溯缺口）：摘要要答得出"本次读的是哪一版
+    # validation/validators.yaml"，否则同一条 tool.pytest@1.0 在账本里对应三种行为。
+    # 路径取自 validators.registry 的 DEFAULT_REGISTRY（与流水线真正加载的那条路径**同一个
+    # 来源**，不在这里另写一份字面量），显示成仓库相对路径（脱敏纪律：不放绝对路径）。
+    from validators.registry import DEFAULT_REGISTRY
+
     bundle = report.bundle
     summary = _summary(
         report,
@@ -249,6 +255,7 @@ def _collect_evidence(
         files_copied=files_copied,
         repo_path=event.file,
         tree=tree,
+        registry_path=Path(DEFAULT_REGISTRY).as_posix(),
     )
     return PreEvidenceResult(bundle=bundle, summary=summary)
 
@@ -648,6 +655,7 @@ def _summary(
     files_copied: int,
     repo_path: str,
     tree: Mapping[str, Any],
+    registry_path: str,
 ) -> Mapping[str, Any]:
     """审计用的脱敏摘要：验证器怎么跑成、证据覆盖了哪些 checker、目标内容是哪一份。
 
@@ -661,6 +669,14 @@ def _summary(
         "status": "collected",
         # 声明是怎么解析的：读账本的人不该靠猜 registry_root 指的是哪一层
         "registry_resolution": resolution,
+        # 18 号 §2 的 R4：解析到的是**哪一版**注册表。digest 与 policy.check --json 的
+        # evidence.configs.registry **同源**（validators.pipeline 已经算好的那一份，
+        # 这里一个字节都不重算——每次 Hook 调用不许新增摘要计算，见 21 号 §2.2）。
+        "registry": {
+            "path": registry_path,
+            "digest": (getattr(report, "configs", None) or {}).get("registry"),
+            "declared_in": "pre_evidence.registry_root",
+        },
         "validators_requested": list(pre.validators),
         "checks": list(report.checks),
         # P2：语言维度的显式判定（有 rule pack / 按声明不取证 / 语言未知）。形状由

@@ -436,7 +436,8 @@ Phase 4 门禁有 `enforcement_detail` 而没有 `detail`），以及
 `skipped_reason: {"phase1_not_applicable": N}`：Phase 1 一条规则都没跑，不留空让人误读成"查过了"。
 既有字段（`matched_rules` / `skipped_rules` / …）只增不改；审计记录协议自己的版本号随
 **键集合**走（统一规则见 AGENTS 第 55 条）：台阶 3a 加 `decision_reason` → `1.1`，
-台阶 3b 加 `pending_findings` → `1.2`。P1 与台阶 2 当时"加键未升版"是既成事实，
+台阶 3b 加 `pending_findings` → `1.2`，台阶 4 加 `reading_context` 与 `pre_evidence.registry`
+→ `1.3`（见 §12.10）。P1 与台阶 2 当时"加键未升版"是既成事实，
 登记在 AGENTS 第 55 条里，不作为可以再犯的先例。
 
 **会失败的检查**：`tests/unit/test_hook_skip_visibility.py`（确定性单测 + 真实产物的字段断言，
@@ -954,6 +955,30 @@ python .tmp/round-07/harness/probe_pre_evidence.py --json .tmp/round-07/evidence
 `tests/integration/test_dsh_pre_evidence_hook.py::test_the_audit_says_which_language_coverage_this_evidence_had`
 （`.md` 载荷跑**生产 Hook CLI** → 判定 `allow` 且 `status == "not_covered_by_design"`；
 对照 `.py` 载荷 → `covered_by_rule_pack`）。
+
+### 12.10 台阶 4 · 审计记录带 `reading_context` 与注册表摘要（`1.2` → `1.3`）
+
+两条**旁注**（都不进 `policy.engine.evaluate`、都不改任何 allow / block）：
+
+| 键 | 位置 | 它回答什么 | 取值来源（**不另算**） |
+| --- | --- | --- | --- |
+| `pre_evidence.registry` | `pre_evidence` 摘要内 | 本次取证读的是**哪一版**注册表（18 号 §2 的 R4：没有它，同一条 `tool.pytest@1.0` 在账本里对应三种行为） | `{path, digest, declared_in}`；`digest` 就是 `validators.pipeline` 已经算好的 `report.configs["registry"]`，`path` 取自 `validators.registry.DEFAULT_REGISTRY` 这个常量 |
+| `reading_context` | 记录顶层 | 这条记录属于**哪棵树 / 哪一套声明 / 哪台宿主**（台阶 4 的统一形状，实现只有 `provenance.reading_context` 一份） | `tree` **引用**本记录 `pre_evidence.tree` 的 `scope` / `tree_digest`；`declarations.registry` 用同一个 digest；`declarations.adapter_config` 是这一个配置文件的 sha256 |
+
+三条**硬约束**（落地时逐条测过，读数见 23 号 §10）：
+
+- **延迟**：每次 Hook 调用**不许**计算整棵树的摘要。实测新增工作 0.53 ms/条记录
+  （其中 adapter 配置摘要 0.48 ms、宿主信息 0.0006 ms）；配对 A/B（同进程交替开关那一项）
+  的中位数增量 −1.8 / +1.6 ms，11 个 fixture 没有一个超过 50 ms。
+  对照：`git rev-parse HEAD` 单次要 48.4 ms —— 这就是 `tree` **不填 `revision`** 的原因
+  （受控项目常常不是 git 工作树，取不到会是常态）：多一个字段就要多花掉整个预算；
+- **大小**：单条记录上限 16384 B（AGENTS 第 16 条 / `enforcement.audit.DEFAULT_MAX_RECORD_BYTES`）。
+  11 个 fixture × 两种模式的最大记录 6574 B → 7518 B，余量 59.9% → 54.1%（下限 30%）；
+- **兼容**：已有 `audit.jsonl` 里的 1.2 记录**不回写**（只追加）；1.2 与 1.3 混排的链仍然通过
+  `enforcement.audit.FileAuditSink.verify()`（两类 Phase 2 记录都是"外来行"，被计数而不是被收编）。
+
+**会失败的检查**：`tests/unit/test_hook_audit_reading_context.py`（形状与归属、三态、
+"把 `workspace_tree_digest` 换成『一调就炸』后调用仍必须成功"、1.2/1.3 混排的链校验）。
 
 ## 13. 声明版本 vs 宿主实际版本：一条能失败的检查（R14 / 缺陷 2）
 

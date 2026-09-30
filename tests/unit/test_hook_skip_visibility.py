@@ -308,7 +308,8 @@ def test_existing_audit_fields_are_kept_unchanged(tmp_root, dsh_project):
     assert "required_action" not in record
     # 台阶 3a（H1）：判定记录新增受控 decision_reason → 审计协议按自己的规则递增。
     # 台阶 3b：审计记录新增 pending_findings 通道 → 1.1 → 1.2（协议自己的规则）。
-    assert record["audit_schema_version"] == AUDIT_SCHEMA_VERSION == "1.2"
+    # 台阶 4：新增 reading_context 与 pre_evidence.registry → 1.2 → 1.3（协议自己的规则）。
+    assert record["audit_schema_version"] == AUDIT_SCHEMA_VERSION == "1.3"
     assert record["agent"] == "dsh"
     assert record["rule_set_hash"].startswith("sha256:")
     assert record["payload_digest"].startswith("sha256:")

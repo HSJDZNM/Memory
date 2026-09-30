@@ -138,6 +138,18 @@ Phase 2 Hook、Phase 6 Runtime、Policy API 与学习手册共用，产物却长
 `tests/unit/test_hook_skip_visibility.py`（断言版本号）、`tools/build_learning_notebook.py`、
 tech-detail 生成器、账本读者（人 / 评审 / 事故复盘）。
 
+**2026-09-30 落地（第 22 轮）**：本节按上面的形状落了码——`AUDIT_SCHEMA_VERSION` `1.2 → 1.3`，
+`_audit()` 顶层多一份 `reading_context`（`source="hook"`；`tree` **引用**本记录
+`pre_evidence.tree` 的 `scope` / `tree_digest`，**不另算**；`declarations.registry` 与
+`pre_evidence.registry` 共用**同一个** digest；`declarations.test_layout` 写 `not_applicable`），
+`pre_evidence` 摘要内多一份 `registry`（`{path, digest, declared_in}`，`digest` 取自
+`validators.pipeline` 已经算好的 `report.configs["registry"]`，**不另算**）。
+两条**与本节预注册形状的偏离**如实写下来、请评审裁定：① `tree` 只有 `status` / `scope` / `digest`，
+**没有 `revision`**（`git rev-parse HEAD` 单次实测 **48.4 ms**，占满本台阶 50 ms 的增量预算；
+且受控项目常常不是 git 工作树，取不到会是常态）；② `host.sandbox` 恒为 `unknown`
+（Hook 不探测沙箱，与 §9.2 裁定④对 `check` 路径的口径相同）。
+三条硬约束的读数与 R-d 差集见 [23 号](23-round20-reading-context-landing.md) §11。
+
 ### 2.3 只报告步骤（三处读数）
 
 `ci_local.py` 的 `REPORT_ONLY_STEPS` 今天有两条：**义务门禁**与**豁免到期检查**；

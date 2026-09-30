@@ -105,7 +105,7 @@
 | 对象 | 类型 | 字段 / 方法 | 说明 |
 | --- | --- | --- | --- |
 | `AuditLedger` | 类 | path、lookup(event_id)、append(record) | 追加写 JSONL；同时充当幂等台账 |
-| 审计记录 | JSONL 行 | audit_schema_version、timestamp、event_id、request_id、tool、operation、file、layer、language、dependencies、payload_digest、payload_fields、governed、decision、reason_code、exit_code、executed、elapsed_ms、matched_rules、skipped_rules、rule_set_hash | 只写摘要与结论，不写参数原文与源码 |
+| 审计记录 | JSONL 行 | audit_schema_version、timestamp、event_id、request_id、tool、operation、file、layer、language、dependencies、payload_digest、payload_fields、governed、decision、reason_code、exit_code、executed、elapsed_ms、matched_rules、skipped_rules、rule_set_hash、reading_context | 只写摘要与结论，不写参数原文与源码；`reading_context` 是台阶 4 加的旁注（哪棵树 / 哪一套声明 / 哪台宿主），1.2 → 1.3 |
 | `feedback_text` | 函数 | reason_code、event、decision、detail -> 文本 | 给模型的理由：规则、级别、证据、期望修复方向 |
 | `sanitize` | 函数 | text、project_root、limit | 绝对路径换占位符、密钥样式打码、截断到 4000 字符 |
 

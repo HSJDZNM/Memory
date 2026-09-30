@@ -62,6 +62,7 @@ from policy.models import (
     ValidationResult,
 )
 from policy.obligations import book_pending_findings
+from provenance import reading_context as reading
 from provenance.origin import Origin
 from provenance.origin_runtime import ORIGIN_BY_REASON_CODE, origin_from_failure
 
@@ -122,7 +123,13 @@ EXIT_BLOCK = 2
 # 在账本上会重新变得一样（两者的 violations 都是空），而这正是 P1 修掉的那类同名两义。
 # 按统一规则（任何协议载荷加键或改语义都递增该协议自己的版本号）递增到 1.2——
 # 决策协议那一侧的 1.0→1.1 是**另一套**协议，两个版本各自演进。
-AUDIT_SCHEMA_VERSION = "1.2"
+#
+# 1.3（台阶 4 / 21 号 §2.2）：判定记录新增两处——顶层的 `reading_context`（这条记录属于
+# 哪棵树 / 哪一套声明 / 哪台宿主）与 `pre_evidence.registry`（本次取证读的是哪一版
+# validation/validators.yaml；18 号 §2 的 R4：没有它，同一条 tool.pytest@1.0 在账本里
+# 对应三种行为）。两条都是"加键"，所以按本协议自己的规则递增（第 55 条）；
+# 决策协议、证据协议、VERDICT 行都不动——它们是**另外几套**协议。
+AUDIT_SCHEMA_VERSION = "1.3"
 
 # 反馈文本长度上限：阻断理由会进入模型上下文，必须足够短且不含敏感内容。
 FEEDBACK_MAX_CHARS = 4000
@@ -682,7 +689,84 @@ class DshPreExecuteHook:
             "rule_set_hash": self.rules.identity,
         }
         payload.update({key: value for key, value in record.items() if value is not None})
+        # 台阶 4 / 21 号 §2.2：这条记录属于**哪棵树 / 哪一套声明 / 哪台宿主**。
+        # 它是旁注——不进 policy.engine.evaluate 的任何输入，也不改任何 allow / block；
+        # 放在既有键之后写，既有键的取值一个字符都不动。
+        payload["reading_context"] = self.reading_context_for_record(payload)
         self.ledger.append(payload)
+
+    def reading_context_for_record(self, record: Mapping[str, Any]) -> dict[str, Any]:
+        r"""台阶 4：这条审计记录属于哪棵树 / 哪一套声明 / 哪台宿主（形状只有一份实现）。
+
+        三条约束写死在这里（21 号 §2.2 + 本台阶的三条硬约束）：
+
+        1. **不另算树摘要**（延迟）：\`tree\` **直接引用**本记录 \`pre_evidence.tree\` 的
+           同一组值（\`scope\` / \`tree_digest\`）——既不遍历工作区，也不重复算指纹。
+           拿不到取证树时写 \`unavailable\`（取证失败）或 \`not_applicable\`（这条路径上没有
+           取证），**绝不**退回去自己算一棵树：那正是"每次调用多出一次全树遍历"的来源；
+        2. **只放已有的声明摘要**：\`registry\` 用 \`pre_evidence.registry\` 里**同一个**
+           digest（由 validators.pipeline 算好的那一份），这里一个字节都不重算；
+           \`adapter_config\` 是这一个配置文件的 sha256（单文件，不遍历目录）；
+        3. **不进判定**：判定路径不读它，只有 \`_audit()\` 调用本方法。
+
+        形状与其余五处读数**同名同义**（\`provenance.reading_context\` 的唯一实现）：
+        \`source\` / \`tree\` / \`declarations\` / \`host\` / \`run\`。两份**偏离**如实写下来，
+        不等读者自己发现：
+
+        - \`tree\` 只有 \`status\` / \`scope\` / \`digest\`，**没有 \`revision\`**：修订号要一次
+          \`git rev-parse\` 子进程，而受控项目常常不是 git 工作树（取不到会是常态）；
+          本台阶的硬约束是"每次调用不新增计算"，所以这里只放已有的取证树摘要；
+        - \`host.sandbox\` 恒为 \`unknown\`：Hook 不探测沙箱（探测要有副作用），
+          这一条与 21 号 §9.2 裁定④对 \`check\` 路径的口径相同——不猜。
+
+        \`declarations.test_layout\` 写 \`not_applicable\`：这条记录本身不依赖那份声明；
+        取证流水线读过的那一份不在 21 号 §2.2 预注册的搬运范围内。
+        """
+
+        pre = record.get("pre_evidence")
+        pre_block: Mapping[str, Any] = pre if isinstance(pre, Mapping) else {}
+        status = record.get("pre_evidence_status")
+        raw_tree = pre_block.get("tree")
+
+        if isinstance(raw_tree, Mapping) and raw_tree.get("tree_digest"):
+            tree: dict[str, Any] = {
+                "status": reading.STATUS_AVAILABLE,
+                "scope": str(raw_tree.get("scope") or "unknown"),
+                "digest": str(raw_tree["tree_digest"]),
+            }
+        elif status == "unavailable":
+            tree = reading.unavailable("本次取证失败：没有可引用的取证树（pre_evidence 未收集）")
+        else:
+            tree = reading.not_applicable()
+
+        declarations: dict[str, Any] = {}
+        raw_registry = pre_block.get("registry")
+        if isinstance(raw_registry, Mapping) and raw_registry.get("digest"):
+            declarations[reading.DECLARATION_REGISTRY] = {
+                "status": reading.STATUS_AVAILABLE,
+                "path": raw_registry.get("path"),
+                "digest": raw_registry.get("digest"),
+            }
+        elif status == "unavailable":
+            declarations[reading.DECLARATION_REGISTRY] = reading.unavailable(
+                "本次取证失败：注册表摘要没有取到"
+            )
+        else:
+            declarations[reading.DECLARATION_REGISTRY] = reading.not_applicable()
+        declarations[reading.DECLARATION_ADAPTER_CONFIG] = (
+            reading.unavailable("调用点没有给出 adapter 配置路径")
+            if self.config_path is None
+            else reading.declaration_block(self.config_path, root=self.config.project_root)
+        )
+        declarations[reading.DECLARATION_TEST_LAYOUT] = reading.not_applicable()
+
+        return reading.build(
+            source=reading.SOURCE_HOOK,
+            tree=tree,
+            declarations=declarations,
+            # 宿主只报事实：平台与解释器取得到，沙箱**不探测**（见上）。
+            host=reading.host_block(),
+        )
 
     def _capture(self, raw_payload: Mapping[str, Any], tool_name: str) -> None:
         """把收到的原始事件原样落盘，用于采集脱敏 fixture。

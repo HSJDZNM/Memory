@@ -2848,6 +2848,8 @@ documented_audit_fields = (
     "exit_code", "executed", "elapsed_ms", "rule_set_hash", "governed", "event_id",
     "request_id", "tool", "operation", "file", "layer", "language", "dependencies",
     "payload_digest", "payload_fields", "matched_rules", "skipped_rules", "decision",
+    # 台阶 4（审计协议 1.2 → 1.3）：这条记录属于哪棵树 / 哪一套声明 / 哪台宿主。
+    "reading_context",
 )
 missing = [name for name in documented_audit_fields if name not in audit_record]
 assert not missing, missing

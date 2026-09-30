@@ -613,6 +613,8 @@ documented = (
     "executed", "elapsed_ms", "rule_set_hash", "governed", "event_id", "request_id", "tool",
     "operation", "file", "layer", "language", "dependencies", "payload_digest", "payload_fields",
     "matched_rules", "skipped_rules", "decision",
+    # 台阶 4（审计协议 1.2 → 1.3）：这条记录属于哪棵树 / 哪一套声明 / 哪台宿主。
+    "reading_context",
 )
 missing = [name for name in documented if name not in record]
 assert not missing, missing
