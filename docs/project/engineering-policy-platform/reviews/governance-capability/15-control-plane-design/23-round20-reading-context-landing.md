@@ -509,6 +509,41 @@ D-2 冻结的部分（`account` / `differences` / `governs` 轴）照旧不动�
 
 ---
 
+## 10 背景登记：真机 `unrestricted` 端到端与 `7864dd2` 的 pre-push 门禁（第 22 轮补记）
+
+这一节登记两件**由使用者在本机产生**的读数，用来关闭 §9.6 的两条未核实。口径分开写：
+「我复核了什么」与「使用者提供了什么、原件我没看到」不混在一起。
+
+### 10.1 真机 `--isolated-home` 端到端：`result=pass`、`host.sandbox=unrestricted`
+
+| 项 | 读数 |
+| --- | --- |
+| 时刻 | `timestamp = 2026-09-30T13:48:23.294459Z`（本机 21:48:23 +08:00） |
+| 树 | `reading_context.tree.revision = 7864dd247cb8c98dedf2c26b55ebcd02a0092671` —— 与第 22 轮起点 HEAD（`7864dd2`）**逐字符相同** |
+| 结论 | `result = pass`、`environment_skipped = false`、`schema_version = "1.2"`、`host.sandbox = "unrestricted"`、`host.isolated_home = true`、`host.dsh_home = .tmp/phase-2-sandbox/dsh-home` |
+| 两个场景 | `block_scenario.passed = true`（`file_sha256_before == after == 53b53a25162599fc…`，**文件未变**）；`allow_scenario.passed = true`（`53b53a25162599fc… → 2972725e717804ec…`，**改了一次**）；两者 `rule_set_hash = sha256:50202675b6ca4013…` |
+| 原件 | `.tmp/e2e/pass-20260930T214825.json`（**3603 B**，sha256 `da1279af9f86e0c082d3fb782aa3b2e0…`，mtime `2026-09-30T13:48:25.282163Z`）：使用者用 `Copy-Item` 从 `.tmp/artifacts/phase-2-sandbox-result.json` 复制的**原字节**——与前两份**转录件**（§2 的手抄件）不同，这份可逐字节复核 |
+| 被覆盖的证据 | 现 `.tmp/artifacts/phase-2-sandbox-result.json`（3122 B，mtime `13:50:46.691519Z`）已经是随后那次运行写出的 `result = skipped` / `host.sandbox = restricted` / `dsh_startup_denied_kind = profile_write_denied` —— 与 §2 第 2 条记的覆盖现象同型，区别是这次原件**留下来了** |
+
+**我复核了什么**：上表每一行的值都来自原件本身（`tree.digest = sha256:d1740cc8dca6853c1046abc5ca98272dbe282455fc38e582b7d6d087ff4b4778`）。
+**这一节关闭的是 §9.6 第 1 条**（"真机端到端仍然没有真机读数"）——而且补上了 §5.1 第 1 条缺的那件事：
+真机 pass 的 `reading_context` 现在有**真产物**（`host.sandbox=unrestricted`），不再只有合成探针。
+「合成探针预测过 unrestricted」与「真机上采到了 unrestricted」是两条不同的证据，这里是后者。
+
+### 10.2 `--hook` 形态的门禁在 `7864dd2` 上跑过
+
+| 项 | 读数 |
+| --- | --- |
+| 使用者提供 | 推送时 pre-push（`--hook`）门禁在 `7864dd2` 上**通过** |
+| 我复核到的旁证 | `.tmp/ci-local-logs/` 下 **32 个**分步日志：`01-repository-consistency-gate.log` 起于 **21:48:26**，`32-exemption-expiry-report-report-only.log` 止于 **21:52:30**；`.tmp/ci-local.lock` 的 mtime 同为 **21:52:30**；第 9 步（沙箱闭环）的产物被重写为 `result=skipped`（mtime `13:50:46Z` = 21:50:46 +08:00）。32 份日志里**没有** `INTERNALERROR` / `Traceback`（命中的 `FAIL` 字样都是用例名与 `[PASS]` 标记） |
+| 我**没有**看到的 | 那次运行的**汇总行与退出码**（打在终端上，没有落盘）。因此"退出码 0"按**使用者提供**登记 |
+| 形态差别 | `--hook` 与 `--full` 的**步集不同**：`FULL_ONLY_STEPS`（学习手册同步）在 `--hook` 下不执行 |
+
+**这一节关闭的是 §9.6 第 4 条**（"本轮没有跑 `--hook` 形态"）。`--full` 在 `7864dd2` 上的读数
+是**第 22 轮**的事，见 §11。
+
+---
+
 **本文件的三半是三次提交**：§1–§4.1 在 `45b9962`（门禁之前），§4.2–§7 是第 20 轮门禁之后的补记，
 §8–§9 是 2026-09-30 第二轮的裁定与落地读数。切开写是刻意的：§4.1 是**事先**写下的放宽理由，
 事后补写就变成了"先射箭再画靶"；§9 的读数则在**跑完门禁之后**才写。
