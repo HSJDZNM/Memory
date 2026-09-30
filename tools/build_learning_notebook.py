@@ -701,11 +701,12 @@ skipped_rules 与 required_action。
 
         `indent=2` 表示缩进两格，`sorted(payload)` 返回字典键名列表（排过序，便于核对）。
 
-这份输出的顶层键有八个：`context`（这次检查的输入）、`rule_set`（规则集身份与来源）、
+这份输出的顶层键有九个：`context`（这次检查的输入）、`rule_set`（规则集身份与来源）、
 `result`（决策协议载荷）、`reported_imports`（被检查文件的 import 列表，仅供人参考，
 不参与判定——这是 Phase 0 就定下的显式边界）、`exit_code`（给脚本用的等价退出码）。
-后续阶段又加了四个：`evidence`（Phase 5）、`layer_source` 与 `check_volume`（治理修复轮）、
-`output_schema_version`（包装层自己的版本轴，2026-09-30 裁定）——
+后续阶段又加了五个：`evidence`（Phase 5）、`layer_source` 与 `check_volume`（治理修复轮）、
+`output_schema_version`（包装层自己的版本轴，2026-09-30 裁定）、`reading_context`（台阶 4：
+这份读数属于哪个入口 / 哪棵树 / 哪一套声明）——
 "这次查了多少"必须能被读出来，否则两个 allow 长得一模一样。
 
 `exit_code` 属于 CLI 包装而不是决策协议：Phase 1 起 `result` 必须能被
@@ -724,7 +725,7 @@ payload = json.loads(
     )
 )
 
-print("顶层键:", sorted(payload))  # 实际是八个键（含包装层自己的版本号），看下面输出的列表
+print("顶层键:", sorted(payload))  # 实际是九个键（含包装层自己的版本号），看下面输出的列表
 print("规则集身份:", payload["rule_set"]["identity"])  # 规则内容的 sha256 指纹
 print("规则集来源:", payload["rule_set"]["sources"])
 print()  # 空行，纯排版
@@ -5134,6 +5135,8 @@ def check_phase_0_structure(namespace: dict) -> list[str]:
         # 2026-09-30 裁定：包装层也有自己的版本轴。手册写过的键名与实际载荷必须逐项对上，
         # 加键就要在这张清单里出现，否则"文档说过的形状"会悄悄落后于实现（第 55 条）。
         "output_schema_version",
+        # 台阶 4：读数属于哪个入口 / 哪棵树 / 哪一套声明——手册里也要看得见这个键。
+        "reading_context",
         "reported_imports",
         "result",
         "rule_set",
@@ -5188,6 +5191,8 @@ def check_phase_1_structure(namespace: dict) -> list[str]:
         # 包装层自己的版本轴（2026-09-30 裁定）：Phase 1 的手册讲的正是"包装与协议是两层"，
         # 这个键必须在清单里，读者才看得到两层各有各的版本号。
         "output_schema_version",
+        # 台阶 4 的 reading_context 同在包装层：它讲的是"这份读数从哪来"，与决策协议无关。
+        "reading_context",
         "reported_imports",
         "result",
         "rule_set",

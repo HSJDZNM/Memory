@@ -433,7 +433,10 @@
       `policy.evidence.EVIDENCE_SCHEMA_VERSION` / `validators.pipeline.PIPELINE_SCHEMA_VERSION`；
       `policy.check.OUTPUT_SCHEMA_VERSION`（`--json` 的**外层包装**，不是决策载荷：1.0 是**追认**的
       ——台阶 3c 之前的形状（那时 `check_volume` 还没有 `obligations_open` / `obligations_note`），
-      1.1 = 现形状；2026-09-30 裁定见 `src/policy/check.py` 的常量注释）；
+      1.1 = 第 19 轮形状；1.2 = 现形状（台阶 4 第三件：顶层多一份 `reading_context`）。
+      **副作用要记住**：`reading_context.run` 带"本次运行"的标识，所以 `--json` 的输出**不再是
+      输入的纯函数**——要逐字节比对两份 `--json`，先剥掉 `run.id` / `run.started_at`
+      （文本输出没有这两个字段，仍然逐字节可重现）；2026-09-30 裁定见 `src/policy/check.py` 的常量注释）；
     - 多 Agent 协议：`adapters.models.CANONICAL_EVENT_SCHEMA_VERSION`（规范事件）与
       `ADAPTER_MANIFEST_SCHEMA_VERSION`（manifest）；`adapters.base.ADAPTER_CONFIG_SCHEMA_VERSION`
       （adapter 配置）与 `APPROVED_SCHEMA_VERSION`（已审核哈希）；`adapters.runtime.AGENT_RUNTIME_SCHEMA_VERSION`；

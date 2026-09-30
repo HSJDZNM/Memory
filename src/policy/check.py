@@ -18,9 +18,20 @@ Phase 5 起默认走**验证器流水线**：先由 AST / 依赖图 / 外部工�
 
 CLI 输出面向人（--json 时输出面向机器），Engine 结果始终保持结构化。
 --json 的顶层是 CLI 包装（output_schema_version / context / rule_set / reported_imports /
-evidence / exit_code / layer_source / check_volume），其中 result 就是完整的 PolicyDecision
-协议载荷，可被 policy.parse_decision 直接消费；evidence 是本次验证器运行的完整事实
+evidence / exit_code / layer_source / check_volume / reading_context），其中 result 就是完整的
+PolicyDecision 协议载荷，可被 policy.parse_decision 直接消费；evidence 是本次验证器运行的完整事实
 （验证器状态、工具版本与配置哈希、依赖、发现、阻断点）。
+
+reading_context（台阶 4 / 21 号 §2.1）回答的是**归属**：这份 JSON 是哪个入口（source）、在哪棵树
+（tree：轮次级封条 + git 修订号）、哪一套声明（declarations：registry / test_layout 的摘要，
+与 evidence.configs.* 同源；adapter_config 在 CLI 路径上不适用）、哪个宿主（host，**不探测沙箱**，
+一律 unknown）、哪一次运行（run）。它不进 evaluate 的任何输入，也不改变 result / exit_code。
+
+**它有一个代价，必须知道**：run 里是"本次运行"的标识，所以 --json 的输出**不再是输入的纯函数**。
+要逐字节比对两份 --json，先剥掉 reading_context.run.id / run.started_at（tests/integration/test_cli.py
+的 normalise_run_identity 就是这么做的，并且把"剥掉的字段确实每次都不同"单独断言了一次）；
+**文本输出不受影响**，它没有这两个字段，仍然逐字节可重现。证据载荷**不能**带它——
+那两份要求"相同输入得到逐字节相同的证据"（21 号 §2.7）。
 
 **包装层也有自己的协议版本**（2026-09-30 裁定）：output_schema_version 只描述**外层包装**的形状，
 与决策协议（policy.models.SCHEMA_VERSION）各自演进、谁也不跟随谁。1.0 是**追认**的
@@ -57,6 +68,8 @@ from typing import Any, Mapping, Sequence
 from validators.registry import RegistryError as ValidatorConfigError  # noqa: E402
 from validators.registry import load_test_layout  # noqa: E402
 
+from provenance import reading_context as reading
+
 from .context import build_context, normalize_context, repo_relative_path
 from .engine import EngineError, evaluate
 from .loader import LoaderError, load_rule_set
@@ -90,6 +103,7 @@ __all__ = [
     "SKIP_REASON_SCOPE_MISMATCH",
     "build_check_volume",
     "build_parser",
+    "build_reading_context",
     "context_payload",
     "default_rule_dirs",
     "exit_code_for",
@@ -117,7 +131,11 @@ EXIT_ERROR = 2
 # 把这件事定下来：**1.0 = 台阶 3c 之前的形状，当前形状 = 1.1**，并登记进 AGENTS 第 55 条。
 # 消费方（脚本 / 门禁 / 学习手册）按它判断"外层键集合是哪一版"；决策载荷仍是 result 里的
 # SCHEMA_VERSION，两者互不代替。
-OUTPUT_SCHEMA_VERSION = "1.1"
+# 1.2 = 现形状（台阶 4 第三件）：顶层多一份 reading_context（21 号 §2.1 / §3 的统一形状）——
+# 这份 JSON 是**被哪个入口**在**哪棵树**上算出来的。同一个 render_json 被 CLI 与学习手册共用，
+# 产物过去长得一模一样，读的人分不出"哪一份是哪来的"。source 由调用点显式传入
+# （默认 library，不猜）；它只加旁注，result / exit_code / check_volume 一个都不由它决定。
+OUTPUT_SCHEMA_VERSION = "1.2"
 
 DEFAULT_RULE_DIRS = ("policies",)
 
@@ -738,6 +756,51 @@ def _finding_lines(entry: Violation) -> list[str]:
     return rendered
 
 
+def build_reading_context(
+    *,
+    source: str,
+    anchor: Path,
+    report: Any | None = None,
+    config_root: Path | None = None,
+) -> dict:
+    """这份 --json 读数属于哪里（21 号 §2.1）：树 / 三处声明 / 宿主 / 本次运行。
+
+    声明摘要的来源与验证器流水线**同源**：有证据段时直接取 report.configs 里那几个值
+    （与 evidence.configs.* 逐字符相同，test_cli.py 里有断言），没有证据段时按**同一批文件**
+    现算——两条路算出来的字符串相等这件事由
+    tests/contract/test_reading_context_digest_parity.py 钉住。adapter_config 在 CLI 路径上
+    **不适用**（CLI 不读 adapter 配置，那是 Hook 路径的事）。
+
+    它只回答归属：不进 evaluate 的任何输入，也不改变任何 allow / block。
+    """
+
+    root = config_root if config_root is not None else anchor
+    configs = getattr(report, "configs", None)
+    configs = configs if isinstance(configs, Mapping) else {}
+    declarations: dict[str, dict] = {}
+    for name, relative in (
+        (reading.DECLARATION_REGISTRY, "validation/validators.yaml"),
+        (reading.DECLARATION_TEST_LAYOUT, "validation/test-layout.yaml"),
+    ):
+        digest = configs.get(name)
+        path = root / relative
+        if isinstance(digest, str) and digest:
+            declarations[name] = {
+                "status": reading.STATUS_AVAILABLE,
+                "path": reading.display_path(path, root=anchor),
+                "digest": digest,
+            }
+        else:
+            declarations[name] = reading.declaration_block(path, root=anchor)
+    declarations[reading.DECLARATION_ADAPTER_CONFIG] = reading.not_applicable()
+    return reading.build(
+        source=source,
+        tree=reading.tree_block(anchor),
+        declarations=declarations,
+        host=reading.host_block(),
+    )
+
+
 def render_json(
     context: PolicyContext,
     rules: RuleSet,
@@ -748,6 +811,9 @@ def render_json(
     report: Any | None = None,
     layer_source: str | None = None,
     check_volume: Mapping[str, Any] | None = None,
+    source: str = reading.SOURCE_LIBRARY,
+    anchor: Path | None = None,
+    config_root: Path | None = None,
 ) -> str:
     if exit_code is None:
         exit_code = EXIT_ALLOWED if result is None else exit_code_for(result)
@@ -779,6 +845,14 @@ def render_json(
         # 包装自己的版本（加键 / 改语义就要动它，AGENTS 第 55 条）：
         # 它说的是"外层这些键是哪一版形状"，不替代 result 的 schema_version。
         "output_schema_version": OUTPUT_SCHEMA_VERSION,
+        # 台阶 4：这份包装属于哪个入口、哪棵树、哪一套声明（21 号 §2.1）。
+        # source 由调用点显式传入（默认 library——**不猜**，AGENTS 核心约束 6）。
+        "reading_context": build_reading_context(
+            source=source,
+            anchor=anchor if anchor is not None else repo_root(),
+            report=report,
+            config_root=config_root,
+        ),
         "result": None if result is None else result.to_decision_dict(),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
@@ -999,6 +1073,12 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
             report=report,
             layer_source=layer_source,
             check_volume=volume,
+            # 入口是**显式**的：CLI 就说 cli（默认 library 是给进程内调用留的，不猜）。
+            source=reading.SOURCE_CLI,
+            anchor=anchor,
+            # 与 collect_evidence 同一条解析（同一个 --config-root 语义），
+            # 否则读数里的声明摘要会指向另一份文件。
+            config_root=resolve_directory(args.config_root, anchor=anchor, fallback=anchor),
         )
     else:
         rendered = render_text(

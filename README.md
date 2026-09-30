@@ -78,11 +78,18 @@ site-packages，而是靠 `PYTHONPATH=src`（CI 的 workflow 里就是这条）�
 `2` 配置或执行错误（规则不可读、规则损坏、上下文不完整、未知 checker）。
 
 加 `--json` 得到机器可读输出：顶层是 CLI 包装（`output_schema_version` / `context` / `rule_set` /
-`reported_imports` / `evidence` / `exit_code` / `layer_source` / `check_volume`），
-其中 `result` 就是带 `schema_version` 的决策协议载荷，可被 `policy.parse_decision` 原样解析回来。
-**包装有自己的版本轴**：`output_schema_version`（当前 `1.1`；`1.0` 是追认的"台阶 3c 之前的形状"，
-那时 `check_volume` 还没有 `obligations_open` / `obligations_note`）只描述外层键集合，
-与决策协议的 `schema_version` 各自演进（AGENTS 第 55 条）。
+`reported_imports` / `evidence` / `exit_code` / `layer_source` / `check_volume` /
+`reading_context`），其中 `result` 就是带 `schema_version` 的决策协议载荷，可被
+`policy.parse_decision` 原样解析回来。
+**包装有自己的版本轴**：`output_schema_version`（当前 `1.2`；`1.0` 是追认的"台阶 3c 之前的形状"，
+那时 `check_volume` 还没有 `obligations_open` / `obligations_note`；`1.1` 是第 19 轮形状）只描述
+外层键集合，与决策协议的 `schema_version` 各自演进（AGENTS 第 55 条）。
+`reading_context`（台阶 4）是这份读数的**归属**：哪个入口（`source`）、哪棵树
+（`tree`：轮次级封条 + git 修订号）、哪一套声明（`declarations`：registry / test_layout 的摘要，
+与 `evidence.configs.*` 同源）、哪个宿主（`host`，CLI 路径不探测沙箱，写 `unknown`）。
+它**不进判定**，也不改变 `result` / `exit_code`；但它带"本次运行"的标识
+（`reading_context.run`），所以 `--json` 的输出**不再是输入的纯函数**——要逐字节比对两份
+`--json` 输出，先剥掉 `run.id` / `run.started_at`（文本输出没有这两个字段，仍然逐字节可重现）。
 
 常用参数：`--layer`（安全关键维度，不传时按文件名推断并在输出中标明）、`--module`（只接受显式传入）、
 `--operation`（受控枚举）、`--trace-id`（串联检索/决策/执行，不传即留空）、`--task`、`--agent`、`--project`。
