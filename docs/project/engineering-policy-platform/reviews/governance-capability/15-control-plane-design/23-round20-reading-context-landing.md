@@ -544,6 +544,172 @@ D-2 冻结的部分（`account` / `differences` / `governs` 轴）照旧不动�
 
 ---
 
-**本文件的三半是三次提交**：§1–§4.1 在 `45b9962`（门禁之前），§4.2–§7 是第 20 轮门禁之后的补记，
-§8–§9 是 2026-09-30 第二轮的裁定与落地读数。切开写是刻意的：§4.1 是**事先**写下的放宽理由，
-事后补写就变成了"先射箭再画靶"；§9 的读数则在**跑完门禁之后**才写。
+## 11 第 22 轮 · 审计 `reading_context`（`AUDIT_SCHEMA_VERSION` 1.2 → 1.3）落地读数与门禁
+
+- **树**：HEAD = `7f8f77a`（跑门禁前 `git status --porcelain -uall` 空、`.tmp/ci-local.lock` 未被持有）。
+- **本轮的提交**：`15be129`（§10 背景登记）、`7f8f77a`（本件：审计记录加 `reading_context` 与注册表摘要）、
+  本提交（本文与设计目录索引）。
+- **仪器落点**：`.tmp/step9/`（不提交）。
+
+### 11.0 仪器与它的自证（AGENTS 第 45 条）
+
+| 仪器 | 作用 | 规模 |
+| --- | --- | --- |
+| `.tmp/step9/probe_audit_records.py`（新） | 11 个 dsh 事件 fixture × **5 次** × 3 个模式（evidence / plain / paired），走真 Hook 路径，采**落盘后的记录**、单次调用耗时与字节 | 每轮 **120 次调用** |
+| `extract_records.py`（新） | 把审计记录从计时载荷里抽出来——计时每次都不同，混进差集就废掉"差集几条"这个判据 | 24 个用例 |
+| `compare_r3.py`（新） | R3：预注册键分类 + **残差逐字节**比较 + 六个判定字段扫描；`--self-control` 模式 | —— |
+| `compare_latency.py`（新） | 逐用例 min / median 估计的增量 + 自证噪声包络 | 24 个点 |
+| `ab_reading_context.py`（新） | 同进程**交替开关**那一项的配对 A/B（抵消时间漂移） | 11 fixture × 5 轮 × 2 臂 × 2 模式 |
+| `measure_reading_context_cost.py`（新） | 直接测新增工作（含**被否掉的** `git rev-parse` 选项） | n=200 |
+| `probe_verdict_lines.py`（新） | VERDICT 判定行矩阵 + 跨语言对侧字面量 | 144 行 |
+| `.tmp/step3b/probe_decisions.py` / `json_field_diff.py` / `.tmp/step7/volatile.py` | 沿用（R1 与字段级差集） | —— |
+
+**自证（自己对自己必须干净）**：
+
+| 对照 | 读数 |
+| --- | --- |
+| 审计记录 before vs before-run2（残差口径） | `diffs=0 / residual_mismatch=0 / forbidden=0` |
+| 审计记录 after vs after-run2（残差口径） | `diffs=0 / residual_mismatch=0 / forbidden=0` |
+| 决策载荷 before vs after | 两份**逐字节相同**（23992 B、`cfad8c32c59a57a4…`） |
+| VERDICT 判定行 before vs after | 两份**逐字节相同**（24403 B） |
+
+**仪器第一版漏掉过一个每次都在变的时间戳（记下来）**：before/before-run2 的残差里出现过 3 条
+`origin.observation.verified_at`（墙钟）。`json_field_diff` 的 UNSTABLE 名单里本来就有这个叶子，
+所以**字段级差集看不见它**——是"残差逐字节"这把更严的尺子把它抓出来的。把它声明成运行期变化字段之后，
+自证归零。这条留在记录里，因为"差集里多出 3 条"当时看起来**很像**真实差异；仪器错了，读数就会骗人。
+
+### 11.1 R-d 逐条（21 号 §5 的预注册形状）
+
+| # | 尺子 | 差集 | 结论 |
+| --- | --- | --- | --- |
+| R1 | 决策载荷（10 个场景，四把尺子里唯一不碰包装层的一把） | **0 条**：before/after 逐字节相同（23992 B、`cfad8c32c59a57a4…`，与 22 号记的第 19 轮同一个值） | `reading_context` **不进决策载荷** |
+| R2' | VERDICT 判定行（144 行矩阵 + 插件侧按精确版本号读的字面量） | **0 条**：逐字节相同（24403 B）；`VERDICT_SCHEMA_VERSION` 仍 `1.0`，`policy-hook.plugin.mjs` 里的字面量仍 `1.0` | 判定行不在本次改动面内——**"不动"是被读出来的，不是被声明的** |
+| R3 | Hook 审计记录（24 个用例、**51 条**记录） | **107 条 = 51 ×（`reading_context` 新增 + `audit_schema_version` 1.2→1.3）+ 5 × `pre_evidence.registry` 新增**；`unexpected=0`、残差**0 条不符**、六个判定字段 **0** 命中、结论/记录条数 **0** 处不一致 | 每条记录只多出**预注册的键与版本号** |
+
+那 5 条 `pre_evidence.registry` 落在**取证真的收上来**的记录上：`evidence.pre-tool-use-write-{allow,block}`、
+`paired.paired-allow`（两条记录）、`paired.paired-block`；其余记录没有这个键——
+**"这次没有取证"与"取证了但没记版本"必须能分开读**（这也是它放在 `pre_evidence` 内、
+而不是放进顶层 `reading_context` 的原因）。
+
+### 11.2 硬约束①：延迟（增量不得超过 50 ms）
+
+| 尺子 | 读数 |
+| --- | --- |
+| **直接测**（n=200） | `reading_context_for_record` **0.5258 ms**（中位数；其中 `declaration_block` 0.4829 ms、`host_block` 0.0006 ms）。每次 Hook 调用写 1~2 条记录 → 上限约 **1.1 ms/次** |
+| **配对 A/B**（同进程交替开关） | evidence 模式增量中位数 **−1.8 ms**、最大 **+36.7 ms**；plain 模式中位数 **+1.6 ms**、最大 **+14.1 ms**；**0/11** 个 fixture 超过 50 ms |
+| before/after 两轮采集（每 fixture 5 次） | min 估计：中位数 **+1.5 ms**、最大 **+34.7 ms**；median 估计：中位数 **+3.0 ms**、最大 **+50.1 ms**（**1 个点**） |
+| 自证噪声包络 | before vs before-run2：**−25.8 … +14.3 ms**；after vs after-run2：**−78.9 … +1.5 ms**；交叉对照 before vs after-run2：最大 **+7.5 ms** |
+| **被否掉的选项的代价** | `git rev-parse HEAD` **48.3967 ms**（中位数，n=200）——它一项就吃掉整个 50 ms 预算 |
+
+**结论：增量在 1 ms 量级，11 个 fixture 没有一个超过 50 ms。** 上面那个 **+50.1 ms** 的单点落在
+机器自证的噪声带里（同一台机器、**同一份代码**的两次采集，自身差值就能到 −78.9 ms），
+而它对应的直接代价是 0.53 ms —— 这个点归因于机器负载，**不归因于本次改动**；
+单独写出来，是因为"每项 5 次取中位数"这条口径下它确实出现了，隐掉它就是挑读数。
+
+### 11.3 硬约束②：大小（失败关闭上限的余量不得低于 30%）
+
+| 项 | before | after | 余量 |
+| --- | --- | --- | --- |
+| 最大单条记录（Phase 2 审计记录，UTF-8 字节） | **6574 B** | **7518 B** | `16384 − 7518 = 8866 B` → **54.11%**（下限 30%） |
+| 51 条记录的增量分布 | —— | 最小 **+520 B**、最大 **+944 B** | —— |
+| 上限来源 | `enforcement.audit.DEFAULT_MAX_RECORD_BYTES = 16384`（AGENTS 第 16 条） | | |
+
+**口径诚实**：Hook 侧写审计用的是 `hooks.AuditLedger.append`，它**自己不设**字节上限——
+那条上限是**审计链**（`FileAuditSink`）的失败关闭阈值，也是 AGENTS 第 16 条登记的那一个。
+所以这里报的是"离那条被登记的上限还有多远"，不是"已经被它拦住过"。
+
+### 11.4 硬约束③：兼容（1.2 不回写 · 1.2 与 1.3 混排的链必须过校验）
+
+| 判据 | 读数 |
+| --- | --- |
+| 已有 1.2 记录不回写 | 用例 `test_a_1_2_record_is_not_rewritten_and_a_mixed_chain_still_verifies`：新记录写入后 `audit.read_bytes().startswith(before_bytes)`，第 1 行与写入前**逐字节相同** |
+| 1.2 与 1.3 混排的链 | `enforcement.audit.FileAuditSink(audit).verify() == ()`；两类 Phase 2 记录都被算作**外来行**（`foreign_records()` 计数），不静默收编 |
+| 版本断言 | `tests/unit/test_hook_skip_visibility.py` 的版本断言按协议自己的规则显式改成 `"1.3"`（第 55 条） |
+
+### 11.5 门禁（`--full`）
+
+**命令（逐字）**：`python tools/ci_local.py --full --python .venv/Scripts/python.exe`
+**树**：HEAD = `7f8f77a`（跑前工作树空；本会话没有别的门禁作业）。
+
+| 项 | 读数 |
+| --- | --- |
+| **显式退出码** | **0** —— `本机检查全部通过（31 步）；只报告 2 步（非零退出不计入失败）` |
+| **耗时** | 门禁自己的汇总行 **5m 00.1s**（`=== 执行耗时（合计 5m 00.1s，33 步，最慢 5 步）===`） |
+| 选组 | `改动文件 812 个；执行 31 步（本机跳过 11 步，登记豁免 2 步，只报告 2 步）` |
+| 大头 | pytest **2m 09.2s**（43.1%）→ notebooks 1m 08.8s（22.9%）→ 编排闭环 1m 01.7s（20.5%）→ 阶段验收证据 7.2s → 验证器闭环 6.8s |
+| 与第 21 轮对照 | 同一条命令在 `e71b5e0` 上是 **5m 35.6s / 33 步**，本轮 **5m 00.1s / 33 步**（**不相减**：改动面与机器负载都不同）。能对照的是同一步：pytest 2m06.6s → 2m09.2s（+2.6s）、notebooks 1m33.0s → 1m08.8s（−24.2s，**未归因**） |
+| 只报告步骤 1 | 义务门禁：0 命中（退出码 0），`hits=0 / 1 个账本（不适用 1：没有账本可读，不算一次真实读数）` |
+| 只报告步骤 2 | 豁免到期：0 命中（退出码 0），`HITS: 0 / declared=8 due=0 expired=0 unprovable=0` |
+| 日志 | `.tmp/step9/ci-local-full-r22.log`（4956 B）+ `.tmp/ci-local-logs/` 下 **33 个**分步日志 |
+| 第 9 步（沙箱闭环） | `ok 1.8s`；产物 `result=skipped`、`environment_skipped=true`、`dsh_startup_denied_kind=profile_write_denied`（被拒路径 `C:\Users\ZNM\.dsh\profiles\headless\cordis.yml`）、`host.sandbox=restricted`、`tree.revision=7f8f77a…` —— **受限上下文里的读数，不是真机读数**（第 45 条：环境跳过不是通过） |
+
+**跑之前删掉了一个沙箱 ACL 残留（必须记下来）**：`.tmp/tmp/pytest-of-ZNM` 是**上一次**运行
+（21:50 的 pre-push）留下的 `0o700` 残留目录：`os.scandir` 都被拒（`WinError 5`），
+`pytest -n auto` 因此在**收集期** `INTERNALERROR`（`make_numbered_dir_with_cleanup` →
+`PermissionError`）——与第 20 轮 §4.1/§4.2 同一个现象、同一条处置：**程序级放宽到
+`danger-full-access`**，只删这**一个** pytest 落点目录（`removed=1`、`still there? False`），
+随后 `-n auto` 恢复正常（`5 passed in 5.38s`）。放宽**只用在这一次删除上**：
+本轮所有代码 / 文档 / 测试改动只用 `write` / `edit` 落树，按路径暂存，没有 `--no-verify`、
+没有强推、没有 `cleanup.py`、没有直接跑 `tools/dsh_sandbox_loop.py`。
+
+### 11.6 跑前快照 → 跑后逐个文件比对（第 9 步必然跑 `tools/dsh_sandbox_loop.py`）
+
+**禁令照样遵守**：**没有**直接跑 `tools/dsh_sandbox_loop.py`；它只作为门禁第 9 步被执行。
+快照 `.tmp/e2e/before-gate-r22/20260930T224415/manifest.json`（受控目录 55 个文件的
+路径 / 字节 / mtime / sha256 + 产物副本 + HEAD + `git status`），跑后逐文件比对：
+
+| 项 | 读数 |
+| --- | --- |
+| 受控目录 | before/after 都是 **55 个文件**；逐字节相同 **53**、内容变了 **2**、新增 0、消失 0 |
+| 变了的两个 | `.tmp/phase-2-sandbox/logs/{allow-run,block-run}.txt`：`2ab540972f1d1a75… → 2dc1a97ba8eea1c8…`（两份内容相同：这次 dsh 真的起了进程，日志被重写） |
+| 内容相同但 mtime 变了 | **6** 个（受控项目的 `dsh-adapter.yaml` / `hooks.json` / `patch.yml` / `AGENTS.md` / `order_controller.py` / `order_service.py`）——受控目录每次由闭环重建，**"内容没变"不等于"没被重写"**，两件事分开报 |
+| 产物 | `3122 B → 3121 B`；`result=skipped` / `environment_skipped=true` 两边一致；`reading_context.host.dsh_home`：`<unset>` → `<outside-workspace>`，`tree.revision`：`7864dd2…` → `7f8f77a…`——**这正是 `reading_context` 要回答的问题**：两份读数不属于同一棵树、也不属于同一个环境 |
+| 仓库侧 | HEAD 仍 `7f8f77a`；`git status --porcelain -uall` **空** |
+| 这一步证明什么 | 门禁**没有动仓库**、**没有动受控项目的源码与配置**；它**不**证明端到端闭环跑通了（那是环境跳过） |
+
+### 11.7 预算对账（`git show --numstat`，口径 = 新增行；按路径前缀分桶）
+
+| 桶 | 台阶 4 累计 | 复核线（1.5×） | 硬上限（2.5×） |
+| --- | --- | --- | --- |
+| src | **681** | 1 950 | 3 250 |
+| tests | **1 527** | 2 100 | 3 500 |
+| tools | **893** | ——（21 号 §7 的表里没有这一桶，照旧单列） | —— |
+| 数据 / 文档 | **815** | —— | —— |
+
+**逐段**（提交集合照 21 号 §8 的基线 + 23 号 §5.4 的第 20 轮 + 第 21/22 轮）：
+
+| 段 | 提交数 | src | tests | tools | 数据/文档 |
+| --- | --- | --- | --- | --- | --- |
+| 21 号 §8 基线（端到端建轴之前） | 6 | 0 | 598 | 670 | 103 |
+| 第 20 轮（`reading_context` 前三件 + 记录） | 6 | 463 | 543 | 221 | 476 |
+| 第 21 轮（裁定① + 覆盖账 + 记录） | 3 | 91 | 111 | 0 | 178 |
+| 第 22 轮（背景登记 + Hook 审计） | 2 | 127 | 275 | 2 | 58 |
+| **台阶 4 累计** | 17 | **681** | **1 527** | **893** | **815** |
+
+**src 与 tests 都在复核线之内**（余量 1 269 / 573），没有触发"超过 1.5 倍就停下复核"。
+本文件不计入上面的提交集合（它自己只加文档行）。
+
+### 11.8 未核实 / 待评审
+
+1. **两处与预注册形状的偏离，请评审裁定**：① `reading_context.tree` 只有 `status` / `scope` /
+   `digest`，**没有 `revision`**（`git rev-parse HEAD` 48.4 ms，占满 50 ms 预算；受控项目常常
+   不是 git 工作树，取不到会是常态）；② `host.sandbox` 恒为 `unknown`（Hook 不探测沙箱，
+   与 21 号 §9.2 裁定④对 `check` 路径的口径相同）。两者都写在
+   `hooks.reading_context_for_record` 的 docstring 里，不是顺手省掉的；
+2. **`declarations.test_layout` 写 `not_applicable`**：取证流水线**确实读过**
+   `validation/test-layout.yaml`（`report.configs` 里有它的 digest），但本台阶预注册的搬运范围
+   只有 `registry`。它是"**没搬**"而不是"没有"——措辞按此定，若评审要它可读，
+   下一轮把它一起搬（`report.configs["test_layout"]` 已经在那儿了）；
+3. **延迟读数只属于这台机器这个上下文**：配对 A/B 抵消了时间漂移，但机器负载本身没有独立取证；
+   那个 +50.1 ms 的单点只有"自证噪声带"这一个解释，没有做更细的归因；
+4. **`--hook` 形态本轮没有跑**：只跑了 `--full`。§10.2 那次 `--hook` 是**使用者**在 `7864dd2` 上跑的；
+5. **`git rev-parse` 的 48.4 ms 是这台机器上的读数**（Windows 子进程启动开销），别的平台上没有测；
+6. **`tools/ci_local.py` / `tests/unit/test_ci_local*.py` / `tools/phase_evidence.py` 一个字都没动**
+   （文件归属），`git push` / `git fetch` 没有做。
+
+---
+
+**本文件是七次提交**：§1–§4.1 在 `45b9962`（门禁之前），§4.2–§7 是第 20 轮门禁之后的补记，
+§8–§9 是 2026-09-30 第二轮的裁定与落地读数；§10 是 `15be129`（第 22 轮的背景登记），
+§11 是本提交（第 22 轮的门禁之后的落地读数）。切开写是刻意的：§4.1 是**事先**写下的放宽理由，
+事后补写就变成了"先射箭再画靶"；§9 与 §11 的读数则在**跑完门禁之后**才写。
