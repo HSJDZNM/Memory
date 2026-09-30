@@ -455,7 +455,9 @@
       `policy_api.config.API_CONFIG_SCHEMA_VERSION`、`policy_api.idempotency.IDEMPOTENCY_SCHEMA_VERSION`、
       `policy_api.contract.SNAPSHOT_SCHEMA_VERSION`；
     - 检索与针脚：`retrieval.models.INDEX_SCHEMA_VERSION` 与 `CHUNKER_VERSION`（分块语义）、
-      `provenance.cli.RECEIPT_SCHEMA_VERSION`、`provenance.wiring_scope.SCHEMA_VERSION`；
+      `provenance.cli.RECEIPT_SCHEMA_VERSION`、`provenance.wiring_scope.SCHEMA_VERSION`
+      （边界声明 `adapters/wiring-scope.yaml`；2026-10-01 起 **"1" 与 "2" 都接受**——"2" 只多了
+      **可选**字段 `channel_kinds` / `covers` / `governs_tree` / `tree_ref`，加载期 FATAL 一条没加）；
     - **`provenance.reading_context` 不是一条轴**（别照这张表给它加版本号）：它是一个**形状**
       （读数属于哪棵树 / 哪个环境 / 哪一套声明），形状变更随**各载荷自己的**轴走
       （`OUTPUT_SCHEMA_VERSION` / `REPORT_SCHEMA_VERSION` / `SANDBOX_RESULT_SCHEMA_VERSION` …）；

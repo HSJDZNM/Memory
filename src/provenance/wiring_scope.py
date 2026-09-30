@@ -9,6 +9,12 @@ owner / reason / consequence / expires_at——否则「不在范围内」就成
 
 口径与仓库其余数据文件一致：未知字段、未知取值、空理由、重复 id 一律**加载期报错**，
 不静默忽略、不默认放行。
+
+**schema "2"（2026-10-01 裁定①，24 号 §8.3）**：加载器**同时接受 "1" 和 "2"**，本版新增的字段
+（顶层 `channel_kinds`，条目 `covers` / `governs_tree` / `tree_ref`）**一律可选**，
+并且**不新增任何加载期 FATAL**：一个 schema "1" 的合法文件在 "2" 的加载器下必须照样加载。
+对**新字段**的未知枚举取值仍按核心约束 3 报错（例如 `governs_tree: othr`）——那条 FATAL 与
+既有的 `decision` 是同一类，不是新的加载条件。
 """
 
 from __future__ import annotations
@@ -18,11 +24,22 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
+# 兼容读法（裁定①）：这两个版本都接受，且**新字段一律可选**；"1" 的文件里不会有本版新增字段。
+ACCEPTED_SCHEMA_VERSIONS: Tuple[str, ...] = ("1", "2")
 # decision 的三个取值：在范围内 / 不在范围内 / 预期缺席（方案 §3.5）。
 DECISIONS: Tuple[str, ...] = ("in_scope", "out_of_scope", "expected_absent")
+# governs_tree 的两个取值：这条声明覆盖的通道治理的是**本仓库这棵树**，还是**有意治理另一棵树**。
+GOVERNS_TREE_VALUES: Tuple[str, ...] = ("self", "other")
 
 
 class WiringScopeError(Exception):
@@ -71,6 +88,15 @@ class ScopeEntry(BaseModel):
     consequence: str
     expires_at: str | None = None
     renewals: Tuple[Renewal, ...] = ()
+    # —— schema "2" 新增（一律可选；裁定①）——
+    # 显式覆盖：glob 作用于发现侧（adapters.cli wiring）的 channel_id。显式覆盖**优先于**
+    # kind 档（24 号 §2.1 规则 1）：同档多条声明判决不同时，只有显式覆盖能定夺，不猜。
+    covers: Tuple[str, ...] = ()
+    # 这条声明覆盖的通道是不是**有意**治理另一棵树（默认 self = 本仓库这棵树）。
+    governs_tree: str = "self"
+    # 只放指针（仓库相对路径，或 <outside-workspace>），不放正文、不放绝对路径（第 16/34 条）；
+    # governs_tree=self 时不写。
+    tree_ref: str | None = None
 
     @field_validator("decision")
     @classmethod
@@ -94,6 +120,16 @@ class ScopeEntry(BaseModel):
         if value is None:
             return None
         return _require_date(value, field="expires_at")
+
+    @field_validator("governs_tree")
+    @classmethod
+    def _tree(cls, value: str) -> str:
+        if value not in GOVERNS_TREE_VALUES:
+            raise ValueError(
+                f"未知 governs_tree {value!r}：只接受 {' / '.join(GOVERNS_TREE_VALUES)}"
+                "（未知枚举不静默忽略——核心约束 3；这不是新增的加载条件，与 decision 同类）"
+            )
+        return value
 
     @model_validator(mode="after")
     def _consistent(self) -> "ScopeEntry":
@@ -119,13 +155,19 @@ class WiringScope(BaseModel):
 
     schema_version: str
     scope: Tuple[ScopeEntry, ...]
+    # schema "2" 新增（可选）：发现侧 kind → 声明侧 kind 的**数据**映射（24 号 §2.1 规则 2）。
+    # 它把"按 kind 分档"变成可读的声明而不是代码里的写死分支；没有映射的发现 kind
+    # 一律写 decision=undeclared，不猜。
+    channel_kinds: Dict[str, str] = Field(default_factory=dict)
 
     @field_validator("schema_version")
     @classmethod
     def _version(cls, value: str) -> str:
-        if value != SCHEMA_VERSION:
+        if value not in ACCEPTED_SCHEMA_VERSIONS:
             raise ValueError(
-                f"未知 schema_version {value!r}：只接受 {SCHEMA_VERSION!r}（消费方看不懂必须拒绝）"
+                f"未知 schema_version {value!r}：只接受 "
+                f"{' / '.join(repr(item) for item in ACCEPTED_SCHEMA_VERSIONS)}"
+                "（消费方看不懂必须拒绝；两个版本的差异只在**可选**字段的有无）"
             )
         return value
 
@@ -150,6 +192,14 @@ class WiringScope(BaseModel):
             "declared": len(self.scope),
             "by_decision": counts,
             "ids": [entry.id for entry in self.scope],
+            # schema "2" 的新字段：**只列写了的那些**（空 = 没有人写，不是"写空了"）。
+            "channel_kinds": dict(sorted(self.channel_kinds.items())),
+            "covers": {entry.id: list(entry.covers) for entry in self.scope if entry.covers},
+            "governs_tree": {
+                entry.id: entry.governs_tree
+                for entry in self.scope
+                if entry.governs_tree != "self"
+            },
         }
 
 

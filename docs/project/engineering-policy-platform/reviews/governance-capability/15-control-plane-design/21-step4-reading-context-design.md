@@ -210,6 +210,17 @@ tech-detail 生成器、账本读者（人 / 评审 / 事故复盘）。
 退出码），并且**保留 `run`**（21 号 §9.2 裁定①只对 `policy.check --json` 生效）。
 D-2 冻结的部分（`account` / `differences` / `governs` 轴）**照旧不动**。落地读数见 23 号 §9。
 
+**2026-10-01 落地（第 24 轮：24 号设计稿 + §8.3 裁定②③④⑤）**：`WIRING_SCHEMA_VERSION`
+`1.2 → 1.3`——顶层**只**新增 `account` / `differences` / `headline` / `red_conditions`
+四个键（既有 13 个一个不删不改名），每个通道新增 `governs` 分档（显式 `covers` 优先 →
+`channel_kinds` 的 kind 档兜底 → 同档冲突写 `undeclared`、**不猜**）；
+`red_conditions.in_scope_not_wired` 就是那条红条件的**预注册形态**（`enforced: false`，
+不进任何退出码）。声明侧：`adapters/wiring-scope.yaml` 升 `schema_version: "2"` 并登记
+`channel_kinds`，`provenance.wiring_scope` **同时接受 "1" 和 "2"**、新字段一律可选、
+**不新增任何加载期 FATAL**（裁定①）。**只报告**：`--check` 的判据、退出码与门禁第 24 步
+**逐字不变**；三数/差集在"没枚举到通道"或"声明读不到"时写 `unavailable`（带 reason），
+**不许写 0**（裁定④）。落地读数见 23 号 §14。
+
 ### 2.6 阶段证据（`tools/phase_evidence.py`，**CI 线的文件**）
 
 **现状**：顶层已有 `environment`（`python` / `implementation` / `platform` / `executable`）与

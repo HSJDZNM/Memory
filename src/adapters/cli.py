@@ -79,9 +79,11 @@ from adapters.wiring import (
     DEFAULT_OBSERVED_SESSIONS,
     DEFAULT_STALE_AFTER_SECONDS,
     READING_GUIDE,
+    WIRING_SCOPE_RELATIVE,
     WiringError,
     WiringReport,
     build_reading_context,
+    load_declared_scope,
     probe_wiring,
 )
 from policy.loader import LoaderError, load_rule_set
@@ -461,6 +463,13 @@ def _print_wiring(report: WiringReport) -> None:
         "  事实合计：接线成立 " + str(wiring_ok) + "/" + str(total)
         + "；留痕新鲜 " + str(freshness_ok) + "/" + str(total)
     )
+    # 台阶 4（1.3）：覆盖账的两行——只**加行**，上面既有行一个字符不动。
+    # 机器行与 tools/exemption_expiry.py 的 HITS: 同型（跨文件契约：只加行、不改既有行）。
+    coverage = report.coverage()
+    print("  " + coverage["headline"]["text"])
+    print("  " + coverage["headline"]["machine_line"])
+    if coverage["differences"]["status"] != "available":
+        print("      差集不可用（不是 0）：" + str(coverage["differences"]["reason"]), file=sys.stderr)
     for channel in report.channels:
         mark = "WIRED" if channel.ok else channel.status.value
         print("  " + channel.channel_id + "  [" + mark + "]")
@@ -523,6 +532,9 @@ def run_wiring(args: argparse.Namespace) -> int:
         except ValueError:
             print("[adapters] --now 不是 ISO8601 时间：" + str(args.now), file=sys.stderr)
             return EXIT_USAGE
+    # 台阶 4（1.3）：声明侧读数——边界声明由**调用方**读好交给报告；读不到就是显式三态
+    # （unavailable + reason），不让整份报告写不出来，也不把“读不到”折成 0。
+    declared_scope = load_declared_scope(Path(args.root) / WIRING_SCOPE_RELATIVE)
     try:
         report = probe_wiring(
             dsh_home=args.dsh_home,
@@ -530,6 +542,7 @@ def run_wiring(args: argparse.Namespace) -> int:
             stale_after_seconds=args.stale_after,
             observed_sessions=args.observe_sessions,
             now=now,
+            declared_scope=declared_scope,
         )
     except WiringError as error:
         print("[adapters] 通道清点无法进行：" + str(error), file=sys.stderr)

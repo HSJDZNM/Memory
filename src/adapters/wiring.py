@@ -61,8 +61,16 @@ __all__ = [
     "FAILURE_STATUSES",
     "READING_GUIDE",
     "WIRING_SCOPE_RELATIVE",
+    "ACCOUNT_NOTE",
     "ChannelReport",
     "ChannelStatus",
+    "DECLARATION_AVAILABLE",
+    "DECLARATION_UNAVAILABLE",
+    "DIFFERENCE_KEYS",
+    "DeclaredScope",
+    "GOVERNS_DECISIONS",
+    "GOVERNS_IN_SCOPE",
+    "GOVERNS_UNDECLARED",
     "DEFAULT_OBSERVED_SESSIONS",
     "DEFAULT_STALE_AFTER_SECONDS",
     "FreshnessStatus",
@@ -75,6 +83,7 @@ __all__ = [
     "build_reading_context",
     "combine_status",
     "declared_tool_table",
+    "load_declared_scope",
     "probe_wiring",
     "split_status",
 ]
@@ -98,7 +107,12 @@ READING_GUIDE = (
 #      **哪一份边界声明**（adapters/wiring-scope.yaml 的摘要）、**哪台宿主**。它只是旁注：
 #      不改任何通道状态、不改 result / failures / 退出码，也不进 --check 的判据。
 #      顶层加键 = 改协议（AGENTS 第 55 条），因此 1.1 → 1.2。
-WIRING_SCHEMA_VERSION = "1.2"
+# 1.3：顶层新增 account / differences / headline / red_conditions 四个键，每个通道新增 governs
+#      分档（24 号 §2.1/§2.2 + §8.3 裁定②）。**全部只报告**：--check 的判据与退出码、
+#      result / failures / counts / fact_counts 与两根轴一个字段都不动；红条件只以
+#      red_conditions.in_scope_not_wired.enforced = false 的**显式未接线**形态出现。
+#      顶层加键 = 改协议（AGENTS 第 55 条），因此 1.2 → 1.3。
+WIRING_SCHEMA_VERSION = "1.3"
 
 DEFAULT_STALE_AFTER_SECONDS = 7 * 24 * 3600
 DEFAULT_OBSERVED_SESSIONS = 8
@@ -305,6 +319,92 @@ class ToolObservationStatus(str, Enum):
     DISABLED = "disabled"
 
 
+# --------------------------------------------------------------- 台阶 4：governs 轴与声明差集
+#
+# 这一族键**全部只报告**（24 号 §2 的设计稿 + §8.3 的五条裁定）：它们不进 --check 的判据、
+# 不改任何退出码、不动 result / failures / counts / fact_counts 与两根事实轴。
+# 它们回答三个问题：本机**发现**了几个通道、声明文件**覆盖**了几个、
+# “声明在范围内却没接线”的有几个——最后那条就是红条件的**预注册形态**
+# （red_conditions.in_scope_not_wired.enforced = false）。
+
+# governs.decision 的四个取值：三个来自声明文件，外加“没有可判定的声明”。
+GOVERNS_IN_SCOPE = "in_scope"
+GOVERNS_OUT_OF_SCOPE = "out_of_scope"
+GOVERNS_EXPECTED_ABSENT = "expected_absent"
+GOVERNS_UNDECLARED = "undeclared"
+GOVERNS_DECISIONS: tuple[str, ...] = (
+    GOVERNS_IN_SCOPE,
+    GOVERNS_OUT_OF_SCOPE,
+    GOVERNS_EXPECTED_ABSENT,
+    GOVERNS_UNDECLARED,
+)
+
+# 通道自己的目标指向哪棵树：`<external>/…` 是本模块**既有**的渲染口径（不新造一套）。
+TREE_SELF = "self"
+TREE_OTHER = "other"
+TREE_UNKNOWN = "unknown"
+
+# 读数三态：读不到**不是 0**（24 号 §8.3 裁定④；AGENTS 第 56 条是同一条口径）。
+DECLARATION_AVAILABLE = "available"
+DECLARATION_UNAVAILABLE = "unavailable"
+
+# 五个差集（“声明 × 发现”的闭集，24 号 §2.2）+ 同档冲突（§2.1 规则 3）。
+DIFFERENCE_KEYS: tuple[str, ...] = (
+    "discovered_not_declared",
+    "declared_not_discovered",
+    "in_scope_not_wired",
+    "out_of_scope_active",
+    "out_of_scope_expired",
+    "declaration_conflicts",
+)
+# 通道级的那几格：每一项都带 channel_id / declared_by / decision / wiring_status /
+# freshness_status / remedy。declared_not_discovered 是**声明级**的一格，形状不同（见 _coverage）。
+CHANNEL_DIFFERENCE_KEYS: tuple[str, ...] = (
+    "discovered_not_declared",
+    "in_scope_not_wired",
+    "out_of_scope_active",
+    "out_of_scope_expired",
+    "declaration_conflicts",
+)
+
+ACCOUNT_NOTE = (
+    "三数一律整数、不许合并成一个数或百分比；status=unavailable 时 value 写 null 并带 reason"
+    "——0 是“枚举过、一个都没有”，unavailable 是“这次读不到”，两者分得开"
+)
+
+
+@dataclass(frozen=True)
+class DeclaredScope:
+    """声明侧读数（`adapters/wiring-scope.yaml`）：条目 + 可读性三态。
+
+    读不到**不是 0**（24 号 §8.3 裁定④）：调用方拿不到声明时这里写 `unavailable` + reason，
+    于是 `account.declared` 是 `null`，而不是一个看起来像“没人声明过”的 0。
+    `scope` 的真实类型是 `provenance.wiring_scope.WiringScope`；这里不写死注解，避免两个模块
+    在导入期互相拉扯——报告模块只读它的三个属性：`scope` / `channel_kinds` / `schema_version`。
+    """
+
+    status: str = DECLARATION_UNAVAILABLE
+    scope: Any = None
+    reason: Optional[str] = None
+    path: Optional[str] = None
+
+    @property
+    def available(self) -> bool:
+        return self.status == DECLARATION_AVAILABLE and self.scope is not None
+
+    @property
+    def entries(self) -> tuple[Any, ...]:
+        return () if self.scope is None else tuple(self.scope.scope)
+
+    @property
+    def channel_kinds(self) -> Mapping[str, str]:
+        return {} if self.scope is None else dict(self.scope.channel_kinds)
+
+
+def _no_declaration() -> DeclaredScope:
+    return DeclaredScope(reason="本次探测没有读边界声明（调用方没有给 declared_scope）")
+
+
 @dataclass(frozen=True)
 class _PathRenderer:
     """把绝对路径渲染成相对探测根的字符串（AGENTS.md 第 19 条）。"""
@@ -473,6 +573,32 @@ class WiringReport:
     notes: tuple[str, ...] = ()
     skipped: bool = False
     skip_reason: Optional[str] = None
+    # —— 台阶 4（1.3）：声明侧读数 + 本次读数的“今天”（只给 expired 用）。
+    # 这两个字段**不进** to_dict() 的顶层：顶层只按裁定②新增 account / differences /
+    # headline / red_conditions 四个键（AGENTS 第 55 条：顶层加键 = 改协议）。
+    declared_scope: DeclaredScope = field(default_factory=_no_declaration)
+    as_of: Optional[str] = None
+
+    def _governs(self) -> dict[str, "_Governs"]:
+        """每个通道的 governs 分档（声明的 id 作键；未声明的通道也有一档）。"""
+
+        return {
+            channel.channel_id: _governs_for(
+                channel, self.declared_scope, as_of=self.as_of
+            )
+            for channel in self.channels
+        }
+
+    def coverage(self) -> dict[str, Any]:
+        """三数 / 五个差集 / 红条件 / headline（24 号 §2.2 与 §2.3；全部只报告）。"""
+
+        return _coverage(
+            self.channels,
+            self.declared_scope,
+            self._governs(),
+            enumerated=self.probe_status == "ok",
+            not_enumerated_reason=_not_enumerated_reason(self),
+        )
 
     @property
     def failures(self) -> tuple[str, ...]:
@@ -503,7 +629,8 @@ class WiringReport:
         return "在有 dsh 运行时的机器上执行：python -m adapters.cli wiring --check"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        governs = self._governs()
+        payload: dict[str, Any] = {
             "wiring_schema_version": WIRING_SCHEMA_VERSION,
             "probe": {
                 "dsh_home": self.dsh_home_label,
@@ -519,7 +646,11 @@ class WiringReport:
             },
             # 口径声明（N20）：不写在这里的话，"wired 是联合属性"这件事会继续靠读者的印象传播。
             "reading_guide": READING_GUIDE,
-            "channels": [channel.to_dict() for channel in self.channels],
+            # 每个通道多一个 governs 分档（24 号 §2.1）：原有的键一个都不动、一个都不删。
+            "channels": [
+                {**channel.to_dict(), "governs": governs[channel.channel_id].to_dict()}
+                for channel in self.channels
+            ],
             "counts": {
                 "total": len(self.channels),
                 "wired": sum(1 for channel in self.channels if channel.ok),
@@ -541,6 +672,18 @@ class WiringReport:
             "skip_reason": self.skip_reason,
             "reproduce": self.reproduce,
         }
+        # 台阶 4（1.3 / 裁定②）：顶层只新增这四个键；只在 --json 与文本输出里读，
+        # 不进 --check 的判据（它读的仍是 failures / result）。
+        payload.update(
+            _coverage(
+                self.channels,
+                self.declared_scope,
+                governs,
+                enumerated=self.probe_status == "ok",
+                not_enumerated_reason=_not_enumerated_reason(self),
+            )
+        )
+        return payload
 
 # --------------------------------------------------------------------------- 小工具
 
@@ -1689,10 +1832,15 @@ def probe_wiring(
     stale_after_seconds: float = DEFAULT_STALE_AFTER_SECONDS,
     observed_sessions: int = DEFAULT_OBSERVED_SESSIONS,
     now: Optional[clock.datetime] = None,
+    declared_scope: Optional[DeclaredScope] = None,
 ) -> WiringReport:
     """清点本机 Agent 运行时通道。**不抛"没接线"的异常**：那是报告里的显式状态。
 
     抛 `WiringError` 的只有"调用方给错了参数"（阈值非正、now 无时区、project_root 不存在）。
+
+    `declared_scope` 是**声明侧**的输入（边界声明 `adapters/wiring-scope.yaml`，由调用方读好
+    ——见 `load_declared_scope`）：它不改变任何通道状态，只喂 `governs` / `account` 一族；
+    不给就是"本次没有声明可读"（`unavailable` + reason，**不是 0**）。
     """
 
     if (
@@ -1814,6 +1962,10 @@ def probe_wiring(
         notes=tuple(notes),
         skipped=skipped,
         skip_reason=skip_reason,
+        declared_scope=declared_scope if declared_scope is not None else _no_declaration(),
+        # “今天”取本次读数用的 now（--now 可钉死）；这与 tools/exemption_expiry.py 的
+        # “今天”（默认取本机日期）**不是同一份读数**，两者可能差一天。
+        as_of=moment.date().isoformat(),
     )
 
 
@@ -1847,3 +1999,481 @@ def build_reading_context(*, root: Path | str) -> dict:
         },
         host=reading.host_block(),
     )
+
+
+# --------------------------------------------------- 台阶 4：声明侧读数（governs 轴与差集）
+
+
+def load_declared_scope(path: Path | str) -> DeclaredScope:
+    """读边界声明（`adapters/wiring-scope.yaml`）；**读不到是显式状态**，不让整份报告写不出来。
+
+    与 `reading_context` 的三态同一条口径：文件不在 / 读不了 / 形状不合法，都写
+    `unavailable` + reason（reason 里的绝对路径先脱敏，AGENTS 第 19 条）。报告里的路径一律用
+    仓库相对的常量渲染——它就是这个文件在仓库里的固定位置。
+    """
+
+    from provenance.wiring_scope import WiringScopeError, load_wiring_scope
+
+    target = Path(path)
+    label = WIRING_SCOPE_RELATIVE
+    if not target.is_file():
+        return DeclaredScope(reason="边界声明不存在：" + label, path=label)
+    try:
+        scope = load_wiring_scope(target)
+    except WiringScopeError as error:
+        return DeclaredScope(
+            reason="边界声明读不了或形状不合法：" + _redact_absolute(str(error)),
+            path=label,
+        )
+    return DeclaredScope(status=DECLARATION_AVAILABLE, scope=scope, path=label)
+
+
+def _glob_match(pattern: str, value: str) -> bool:
+    """`covers` 的匹配口径：**只有 `*` 是元字符**，且必须匹配**整个** channel_id。
+
+    刻意不引入 `fnmatch` 的另外两个元字符（`?` 与 `[seq]`）：多一种元字符就多一种
+    “看起来覆盖了、其实没有”的写法。写错的 pattern 不会静默生效——它会落在
+    `differences.discovered_not_declared` 里。
+    """
+
+    if not pattern:
+        return False
+    regex = "^" + ".*".join(re.escape(part) for part in pattern.split("*")) + "$"
+    return re.match(regex, value) is not None
+
+
+def _channel_targets(channel: ChannelReport) -> list[tuple[str, str]]:
+    """通道声明的三个目标（字段名, 渲染值）：hooks_config / audit_path / bridge.entry。"""
+
+    targets: list[tuple[str, str]] = []
+    if channel.hooks_config:
+        targets.append(("hooks_config", channel.hooks_config))
+    if channel.audit_path:
+        targets.append(("audit_path", channel.audit_path))
+    if channel.bridge is not None:
+        entry = channel.bridge.get("entry")
+        if isinstance(entry, str) and entry:
+            targets.append(("bridge.entry", entry))
+    return targets
+
+
+def _tree_relation(channel: ChannelReport) -> tuple[str, tuple[str, ...]]:
+    """通道的**目标**指向哪棵树：`<external>/…` 是既有的渲染口径（不新造一套）。
+
+    三个目标一个都读不到 → `unknown`：没读到**不等于**在本仓库里，也不等于“有意治理另一棵树”。
+    """
+
+    targets = _channel_targets(channel)
+    external = [label for label, value in targets if value.startswith("<external>/")]
+    if external:
+        return TREE_OTHER, tuple(external)
+    if targets:
+        return TREE_SELF, ()
+    return TREE_UNKNOWN, ()
+
+
+def _candidates_for(channel: ChannelReport, declared: DeclaredScope) -> tuple[tuple[Any, ...], str]:
+    """这条通道的**候选声明**与匹配方式——**唯一**的匹配口径（governs 与差集共用）。
+
+    规则 1（24 号 §2.1）：显式 `covers` 优先（glob 作用于 channel_id）；
+    规则 2：其次按 `channel_kinds` 的 kind 档兜底；发现 kind 没有映射 → 没有候选（不猜）。
+    """
+
+    entries = declared.entries
+    explicit = tuple(
+        entry
+        for entry in entries
+        if entry.covers and any(_glob_match(pattern, channel.channel_id) for pattern in entry.covers)
+    )
+    if explicit:
+        return explicit, "covers"
+    mapped = declared.channel_kinds.get(channel.kind)
+    if mapped is None:
+        return (), "kind_unmapped"
+    return tuple(entry for entry in entries if entry.kind == mapped), "kind"
+
+
+def _is_expired(expires_at: Optional[str], as_of: Optional[str]) -> bool:
+    """到期只做**读数**：它不改 status、不改退出码（唯一实现仍是 tools/exemption_expiry.py）。"""
+
+    if not expires_at or not as_of:
+        return False
+    try:
+        return clock.date.fromisoformat(expires_at) < clock.date.fromisoformat(as_of)
+    except ValueError:
+        return False
+
+
+@dataclass(frozen=True)
+class _Governs:
+    """一个通道的 governs 分档（24 号 §2.1）。**只报告**：不改 status、不改退出码。"""
+
+    decision: str
+    declared_by: Optional[str]
+    declaration_kind: Optional[str]
+    expires_at: Optional[str]
+    expired: bool
+    relation: str
+    tree_declared: str
+    tree_declared_by: Optional[str]
+    tree_evidence: tuple[str, ...]
+    note: str
+    candidates: tuple[tuple[str, str], ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision": self.decision,
+            "declared_by": self.declared_by,
+            "declaration_kind": self.declaration_kind,
+            "expires_at": self.expires_at,
+            "expired": self.expired,
+            "tree": {
+                "relation": self.relation,
+                # 裁定③：拿不出证据（没人写过 governs_tree）就写 unknown，不写 null——
+                # null 与“读不到”分不开（第 50 条：同名两义一律改名）。
+                "declared": self.tree_declared,
+                "declared_by": self.tree_declared_by,
+                "evidence": list(self.tree_evidence),
+            },
+            "note": self.note,
+        }
+
+
+def _governs_for(
+    channel: ChannelReport, declared: DeclaredScope, *, as_of: Optional[str]
+) -> _Governs:
+    """按声明文件给这条通道分档：显式 covers → kind 档 → 同档冲突**不挑一个**（24 号 §2.1）。"""
+
+    relation, evidence = _tree_relation(channel)
+    candidates, how = _candidates_for(channel, declared)
+    decision = GOVERNS_UNDECLARED
+    declared_by: Optional[str] = None
+    expires_at: Optional[str] = None
+    tree_declared = TREE_UNKNOWN
+    tree_declared_by: Optional[str] = None
+    expired = False
+
+    if not declared.available:
+        note = (
+            "边界声明读不到：这条通道算什么读不出来——这是**读不到**，不是“没人声明过”（"
+            + str(declared.reason)
+            + "）"
+        )
+    elif not candidates:
+        mapped = declared.channel_kinds.get(channel.kind)
+        if mapped is None:
+            note = (
+                "发现侧 kind=" + channel.kind + " 没有映射到任何声明档"
+                "（wiring-scope.yaml 的 channel_kinds 里没有它）：不猜，写 undeclared"
+            )
+        else:
+            note = "声明文件里没有 kind=" + mapped + " 的声明条目：没有人声明过这条通道"
+    else:
+        decisions = sorted({entry.decision for entry in candidates})
+        listed = "、".join(entry.id for entry in candidates)
+        if len(decisions) == 1:
+            decision = decisions[0]
+            if len(candidates) == 1:
+                entry = candidates[0]
+                declared_by = entry.id
+                expires_at = entry.expires_at
+                tree_declared = entry.governs_tree
+                tree_declared_by = entry.id
+                expired = _is_expired(expires_at, as_of)
+                note = "由声明 " + entry.id + " 覆盖（匹配方式 " + how + "）：decision=" + decision
+            else:
+                note = (
+                    "同档 " + str(len(candidates)) + " 条声明判决一致（" + listed + "）：decision="
+                    + decision
+                    + "；不挑一条，declared_by 写 null",
+                )
+        else:
+            # 这里**不**把候选 id 全列出来（12 个通道会重复 12 遍）：逐条候选在
+            # differences.declaration_conflicts 里，一行一条、带 remedy。
+            note = (
+                "同档 " + str(len(candidates)) + " 条声明的 decision 不同（"
+                + " / ".join(decisions) + "）：不挑一个，写 undeclared；"
+                "逐条候选见 differences.declaration_conflicts"
+            )
+    return _Governs(
+        decision=decision,
+        declared_by=declared_by,
+        declaration_kind=declared.channel_kinds.get(channel.kind),
+        expires_at=expires_at,
+        expired=expired,
+        relation=relation,
+        tree_declared=tree_declared,
+        tree_declared_by=tree_declared_by,
+        tree_evidence=evidence,
+        note=note,
+        candidates=tuple((entry.id, entry.decision) for entry in candidates),
+    )
+
+
+def _not_enumerated_reason(report: WiringReport) -> str:
+    """为什么没有枚举到通道——三种成因分开写（0 与 unavailable 必须分得开，裁定④）。"""
+
+    if report.skipped:
+        return "环境跳过：本机没有可发现的 Agent 运行时——没有通道被枚举（跳过不是通过）"
+    if report.probe_status == "dsh_home_missing":
+        return "没有找到 dsh 配置根：没有通道被枚举"
+    if report.probe_status == "profiles_dir_missing":
+        return "profiles 目录不存在：无法枚举通道"
+    return "本次探测没有枚举通道（probe.status=" + report.probe_status + "）"
+
+
+# 每一格的 remedy 必须回答“改成什么形态就能过”（AGENTS 第 50 条）。全部只报告：
+# 本台阶没有把任何一格接进退出码。
+_REMEDY_DISCOVERED_NOT_DECLARED = (
+    '给这条通道写一条显式 covers（显式覆盖优先于 kind 档），例如 covers: ["<channel_id>"]；'
+    "只报告：本台阶不改任何退出码"
+)
+_REMEDY_IN_SCOPE_NOT_WIRED = (
+    "把两根事实轴弄成立（接线 + 留痕），或把这条声明的 decision 改成 out_of_scope /"
+    " expected_absent（改判要带 expires_at 与理由）；只报告：本台阶不改任何退出码"
+)
+_REMEDY_OUT_OF_SCOPE_ACTIVE = (
+    "把 decision 改成 in_scope（在范围内的声明不该有过期日），或拆掉这条通道上的策略桥；"
+    "只报告：本台阶不改任何退出码"
+)
+_REMEDY_OUT_OF_SCOPE_EXPIRED = (
+    "续期（renewals 加一条并改 expires_at）或改判；到期读数以 tools/exemption_expiry.py 为准"
+    "（那是唯一实现）"
+)
+_REMEDY_DECLARATION_CONFLICTS = (
+    "给这条通道写一条显式 covers 定夺（显式覆盖优先于 kind 档），或把同档声明的 decision"
+    "调成一致；加载期不因为冲突拒绝（只报告）"
+)
+_REMEDY_DECLARED_NOT_DISCOVERED = (
+    "如果它本来就不该在这台机器上出现，保持 expected_absent 并写明理由；"
+    "如果它不是通道（kind 不在 channel_kinds 的值里），把它从通道声明里移出去"
+)
+
+
+def _number(value: Optional[int], *, status: str, reason: Optional[str] = None) -> dict[str, Any]:
+    """三数的读数形状：available 时 value 是整数，unavailable 时是 null + reason。"""
+
+    return {"status": status, "value": value, "reason": reason}
+
+
+def _count_text(grid: Mapping[str, Any]) -> str:
+    return "unavailable" if grid.get("count") is None else str(grid["count"])
+
+
+def _text_of(block: Mapping[str, Any]) -> str:
+    return str(block["value"]) if block["status"] == DECLARATION_AVAILABLE else "unavailable"
+
+
+def _channel_item(
+    channel: ChannelReport,
+    governs: _Governs,
+    *,
+    remedy: str,
+    extra: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    """通道级差集的一项：channel_id / declared_by / decision / 两根轴 / remedy。"""
+
+    item: dict[str, Any] = {
+        "channel_id": channel.channel_id,
+        "declared_by": governs.declared_by,
+        "decision": governs.decision,
+        "wiring_status": channel.wiring_status.value,
+        "freshness_status": channel.freshness_status.value,
+        "remedy": remedy,
+    }
+    if extra:
+        item.update(extra)
+    return item
+
+
+def _coverage(
+    channels: Sequence[ChannelReport],
+    declared: DeclaredScope,
+    governs: Mapping[str, _Governs],
+    *,
+    enumerated: bool,
+    not_enumerated_reason: str,
+) -> dict[str, Any]:
+    """三数 + 五个差集 + 红条件 + headline（24 号 §2.2 / §2.3；全部只报告）。
+
+    三态纪律（裁定④）：**没枚举到通道**或**声明读不到**时，三数与每一格都写 unavailable /
+    `count: null` + reason——0 是“枚举过、一个都没有”，不许拿它冒充“这次读不到”。
+    """
+
+    if enumerated:
+        discovered = _number(len(channels), status=DECLARATION_AVAILABLE)
+        measured = _number(
+            sum(1 for c in channels if c.freshness_status is not FreshnessStatus.UNEVALUATED),
+            status=DECLARATION_AVAILABLE,
+        )
+    else:
+        discovered = _number(None, status=DECLARATION_UNAVAILABLE, reason=not_enumerated_reason)
+        measured = _number(None, status=DECLARATION_UNAVAILABLE, reason=not_enumerated_reason)
+    if declared.available:
+        declared_number = _number(len(declared.entries), status=DECLARATION_AVAILABLE)
+    else:
+        declared_number = _number(None, status=DECLARATION_UNAVAILABLE, reason=declared.reason)
+
+    account = {
+        "discovered": discovered,
+        "declared": declared_number,
+        "measured": measured,
+        "note": ACCOUNT_NOTE,
+    }
+
+    computable = enumerated and declared.available
+    gaps: list[str] = []
+    if not enumerated:
+        gaps.append(not_enumerated_reason)
+    if not declared.available:
+        gaps.append("边界声明读不到：" + str(declared.reason))
+    differences: dict[str, Any] = {
+        "status": DECLARATION_AVAILABLE if computable else DECLARATION_UNAVAILABLE,
+        "reason": None if computable else "；".join(gaps),
+        "note": (
+            "五个差集是“声明 × 发现”的闭集（24 号 §2.2）；declaration_conflicts 是同档冲突"
+            "（§2.1 规则 3），它不占第六格、只在这里逐条列出"
+        ),
+    }
+    grids: dict[str, dict[str, Any]] = {key: {"count": None, "items": []} for key in DIFFERENCE_KEYS}
+
+    if computable:
+        bound: set[str] = set()
+        for channel in channels:
+            entries, _how = _candidates_for(channel, declared)
+            bound.update(entry.id for entry in entries)
+
+        no_candidate = [c for c in channels if not governs[c.channel_id].candidates]
+        conflicts = [
+            c for c in channels if len({item[1] for item in governs[c.channel_id].candidates}) > 1
+        ]
+        in_scope_not_wired = [
+            c for c in channels if governs[c.channel_id].decision == GOVERNS_IN_SCOPE and not c.ok
+        ]
+        out_of_scope_active = [
+            c
+            for c in channels
+            if governs[c.channel_id].decision == GOVERNS_OUT_OF_SCOPE and c.wiring_status.is_wired
+        ]
+        out_of_scope_expired = [
+            c
+            for c in channels
+            if governs[c.channel_id].decision == GOVERNS_OUT_OF_SCOPE and governs[c.channel_id].expired
+        ]
+        not_discovered = [entry for entry in declared.entries if entry.id not in bound]
+        mapped_kinds = set(declared.channel_kinds.values())
+
+        grids["discovered_not_declared"] = {
+            "count": len(no_candidate),
+            "items": [
+                _channel_item(c, governs[c.channel_id], remedy=_REMEDY_DISCOVERED_NOT_DECLARED)
+                for c in no_candidate
+            ],
+        }
+        grids["declaration_conflicts"] = {
+            "count": len(conflicts),
+            "items": [
+                _channel_item(
+                    c,
+                    governs[c.channel_id],
+                    remedy=_REMEDY_DECLARATION_CONFLICTS,
+                    extra={
+                        "candidates": [
+                            {"id": item[0], "decision": item[1]}
+                            for item in governs[c.channel_id].candidates
+                        ]
+                    },
+                )
+                for c in conflicts
+            ],
+        }
+        grids["declared_not_discovered"] = {
+            "count": len(not_discovered),
+            "items": [
+                {
+                    "channel_id": None,
+                    "declaration_id": entry.id,
+                    "decision": entry.decision,
+                    "kind": entry.kind,
+                    "reason": (
+                        "本机没有发现它覆盖的那类通道"
+                        if entry.kind in mapped_kinds
+                        else (
+                            "它的 kind=" + entry.kind + " 没有任何发现侧 kind 映射到它"
+                            "（channel_kinds 的值里没有）：本机没有这类通道"
+                        )
+                    ),
+                    "remedy": _REMEDY_DECLARED_NOT_DISCOVERED,
+                }
+                for entry in not_discovered
+            ],
+        }
+        grids["in_scope_not_wired"] = {
+            "count": len(in_scope_not_wired),
+            "items": [
+                _channel_item(c, governs[c.channel_id], remedy=_REMEDY_IN_SCOPE_NOT_WIRED)
+                for c in in_scope_not_wired
+            ],
+        }
+        grids["out_of_scope_active"] = {
+            "count": len(out_of_scope_active),
+            "items": [
+                _channel_item(c, governs[c.channel_id], remedy=_REMEDY_OUT_OF_SCOPE_ACTIVE)
+                for c in out_of_scope_active
+            ],
+        }
+        grids["out_of_scope_expired"] = {
+            "count": len(out_of_scope_expired),
+            "items": [
+                _channel_item(c, governs[c.channel_id], remedy=_REMEDY_OUT_OF_SCOPE_EXPIRED)
+                for c in out_of_scope_expired
+            ],
+        }
+
+    red_count = grids["in_scope_not_wired"]["count"]
+    red_conditions = {
+        "in_scope_not_wired": {
+            "status": DECLARATION_AVAILABLE if computable else DECLARATION_UNAVAILABLE,
+            "count": red_count,
+            # is_red = “此刻真的红着”，不是“这是一条红条件”（后者由本块的存在与 red_when 表达）。
+            # 设计稿 §2.3 的例子把它写成恒 true；落地按状态取——与 count=0 并排的恒 true
+            # 会被读成“现在就红着”。偏离已登记在 23 号 §14.2。
+            "is_red": bool(red_count),
+            "red_when": "differences.in_scope_not_wired.count > 0（声明 in_scope 的通道两根轴不都成立）",
+            "enforced": False,
+            "would_exit_code": 1,
+            "promote_when": (
+                "跑过 N≥1 次且 0 命中（0 命中必须来自至少一次真实读数）——与 L5 上线闸同型"
+            ),
+            "note": (
+                "只报告期：本块不改任何退出码；--check 的判据与今天逐字相同"
+                "（failures 非空即 1，不读本块）"
+            ),
+        }
+    }
+
+    machine_line = (
+        "IN_SCOPE_NOT_WIRED: "
+        + ("unavailable" if red_count is None else str(red_count))
+        + " / discovered=" + _text_of(discovered)
+        + " declared=" + _text_of(declared_number)
+        + " measured=" + _text_of(measured)
+    )
+    headline_text = (
+        "覆盖账：发现 " + _text_of(discovered)
+        + " / 声明 " + _text_of(declared_number)
+        + " / 量过 " + _text_of(measured)
+        + "；未声明 " + _count_text(grids["discovered_not_declared"])
+        + "、同档冲突 " + _count_text(grids["declaration_conflicts"])
+        + "、声明未发现 " + _count_text(grids["declared_not_discovered"])
+        + "、in_scope 未接线 " + _count_text(grids["in_scope_not_wired"])
+        + "、out_of_scope 却生效 " + _count_text(grids["out_of_scope_active"])
+        + "、out_of_scope 已过期 " + _count_text(grids["out_of_scope_expired"])
+        + "（全部只报告）"
+    )
+    return {
+        "account": account,
+        "differences": {**differences, **grids},
+        "red_conditions": red_conditions,
+        "headline": {"text": headline_text, "machine_line": machine_line},
+    }

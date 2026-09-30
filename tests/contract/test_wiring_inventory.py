@@ -16,7 +16,10 @@ from conftest import POLICIES_DIR, REPO_ROOT, write_dsh_config
 
 from adapters.cli import build_parser, main
 from adapters.wiring import (
+    DIFFERENCE_KEYS,
     FAILURE_STATUSES,
+    GOVERNS_DECISIONS,
+    GOVERNS_UNDECLARED,
     WIRING_SCHEMA_VERSION,
     ChannelStatus,
     FreshnessStatus,
@@ -305,6 +308,36 @@ def test_wiring_json_contract(tmp_root: Path, capsys: Any) -> None:
         (REPO_ROOT / "adapters" / "wiring-scope.yaml").read_bytes()
     ).hexdigest()
 
+    # 台阶 4（1.3 / 裁定②）：顶层只多这四个键；既有 13 个一个都不删不改名，
+    # 而且上面那些 counts / fact_counts / result / 通道状态**都没有被新键改过**。
+    assert set(payload) >= {"account", "differences", "headline", "red_conditions"}
+    account = payload["account"]
+    assert account["discovered"]["status"] == "available"
+    assert account["discovered"]["value"] == len(payload["channels"])
+    assert account["declared"]["status"] == "available"
+    assert account["declared"]["value"] >= 2
+    assert account["measured"]["status"] == "available"
+    assert 0 <= account["measured"]["value"] <= account["discovered"]["value"]
+    differences = payload["differences"]
+    assert differences["status"] == "available"
+    assert set(differences) >= set(DIFFERENCE_KEYS) | {"status", "reason", "note"}
+    # 红条件是**预注册形态**：显式说出"还没接线"，且不改任何退出码。
+    red = payload["red_conditions"]["in_scope_not_wired"]
+    assert red["enforced"] is False
+    assert red["would_exit_code"] == 1
+    assert red["count"] == differences["in_scope_not_wired"]["count"]
+    assert red["is_red"] is (red["count"] > 0)
+    machine_line = payload["headline"]["machine_line"]
+    assert machine_line.startswith("IN_SCOPE_NOT_WIRED: ")
+    assert "discovered=" in machine_line and "declared=" in machine_line
+    # 每个通道多一份 governs 分档：判定来自声明文件，取值是协议的一部分。
+    for channel in payload["channels"]:
+        governs = channel["governs"]
+        assert governs["decision"] in GOVERNS_DECISIONS
+        assert set(governs["tree"]) == {"relation", "declared", "declared_by", "evidence"}
+        assert governs["tree"]["relation"] in {"self", "other", "unknown"}
+        assert governs["tree"]["declared"] in {"self", "other", "unknown"}
+
 
 def test_wiring_json_exposes_required_channel_statuses() -> None:
     """枚举值是协议：删一个、改一个名字都必须是一次显式的契约变更。"""
@@ -363,10 +396,13 @@ def test_wiring_schema_version_is_pinned_to_a_literal() -> None:
     fact_counts，并且"wired 是接线 + 留痕的联合属性"这一旧读法不再被支持（N20）。
     1.1 -> 1.2：顶层新增 reading_context（台阶 4 / 21 号 §2.5）——顶层加键 = 改协议
     （AGENTS 第 55 条）；它只做旁注，不改任何状态与退出码。
+    1.2 -> 1.3：顶层新增 account / differences / headline / red_conditions 四个键，每个通道新增
+    governs 分档（24 号 §2.1/§2.2 + §8.3 裁定②）——同样只做报告：--check 的判据、退出码、
+    result / failures / counts / fact_counts 与两根事实轴一个都不动。
     另一条用例 `test_wiring_json_contract` 只比常量与载荷是否一致，钉不住"版本号本身变了"。
     """
 
-    assert WIRING_SCHEMA_VERSION == "1.2"
+    assert WIRING_SCHEMA_VERSION == "1.3"
 
 
 def test_missing_dsh_home_fails_the_check_and_says_so(tmp_root: Path, capsys: Any) -> None:
@@ -709,3 +745,191 @@ def test_no_runtime_is_skipped_in_the_cli_and_require_runtime_turns_it_red(
     assert strict == 1
     assert "skipped" in err_strict
     assert "复现" in err_strict
+
+
+# --------------------------------------------------------------------------- 台阶 4（1.3）
+
+# 两个自制声明文件（写到 tmp 的 root 下，不动仓库那一份）——覆盖账读的**就是这个位置**。
+EXPLICIT_COVERS_DECLARATION = """\
+schema_version: "2"
+channel_kinds:
+  dsh-profile: agent_runtime
+scope:
+  - id: governed-session-hook
+    decision: in_scope
+    kind: agent_runtime
+    owner: platform
+    reason: 受控会话由本仓库治理。
+    consequence: 接不上就不放行。
+    covers: ["dsh:desk*"]
+  - id: desktop-entry-points
+    decision: out_of_scope
+    kind: agent_runtime
+    owner: host
+    reason: 桌面通道是主机配置。
+    consequence: 只报告。
+    expires_at: "2026-12-31"
+"""
+
+CONFLICTING_DECLARATION = """\
+schema_version: "2"
+channel_kinds:
+  dsh-profile: agent_runtime
+scope:
+  - id: a-in-scope
+    decision: in_scope
+    kind: agent_runtime
+    owner: platform
+    reason: 在范围内。
+    consequence: 不放行。
+  - id: b-out-of-scope
+    decision: out_of_scope
+    kind: agent_runtime
+    owner: host
+    reason: 主机配置。
+    consequence: 只报告。
+    expires_at: "2026-12-31"
+"""
+
+
+def write_declaration(root: Path, text: str) -> Path:
+    """把声明文件写到这个 root 的 adapters/ 下——`--root` 指到哪，读的就是哪一份。"""
+
+    return _write(root / "adapters" / "wiring-scope.yaml", text)
+
+
+def test_governs_uses_explicit_covers_and_flags_in_scope_not_wired(
+    tmp_root: Path, capsys: Any
+) -> None:
+    """规则 1：显式 covers 优先于 kind 档；声明 in_scope 而通道没接线 → 红条件计数 1。
+
+    夹具是"接线在、留痕没有"（N20 的正例），因此它**不是** wired，落进 in_scope_not_wired；
+    同一份声明文件里还有一条同档、判决相反的声明——若没有显式覆盖，这里就该是 undeclared。
+    """
+
+    root = tmp_root / "root"
+    write_declaration(root, EXPLICIT_COVERS_DECLARATION)
+    home, _profile = wired_home_without_audit(tmp_root)
+
+    code, out, _ = run_cli(
+        [
+            "--root", str(root), "--json", "wiring", "--dsh-home", str(home),
+            "--now", "2026-09-25T12:00:00Z", "--observe-sessions", "0",
+        ],
+        capsys,
+    )
+
+    assert code == 0  # 只报告：默认形态仍然退出 0
+    payload = json.loads(out)
+    channel = payload["channels"][0]
+    assert channel["channel_id"] == "dsh:desktop"
+    assert channel["wired"] is False
+    assert channel["governs"]["decision"] == "in_scope"
+    assert channel["governs"]["declared_by"] == "governed-session-hook"
+    assert channel["governs"]["expires_at"] is None  # in_scope 不该有过期日
+    # 通道自己的目标渲染成 <external>/… → relation=other（证据就是那个字段名）。
+    assert channel["governs"]["tree"]["relation"] == "other"
+    assert channel["governs"]["tree"]["evidence"] == ["bridge.entry"]
+    # 声明侧没写 governs_tree → 取 schema 的默认值 self：于是这一行同时读得出
+    # "声明说它治理本仓库这棵树"与"证据说它的目标在探测根之外"这对**矛盾**。
+    # 按 24 号 §2.1 的边界，它不进五个差集，只出现在通道行（见 23 号 §14.2 的登记）。
+    assert channel["governs"]["tree"]["declared"] == "self"
+    assert channel["governs"]["tree"]["declared_by"] == "governed-session-hook"
+
+    not_declared = payload["differences"]["discovered_not_declared"]
+    assert not_declared["count"] == 0  # 有显式覆盖，不算"没声明"
+    in_scope = payload["differences"]["in_scope_not_wired"]
+    assert in_scope["count"] == 1
+    item = in_scope["items"][0]
+    assert item["channel_id"] == "dsh:desktop"
+    assert item["remedy"]
+    red = payload["red_conditions"]["in_scope_not_wired"]
+    assert red["count"] == 1 and red["is_red"] is True and red["enforced"] is False
+    assert payload["differences"]["out_of_scope_active"]["count"] == 0
+
+
+def test_same_tier_conflicting_declarations_are_not_guessed(tmp_root: Path, capsys: Any) -> None:
+    """规则 3：同一通道被多条同档声明命中而判决不同 → undeclared + 逐条冲突，不挑一个。"""
+
+    root = tmp_root / "root"
+    write_declaration(root, CONFLICTING_DECLARATION)
+    home = wired_home(tmp_root)
+
+    code, out, _ = run_cli(
+        [
+            "--root", str(root), "--json", "wiring", "--dsh-home", str(home),
+            "--now", "2026-09-25T12:00:00Z", "--observe-sessions", "0",
+        ],
+        capsys,
+    )
+
+    assert code == 0
+    payload = json.loads(out)
+    channel = payload["channels"][0]
+    assert payload["result"] == "pass"  # 通道本身是 wired + fresh：冲突不影响判定
+    assert channel["governs"]["decision"] == GOVERNS_UNDECLARED
+    assert channel["governs"]["declared_by"] is None
+    assert "不挑一个" in channel["governs"]["note"]
+    # 没有可判定的声明 → "有没有意治理另一棵树"拿不出证据：写 unknown（裁定③）。
+    assert channel["governs"]["tree"]["declared"] == "unknown"
+    conflicts = payload["differences"]["declaration_conflicts"]
+    assert conflicts["count"] == 1
+    assert {item["id"] for item in conflicts["items"][0]["candidates"]} == {
+        "a-in-scope",
+        "b-out-of-scope",
+    }
+    # 冲突的通道既不进"未声明"（它有候选），也不进 in_scope_not_wired（没有可判定的档）。
+    assert payload["differences"]["discovered_not_declared"]["count"] == 0
+    assert payload["differences"]["in_scope_not_wired"]["count"] == 0
+    assert payload["red_conditions"]["in_scope_not_wired"]["count"] == 0
+
+
+def test_the_three_numbers_are_unavailable_not_zero_when_nothing_is_enumerated(
+    tmp_root: Path, capsys: Any
+) -> None:
+    """裁定④：没枚举到通道时三数写 unavailable（带 reason），**不许写 0**。
+
+    与"枚举过、一个都没有"必须分得开：本用例第二节就是后者（profiles 目录存在但是空的）。
+    """
+
+    code, out, _ = run_cli(
+        ["--root", str(REPO_ROOT), "--json", "wiring", "--dsh-home", str(tmp_root / "nowhere")],
+        capsys,
+    )
+
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["channels"] == []
+    for key in ("discovered", "measured"):
+        block = payload["account"][key]
+        assert block["status"] == "unavailable"
+        assert block["value"] is None, key + " 读不到时不许写 0"
+        assert block["reason"]
+    # 声明文件是读得到的（--root 是仓库）：它**不是** unavailable，也不受"没枚举到通道"影响。
+    assert payload["account"]["declared"]["status"] == "available"
+    differences = payload["differences"]
+    assert differences["status"] == "unavailable"
+    assert differences["reason"]
+    assert differences["in_scope_not_wired"]["count"] is None
+    assert differences["in_scope_not_wired"]["items"] == []
+    red = payload["red_conditions"]["in_scope_not_wired"]
+    assert red["count"] is None and red["is_red"] is False and red["enforced"] is False
+    assert "unavailable" in payload["headline"]["machine_line"]
+
+    # 对照：profiles 目录存在、里面一个 profile 都没有 → **真的 0**（枚举发生了，只是空）。
+    empty = make_home(tmp_root)
+    _, out_empty, _ = run_cli(
+        ["--root", str(REPO_ROOT), "--json", "wiring", "--dsh-home", str(empty),
+         "--observe-sessions", "0"],
+        capsys,
+    )
+    empty_payload = json.loads(out_empty)
+    assert empty_payload["probe"]["status"] == "ok"
+    assert empty_payload["account"]["discovered"] == {
+        "status": "available",
+        "value": 0,
+        "reason": None,
+    }
+    line = empty_payload["headline"]["machine_line"]
+    assert "discovered=0" in line and "measured=0" in line  # 真的是 0，不是 unavailable
+    assert "unavailable" not in line

@@ -44,9 +44,15 @@ def test_the_repository_declaration_is_valid() -> None:
     scope = load_wiring_scope(REPO_ROOT / "adapters" / "wiring-scope.yaml")
     summary = scope.as_json()
 
-    assert summary["schema_version"] == "1"
+    assert summary["schema_version"] == "2"
     assert summary["declared"] >= 2
     assert summary["by_decision"]["in_scope"] >= 1
+    # schema "2" 的数据侧：发现侧 kind → 声明侧 kind 的映射（24 号 §2.1 规则 2）。
+    assert summary["channel_kinds"] == {"dsh-profile": "agent_runtime"}
+    # 裁定③：本轮**不写** covers / governs_tree —— 这两个读数因此是空的
+    # （"空"是一个明确读数：没有人写过，不是"写空了"）。
+    assert summary["covers"] == {}
+    assert summary["governs_tree"] == {}
 
 
 def test_two_decisions_load_and_are_counted(tmp_root: Path) -> None:
@@ -113,9 +119,46 @@ def test_duplicate_ids_are_rejected(tmp_root: Path) -> None:
 
 
 def test_unknown_schema_version_is_rejected(tmp_root: Path) -> None:
-    text = _document(IN_SCOPE).replace('schema_version: "1"', 'schema_version: "2"')
+    text = _document(IN_SCOPE).replace('schema_version: "1"', 'schema_version: "3"')
     with pytest.raises(WiringScopeError):
         load_wiring_scope(_write(tmp_root, text))
+
+
+def test_a_schema_1_declaration_still_loads(tmp_root: Path) -> None:
+    """裁定①：加载器**同时接受 "1" 和 "2"**，新字段一律可选——"2" 不是一次破坏性变更。"""
+
+    scope = load_wiring_scope(_write(tmp_root, _document(IN_SCOPE, OUT_OF_SCOPE)))
+
+    assert scope.schema_version == "1"
+    assert scope.channel_kinds == {}
+    # 没写的新字段落在各自的默认值上：covers 空、governs_tree=self、tree_ref 无。
+    assert scope.scope[0].covers == ()
+    assert scope.scope[0].governs_tree == "self"
+    assert scope.scope[0].tree_ref is None
+
+
+def test_schema_2_optional_fields_load_and_unknown_values_are_rejected(tmp_root: Path) -> None:
+    """新字段能读；但**未知取值**仍按核心约束 3 报错（与 decision 同类的 FATAL，不静默忽略）。"""
+
+    text = (
+        'schema_version: "2"\n'
+        "channel_kinds:\n  dsh-profile: agent_runtime\n"
+        "scope:\n"
+        + IN_SCOPE
+        + '    covers: ["dsh:gov*"]\n'
+        + "    governs_tree: other\n"
+        + "    tree_ref: <outside-workspace>\n"
+    )
+    scope = load_wiring_scope(_write(tmp_root, text))
+
+    assert scope.scope[0].covers == ("dsh:gov*",)
+    assert scope.scope[0].governs_tree == "other"
+    assert scope.scope[0].tree_ref == "<outside-workspace>"
+    assert scope.channel_kinds == {"dsh-profile": "agent_runtime"}
+    assert scope.as_json()["governs_tree"] == {"governed-session-hook": "other"}
+
+    with pytest.raises(WiringScopeError):
+        load_wiring_scope(_write(tmp_root, text.replace("governs_tree: other", "governs_tree: othr")))
 
 
 def test_missing_file_and_broken_yaml_are_rejected(tmp_root: Path) -> None:

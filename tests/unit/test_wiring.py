@@ -29,6 +29,7 @@ from adapters.wiring import (
     build_reading_context,
     combine_status,
     declared_tool_table,
+    load_declared_scope,
     probe_wiring,
     split_status,
 )
@@ -1307,3 +1308,53 @@ def test_an_impossible_axis_combination_is_rejected() -> None:
             freshness_status=FreshnessStatus.UNEVALUATED,
             detail="不可能的组合",
         )
+
+
+# --------------------------------------------------------------------------- 台阶 4（1.3）
+
+
+def test_no_declaration_is_unavailable_not_zero(tmp_root: Path) -> None:
+    """声明侧读不到 → `account.declared` 写 null + reason，**不是 0**（24 号 §8.3 裁定④）。
+
+    `probe_wiring` 不猜任何路径：调用方不给 `declared_scope` 就是"本次没有声明可读"。
+    同一份读数里 `discovered` 是真的 1（枚举发生了）——两个 0/读不到必须分得开。
+    """
+
+    home = make_home(tmp_root)
+    profile = make_profile(home, "desktop")
+    _write(profile / "cordis.patch.yml", "[]\n")
+
+    payload = probe_wiring(dsh_home=home, observed_sessions=0).to_dict()
+
+    assert payload["account"]["declared"] == {
+        "status": "unavailable",
+        "value": None,
+        "reason": "本次探测没有读边界声明（调用方没有给 declared_scope）",
+    }
+    assert payload["account"]["discovered"]["value"] == 1
+    # 接线没成立（patch 里没有桥）→ 留痕没被评估 → measured=0；这不是"读不到"。
+    assert payload["account"]["measured"]["value"] == 0
+    # 差集整块不可用：声明 × 发现 的闭集算不出来，每一格写 count=null 而不是 0。
+    assert payload["differences"]["status"] == "unavailable"
+    assert payload["differences"]["discovered_not_declared"]["count"] is None
+    assert payload["headline"]["machine_line"].startswith("IN_SCOPE_NOT_WIRED: unavailable")
+
+
+def test_load_declared_scope_reports_unreadable_declarations(tmp_root: Path) -> None:
+    """读不到 / 形状不合法都写 unavailable + reason：**不让整份报告写不出来**。
+
+    报告里也不许出现绝对路径（AGENTS.md 第 19 条）：reason 里的路径先脱敏。
+    """
+
+    missing = load_declared_scope(tmp_root / "missing.yaml")
+    assert missing.status == "unavailable"
+    assert missing.available is False
+    assert missing.reason and "不存在" in missing.reason
+    assert missing.path == "adapters/wiring-scope.yaml"
+
+    broken_path = _write(tmp_root / "bad.yaml", "scope: [unclosed\n")
+    broken = load_declared_scope(broken_path)
+    assert broken.status == "unavailable"
+    assert broken.reason and "不合法" in broken.reason
+    assert str(tmp_root) not in broken.reason
+    assert tmp_root.as_posix() not in broken.reason
