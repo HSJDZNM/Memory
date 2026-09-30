@@ -209,11 +209,16 @@ def drive_main(
     require_dsh: bool,
     isolated_home: bool = False,
     seen: list[bool] | None = None,
+    dsh_available: bool = True,
 ) -> tuple[int, dict]:
     """把 main() 的判定路径整条驱动一遍：假 dsh、假项目、真日志。
 
     `seen` 非空时按顺序记下每次 `run_dsh` 拿到的 `isolated_home`（两个场景各一次）：
     `--isolated-home` 的接线因此不必真起 dsh 也能被钉住。
+
+    `dsh_available=False` 走的是另一条写盘路径（`dsh_argv()` 返回 None → 最小跳过载荷）。
+    `TREE_ROOT` 与 `PROJECT`/`LOGS`/`ARTIFACT` 一样被换成本次临时目录：reading_context 里
+    "这棵树"于是指测试自己的目录，不必每个用例都为整棵仓库算一次轮次级封条。
     """
 
     project = tmp_root / "demo-shop"
@@ -223,13 +228,18 @@ def drive_main(
     (project / "src" / "shop" / "order_controller.py").write_text(
         "def create() -> dict:\n    return {}\n", encoding="utf-8"
     )
+    (project / ".policy").mkdir(parents=True, exist_ok=True)
+    (project / ".policy" / "dsh-adapter.yaml").write_text(
+        "agent_version: test\nproject: demo-shop\n", encoding="utf-8"
+    )
     logs.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(loop, "PROJECT", project)
     monkeypatch.setattr(loop, "LOGS", logs)
     monkeypatch.setattr(loop, "ARTIFACT", artifact)
+    monkeypatch.setattr(loop, "TREE_ROOT", tmp_root)
     monkeypatch.setattr(loop, "build_project", lambda *, keep: None)
-    monkeypatch.setattr(loop, "dsh_argv", lambda: ["dsh"])
+    monkeypatch.setattr(loop, "dsh_argv", (lambda: ["dsh"]) if dsh_available else (lambda: None))
 
     def fake_run(prompt: str, log_name: str, *, isolated_home: bool = False) -> int:
         if seen is not None:
@@ -1048,3 +1058,155 @@ def test_main_passes_isolated_home_to_both_children(
     default: list[bool] = []
     drive_main(tmp_root, monkeypatch, log_no_permission_error(), require_dsh=False, seen=default)
     assert default == [False, False], "不给开关时不许悄悄打开隔离"
+
+
+# --------------------------------------------------------------------------- 台阶 4：reading_context
+#
+# 21 号 §3 的统一形状、§2.4 的端到端键、§9.1 裁定①（**不单独设状态轴**，只加 host.sandbox）。
+# 四条判据：① 两条写盘路径都带它；② host.sandbox 只报"本次真的发生了什么"；
+# ③ 路径一律仓库相对 / <outside-workspace>；④ 它一个字都不改判定字段。
+
+
+def _strings(value):
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings(item)
+    elif isinstance(value, str):
+        yield value
+
+
+def _head_revision() -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(Path(__file__).resolve().parents[2]),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def test_sandbox_state_is_the_only_implementation():
+    """host.sandbox 的判据只有这一份实现；四个分支各自给一条读数。"""
+
+    denial = loop.classify_startup_denial(log_profile_denied())
+    assert denial is not None
+    sandbox_spawn = loop.HookSpawnFailure(kind=loop.SANDBOX_PIPE_STDIO_DENIED, evidence="line")
+    workdir_spawn = loop.HookSpawnFailure(
+        kind=loop.HOOK_WORKDIR_UNUSABLE, workdir="C:/gone/demo-shop", evidence="line"
+    )
+
+    assert loop.sandbox_state(ran=True, denial=denial, spawn_failure=sandbox_spawn) == "unrestricted"
+    assert loop.sandbox_state(ran=False, denial=denial, spawn_failure=None) == "restricted"
+    assert loop.sandbox_state(ran=False, denial=None, spawn_failure=sandbox_spawn) == "restricted"
+    assert loop.sandbox_state(ran=False, denial=None, spawn_failure=workdir_spawn) == "unknown"
+    assert loop.sandbox_state(ran=False, denial=None, spawn_failure=None) == "unknown"
+
+
+def test_reading_context_marks_a_denied_write_as_restricted(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """profile_write_denied = **写工作区之外被拒** → restricted（19 号 §3.1 那条读数）。"""
+
+    code, payload = drive_main(tmp_root, monkeypatch, log_profile_denied(), require_dsh=True)
+
+    assert code == 1 and payload["result"] == "skipped"
+    assert payload["schema_version"] == "1.2", "加键就是改协议（AGENTS 第 55 条）"
+    context = payload["reading_context"]
+    assert context["source"] == "sandbox-loop"
+    assert context["host"]["sandbox"] == "restricted"
+    assert context["host"]["isolated_home"] is False
+    assert context["tree"]["status"] == "available"
+    assert context["tree"]["scope"] == "workspace"
+    assert context["tree"]["digest"].startswith("sha256:")
+    assert context["tree"]["revision"] == _head_revision()
+    declaration = context["declarations"]["adapter_config"]
+    assert declaration["status"] == "available"
+    assert declaration["path"].endswith(".policy/dsh-adapter.yaml")
+    assert not Path(declaration["path"]).is_absolute(), "读数里不放绝对路径"
+    assert declaration["digest"].startswith("sha256:")
+
+
+def test_reading_context_marks_a_completed_run_as_unrestricted(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """审计里真的有记录 = 闭环真的跑过 → unrestricted；判定字段一个都不受影响。"""
+
+    record = {
+        "governed": True,
+        "tool": "edit",
+        "decision": "block",
+        "exit_code": 2,
+        "executed": False,
+        "matched_rules": [loop.RULE_ID],
+    }
+    monkeypatch.setattr(loop, "audit_records", lambda: [record])
+    code, payload = drive_main(tmp_root, monkeypatch, log_no_permission_error(), require_dsh=False)
+
+    assert payload["result"] == "fail", "allow 场景没真的改文件，所以这次运行整体失败"
+    assert payload.get("environment_skipped") is False
+    assert payload["reading_context"]["host"]["sandbox"] == "unrestricted"
+
+
+def test_reading_context_names_the_isolated_roots_when_the_switch_is_on(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    code, payload = drive_main(
+        tmp_root, monkeypatch, log_profile_denied(), require_dsh=False, isolated_home=True
+    )
+    assert code == 0
+    host = payload["reading_context"]["host"]
+    assert host["isolated_home"] is True
+    assert host["dsh_home"] == ".tmp/phase-2-sandbox/dsh-home"
+    assert host["temp_roots"] == [".tmp/phase-2-sandbox/dsh-tmp"]
+    assert host["sandbox"] == "restricted"
+
+
+def test_reading_context_is_unknown_when_our_own_config_was_wrong(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """ACL 临时根落在工作区内 = **我们自己配错了**，不是宿主在拦 → unknown（不是 restricted）。"""
+
+    code, payload = drive_main(
+        tmp_root, monkeypatch, log_acl_temp_root_inside_workspace(), require_dsh=False
+    )
+    assert payload["dsh_config_failure_kind"] == loop.ACL_TEMP_ROOT_INSIDE_WORKSPACE
+    assert payload["reading_context"]["host"]["sandbox"] == "unknown"
+
+
+def test_reading_context_is_written_on_the_dsh_absent_path(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """最小跳过载荷也要说清归属：那是**另一条**写盘路径，不能只在完整路径上写。"""
+
+    code, payload = drive_main(
+        tmp_root, monkeypatch, log_no_permission_error(), require_dsh=False, dsh_available=False
+    )
+
+    assert code == 0 and payload["result"] == "skipped"
+    assert sorted(payload) == [
+        "environment_skipped",
+        "phase",
+        "reading_context",
+        "reason",
+        "result",
+        "schema_version",
+    ]
+    context = payload["reading_context"]
+    assert context["declarations"]["adapter_config"] == {"status": "not_applicable"}
+    assert context["host"]["sandbox"] == "unknown", "什么都没做过，就不许声称不受限"
+    assert context["tree"]["status"] == "available"
+
+
+def test_reading_context_never_carries_an_absolute_path(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    code, payload = drive_main(tmp_root, monkeypatch, log_profile_denied(), require_dsh=False)
+    values = list(_strings(payload["reading_context"]))
+    assert values
+    for value in values:
+        assert not Path(value).is_absolute(), value

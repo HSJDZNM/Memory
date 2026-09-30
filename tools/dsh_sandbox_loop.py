@@ -74,6 +74,17 @@ SANDBOX = REPO_ROOT / ".tmp" / "phase-2-sandbox"
 PROJECT = SANDBOX / "demo-shop"
 LOGS = SANDBOX / "logs"
 ARTIFACT = REPO_ROOT / ".tmp" / "artifacts" / "phase-2-sandbox-result.json"
+# reading_context 里"这棵树"默认就是仓库自己。做成模块常量有两个理由：真实运行一个字不改；
+# 测试可以像 PROJECT / LOGS / ARTIFACT 那样把它换掉（否则每个驱动 main() 的用例都要为整棵仓库
+# 算一次轮次级封条，那是与被测行为无关的时间）。
+TREE_ROOT = REPO_ROOT
+
+# 台阶 4：reading_context 的**统一形状只有一份实现**（src/provenance/reading_context.py，
+# 21 号 §3）。本脚本按文件路径直跑，所以自己把 src 挂上搜索路径；provenance 只依赖标准库，
+# 这一步不改变"没有 src 也能跑"的性质（它读树摘要用的也是同一个模块里的那份实现）。
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from provenance import reading_context as reading  # noqa: E402
 
 # 结论载荷的版本轴（AGENTS 第 55 条：加键就是改协议）。
 #
@@ -83,12 +94,16 @@ ARTIFACT = REPO_ROOT / ".tmp" / "artifacts" / "phase-2-sandbox-result.json"
 # 第 18 轮（`09322b0`）的 `dsh_config_failure_` 一族（三族键的引入点由 `git show` 逐版读出）。
 # 第 13 轮的树（`b2c1255`）里这个文件只有一个 `dsh_startup_denied` 布尔位，
 # 「哪条路径被拒」还读不出来；那棵树上也没有 `schema_version`。
-# 1.1 = 现形状：**两条写盘路径（完整跑 / dsh 不可用）都带这个键**，各自的诊断键按路径出现或缺失。
+# 1.1 = 第 19 轮形状：**两条写盘路径（完整跑 / dsh 不可用）都带这个键**，各自的诊断键按路径出现或缺失。
+# 1.2 = 现形状（台阶 4 第一件）：两条路径都多一份 `reading_context`（21 号 §3 的统一形状），
+#       其中 `host.sandbox` 是 2026-09-30 裁定①的落点（**不单独设状态轴**，只加这一个枚举）。
+#       它的作用就是让 `.tmp/artifacts/` 下那份 **skipped 产物自己说得出**"这不是这棵树上的
+#       真机读数"（pre-push 钩子每次推送都会用 skipped 覆盖它，见第 20 轮记录 §2）。
 #
 # 消费方：`tools/phase_evidence.py` 的 `sandbox_loop()`（逐键 `.get()`，**不依赖键集合**）
 # 与 `.tmp/e2e/` 下的人工复核副本。读这份载荷的代码不必认全键，但「这份读数属于哪一代
 # 形状」必须能读出来——这就是本轴存在的理由；下一族诊断键落地时，这里跟着递增。
-SANDBOX_RESULT_SCHEMA_VERSION = "1.1"
+SANDBOX_RESULT_SCHEMA_VERSION = "1.2"
 
 AGENT_VERSION = "0.1.5-rc.1"
 RULE_ID = "ARCH-001@1"
@@ -902,6 +917,83 @@ def isolated_home_env() -> dict[str, str]:
     return {"DSH_HOME": str(ISOLATED_HOME), "TEMP": temp, "TMP": temp}
 
 
+def sandbox_state(
+    *, ran: bool, denial: StartupDenial | None, spawn_failure: HookSpawnFailure | None
+) -> str:
+    """host.sandbox 的取值（21 号 §3 的唯一新词；裁定①：**不单独设状态轴**）。
+
+    判据是**本次运行里真的发生了什么**，不是"这台机器是什么"：
+
+    - `ran`（审计里真的有记录 = 闭环真的跑完了）→ `unrestricted`；
+    - 出现了「工作区之外的操作被沙箱 / 宿主拒绝」的证据 → `restricted`：dsh 启动期的
+      `profile_write_denied` / `other_path_denied`（写 $DSH_HOME 或 dsh 自己的临时区被拒，
+      19 号 §3.1 那条读数就是这一类），以及 Hook spawn 的 `sandbox_pipe_stdio_denied`
+      （受限沙箱禁止命名管道，spawn 直接 EPERM）——**后者不是"写"被拒**，但它同样是"这台宿主
+      在拦"，把它记成 `unrestricted` 会是一句没有依据的话；
+    - 其余一律 `unknown`：dsh 找不到 / 理由读不出来 / projectDir 配错 / ACL 临时根配置失败 /
+      没跑完也没有被拒证据。**unknown 不是"没有沙箱"**，是"这次没有取到事实"。
+    """
+
+    if ran:
+        return reading.SANDBOX_UNRESTRICTED
+    if denial is not None:
+        return reading.SANDBOX_RESTRICTED
+    if spawn_failure is not None and spawn_failure.kind == SANDBOX_PIPE_STDIO_DENIED:
+        return reading.SANDBOX_RESTRICTED
+    return reading.SANDBOX_UNKNOWN
+
+
+def host_facts(*, isolated_home: bool) -> dict:
+    """端到端读数专有的宿主事实（21 号 §2.4）：隔离开关 + 本次子进程实际拿到的三个根。
+
+    默认（不给 `--isolated-home`）时子进程继承父进程的环境，三个根通常在工作区之外 →
+    按统一口径写成 `<outside-workspace>`；给了开关就是仓库内的 `.tmp/phase-2-sandbox/...`。
+    """
+
+    if isolated_home:
+        return {
+            "isolated_home": True,
+            "dsh_home": reading.display_path(ISOLATED_HOME, root=REPO_ROOT),
+            "temp_roots": [reading.display_path(ISOLATED_TMP, root=REPO_ROOT)],
+        }
+    return {
+        "isolated_home": False,
+        "dsh_home": reading.display_path(os.environ.get("DSH_HOME"), root=REPO_ROOT),
+        "temp_roots": [
+            reading.display_path(os.environ.get("TEMP"), root=REPO_ROOT),
+            reading.display_path(os.environ.get("TMP"), root=REPO_ROOT),
+        ],
+    }
+
+
+def build_reading_context(
+    *,
+    isolated_home: bool,
+    sandbox: str,
+    project: Path | None,
+    started_at: str,
+) -> dict:
+    """这份端到端读数属于哪里（21 号 §2.4）：树 / 声明 / 宿主 / 本次运行。
+
+    它**只回答归属**：在判定链跑完之后才采集，**不进**上面任何一条判断，也不改变
+    `result` / `environment_skipped` / 三族诊断键里的任何一个字。
+    """
+
+    if project is None:
+        adapter_config = reading.not_applicable()
+    else:
+        adapter_config = reading.declaration_block(
+            project / ".policy" / "dsh-adapter.yaml", root=REPO_ROOT
+        )
+    return reading.build(
+        source=reading.SOURCE_SANDBOX_LOOP,
+        tree=reading.tree_block(TREE_ROOT),
+        declarations={reading.DECLARATION_ADAPTER_CONFIG: adapter_config},
+        host=reading.host_block(sandbox=sandbox, extra=host_facts(isolated_home=isolated_home)),
+        run=reading.run_block(started_at=started_at),
+    )
+
+
 def run_dsh(prompt: str, log_name: str, *, isolated_home: bool = False) -> int:
     argv = dsh_argv()
     assert argv is not None
@@ -1119,6 +1211,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+    # 本次运行的起始墙钟（reading_context.run.started_at 用它，**不用**载荷末尾那个 timestamp）：
+    # 两处各有各的含义——一个是"这次跑从什么时候开始"，一个是"这份载荷什么时候写下来"。
+    run_started_at = reading.utc_now()
 
     if dsh_argv() is None:
         message = "未找到 dsh 可执行文件：跳过真实沙箱闭环（本机验证项，不适合无 dsh 的环境）"
@@ -1134,6 +1229,14 @@ def main(argv: list[str] | None = None) -> int:
                 "result": "skipped",
                 "environment_skipped": True,
                 "reason": message,
+                # dsh 不可用也是**一条读数**：它同样要说清属于哪棵树、哪个环境。
+                # 三个事实都取不到 → host.sandbox 只能是 unknown（不是"没有沙箱"）。
+                "reading_context": build_reading_context(
+                    isolated_home=args.isolated_home,
+                    sandbox=sandbox_state(ran=False, denial=None, spawn_failure=None),
+                    project=None,
+                    started_at=run_started_at,
+                ),
             },
             ensure_ascii=False,
             indent=2,
@@ -1312,6 +1415,20 @@ def main(argv: list[str] | None = None) -> int:
                 "归不了因就不跳过——请按日志原文核对插件版本与接线；要让它能通过，"
                 "要么让插件在理由里写出原因，要么把接线恢复到真的能跑通的形态。"
             )
+    # 台阶 4：reading_context 在判定链**之后**采集——它只回答"这份读数属于哪里"，
+    # 不进上面任何一条判断，也不改写 result / environment_skipped / 三族诊断键里的任何一个字。
+    # 这里**再读一次**日志（判定已经做完）是有意的：让这条旁注的事实来源与判定链里的局部变量
+    # 解耦，而不是顺手把那些局部变量当成事实——否则"取值来自本次运行的真实读数"就成了空话。
+    payload["reading_context"] = build_reading_context(
+        isolated_home=args.isolated_home,
+        sandbox=sandbox_state(
+            ran=bool(records),
+            denial=None if records else dsh_startup_denial(),
+            spawn_failure=None if records else hook_spawn_failure(),
+        ),
+        project=PROJECT,
+        started_at=run_started_at,
+    )
     write(ARTIFACT, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + chr(10))
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     if payload["result"] == "pass":
