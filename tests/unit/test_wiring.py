@@ -26,6 +26,7 @@ from adapters.wiring import (
     ToolObservationStatus,
     WiringError,
     WiringStatus,
+    build_reading_context,
     combine_status,
     declared_tool_table,
     probe_wiring,
@@ -762,6 +763,43 @@ def test_report_contains_no_absolute_paths(tmp_root: Path) -> None:
     assert str(tmp_root) not in payload
     assert tmp_root.as_posix() not in payload
     assert "<external>/hooks.json" in payload
+
+
+def test_reading_context_names_the_tree_and_the_scope_declaration() -> None:
+    """台阶 4（1.2）：旁注说得出"哪棵树 / 哪一份边界声明 / 哪台宿主"，且不出现绝对路径。
+
+    它是**旁注**：不改任何通道状态、不改 result / failures / 退出码（--check 的判据不读它），
+    但读者必须能凭载荷本身回答"这份读数是从哪棵树上读出来的"（AGENTS 第 48 条）。
+    """
+
+    block = build_reading_context(root=REPO_ROOT)
+
+    assert block["source"] == "gate", "覆盖账是只报告读数：入口显式给 gate，不猜"
+    assert block["tree"]["status"] == "available"
+    assert block["tree"]["scope"] == "workspace"
+    assert block["tree"]["digest"].startswith("sha256:")
+    assert len(block["tree"]["revision"]) == 40
+    assert block["declarations"]["wiring_scope"]["status"] == "available"
+    assert block["declarations"]["wiring_scope"]["path"] == "adapters/wiring-scope.yaml"
+    assert block["declarations"]["wiring_scope"]["digest"].startswith("sha256:")
+    assert block["host"]["sandbox"] == "unknown", "清点不探测沙箱（探测要有副作用），不猜"
+    # 这一份**保留 run**（21 号 §9.2 裁定①：只有 policy.check --json 要求逐字节可复现）。
+    assert block["run"]["id"] and block["run"]["started_at"].endswith("Z")
+    rendered = json.dumps(block, ensure_ascii=False)
+    assert str(REPO_ROOT) not in rendered
+    assert REPO_ROOT.as_posix() not in rendered
+
+
+def test_reading_context_degrades_when_the_scope_declaration_is_missing(tmp_root: Path) -> None:
+    """读不到声明 = unavailable + 原因；旁注写不出来**不该**让整份报告写不出来（三态纪律）。"""
+
+    block = build_reading_context(root=tmp_root)
+
+    declaration = block["declarations"]["wiring_scope"]
+    assert declaration["status"] == "unavailable"
+    assert "读不到" in declaration["reason"]
+    assert "digest" not in declaration, "读不到就不许留下一个像摘要的字符串"
+    assert block["tree"]["status"] == "available", "一棵树上少一份声明，不等于这棵树读不到"
 
 
 def test_tool_declaration_is_read_from_the_adapter_tool_table(tmp_root: Path) -> None:

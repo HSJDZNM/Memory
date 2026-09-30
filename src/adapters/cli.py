@@ -81,6 +81,7 @@ from adapters.wiring import (
     READING_GUIDE,
     WiringError,
     WiringReport,
+    build_reading_context,
     probe_wiring,
 )
 from policy.loader import LoaderError, load_rule_set
@@ -536,6 +537,10 @@ def run_wiring(args: argparse.Namespace) -> int:
 
     payload = report.to_dict()
     if args.json:
+        # 台阶 4（21 号 §2.5）：旁注——这份读数属于哪棵树、读的是哪一份边界声明、哪台宿主。
+        # 它**只进 --json**，且不改任何通道状态 / result / failures / 退出码（--check 的判据
+        # 一个字段都不读它）。树摘要要遍历仓库（有声明好的排除项），因此不做无谓的旁路计算。
+        payload["reading_context"] = build_reading_context(root=Path(args.root))
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
         _print_wiring(report)

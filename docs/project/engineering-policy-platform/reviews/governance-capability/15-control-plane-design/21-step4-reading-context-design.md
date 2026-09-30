@@ -190,6 +190,14 @@ tech-detail 生成器、账本读者（人 / 评审 / 事故复盘）。
 **与冻结的关系**：`reading_context` 与 `governs` 轴、声明差集同属覆盖账，一起落最自然；
 但在 D-2 解冻之前本稿**只给形状**，不动 `account` / `differences`。
 
+**2026-09-30 落地（第 21 轮）**：本节按上面的形状落了码——`WIRING_SCHEMA_VERSION` `1.1 → 1.2`，
+`--json` 顶层多一份 `reading_context`（`source="gate"`；`declarations` 只放 `wiring_scope` 一项，
+不把每通道一份的 adapter 配置混进"哪一套声明"；树摘要用 `workspace_tree_digest`），实现是
+`adapters.wiring.build_reading_context`（形状仍只有 `src/provenance/reading_context.py` 一份）。
+**它只进 `--json`**：人类可读输出与 `--check` 的判据一个字段都不读它（不改通道状态 / result /
+退出码），并且**保留 `run`**（21 号 §9.2 裁定①只对 `policy.check --json` 生效）。
+D-2 冻结的部分（`account` / `differences` / `governs` 轴）**照旧不动**。落地读数见 23 号 §9。
+
 ### 2.6 阶段证据（`tools/phase_evidence.py`，**CI 线的文件**）
 
 **现状**：顶层已有 `environment`（`python` / `implementation` / `platform` / `executable`）与

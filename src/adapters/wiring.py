@@ -20,7 +20,8 @@
 2. **确定性排序**：通道按 `channel_id` 排序，墙钟时间不参与排序；
    相同输入 + 相同 `now` 得到逐字节相同的 JSON；
 3. **报告里不出现绝对路径**（AGENTS.md 第 19 条）：路径一律相对探测根渲染，
-   探测根之外的路径渲染成 `<external>/<文件名>`；
+   探测根之外的路径渲染成 `<external>/<文件名>`（`--json` 里那份 reading_context 同一条纪律：
+   树与声明的路径一律仓库相对，工作区之外折叠成 `<outside-workspace>`）；
 4. **钩子命令原文不入报告**：命令可能带凭据，只留 sha256 摘要与受控的
    `--config` / `--audit` / `--hooks-config` 取值（取值本身是路径，按第 3 条渲染）；
 5. **工具表只读导入** `adapters.dsh.adapter.TOOL_TABLE`（那是 T3 的写域，本模块不得复制一份）：
@@ -52,9 +53,14 @@ from typing import Any, Iterator, Mapping, Optional
 
 import yaml
 
+# 台阶 4 的旁注（21 号 §2.5 / §3）：这份读数属于哪棵树 / 哪一份边界声明。
+# 统一形状**只有一份实现**（src/provenance/reading_context.py），本模块不另写一套。
+from provenance import reading_context as reading
+
 __all__ = [
     "FAILURE_STATUSES",
     "READING_GUIDE",
+    "WIRING_SCOPE_RELATIVE",
     "ChannelReport",
     "ChannelStatus",
     "DEFAULT_OBSERVED_SESSIONS",
@@ -66,6 +72,7 @@ __all__ = [
     "WiringError",
     "WiringReport",
     "WiringStatus",
+    "build_reading_context",
     "combine_status",
     "declared_tool_table",
     "probe_wiring",
@@ -87,7 +94,11 @@ READING_GUIDE = (
 # 1.1：每个通道新增 wiring_status / freshness_status 两个事实轴字段，报告新增 reading_guide
 #      与 fact_counts（N20）。字段是**新增**的，但"wired 是联合属性"这一旧读法不再被支持——
 #      要分别读的两件事必须能被分别断言，因此这是一次显式的协议版本变更。
-WIRING_SCHEMA_VERSION = "1.1"
+# 1.2：顶层新增 reading_context（台阶 4 / 21 号 §2.5）——这份读数属于**哪棵树**、读的是
+#      **哪一份边界声明**（adapters/wiring-scope.yaml 的摘要）、**哪台宿主**。它只是旁注：
+#      不改任何通道状态、不改 result / failures / 退出码，也不进 --check 的判据。
+#      顶层加键 = 改协议（AGENTS 第 55 条），因此 1.1 → 1.2。
+WIRING_SCHEMA_VERSION = "1.2"
 
 DEFAULT_STALE_AFTER_SECONDS = 7 * 24 * 3600
 DEFAULT_OBSERVED_SESSIONS = 8
@@ -1803,4 +1814,36 @@ def probe_wiring(
         notes=tuple(notes),
         skipped=skipped,
         skip_reason=skip_reason,
+    )
+
+
+# --------------------------------------------------------------------------- 台阶 4：reading_context
+
+# 边界声明在仓库里的位置（`reading_context.declarations.wiring_scope` 读的就是它）。
+WIRING_SCOPE_RELATIVE = "adapters/wiring-scope.yaml"
+
+
+def build_reading_context(*, root: Path | str) -> dict:
+    """这份覆盖账读数属于哪里（台阶 4 / 21 号 §2.5）：树 / 边界声明 / 宿主。
+
+    `source="gate"` 是**调用点显式给的**（不猜，AGENTS 核心约束 6）：这份载荷是三处只报告读数
+    之一（义务门禁、豁免到期、覆盖账）。
+
+    `declarations` 里只放**这份读数真正读的那一份声明**——`wiring-scope.yaml`（"哪些通道按声明
+    不治理 / 到期日"的唯一声明处）。不把 adapter 配置塞进来：通道清点读的是**主机上的**配置，
+    每通道一份，把它们混进"哪一套声明"只会让这个字段答非所问。
+
+    run **照旧带着**（21 号 §9.2 裁定①：只有 `policy.check --json` 那一份要求逐字节可复现）。
+    取不到的一律降级成三态（树摘要读不到 / 声明文件不在），**不让整份报告写不出来**。
+    """
+
+    return reading.build(
+        source=reading.SOURCE_GATE,
+        tree=reading.tree_block(root),
+        declarations={
+            reading.DECLARATION_WIRING_SCOPE: reading.declaration_block(
+                Path(root) / WIRING_SCOPE_RELATIVE, root=root
+            )
+        },
+        host=reading.host_block(),
     )

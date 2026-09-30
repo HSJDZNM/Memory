@@ -285,6 +285,26 @@ def test_wiring_json_contract(tmp_root: Path, capsys: Any) -> None:
     assert payload["channels"][0]["freshness_status"] == FreshnessStatus.FRESH.value
     assert "不再是" in payload["reading_guide"]
 
+    # 台阶 4（1.2）：顶层多一份 reading_context——哪棵树 / 哪一份边界声明 / 哪台宿主。
+    # 它只是旁注：上面的 counts / result / 通道状态一个都不由它决定（R-d 的 2 条见 23 号 §9）。
+    context = payload["reading_context"]
+    assert context["source"] == "gate"
+    assert context["tree"]["status"] == "available"
+    assert context["tree"]["scope"] == "workspace"
+    assert context["tree"]["digest"].startswith("sha256:")
+    assert len(context["tree"]["revision"]) == 40
+    assert context["host"]["sandbox"] == "unknown"
+    # 这一份**保留 run**（21 号 §9.2 裁定①）。
+    assert context["run"]["id"] and context["run"]["started_at"].endswith("Z")
+    scope = context["declarations"]["wiring_scope"]
+    assert scope["status"] == "available"
+    assert scope["path"] == "adapters/wiring-scope.yaml"
+    assert not Path(scope["path"]).is_absolute()
+    # 摘要必须来自**那份真实文件**，不是写死的常量。
+    assert scope["digest"] == "sha256:" + hashlib.sha256(
+        (REPO_ROOT / "adapters" / "wiring-scope.yaml").read_bytes()
+    ).hexdigest()
+
 
 def test_wiring_json_exposes_required_channel_statuses() -> None:
     """枚举值是协议：删一个、改一个名字都必须是一次显式的契约变更。"""
@@ -341,10 +361,12 @@ def test_wiring_schema_version_is_pinned_to_a_literal() -> None:
 
     1.0 -> 1.1：新增 wiring_status / freshness_status 两个事实轴字段 + reading_guide /
     fact_counts，并且"wired 是接线 + 留痕的联合属性"这一旧读法不再被支持（N20）。
+    1.1 -> 1.2：顶层新增 reading_context（台阶 4 / 21 号 §2.5）——顶层加键 = 改协议
+    （AGENTS 第 55 条）；它只做旁注，不改任何状态与退出码。
     另一条用例 `test_wiring_json_contract` 只比常量与载荷是否一致，钉不住"版本号本身变了"。
     """
 
-    assert WIRING_SCHEMA_VERSION == "1.1"
+    assert WIRING_SCHEMA_VERSION == "1.2"
 
 
 def test_missing_dsh_home_fails_the_check_and_says_so(tmp_root: Path, capsys: Any) -> None:
