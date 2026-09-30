@@ -309,3 +309,62 @@ def test_timings_summary_survives_a_red_run(monkeypatch, capsys, tmp_root):
     printed = capsys.readouterr().out
     assert "执行耗时" in printed
     assert "Module import probe" in printed
+
+
+# --------------------------------------------------------------------------- 推迟到 --full
+#
+# 学习手册同步只在 --full 下执行：默认 / --hook 被改动选中时必须**点名跳过并写明原因**，
+# 不能静默消失；--full 下必须真的进执行计划。GitHub CI 不受影响（它不经过 ci_local）。
+
+HANDBOOK_SYNC = "Learning notebooks are in sync"
+
+
+def _handbook_plan(monkeypatch, full: bool):
+    ci_local = _load_ci_local()
+    monkeypatch.setattr(
+        ci_local,
+        "_steps",
+        lambda: [
+            (HANDBOOK_SYNC, ".venv/bin/python tools/build_learning_notebook.py --check"),
+            ("Learning notebook structure", ".venv/bin/python tools/check_notebook.py a.ipynb"),
+        ],
+    )
+    # 模拟"改了 src/"：手册组被改动范围选中
+    monkeypatch.setattr(ci_local, "_changed_paths", lambda: ["src/policy/engine.py"])
+    return ci_local, ci_local._plan_steps(full)
+
+
+def test_handbook_sync_is_deferred_by_default_and_named_with_a_reason(monkeypatch):
+    ci_local, (plan, skipped, _not_run) = _handbook_plan(monkeypatch, full=False)
+
+    planned = [name for name, _ in plan]
+    assert HANDBOOK_SYNC not in planned
+    assert "Learning notebook structure" in planned  # 只推迟这一步，同组其余照跑
+    reasons = dict(skipped)
+    assert HANDBOOK_SYNC in reasons
+    assert "--full" in reasons[HANDBOOK_SYNC]
+
+
+def test_handbook_sync_runs_under_full(monkeypatch):
+    _ci_local, (plan, skipped, _not_run) = _handbook_plan(monkeypatch, full=True)
+
+    assert HANDBOOK_SYNC in [name for name, _ in plan]
+    assert HANDBOOK_SYNC not in dict(skipped)
+
+
+def test_deferred_step_is_listed_as_not_run(monkeypatch, capsys):
+    ci_local, _ = _handbook_plan(monkeypatch, full=False)
+    monkeypatch.setattr(ci_local, "unregistered_steps", lambda: [])
+
+    assert ci_local.main(["--list"]) == 0
+    out = capsys.readouterr().out
+    assert HANDBOOK_SYNC in out.split("本机跳过")[1]
+
+
+def test_every_full_only_step_exists_in_the_workflow():
+    """推迟表里的名字必须对得上 workflow：改了步骤名而这里没跟上，推迟会悄悄失效（反而每次都跑）。"""
+
+    ci_local = _load_ci_local()
+    names = [name for name, _ in ci_local._steps()]
+    for prefix in ci_local.FULL_ONLY_STEPS:
+        assert any(name.startswith(prefix) for name in names), prefix

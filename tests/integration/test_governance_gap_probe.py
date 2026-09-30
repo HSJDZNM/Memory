@@ -19,8 +19,8 @@ python -m enforcement.cli / python -m adapters.cli / 规范事件的装配入口
 
 探针工作目录固定在 .tmp/verifier/probe/（构建产物，可随时重建），但**每次运行都有唯一的
 run-<run_id> 子目录**：上次运行的 audit/台账不得成为本次运行的输入（否则 event_id 会命中幂等台账，
-探针会因错误原因变红或变绿）。`test_probe_is_deterministic_across_runs` 连续跑两遍并比对逐项
-结论与 facts。
+探针会因错误原因变红或变绿）。模块 fixture 以 `--repeat 2` 跑一次（两遍、两个工作目录）：
+逐项用例读第 1 遍的报告，`test_probe_is_deterministic_across_runs` 比对两遍的逐项结论与 facts。
 不要在测试之外对同一个 --work 目录并发跑探针（并发只影响磁盘占用，不影响结论：目录是按 run
 隔离的）。
 """
@@ -65,7 +65,14 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture(scope="module")
 def report() -> dict:
-    """对 live 仓库跑一次完整探针（--phase after），返回其 JSON 报告。"""
+    """对 live 仓库跑完整探针（--phase after --repeat 2），返回其 JSON 报告。
+
+    为什么在 fixture 里就 --repeat 2：过去 fixture 跑一遍、确定性用例再用 --repeat 2 跑两遍，
+    同一份探针一次会话跑 3 遍（本模块耗时的大头）。--repeat 2 的报告主体就是第 1 遍（run#0）的
+    完整报告，另附 repeat / run_ids / repeat_consistent 三项，所以逐项用例读 run#0、
+    确定性用例读比对结论，**两次独立运行、两个工作目录**的证明强度不变，只少跑一遍。
+    代价是报告的 ok 同时要求两遍一致：不一致时退出码用例也会跟着红，结论方向不变。
+    """
 
     if not PROBE.is_file():
         pytest.skip(f"探针脚本不存在：{PROBE.relative_to(REPO_ROOT)}")
@@ -73,7 +80,7 @@ def report() -> dict:
     json_out.parent.mkdir(parents=True, exist_ok=True)
     completed = subprocess.run(
         [sys.executable, str(PROBE), "--root", str(PROBE_ROOT), "--phase", "after",
-         "--work", str(PROBE_WORK), "--json-out", str(json_out)],
+         "--work", str(PROBE_WORK), "--repeat", "2", "--json-out", str(json_out)],
         cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8",
         errors="replace", timeout=1800,
     )
@@ -204,24 +211,17 @@ def test_probe_exit_code_matches_report(report: dict) -> None:
     )
 
 
-def test_probe_is_deterministic_across_runs() -> None:
+def test_probe_is_deterministic_across_runs(report: dict) -> None:
     """探针必须是纯函数：同一个 --root/--phase 连续跑两遍，逐项结论与 facts 必须完全一致。
 
     这条不是形式主义：工作目录一旦在两次运行之间复用，上一次写进 audit 的
     <session>:<tool_use_id> 会让本次运行命中幂等台账变成 event_replay——
     "我跑过了"这件事本身会改变下一次的结果，于是探针会**因为错误原因**变红或变绿。
+
+    两遍由 fixture 的 --repeat 2 真跑（见 report() 的说明），这里只读比对结论，不再多跑一遍。
     """
 
-    json_out = REPORT_PATH.parent / "probe-live-after-repeat.json"
-    json_out.parent.mkdir(parents=True, exist_ok=True)
-    completed = subprocess.run(
-        [sys.executable, str(PROBE), "--root", str(PROBE_ROOT), "--phase", "after",
-         "--work", str(PROBE_WORK), "--repeat", "2", "--json-out", str(json_out)],
-        cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=1800,
-    )
-    assert json_out.is_file(), f"探针没有写出报告：{completed.stdout}\n{completed.stderr}"
-    payload = json.loads(json_out.read_text(encoding="utf-8"))
+    payload = report
     assert payload.get("repeat") == 2, "探针没有真的跑两遍"
     assert payload.get("repeat_consistent") is True, (
         "两次运行的结论与 facts 不一致：\n" + "\n".join(payload.get("repeat_differences", []))

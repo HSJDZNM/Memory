@@ -46,8 +46,11 @@ jobs:
       # --junit-xml：把本次测试结果落成一份报告，供最后的"阶段验收证据"步骤直接引用。
       # 证据步骤过去会把这四个套件**再跑一遍**（只为了数用例数），在门禁里就是纯重复。
       # 报告由本步骤写出，证据步骤只读它；报告缺失 / 缺套件 / 早于最新改动时证据步骤会退回真跑。
+      # -n auto --dist loadfile（pytest-xdist，已锁定）：按文件分给多个进程并行跑，同一文件的用例
+      # 留在同一个进程里——module 级 fixture（例如治理探针）只跑一次。用例集合与断言不变，
+      # junit 报告仍是一份（xdist 在主进程合并），证据步骤照旧按用例归属到四个套件。
       - name: Unit, contract, integration and security tests
-        run: .venv/bin/python -m pytest tests/unit tests/contract tests/integration tests/security -q --junit-xml=.tmp/artifacts/tests-all-report.xml
+        run: .venv/bin/python -m pytest tests/unit tests/contract tests/integration tests/security -q -n auto --dist loadfile --junit-xml=.tmp/artifacts/tests-all-report.xml
 
       - name: Rule set self-check
         run: .venv/bin/python -m policy.check --check-rules
@@ -127,9 +130,9 @@ jobs:
       - name: Validator closed loop
         run: .venv/bin/python tools/validator_loop.py
 
-      # Phase 2：Adapter 的映射契约与 Hook 行为（block 不执行 / allow 一次 / 超时 / 重放 / 脱敏）
-      - name: dsh adapter contract and hook behaviour
-        run: .venv/bin/python -m pytest tests/contract/test_dsh_adapter.py tests/integration/test_dsh_hook.py -q
+      # Phase 2 的 Adapter 映射契约与 Hook 行为（tests/contract/test_dsh_adapter.py、
+      # tests/integration/test_dsh_hook.py）由上面的全量 pytest 覆盖：过去这里单独再跑一遍同两份文件，
+      # 没有任何新增断言，只是重复，已删除。
 
       # Phase 2：接线自检必须能识别"hooks.json 没接上"（在 dsh 侧那等于没有治理）
       - name: dsh hook wiring self-check
@@ -224,8 +227,9 @@ jobs:
           set -e
           if [ "$code" -ne 2 ]; then echo "expected exit code 2, got $code"; exit 1; fi
 
-      - name: Performance baseline (fixed seed, recorded not optimised)
-        run: .venv/bin/python tools/policy_bench.py --counts 10 100 1000
+      # 性能基线（固定种子、只记录不优化、永远退 0）不再单独成步：最后的"阶段验收证据"步骤
+      # 本来就调用同一份实现 policy_bench.run_baseline()（默认 10/100/1000），结果写进证据文件；
+      # 单独一步只是把同一件事再算一遍、打印出来，不构成门禁。手动查看：python tools/policy_bench.py
 
       - name: Learning notebooks are in sync
         run: .venv/bin/python tools/build_learning_notebook.py --check

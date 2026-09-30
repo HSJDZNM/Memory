@@ -4,10 +4,14 @@
 检查链却漏跑"手册同步"，PR 因此变红。这个脚本把 workflow 当作唯一真相读出来，在本地按
 同样顺序执行，并按"这次改了什么"决定跑多少；红了就退出 1，pre-push 钩子据此拦住推送。
 
+例外（FULL_ONLY_STEPS）："学习手册同步"只在 --full 下执行。默认与 --hook 模式被改动选中时
+会**点名列为未执行**并写明原因，GitHub CI 上照跑。这是有意的取舍：上面那次"漏跑手册同步、
+PR 变红"的形态会重新变成可能——代价是推送前少等约 2.5 分钟，改了 src/ 的分支合并前要跑一次 --full。
+
 用法：
 
-    python tools/ci_local.py              # 按改动范围自动选择（默认）
-    python tools/ci_local.py --full       # 跑全部能在本机跑的步骤
+    python tools/ci_local.py              # 按改动范围自动选择（默认；学习手册同步推迟到 --full）
+    python tools/ci_local.py --full       # 跑全部能在本机跑的步骤（合并前跑这个）
     python tools/ci_local.py --list       # 只列出会跑哪些步骤，不执行
     python tools/ci_local.py --hook       # pre-push 钩子用：更简短、失败即退出码 1
     python tools/ci_local.py --full --python C:\\path\\to\\python.exe
@@ -95,7 +99,8 @@ CODE_STEPS = (
     "Validators fail closed",
     "Syntax errors fail closed",
     "Validator closed loop",
-    "dsh adapter contract",
+    # "dsh adapter contract and hook behaviour" 已从 workflow 删除：它单独重跑的两份测试文件
+    # 本来就在全量 pytest 里。
     "dsh hook wiring",
     "Real dsh sandbox loop",
     # 这一步跑的是 workflow 里的 host-version --record-check（CI 形态：不依赖宿主，
@@ -116,7 +121,8 @@ CODE_STEPS = (
     "Policy API contract snapshot",
     "Policy API ASGI contract",
     "Policy API closed loop",
-    "Performance baseline",
+    # "Performance baseline" 已从 workflow 删除：只记录、永远退 0，阶段验收证据步骤本来就调用
+    # 同一份 policy_bench.run_baseline() 并写进证据。
     # 阶段验收证据与上面的 pytest 步骤**必须同组**：前者要引用后者刚写出的 junit 报告，
     # 同组才保证"要么都跑、要么都不跑"，复用的报告永远来自本次门禁。
     "Phase 8 acceptance evidence",
@@ -140,6 +146,17 @@ ORCHESTRATION_STEPS = (
     "Orchestration self-check",
     "Orchestration closed loop",
 )
+
+# 只在 --full 下执行的步骤（前缀匹配 -> 原因）。按改动范围自动选择时（默认，以及 pre-push 钩子的
+# --hook）即使被改动选中也**不执行**，而是显式列为"推迟到 --full"——不静默丢掉。
+# GitHub CI 上照跑，这里只改本机的执行时机：推送前不跑，合并前用 --full 跑。
+# 学习手册同步要把 9 个阶段手册的全部代码单元执行一遍（本机约 2.5 分钟，是本机门禁第二重的一步），
+# 守的是"手册与实现同步"，不是产品行为；HANDBOOK_PREFIXES 又含 src/，几乎每次改代码都会选中它。
+FULL_ONLY_STEPS = {
+    "Learning notebooks are in sync": (
+        "推迟到 --full：学习手册同步要执行全部阶段手册代码单元，合并前用 --full 跑（GitHub CI 照跑）"
+    ),
+}
 
 # 改了这些前缀，就要跑对应的那一组。
 CODE_PREFIXES = (
@@ -320,6 +337,15 @@ def _step_environment() -> dict[str, str]:
 PlanGroups = tuple[list[tuple[str, list[str]]], list[tuple[str, str]], list[tuple[str, str]]]
 
 
+def full_only_reason(name: str) -> str | None:
+    """步骤名命中 FULL_ONLY_STEPS（前缀匹配）时返回推迟原因，否则 None。"""
+
+    for prefix, reason in FULL_ONLY_STEPS.items():
+        if name.startswith(prefix):
+            return reason
+    return None
+
+
 def _plan_steps(full: bool) -> PlanGroups:
     """把 workflow 的步骤筛成三份：本机要执行的、本机跳过的、登记豁免的。
 
@@ -335,6 +361,11 @@ def _plan_steps(full: bool) -> PlanGroups:
             not_run.append((name, NOT_RUN_ON_HOST[name]))
             continue
         if wanted and not any(name.startswith(prefix) for prefix in wanted):
+            continue
+        deferred = full_only_reason(name)
+        if deferred and not full:
+            # 被改动范围选中、但只在 --full 下执行：列进"本机跳过"并写明原因，不静默丢掉。
+            skipped.append((name, deferred))
             continue
         lines = _local_lines(run)
         if not lines:
@@ -680,6 +711,10 @@ def main(argv: list[str] | None = None) -> int:
                 "改动文件 %d 个；执行 %d 步（本机跳过 %d 步，登记豁免 %d 步）"
                 % (len(changed), len(plan), len(skipped), len(not_run))
             )
+            # 推迟到 --full 的步骤单独点名：它们是被改动选中却没跑的，不能只藏在"跳过 N 步"里。
+            for name, why in skipped:
+                if full_only_reason(name):
+                    print("  - 未执行 %s：%s" % (name, why))
 
         failures: list[str] = []
         step_environment = _step_environment()
