@@ -678,6 +678,39 @@ def report_timings(
 # 读者可以自己重跑那一条命令（命令原文打在标题行上）。
 
 
+def json_objects(output: str) -> list[dict]:
+    """把一段输出里**完整的 JSON 对象**切出来（允许它跨多行）。
+
+    为什么不能逐行 `json.loads`：`obligations_gate.py --json` 打的是
+    `json.dumps(..., indent=2)` 的**多行**载荷，第一行只有一个 `{` —— 逐行解析**永远**
+    读不到它，读数于是退化成"读不出命中数"（2026-09-30 第 17 轮门禁运行里实测就是这一行）。
+    这里按花括号配平把对象切出来整体解析；解析不了就跳过 —— 读不到不许被写成结论。
+    """
+
+    found: list[dict] = []
+    lines = output.splitlines()
+    index = 0
+    while index < len(lines):
+        if not lines[index].strip().startswith("{"):
+            index += 1
+            continue
+        depth = 0
+        chunk: list[str] = []
+        for line in lines[index:]:
+            chunk.append(line)
+            depth += line.count("{") - line.count("}")
+            if depth <= 0:
+                break
+        try:
+            payload = json.loads("\n".join(chunk))
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            found.append(payload)
+        index += max(1, len(chunk))
+    return found
+
+
 def report_only_hits(step: ReportOnlyStep, output: str) -> str:
     """取"命中数"：结构化优先（`--json` 的 `hits` / `ledger_count`），其次 `HITS:` 文本行。
 
@@ -687,15 +720,8 @@ def report_only_hits(step: ReportOnlyStep, output: str) -> str:
     """
 
     if "--json" in step.args:
-        for line in output.splitlines():
-            text = line.strip()
-            if not text.startswith("{"):
-                continue
-            try:
-                payload = json.loads(text)
-            except ValueError:
-                continue
-            if isinstance(payload, dict) and "hits" in payload:
+        for payload in json_objects(output):
+            if "hits" in payload:
                 # 账本不存在 = 不适用：0 命中**不是**一次真实读数，读数里必须看得出这一档，
                 # 否则"什么都没读到"会被读成"跑过了、0 命中"（升格判据就靠这句话）。
                 not_applicable = payload.get("not_applicable_ledgers")

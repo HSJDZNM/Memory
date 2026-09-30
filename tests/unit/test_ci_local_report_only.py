@@ -162,6 +162,32 @@ def test_hook_mode_stays_quiet_even_when_a_report_only_reading_is_red(monkeypatc
     assert "REPORT-ONLY" in capsys.readouterr().out
 
 
+def test_report_only_reading_parses_an_indented_json_payload(monkeypatch, capsys, tmp_root):
+    """`--json` 的载荷是缩进过的多行 JSON（indent=2）：逐行 json.loads 读不到它。
+
+    实测（第 17 轮门禁运行）：义务门禁这一步打的就是多行载荷，读数因此退化成
+    "读不出命中数" —— 零命中的那次运行于是给不出任何可引用的读数。
+    """
+
+    ci_local = _load_ci_local()
+    _prepare(ci_local, monkeypatch, tmp_root)
+    probe = _probe(
+        ci_local,
+        "import json; print(json.dumps({'hits': 0, 'ledger_count': 1,"
+        " 'not_applicable_ledgers': 1}, indent=2))",
+    )
+    monkeypatch.setattr(
+        ci_local,
+        "REPORT_ONLY_STEPS",
+        (probe._replace(args=(*probe.args, "--json")),),
+    )
+
+    assert ci_local.main(["--full", "--python", sys.executable]) == 0
+    out = capsys.readouterr().out
+    assert "hits=0 / 1 个账本" in out
+    assert "不适用 1" in out
+
+
 def test_report_only_step_shows_when_a_ledger_was_not_applicable(monkeypatch, capsys, tmp_root):
     """账本不存在时读数里必须看得出"不适用"：0 命中不等于"读到过一次真实读数"。"""
 
