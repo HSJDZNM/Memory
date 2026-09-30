@@ -4,6 +4,9 @@
 - **树**：分支 `refactor/control-plane`；**before** = `2d9b353`（第 16 轮末），两个提交依次落地：
   `640fd98`（小修：义务门禁"账本不存在 = 不适用"）→ `0fa42d1`（只报告读数读得懂多行 JSON）；
   本文件是第三个提交。
+- **更正（2026/09/30 18:06 +08:00，本文件的第四笔改动，只动文档）**：§3 第 2 行的端到端读数在**使用者裁定**下
+  更正为「**真机 = pass；受限沙箱里 = skipped**」，原件 sha256 与四条旁证见 §3.1；
+  `tools/` 与 `tests/` 一个字节都没改。
 - **依据**：本轮指令的四步；AGENTS 第 45（仪器要能失败）/ 46（违规则清单）/ 50（口径诚实）/
   55（加键就是改协议）/ 56（义务账）条；18 号 §2（`tool.pytest` 第 55 条核查的既定语）。
 - **本文件是什么**：这一轮的**前置读数、小修口径、登记项、门禁读数**，以及
@@ -102,7 +105,60 @@
 | # | 待建项 | 为什么属于 `reading_context` | 代价（按第 55 条算） |
 | --- | --- | --- | --- |
 | 1 | **Hook 侧 `tool.pytest` 的追溯缺口**：`pre_evidence` 的审计摘要里没有注册表摘要（字段是 `registry_resolution` / `validators_requested` / `validators[]` …，见 `src/adapters/dsh/pre_evidence.py` 的 `_summary`），同一条 `tool.pytest@1.0` 在账本里对应三种行为（H4 之前 / H4 之后 / 3b 之后） | `reading_context` 要回答"这份读数属于哪棵树、哪一套声明"；审计记录答不出它出自哪一版 `validation/validators.yaml` —— 这正是同一个问题在**审计侧**的形态。证据段（`policy.check --json` 的 `evidence.configs.registry`）**已经**能读到注册表摘要（18 号 §2 的 R2），缺口只在 Hook 侧 | 给 `pre_evidence` 摘要加注册表摘要键 = **审计记录的键集合变化** → 递增 `AUDIT_SCHEMA_VERSION`（**1.2 → 1.3**）；同批要改 5 处测试断言与 14 处文档读数引用（18 号 §2 已列出） |
-| 2 | **JS 侧真实 dsh 端到端 = skipped（本机）**：`python tools/dsh_sandbox_loop.py` 退出码 0、`result=skipped`、`environment_skipped=true`、`dsh_startup_denied_kind=profile_write_denied`、被拒路径 `C:\Users\ZNM\.dsh\profiles\headless\cordis.yml`、拒绝系统调用 `open`、根证据 `env:DSH_HOME`；两个场景 `passed=false`、`audit={}`（**Hook 从未被调用**） | 台阶 4 的机制要能说"这份读数属于哪个环境"，而这条端到端读数**本机拿不到**：环境跳过不是通过（AGENTS 第 45 条）。机制建起来之后，"绿"必须仍然能区分"真跑过"与"环境跳过" —— **它是机制的前置条件**，不是机制的替代品 | 跳过本身是**显式**的（退出码 0 + reason + 复现命令），不必改协议；要评审裁定的是：机制要不要为"端到端在受限宿主上不可得"单独留一档读数 |
+| 2 | **JS 侧真实 dsh 端到端**：**真机 = pass；受限沙箱里 = skipped**（2026-09-30 更正，见 §3.1）—— 更正前那条读数（`python tools/dsh_sandbox_loop.py` 退出码 0、`result=skipped`、`environment_skipped=true`、`dsh_startup_denied_kind=profile_write_denied`、被拒路径 `C:\Users\ZNM\.dsh\profiles\headless\cordis.yml`、拒绝系统调用 `open`、根证据 `env:DSH_HOME`；两个场景 `passed=false`、`audit={}`（**Hook 从未被调用**）） | 台阶 4 的机制要能说"这份读数属于哪个环境"，而这条端到端读数**在真机上拿得到、在受限沙箱里拿不到**（同一个工具的结论差别**只来自环境**）：环境跳过不是通过（AGENTS 第 45 条），"本机拿不到"也不是。机制建起来之后，"绿"必须仍然能区分"真跑过"与"环境跳过" —— **它是机制的前置条件**，不是机制的替代品 | 跳过本身是**显式**的（退出码 0 + reason + 复现命令），不必改协议；要评审裁定的是：机制要不要为"端到端在受限宿主上不可得"单独留一档读数 —— 更正后这一档还必须写明**哪台宿主、哪一个环境**（否则同一个工具在两处的结论会被读成同一件事） |
+
+### 3.1 更正（2026-09-30）：端到端 = 真机 pass / 受限沙箱内 skipped
+
+**被更正的那条**：上面表格第 2 行原写「JS 侧真实 dsh 端到端 = skipped（本机）」，并据此把
+"本机拿不到这条读数"当成 `reading_context` 的前置条件。**这个说法只对受限沙箱成立**：
+使用者真机上跑通过一次 `result=pass`；`skipped` 是**在 DSH 沙箱里跑出来**的读数，不作为端到端读数。
+
+**原件**（使用者指定；下表逐字取自它）：
+
+| 项 | 读数 |
+| --- | --- |
+| 路径 | `.tmp/e2e/phase-2-sandbox-result.pass-20260930T010751Z.json` |
+| 大小 / sha256 | **2653 B / `df2646db896cf726d03cbdff0372783d96f2cffb01b3873034a583167859ed30`** |
+| 结论 | `result=pass`、`environment_skipped=false`、`agent=dsh`、`timestamp=2026-09-30T01:07:51.436314Z`（= 本机 09:07:51 +08:00） |
+| block 场景 | `decision=block`、`reason_code=policy_block`、`exit_code=2`、`executed=false`、`matched_rules=[ARCH-001@1]`、文件 sha256 前后**同为** `53b53a25162599fc713132968f015263e3c914fb30f6bb532e4c9c712137ed66`（**未变**）、`passed=true`、session `session-e0c9cd74-2dd8-4f78-9b57-9ada35db6317`（01:07:40Z） |
+| allow 场景 | `decision=allow`、`reason_code=allow`、`exit_code=0`、`executed=true`、文件 sha256 `53b53a25…ed66` → `2972725e717804ec67a4cf5b4bb5a7500de25d161b5e28a15a2e27f76088b558`（**改了一次**）、`passed=true`、session `session-77616ce0-a6ed-451c-81da-45b48ab7d247`（01:07:49Z） |
+
+**成立条件**（使用者裁定）：`DSH_HOME`、`TEMP`、`TMP` 指到 `.tmp/phase-2-sandbox/dsh-home` 与
+`.tmp/phase-2-sandbox/dsh-tmp` —— 两者都在受控项目 `demo-shop` **之外**。
+
+**旁证（本机可复核的四条）**：
+
+1. `dsh-home/sessions/--C-Users-ZNM-…-demo-shop--/` 下正好两个 `session.v3.jsonl.zstd`
+   （09:07:43 / 09:07:51），目录名就是原件里那两个 session id；
+2. `dsh-tmp/dsh-acl-locks/*.lock` 7 个（09:07:35–09:07:49）与 `dsh-tmp/dsh-spill-AVwp50`（09:07:44）：
+   dsh 的 Windows ACL 沙箱与 spill-local **真的在这个临时根上工作过**；
+3. `demo-shop/.policy/audit.enforcement-ledger.jsonl` 5 条（01:07:49.292Z–01:07:50.365Z）：
+   `claim → grant → pre_decision → pre_state → execution`，`action_id` 是 allow 场景的 event_id；
+   **block 场景一条台账都没有**（它停在策略判定，没进受控执行链）；
+4. `dsh-home`（09:07:34）与 `dsh-tmp`（09:07:51）的 mtime 与原件时间戳同刻。
+
+**12:15 那次 skipped 的出处与性质（不作为读数）**：`.tmp/step5/ci-local-full.log` 的
+`=== Real dsh sandbox loop (skipped without dsh) ===`（该次门禁的第 10 个执行步骤；日志第 162–208 行）：
+`result=skipped`、`environment_skipped=true`、`dsh_startup_denied_kind=profile_write_denied`、
+被拒路径 `C:\Users\ZNM\.dsh\profiles\headless\cordis.yml`、`syscall=open`、根证据 `env:DSH_HOME`。
+**它是在 DSH 沙箱里跑的**（门禁跑在受限宿主上，沙箱不允许写 `$DSH_HOME`），所以它既不是
+"这台机器的端到端读数"，也不是"端到端跑不成"的证据。落到 12:15 的依据：该次门禁 12:09:59.6 起跑、
+12:18:09 结束（合计 8m 09.4s），它前面 9 个执行步骤的耗时合计约 5m 23.5s。
+
+**同一路径上的第二次跳过（登记，归属未核实）**：`.tmp/artifacts/phase-2-sandbox-result.json` 现在是
+`timestamp=2026-09-30T08:43:06.919440Z` 的 **skipped**（同一个 `profile_write_denied`，但根证据只有
+平台默认 `default:$HOME/.dsh`，**没有** `env:DSH_HOME`），与 16:42–16:46 的一批门禁产物同批。
+**它是哪条命令、哪个会话触发的，本轮未核实** —— 登记在这里，免得被读成端到端读数。
+
+**更正后依然成立的判据**：`reading_context` 仍要能区分"真跑过"与"环境跳过"，而且现在多了一条已知形态：
+**pass 与 skip 的差别可以只来自环境**（真机 vs 受限沙箱）。读数必须写明"哪台宿主、哪一个环境"，
+否则同一棵树上的两次运行会被读成同一件事。
+
+**未核实（照实写）**：原件里 allow 场景的 `file_sha256_after`（`2972725e…b558`）**在当前磁盘上复核不了**：
+`demo-shop` 已被后续运行按 `build_project()` 重置（当前 `src/shop/order_controller.py` 的 sha256 =
+`53b53a25…ed66`，正好等于原件里两个场景的 before），`demo-shop/.policy/audit.jsonl` 与 `captures/`
+也被那几次重建清掉了。因此上面 block / allow 两条结论**只有原件本身可证**；旁证 1–4 证明的是
+"那两个 session 真跑过、真的走过受控执行链"，不等于"那两次改动的最终哈希"。
 
 ---
 
@@ -182,7 +238,7 @@ $env:PYTHONPATH='src'
 # 3 遗留那条红（应退出 1、共 1 处）
 .venv\Scripts\python.exe tools\check_arch_style.py
 
-# 4 dsh 端到端（受限宿主上应为 skipped、退出 0）
+# 4 dsh 端到端（**受限宿主上**应为 skipped、退出 0；真机读数与更正见 §3.1）
 .venv\Scripts\python.exe tools\dsh_sandbox_loop.py
 
 # 5 门禁（本轮读数：退出码 0 / 8m 09.4s）
@@ -205,3 +261,6 @@ python tools/ci_local.py --full --python .venv/Scripts/python.exe
 | 本文件 | `…/15-control-plane-design/19-round17-registrations.md` | 第 17 轮的读数、登记与遗留 |
 | | `…/15-control-plane-design/17-step4-5-scope-assessment.md` | §8 补记：`reading_context` 两项登记的回指 |
 | | `…/15-control-plane-design/README.md` | 索引新增本文件 |
+| 更正（2026-09-30，本文件的第四笔；**只动文档**） | 本文件 | §3 第 2 行的端到端读数更正为「真机 pass / 受限沙箱内 skipped」，新增 §3.1（原件 sha256 + 四条旁证 + 12:15 的出处 + 未核实）；§7 复现命令的注释同步 |
+| | `…/15-control-plane-design/17-step4-5-scope-assessment.md` | §8 第 2 行的回指同步更正 |
+| | `…/15-control-plane-design/README.md` | 索引里 19 号的摘要同步更正 |
