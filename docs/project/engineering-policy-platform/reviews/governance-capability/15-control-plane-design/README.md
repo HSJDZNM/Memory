@@ -18,7 +18,7 @@
 一次 `python tools/cleanup.py` 之后原件即消失——那样这份长期文档的「现在是这样」就无法复核。
 本归档把**最小证据**（结论、计数、可重算的入口）落进已跟踪目录；**不复制原件全文**。
 
-## 文件清单（01–08 是本轮原归档；09–11 是台阶 −1/1/2 的补记；12–17 是台阶 3a/3b/小修/3c 与 §3.6 评估的补记；18 是 2026-09-30 裁定的执行；19 是第 17 轮的登记、遗留与门禁读数；20 是第 18 轮的端到端更正、`--isolated-home` 与豁免读数）
+## 文件清单（01–08 是本轮原归档；09–11 是台阶 −1/1/2 的补记；12–17 是台阶 3a/3b/小修/3c 与 §3.6 评估的补记；18 是 2026-09-30 裁定的执行；19 是第 17 轮的登记、遗留与门禁读数；20 是第 18 轮的端到端更正、`--isolated-home` 与豁免读数；21 是台阶 4 `reading_context` 的设计稿（**只写文档、不落码**））
 
 | 文件 | 来源（sha256[:16]） | 支撑什么 |
 | --- | --- | --- |
@@ -41,6 +41,7 @@
 | [18-round16-rulings-execution.md](18-round16-rulings-execution.md) | `.tmp/step4/` 的 R-d 读数与两条只报告步骤的实跑读数（该文件 §3 逐个 sha256） | **2026-09-30 裁定的执行（第 16 轮）**：合并 feat 的读数（**Already up to date**，feat 已是祖先）、`tool.pytest` 第 55 条核查（**不升**，证据段能读到 `validators.yaml` 摘要；Hook 审计摘要的缺口登记）、`output_schema_version = "1.1"`（1.0 追认）、义务门禁接进 `ci_local` 的**只报告**路径、台阶 4 的**五条写声明** + 只报告到期检查、R-d 差集 **0 条**、预算对账与未核实清单 |
 | [19-round17-registrations.md](19-round17-registrations.md) | `.tmp/step5/` 的 R-d 读数与两次 `--full` 门禁日志（该文件 §2/§5 给出处） | **第 17 轮**：合并 `origin/perf/ci-local` 的**前置不成立**（本仓库没有这个 ref，五条读数）、义务门禁"账本不存在 = 不适用"（`REPORT_SCHEMA_VERSION` 1.0→1.1）与 R-d 差集 **0 条**、台阶 4 `reading_context` **两项登记**（Hook 侧 `tool.pytest` 追溯缺口 → `AUDIT_SCHEMA_VERSION` 1.2→1.3；JS 侧真实 dsh 端到端 = **真机 pass / 受限沙箱内 skipped**，2026-09-30 更正见 §3.1）、`check_arch_style` 既有红进**遗留**、`--full` 门禁 **退出码 0 / 8m 09.4s / 33 步** |
 | [20-round18-e2e-solidification.md](20-round18-e2e-solidification.md) | `.tmp/step6/` 的门禁日志（sha256 `bb270eb8…1e64`）、R-d 读数与 `.tmp/e2e/before-gate/` 的对比清单（逐个写在该文件 §3.3 / §4） | **第 18 轮**：端到端读数更正（真机 pass / 受限沙箱 skipped，原件 sha256 `df2646db…ed30`）、`--isolated-home` 与「ACL 临时根落在工作区内」这条有名字的配置失败（`09322b0`）、豁免到期检查的 `HITS:` 机器行（`35a4ddd`，R-d 差集 **0 条**）、`--full` 门禁 **退出码 0 / 13m 29.4s / 33 步**、**交给 CI 会话的 4 项清单** |
+| [21-step4-reading-context-design.md](21-step4-reading-context-design.md) | 本机只读读数（`render_json` / `_audit` / `_summary` 的键集合、`wiring.py` 与各处版本常量、`git show --numstat` 的已花行数）+ 本轮的两台探针（`.tmp/step1/probe_report_only.py`、`.tmp/step2/probe_phase_evidence_keys.py`） | **台阶 4 · `reading_context` 设计稿（只写文档）**：六类要带它的读数（`policy.check --json` / Hook 审计 / 只报告两处 / 端到端结果 / 覆盖账 / 阶段证据）逐项给出**要加的键 · 版本轴 · 消费方**，统一形状与三态纪律，`AUDIT_SCHEMA_VERSION` 1.2→1.3（`tool.pytest` 追溯缺口）归到这里；R-d 的**预注册形状**（四把尺子 × 预期差集 × 硬约束）与预算估计（台阶 4 硬上限 src 3.25k / tests 3.5k，已花 0 / 598） |
 | [17-step4-5-scope-assessment.md](17-step4-5-scope-assessment.md) | 本次实跑 `adapters.cli wiring --json`、`ci_local.py --list`、两份测试路径声明与各数据文件（逐条来源写在表里） | **§3.6 前置评估**：台阶 4–5 的两份**整数清单**（已声明不治理 **2** 条；在范围内 **4 组 + 5 组**）与逐条"建机制 / 写声明 / 只报告"结论（台阶 4：5/5/0；台阶 5：4/2/1）；D-2 冻结下**只交清单** |
 | [11-step2-origin-closure.md](11-step2-origin-closure.md) | `provenance/origin.py` `43d301bd547f1428`、`origin_runtime.py` `4bd867cf875cbb81`、`hooks.py` `75a0f52e7ac2bf83`、插件 `26ABA823F6DD9949`、契约用例 `1AC992EFDBE11336`；R-d 读数在 `.tmp/rd-diff/` | **台阶 2（归因闭集与核验前置，判据 R-g）**：五族闭集 + 每族必备字段 + 「写不出 fix 的 origin 不许存在」；核验前置与「证伪自己人落 unknown_origin」；配置族（Python）与 spawn 输入族（JS）的读数；R-d 字段级差集（11 个 fixture：0 条判定变化、3 条新增 `origin`、4 条墙钟漂移） |
 
