@@ -394,7 +394,8 @@ def test_auto_falls_back_to_reference_and_never_mislabels_it(tmp_root, monkeypat
 def test_orchestration_protocol_versions_are_its_own() -> None:
     """编排状态协议 / 传输协议各有自己的版本，而且绝不从阶段号推导。"""
 
-    assert STATE_SCHEMA_VERSION == "1.0"
+    # 台阶 3a（H1/H10）：状态载荷增了受控 reason 与证据通道 → 编排状态协议按自己的规则递增。
+    assert STATE_SCHEMA_VERSION == "1.1"
     assert SUPPORTED_STATE_SCHEMA_VERSIONS == frozenset({STATE_SCHEMA_VERSION})
     assert CHECKPOINT_SCHEMA_VERSION == "1.0"
     assert API_SCHEMA_VERSION == "1.0"
@@ -403,7 +404,7 @@ def test_orchestration_protocol_versions_are_its_own() -> None:
 
     source = (REPO_ROOT / "src" / "orchestration" / "models.py").read_text(encoding="utf-8")
     line = next(item for item in source.splitlines() if item.startswith("STATE_SCHEMA_VERSION"))
-    assert '"1.0"' in line
+    assert '"1.1"' in line
     assert "phase" not in line.lower()
     assert "8" not in line.split("=", 1)[1]
 

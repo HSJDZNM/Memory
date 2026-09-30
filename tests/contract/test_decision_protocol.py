@@ -208,7 +208,7 @@ def test_non_mapping_payload_is_refused() -> None:
 def test_protocol_version_is_reported_in_the_payload() -> None:
     payload = read_snapshot("allow")
 
-    assert payload["policy_version"] == "phase-1"
+    assert payload["policy_version"] == "decision-1.1"
     assert payload["request_id"] == "req-snapshot"
     assert payload["trace_id"] == "trace-snapshot"
     assert payload["rule_set_hash"] == SNAPSHOT_RULES.identity
@@ -221,7 +221,7 @@ def test_policy_version_is_the_protocol_generation_not_the_platform_phase() -> N
     载荷说 phase-1。把它钉在这里，谁再改动都要同时改快照与文档。
     """
 
-    assert POLICY_VERSION == "phase-1"  # 显式字面量：改动必须是有意的
+    assert POLICY_VERSION == "decision-1.1"  # 显式字面量：改动必须是有意的
     assert ValidationResult.model_fields["policy_version"].default == POLICY_VERSION
 
     generations = {

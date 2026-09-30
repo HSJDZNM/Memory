@@ -171,9 +171,9 @@ def pad(text, width, align="left"):
 #
 # | 版本 | 位置 | 值 | 变了意味着什么 |
 # | --- | --- | --- | --- |
-# | 传输协议 | policy_api.models.API_SCHEMA_VERSION | 1.0 | 线上请求/响应字段变了（删字段、改语义）= 新 API 版本，且必须显式更新 api/openapi.json 快照 |
-# | 决策协议 | policy.models.SCHEMA_VERSION | 1.0 | 决策载荷（PolicyDecision）变了 |
-# | 协议世代名 | policy.models.POLICY_VERSION | phase-1 | 与决策协议同进同退，**不跟随平台阶段** |
+# | 传输协议 | policy_api.models.API_SCHEMA_VERSION | 1.0 | 线上请求/响应字段变了（删字段、**加键**或改语义）= 新 API 版本，且必须显式更新 api/openapi.json 快照 |
+# | 决策协议 | policy.models.SCHEMA_VERSION | 1.1 | 决策载荷（PolicyDecision）变了；1.0 → 1.1 是台阶 3b 把 pending 移出 violations、加 pending_findings 通道 |
+# | 协议世代名 | policy.models.POLICY_VERSION | decision-1.1 | 与决策协议同进同退，**不跟随平台阶段**；名字里带的是协议版本，不是平台阶段 |
 #
 # policy_api 只从核心**取值**（DECISION_PAYLOAD_SCHEMA_VERSION = SCHEMA_VERSION、
 # POLICY_GENERATION = POLICY_VERSION），不许自己算一个——"证据说 phase-5、载荷说 phase-1"
@@ -239,7 +239,8 @@ print('-' * 72)
 for label, text in dto_reports.items():
     print(pad(label, 18) + text)
 print()
-print('小结：传输协议 1.0 与决策协议 1.0 / phase-1 各自演进；缺版本、未知版本、未知字段'
+print('小结：传输协议 ' + api_schema_version + ' 与决策协议 '
+      + decision_versions[0] + ' / ' + decision_versions[1] + ' 各自演进；缺版本、未知版本、未知字段'
       '都不得静默忽略，客户端也无法自带证据。')
 
 # ----------------------------------------------------------------------------
@@ -800,8 +801,9 @@ print('小结：超时 504、忙碌 503、依赖不可用 503、审计不可写 
 # ## 10. 边界与不做的事
 #
 # - **不做第二份业务逻辑**：API 只做"协议 -> 领域模型 -> 协议"，判定仍然只有
-#   policy.engine.evaluate 一条路径；决策协议没有新增字段
-#   （仍是 schema_version 1.0 / policy_version phase-1）；
+#   policy.engine.evaluate 一条路径；它**不自己算版本**——传输协议是 1.0，
+#   决策协议与世代名从核心取值（台阶 3b 起是 schema_version 1.1 / policy_version
+#   decision-1.1）；
 # - **不做客户端自带证据 / 自带决策**：evaluate 的请求体里没有 evidence 字段；
 #   retrieve 的 decision_ref 只能指向本服务算过的 request_id，且规则集世代必须一致；
 # - **指标端点不属于任何租户**：它是服务级事实，只要求认证 + 运维角色

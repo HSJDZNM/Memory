@@ -38,6 +38,25 @@ PR 变红"的形态会重新变成可能——代价是推送前少等约 2.5 �
 Python 的 tempfile 会回退到 os.getcwd()，0 字节的 tmpXXXXXXXX 会落进仓库根、把 git status
 弄脏（见 temp_root() 的说明）。
 
+**本地「只报告」步骤**（REPORT_ONLY_STEPS）：这些步骤**不在 workflow 里**，只在本机门禁执行。
+它们是 L5 上线闸的读数（方案 §4 台阶 5：新检查先以"报告 + 非零退出"跑满一个轮次，升格判据是
+"跑过 N≥1 次且 0 命中"），因此**永远不计入门禁失败**：非零退出只把命中读数
+（`--json` 的 `hits`，或输出里的 `HITS:` 行）打印出来，退出码不受影响。
+每条豁免都必须写 `reason` 与 `expires_at`：没有到期日的豁免是一张永不过期的空白支票
+（方案 §5.2 R-b 的同一纪律）；**到期检查只报告**——到期前 14 天提醒、过期标红（`RED`），
+两者都不改退出码（读数由 `tools/exemption_expiry.py` 给出，规则只有那一份实现）。
+
+**门禁退出码**（完整表在 `tools/README.md`，这里只记本脚本自己返回什么，免得两处各说一套）：
+
+| 码 | 本脚本的含义 |
+| --- | --- |
+| `0` | 全部步骤通过（**只报告步骤的非零退出不算失败**） |
+| `1` | 有 workflow 步骤失败 / 拿不到排他锁 / workflow 里有未登记的步骤 |
+| `2` | argparse 的用法错误 |
+
+`3`（封条失效：`external_write` / `unprovable`）属于 `python -m provenance.cli seal` 的
+封条语义，**本脚本不返回 3**——两套语义不要混读（方案 §5.3）。
+
 只用标准库 + PyYAML（已在锁定依赖里）。bash-only 的步骤（heredoc、set +e、grep -q、
 cat > /tmp）在 Windows 上无法直接执行，脚本会**显式跳过并打印原因**，不假装跑过。
 workflow 里新增了步骤却没有登记进分组时，脚本**失败关闭**（退出码 1）而不是悄悄少跑——
@@ -53,7 +72,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import IO, Any, Sequence
+from typing import IO, Any, NamedTuple, Optional, Sequence
 
 import yaml
 
@@ -80,6 +99,64 @@ NOT_RUN_ON_HOST = {
     "Install pinned dependencies": "装依赖：本机用已有 .venv，不重复装环境",
     "Install external linter (ruff)": "装 ruff：本机用 validation/ruff.toml 指定的已有工具",
 }
+
+
+class ReportOnlyStep(NamedTuple):
+    """一条本机「只报告」步骤：**登记在这里就等于登记了一条带到期日的豁免**。
+
+    字段刻意都是必填：没有 `reason` 的豁免读不出"为什么允许它不阻断"，
+    没有 `expires_at` 的豁免是永不过期的空白支票（方案 §5.2 R-b）。
+    `args` 是传给当前解释器（PYTHON / --python 覆盖后的那个）的参数表——
+    这样"用哪个解释器跑"与 workflow 步骤是同一个口径，测试也能换成自己的解释器。
+
+    刻意用 `NamedTuple` 而不是 `@dataclass`：`@dataclass` 在装饰期要求模块已登记进
+    `sys.modules`，而回归测试与 `tools/exemption_expiry.py` 都是按文件路径
+    `spec_from_file_location` + `exec_module` 加载本模块的（不登记 `sys.modules`），
+    用 `@dataclass` 会让这些加载方直接报 `AttributeError`（实测）。
+    """
+
+    name: str
+    args: tuple[str, ...]
+    reason: str
+    expires_at: str
+    adopted: str
+    reads: str
+
+
+# 本机「只报告」步骤（**不在 workflow 里**：它们在 CI 上没有账本 / 没有宿主状态可读，
+# 或者本来就只是给本机评审看的读数）。非零退出**不计入门禁失败**，只打印命中读数。
+#
+# 升格（变成阻断步）需要评审按 L5 判据认定"跑过 N≥1 次且 0 命中"，并且 0 命中必须来自
+# 至少一次真实读数；在升格之前，到期日就是这条豁免的复核点（tools/exemption_expiry.py）。
+REPORT_ONLY_STEPS: tuple[ReportOnlyStep, ...] = (
+    ReportOnlyStep(
+        name="Obligations gate (report only)",
+        args=(
+            "tools/obligations_gate.py",
+            "--ledger",
+            ".tmp/obligations/repo.jsonl",
+            "--json",
+        ),
+        reason=(
+            "台阶 3c 的义务账门禁：判罚与读数在这一步，L5 试用期内非零退出只报告"
+            "（方案 §3.3 / AGENTS 第 56 条）；账本在 .tmp 下，CI 上没有可读的账本"
+        ),
+        expires_at="2026-10-31",
+        adopted="2026-09-30",
+        reads="--json 的 hits / ledger_count / not_applicable_ledgers 与每个账本的 obligations_open",
+    ),
+    ReportOnlyStep(
+        name="Exemption expiry report (report only)",
+        args=("tools/exemption_expiry.py",),
+        reason=(
+            "豁免到期检查：这个文件自己的豁免表 + adapters/wiring-scope.yaml 的声明，"
+            "到期前 14 天提醒、过期标红（方案 §4 台阶 4 / R-b：放宽必须有到期日）"
+        ),
+        expires_at="2026-12-31",
+        adopted="2026-09-30",
+        reads="--json 的 due / expired 两份清单（只报告，不改退出码）",
+    ),
+)
 
 # 按改动范围分组的步骤名（前缀匹配）。名字取自 workflow 里的 name:，改 workflow 时要同步。
 ALWAYS_STEPS = (
@@ -625,6 +702,122 @@ def report_timings(
     return output
 
 
+# --------------------------------------------------------------------------- 只报告步骤
+#
+# 这几步**不进 failures**：L5 试用期内它们的非零退出只是读数（命中数），不是门禁结论。
+# 它们不会因为"输出读不出来"而阻断——读不出来就照实说"读不出命中数"，
+# 读者可以自己重跑那一条命令（命令原文打在标题行上）。
+
+
+def json_objects(output: str) -> list[dict]:
+    """把一段输出里**完整的 JSON 对象**切出来（允许它跨多行）。
+
+    为什么不能逐行 `json.loads`：`obligations_gate.py --json` 打的是
+    `json.dumps(..., indent=2)` 的**多行**载荷，第一行只有一个 `{` —— 逐行解析**永远**
+    读不到它，读数于是退化成"读不出命中数"（2026-09-30 第 17 轮门禁运行里实测就是这一行）。
+    这里按花括号配平把对象切出来整体解析；解析不了就跳过 —— 读不到不许被写成结论。
+    """
+
+    found: list[dict] = []
+    lines = output.splitlines()
+    index = 0
+    while index < len(lines):
+        if not lines[index].strip().startswith("{"):
+            index += 1
+            continue
+        depth = 0
+        chunk: list[str] = []
+        for line in lines[index:]:
+            chunk.append(line)
+            depth += line.count("{") - line.count("}")
+            if depth <= 0:
+                break
+        try:
+            payload = json.loads("\n".join(chunk))
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            found.append(payload)
+        index += max(1, len(chunk))
+    return found
+
+
+def report_only_hits(step: ReportOnlyStep, output: str) -> str:
+    """取"命中数"：结构化优先（`--json` 的 `hits` / `ledger_count`），其次 `HITS:` 文本行。
+
+    为什么允许读文本行：`obligations_gate.py` 的文本读数里 `HITS: n / m` 是**稳定的机器行**
+    （它由同一份 `hits` 计算得出，不是"解析 reasons 文本"那类口径）；给 `--json` 的步骤
+    仍然优先走结构化字段。
+    """
+
+    if "--json" in step.args:
+        for payload in json_objects(output):
+            if "hits" in payload:
+                # 账本不存在 = 不适用：0 命中**不是**一次真实读数，读数里必须看得出这一档，
+                # 否则"什么都没读到"会被读成"跑过了、0 命中"（升格判据就靠这句话）。
+                not_applicable = payload.get("not_applicable_ledgers")
+                suffix = (
+                    "（不适用 %s：没有账本可读，不算一次真实读数）" % not_applicable
+                    if not_applicable
+                    else ""
+                )
+                return "hits=%s / %s 个账本%s" % (
+                    payload.get("hits"),
+                    payload.get("ledger_count"),
+                    suffix,
+                )
+    for line in output.splitlines():
+        if line.strip().startswith("HITS:"):
+            return line.strip()
+    return "读不出命中数（重跑上面那条命令看原始输出）"
+
+
+def run_report_only_steps(
+    steps: Sequence[ReportOnlyStep], *, hook: bool
+) -> list[tuple[str, str, float, int]]:
+    """跑只报告步骤，返回耗时明细（与 workflow 步骤进同一张表）。
+
+    退出码**只被打印、不被判罚**：任何非零（含启动失败）都不进 failures。
+    `--hook` 模式下**什么都不打印**：只报告步骤的非零退出不改变门禁结论，
+    而钩子的行为契约是"成功时保持安静"——读数留给常规（非钩子）的门禁运行与 `--list`。
+    """
+
+    entries: list[tuple[str, str, float, int]] = []
+    environment = _step_environment()
+    for step in steps:
+        command = [PYTHON, *step.args]
+        display = " ".join(command)
+        if not hook:
+            print("\n=== %s（只报告） ===\n$ %s" % (step.name, display), flush=True)
+        started = time.perf_counter()
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(ROOT),
+                env=environment,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            returncode = completed.returncode
+            output = (completed.stdout or "") + (completed.stderr or "")
+        except OSError as error:
+            returncode = -1
+            output = "启动失败：" + str(error)
+        entries.append((step.name, display, time.perf_counter() - started, returncode))
+        if hook:
+            # 钩子的契约是"成功时保持安静"：只报告步骤不改结论，因此它红也不出声。
+            continue
+        verdict = "0 命中（退出码 0）" if returncode == 0 else "退出码 %s" % returncode
+        print(
+            "REPORT-ONLY: %s —— %s；读数 %s；豁免到期 %s（不计入门禁失败）"
+            % (step.name, verdict, report_only_hits(step, output), step.expires_at),
+            flush=True,
+        )
+    return entries
+
+
 def main(argv: list[str] | None = None) -> int:
     global PYTHON
 
@@ -681,6 +874,13 @@ def main(argv: list[str] | None = None) -> int:
             print("本机不执行（已登记豁免）：")
             for name, why in not_run:
                 print("  - %s：%s" % (name, why))
+        if REPORT_ONLY_STEPS:
+            print("本机只报告（不在 workflow 里；非零退出不计入失败，带到期日）：")
+            for step in REPORT_ONLY_STEPS:
+                print(
+                    "  - %s：%s（豁免到期 %s，登记于 %s；读数 %s）"
+                    % (step.name, step.reason, step.expires_at, step.adopted, step.reads)
+                )
         return 0
 
     # 从这里往后才真正执行步骤：先拿排他锁，拿不到就**一步都不跑**。
@@ -708,8 +908,8 @@ def main(argv: list[str] | None = None) -> int:
         plan, skipped, not_run = _plan_steps(args.full)
         if not args.hook:
             print(
-                "改动文件 %d 个；执行 %d 步（本机跳过 %d 步，登记豁免 %d 步）"
-                % (len(changed), len(plan), len(skipped), len(not_run))
+                "改动文件 %d 个；执行 %d 步（本机跳过 %d 步，登记豁免 %d 步，只报告 %d 步）"
+                % (len(changed), len(plan), len(skipped), len(not_run), len(REPORT_ONLY_STEPS))
             )
             # 推迟到 --full 的步骤单独点名：它们是被改动选中却没跑的，不能只藏在"跳过 N 步"里。
             for name, why in skipped:
@@ -750,6 +950,10 @@ def main(argv: list[str] | None = None) -> int:
                         return 1
                     break
 
+        # 只报告步骤在所有 workflow 步骤之后跑：它们的非零退出**不进 failures**，
+        # 因此顺序不影响通过 / 失败的判定，只影响读数出现的先后。
+        timings.extend(run_report_only_steps(REPORT_ONLY_STEPS, hook=args.hook))
+
         # 无论红绿都先把耗时摆出来：红了的时候“卡在哪一步”与“哪一步最贵”同样重要。
         report_timings(timings, changed=len(changed), hook=args.hook, write_json=args.timings)
 
@@ -759,7 +963,14 @@ def main(argv: list[str] | None = None) -> int:
                 print("  - " + item, file=sys.stderr)
             return 1
         if not args.hook:
-            print("\n本机检查全部通过（%d 步）" % len(plan))
+            print(
+                "\n本机检查全部通过（%d 步）" % len(plan)
+                + (
+                    "；只报告 %d 步（非零退出不计入失败）" % len(REPORT_ONLY_STEPS)
+                    if REPORT_ONLY_STEPS
+                    else ""
+                )
+            )
         return 0
     finally:
         lock.release()

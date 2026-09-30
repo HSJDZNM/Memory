@@ -793,6 +793,11 @@ def test_the_audit_reads_that_a_pending_write_was_allowed_while_tests_could_not_
 
     assert completed.returncode == EXIT_ALLOW, completed.stderr
     assert "ALLOWED WITH WARNINGS" in completed.stderr
+    # B1（台阶 3b）：pending 移出 violations 之后，给模型看的那一行必须仍然**点得出名字**——
+    # 否则它变成 `ALLOWED WITH WARNINGS write src/…: `（冒号后空无一物），
+    # 而"被警告了、不知道警告什么"不会让上面那条子串断言变红。
+    assert "TESTING-900@1" in completed.stderr
+    assert "待实现" in completed.stderr
     record = last_decision(audit)
     assert record["decision"] == "allow_with_warnings"
     assert record["executed"] is True  # 这次写入真的放行了
@@ -812,10 +817,14 @@ def test_the_audit_reads_that_a_pending_write_was_allowed_while_tests_could_not_
     # 没查成的不能记成查过了；查成的照样记账
     assert "failing_tests" not in summary["served_checkers"]
     assert "missing_tests" in summary["served_checkers"]
-    # P1：warning 命中必须能从账本读出来
-    assert [item["rule_id"] for item in record["violations"]] == ["TESTING-900@1"]
-    assert record["violations_by_severity"] == {"warning": 1}
-    assert "待实现" in record["violations"][0]["message"]
+    # P1 + 台阶 3b：warning 命中必须能从账本读出来，而且要读得出它走的是**哪一个通道**。
+    # 两个键一起变空/非空，"判定了、有一条待实现"与"判定了、没违规"才分得开。
+    assert record["violations"] == []
+    assert record["violations_by_severity"] == {}
+    assert [item["rule_id"] for item in record["pending_findings"]] == ["TESTING-900@1"]
+    assert record["pending_findings"][0]["severity"] == "warning"
+    assert "待实现" in record["pending_findings"][0]["message"]
+    assert set(record["pending_findings"][0]["evidence"]) >= {"kind", "subject", "value"}
     assert "TESTING-900@1" in record["matched_rules"]
     assert "TESTING-901@1" in record["matched_rules"]
 
@@ -850,6 +859,8 @@ def test_the_same_test_stops_being_pending_once_the_name_lands(tmp_root: Path) -
     assert summary["pending_implementation"] == []
     assert "failing_tests" in summary["served_checkers"]
     assert record["violations"] == []
+    # 名字落地之后两个通道**都**是空的：不是"violations 空了所以没事了"。
+    assert record["pending_findings"] == []
 
 
 def test_a_third_party_import_failure_still_blocks_at_the_production_entry(

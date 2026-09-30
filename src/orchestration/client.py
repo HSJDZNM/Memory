@@ -24,7 +24,17 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Tuple, runtime_checkable
+from typing import (
+    Any,
+    Callable,
+    FrozenSet,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+    runtime_checkable,
+)
 
 from policy.models import Decision, ValidationResult, parse_decision
 
@@ -35,15 +45,26 @@ from .errors import (
     TraceError,
 )
 from .models import (
+    REASON_APPROVAL_REQUIRED,
+    REASON_CODES,
+    REASON_EVIDENCE_UNAVAILABLE,
+    REASON_POLICY_VIOLATION,
     ContextRef,
     FailureCode,
     StageStatus,
     ValidationSummary,
     ViolationRef,
+    decision_reason,
 )
 
 __all__ = [
     "API_SCHEMA_VERSION",
+    # H1 的受控 reason 与派生函数：定义在 `models`，这里再导出，既有调用点不用改。
+    "REASON_APPROVAL_REQUIRED",
+    "REASON_CODES",
+    "REASON_EVIDENCE_UNAVAILABLE",
+    "REASON_POLICY_VIOLATION",
+    "decision_reason",
     "EVALUATE_PATH",
     "RETRIEVE_PATH",
     "VALIDATE_PATH",
@@ -232,6 +253,9 @@ class DecisionOutcome:
             rule_set_hash=self.rule_set_hash,
             required_action=self.required_action,
             violations=self.violations,
+            reason_code=decision_reason(
+                self.decision, required_action=self.required_action, violations=self.violations
+            ),
         )
 
 
@@ -285,6 +309,9 @@ class ValidationOutcome:
             required_action=self.required_action,
             validators=self.validators,
             violations=self.violations,
+            reason_code=decision_reason(
+                self.decision, required_action=self.required_action, violations=self.violations
+            ),
         )
 
 
@@ -317,7 +344,6 @@ class PolicyClient(Protocol):
 
 # --------------------------------------------------------------------- 载荷解析
 
-
 def _violations_from(payload: Mapping[str, Any]) -> Tuple[ViolationRef, ...]:
     items: list[ViolationRef] = []
     raw = payload.get("violations")
@@ -329,12 +355,20 @@ def _violations_from(payload: Mapping[str, Any]) -> Tuple[ViolationRef, ...]:
         evidence = item.get("evidence")
         file = ""
         line = None
+        kind = ""
+        value = ""
         if isinstance(evidence, Mapping):
             candidate = evidence.get("file")
             if isinstance(candidate, str) and _is_relative(candidate):
                 file = candidate
             if isinstance(evidence.get("line"), int):
                 line = int(evidence["line"])
+            # H10：kind / value 是"这条 violation 属于哪一类"的唯一结构化依据。detail
+            # 不搬（它是自由文本，且可能很长）；repair 只按受控取值分流。
+            if isinstance(evidence.get("kind"), str):
+                kind = str(evidence["kind"])[:64]
+            if isinstance(evidence.get("value"), str):
+                value = str(evidence["value"])[:400]
         items.append(
             ViolationRef(
                 rule_id=str(item.get("rule_id", "unknown")),
@@ -343,6 +377,8 @@ def _violations_from(payload: Mapping[str, Any]) -> Tuple[ViolationRef, ...]:
                 file=file,
                 line=line,
                 message=str(item.get("message", ""))[:400],
+                evidence_kind=kind,
+                evidence_value=value,
             )
         )
     return tuple(items)

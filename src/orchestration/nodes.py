@@ -23,6 +23,9 @@ from typing import Any, Callable, Mapping, Optional, Protocol, Tuple, runtime_ch
 
 from .approvals import ApprovalGate
 from .client import (
+    REASON_APPROVAL_REQUIRED,
+    REASON_EVIDENCE_UNAVAILABLE,
+    REASON_POLICY_VIOLATION,
     DecisionOutcome,
     EvaluateCall,
     PolicyClient,
@@ -309,6 +312,32 @@ def _unsettled(state: GraphState, node: NodeId, *, key: str = "") -> NodeOutcome
     return NodeOutcome(state=unknown, label="needs_human", detail="副作用状态未知")
 
 
+def _stop_unrepairable(
+    state: GraphState, node: NodeId, reason: str, summary: ValidationSummary
+) -> NodeOutcome:
+    """「平台没能查」不是代码缺陷：停止并交给人/记 block，**不产生任何 Change**（H1）。"""
+
+    detail = (
+        f"最近的 block 属于「平台没能查」这一类（reason={reason}）："
+        f"没有可修的 violation，改文件改不掉它；已取证情况见 validators={list(summary.validators)}"
+    )
+    stopped = state.replace(
+        **_failure_updates(FailureCode.EVIDENCE_UNAVAILABLE, node, detail),
+        notes=state.notes + (f"{node.value} 停在不可修复的 block：{reason}",),
+    )
+    stopped = _record_run(
+        stopped,
+        node,
+        label="blocked",
+        status=StageStatus.BLOCKED,
+        key=f"{state.task_id}:{node.value}:{reason}",
+        outcome={"reason_code": reason},
+        detail=detail,
+        failure=FailureCode.EVIDENCE_UNAVAILABLE,
+    )
+    return NodeOutcome(state=stopped, label="blocked", detail=detail)
+
+
 def _trace(
     state: GraphState, node: NodeId, outcome: DecisionOutcome, *, status: StageStatus
 ) -> GraphState:
@@ -453,15 +482,63 @@ def implementation(state: GraphState, context: NodeContext) -> NodeOutcome:
     return _apply_change(state, context, change, node=NodeId.IMPLEMENTATION)
 
 
+# H1：受控 reason → 消费方的动作。取值来自 `client.REASON_CODES`（派生，不是新协议）。
+#
+# 这张表是"什么情况下仍然必须拒绝"的落点：说不出理由的 block 仍然是契约错误，
+# 未知取值一律当"说不出来"——失败关闭不许被这次改动打开。
+_REPAIRABLE_REASONS = frozenset({REASON_POLICY_VIOLATION})
+_UNREPAIRABLE_REASONS = frozenset(
+    {REASON_EVIDENCE_UNAVAILABLE}
+)
+
+
 def repair(state: GraphState, context: NodeContext) -> NodeOutcome:
-    """只基于结构化 violation 规划修复：没有 violation 就拒绝"凭感觉修"。"""
+    """只基于结构化 violation 规划修复：没有 violation 就拒绝"凭感觉修"。
+
+    H1 补上的那一半：**block + 空 violations 是合法形态**（审批门禁），把它一律读成
+    "没有依据"会把"需要人批准"翻译成"编排自己坏了"（终态 FAILED）。所以先读受控 reason：
+
+    - `approval_required`：拿它去改文件等于绕过授权 → 停止、交给人（NEEDS_HUMAN）；
+    - `evidence_unavailable`（"平台没能查"）：**带不带 violation 都**不改文件 → 停止（BLOCKED）；
+    - `policy_violation`：照旧按 violations 规划一次受治理的改动；
+    - `None`（含空 violations 却说不出理由）或未知取值：**照旧抛契约错误**。
+    """
 
     # 取**最近一次**失败：验证失败时读验证结果，测试失败时读测试结果。
     # 早先的写法是 `state.validation or state.test_validation`，而测试只在验证通过后才跑，
     # 于是"测试失败 → 修复"这条边永远拿到一份空的 violations，必然抛契约错误——
     # 一条写在图里的分支成了死代码。
     summary = _latest_failure(state)
-    if summary is None or not summary.violations:
+    if summary is None:
+        raise NodeContractError(
+            "修复节点没有结构化 violation 可用：拒绝在没有依据的情况下修改文件",
+            node=NodeId.REPAIR,
+        )
+    reason = summary.reason
+    # 「平台没能查」类与审批门禁都要在**空 violations 之前**判掉：前者可能带着 violation
+    # 进场（uncovered_checker / blocker 在判定侧就长这样），拿它去规划改动等于用"改代码"
+    # 回应"平台没查"——R3 要的正是"不产生任何 Change"。
+    if reason in _UNREPAIRABLE_REASONS:
+        return _stop_unrepairable(state, NodeId.REPAIR, reason, summary)
+    if not summary.violations:
+        if reason == REASON_APPROVAL_REQUIRED:
+            # 审批不是"发现"：没有可修的对象，也不许放行（AGENTS 第 38 条）。
+            detail = "本次 block 是审批门禁（required_action=approval）：没有可修的 violation，需要人来批准"
+            stopped = state.replace(
+                **_failure_updates(FailureCode.APPROVAL_MISSING, NodeId.REPAIR, detail),
+                notes=state.notes + (f"{NodeId.REPAIR.value} 停在审批门禁：交给人",),
+            )
+            stopped = _record_run(
+                stopped,
+                NodeId.REPAIR,
+                label="needs_human",
+                status=StageStatus.NEEDS_HUMAN,
+                key=f"{state.task_id}:{NodeId.REPAIR.value}:approval_required",
+                outcome={"reason_code": reason},
+                detail=detail,
+                failure=FailureCode.APPROVAL_MISSING,
+            )
+            return NodeOutcome(state=stopped, label="needs_human", detail=detail)
         raise NodeContractError(
             "修复节点没有结构化 violation 可用：拒绝在没有依据的情况下修改文件",
             node=NodeId.REPAIR,

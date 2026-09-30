@@ -15,7 +15,9 @@
   检索层 `src/retrieval/`、语料清单 `knowledge/corpus.yaml`、
   受控执行层 `src/enforcement/`、工具注册表 `registry/`、
   测试 `tests/{unit,contract,integration,security}` 与 CI `.github/workflows/phase-8.yml`；
-- Phase 1 的决策协议为 `SCHEMA_VERSION = "1.0"`，快照在 `tests/fixtures/decisions/`；
+- 决策协议为 `SCHEMA_VERSION = "1.1"`（台阶 3b 起；**1.0 的载荷一律拒收**），
+  世代名 `POLICY_VERSION = "decision-1.1"`（世代名常量在 `src/policy/models.py`，只与
+  `schema_version` 同进同退、不跟随平台阶段），快照在 `tests/fixtures/decisions/`；
 - Phase 2 的 Hook 契约、脱敏事件 fixture 与失败关闭设计分别在 `src/adapters/dsh/README.md`、
   `tests/fixtures/agent_events/dsh/` 与 `docs/project/engineering-policy-platform/phases/phase-2-dsh-adapter.md` 的实施记录里；
   `tools/dsh_sandbox_loop.py` 在 dsh 缺失**或**沙箱禁止管道 stdio（Hook spawn EPERM）时按环境跳过
@@ -247,7 +249,8 @@
     （`python -m policy_api.cli self-check` 与契约测试都会查）。
 31. API 的 DTO 与领域模型分开，且两套版本各自演进：`API_SCHEMA_VERSION`（传输协议）与
     `policy.models.SCHEMA_VERSION` / `POLICY_VERSION`（决策协议与世代）**无关**；
-    后者只能从核心取值，`policy_api` 不许自己算一个；删字段或改语义 = 新 API 版本，
+    后者只能从核心取值，`policy_api` 不许自己算一个；删字段、**新增键**或改语义 = 新 API 版本
+    （统一规则见第 55 条——"只增不改"同样是一次协议变更），
     改完必须 `python -m policy_api.cli openapi --write` 显式更新契约快照（`--check` 是 CI 门禁）。
 32. API 的三条信任规则：**租户只来自令牌**（请求体里的 tenant 只是提示，越权即拒绝）、
     **客户端不能自带证据或决策**（证据只由服务端验证器流水线产出，检索的 `decision_ref`
@@ -380,9 +383,19 @@
     `ValidatorStatus.PENDING_IMPLEMENTATION`（中文「待实现」）这条**显式状态**：
     不产生 Blocker、`failing_tests` **不进** `served_checkers`（没查成的不能记成查过了），
     报告与审计里带上 `pending_implementation` 清单（测试模块 + 缺失目标 + 修复动作），
-    判定侧产出 **warning 级** violation，于是 decision 是 `allow_with_warnings`——
-    「先写测试、再写实现」因此不再被自己的平台拦死，而绕法（把测试先写成不测任何东西的占位）
-    也不再是唯一出路。**反例一条都不许放宽**：第三方包缺失、语法错误、conftest 出错、
+    判定侧**不**把它记成 violation，而是产出 **warning 级**的**独立发现**
+    （`ValidationResult.pending_findings`，审计记录里同名的键），
+    decision 仍是 `allow_with_warnings`——「先写测试、再写实现」因此不再被自己的平台拦死，
+    而绕法（把测试先写成不测任何东西的占位）也不再是唯一出路。
+    **为什么必须独立成通道**（2026-09-29 裁定 D-1(b)，台阶 3b 落地）：第 46 条把
+    `violations` 的定义钉死为"本次**真的报了违规**的规则"，而 pending 不是违规——
+    混在同一个键里就是同名两义（第 50 条）。移出之后 `violations` 一个条目都不多、
+    四种 decision 与改动前**逐个相等**（判据 J1(b)：`violations` 里没有 pending 条目），
+    pending 的可见性改由新通道承接：`pending_findings` 在决策载荷、审计记录与给模型看的
+    stderr 里都出现，**空通道是一个明确的空列表，不是一个缺失的键**。
+    `expected_decision` 的空判定因此要求"两个通道都空"，阻断判定**一字不动**且只读
+    `violations`（pending 的 severity 在**构造期**被强制为 warning，进不了阻断级）。
+    **反例一条都不许放宽**：第三方包缺失、语法错误、conftest 出错、
     断言失败、退出码不是收集失败形态、目标解析不出来——全部保持真违规（规则自己的 severity）
     或原来的失败关闭（crashed/unavailable critical）。这条路**不证明测试最终会通过**：
     它只说明这次的树还在构建中，测试是否通过由后续动作的取证与 PostToolUse 事后核对重新算。
@@ -409,6 +422,66 @@
     （有门禁就必须有数据）。**维护纪律**：改 `adapters/<agent>/manifest.yaml` 之后先
     `python -m adapters.cli approve --reviewer <name>`，**再**在装着真实宿主的机器上跑
     `host-version --record`，把记录的 diff 送评审；版本不一致**不改变任何 allow/block**。
+55. **加键就是改协议**（台阶 3b 的统一规则，2026-09-29 裁定）：任何协议载荷**新增键**或
+    改语义，都必须按**该协议自己的**版本号显式递增，并把写死版本号的引用点（协议快照、
+    契约快照、断言、生成物、跨语言/跨包的副本）在**同一个提交**里改完。
+    **"只增不改、旧消费方还能读"不是跳过升版的理由**：加了键却不升版，会让同一个版本号
+    底下存在两种载荷形状——那是第 50 条"同名两义"在协议层的形态，比一次显式的拒收更难发现。
+    本仓库现有的版本轴（**列举，不是穷尽**——判据是"这个载荷的键集合或语义变没变"，
+    不是这张表在不在；各自独立演进，谁也不跟随平台阶段）：
+    - 判定与证据：`policy.models.SCHEMA_VERSION`（决策载荷）与世代名 `POLICY_VERSION`（只与它同进同退）；
+      `policy.evidence.EVIDENCE_SCHEMA_VERSION` / `validators.pipeline.PIPELINE_SCHEMA_VERSION`；
+      `policy.check.OUTPUT_SCHEMA_VERSION`（`--json` 的**外层包装**，不是决策载荷：1.0 是**追认**的
+      ——台阶 3c 之前的形状（那时 `check_volume` 还没有 `obligations_open` / `obligations_note`），
+      1.1 = 现形状；2026-09-30 裁定见 `src/policy/check.py` 的常量注释）；
+    - 多 Agent 协议：`adapters.models.CANONICAL_EVENT_SCHEMA_VERSION`（规范事件）与
+      `ADAPTER_MANIFEST_SCHEMA_VERSION`（manifest）；`adapters.base.ADAPTER_CONFIG_SCHEMA_VERSION`
+      （adapter 配置）与 `APPROVED_SCHEMA_VERSION`（已审核哈希）；`adapters.runtime.AGENT_RUNTIME_SCHEMA_VERSION`；
+      `adapters.wiring.WIRING_SCHEMA_VERSION`（接线报告）；`adapters.conformance.CONFORMANCE_SCHEMA_VERSION`
+      （一致性套件报告）；`adapters.host_version.HOST_VERSION_SCHEMA_VERSION`（报告载荷）与
+      `HOST_VERSION_RECORD_SCHEMA_VERSION`（提交进仓库的观测记录）；
+    - dsh Hook：`adapters.dsh.hooks.AUDIT_SCHEMA_VERSION`（判定记录）；`VERDICT_SCHEMA_VERSION`
+      （阻断判定行——**跨语言**：Python 与 `policy-hook.plugin.mjs` 必须同批改，插件按精确版本号读，
+      不认识就回到"未知状态"）；
+    - 受控执行与编排：`enforcement.models.ENFORCEMENT_SCHEMA_VERSION` / `REGISTRY_SCHEMA_VERSION`、
+      `enforcement.registry.APPROVED_SCHEMA_VERSION`、`enforcement.ledger.LEDGER_SCHEMA_VERSION`、
+      `enforcement.approvals.APPROVAL_SCHEMA_VERSION`、`orchestration.checkpoint.CHECKPOINT_SCHEMA_VERSION`；
+    - API 与服务：`policy_api.models.API_SCHEMA_VERSION`、`policy_api.observability.REQUEST_LOG_SCHEMA_VERSION`、
+      `policy_api.config.API_CONFIG_SCHEMA_VERSION`、`policy_api.idempotency.IDEMPOTENCY_SCHEMA_VERSION`、
+      `policy_api.contract.SNAPSHOT_SCHEMA_VERSION`；
+    - 检索与针脚：`retrieval.models.INDEX_SCHEMA_VERSION` 与 `CHUNKER_VERSION`（分块语义）、
+      `provenance.cli.RECEIPT_SCHEMA_VERSION`、`provenance.wiring_scope.SCHEMA_VERSION`；
+    - 本机门禁与仪器：`tools.obligations_gate.REPORT_SCHEMA_VERSION`（义务账门禁的报告载荷——
+      账本不存在时从"没有依据的命中"改成"不适用"那一档，1.0 → 1.1）。
+    **不是版本轴的同名字段**（别照这张表改）：`orchestration.langgraph_engine.MIN_LANGGRAPH_VERSION`
+    是依赖下界；`adapters/<id>/manifest.yaml` 的 `agent_version` / `protocol_version` 是产品与协议
+    **声明**（改了要重新审核并重录宿主观测，见第 54 条），不是载荷版本。
+    **新增一条轴时，把它登记进这张表**：表里没有的载荷不等于可以不加版本号。
+    **历史先例只登记、不回改**：P1（审计记录新增 `violations` / `violations_by_severity` /
+    `violations_note`）与台阶 2（新增 `origin` 一族键）都**加了键而没有递增**
+    `AUDIT_SCHEMA_VERSION`——它们是本规则生效前的既成事实，登记在这里是为了让后来者知道
+    "当时没升版"，**不是可以再犯的先例**；从台阶 3a（`decision_reason` → 审计 1.0→1.1）起
+    已按本规则执行，台阶 3b（`pending_findings` → 审计 1.1→1.2、决策 1.0→1.1）同。
+56. **义务账只记账、不判罚，解除只认一次真实测试运行**（台阶 3c / 方案 §3.3）：判定载荷里的
+    「待实现」（第 51 条）必须能被**跨会话**读到，否则一个拼错的 import 可以永久待实现下去，
+    而每一次判定都是 `allow_with_warnings`。实现是 `src/policy/obligations.py`（追加写 JSONL，
+    折叠出未结义务），三条口径写死在那里：键是 `(rule_id, target, missing_target)`、**不含
+    `session_id`**（带上它，新会话就把义务清零）；**会话内只记账**（dsh 侧 `dsh-adapter.yaml` 的
+    `obligations_ledger`，可选；写不了只打一行 `OBLIGATIONS LEDGER UNAVAILABLE`，**不改判定、
+    不阻断**）；**判罚与读数只在 `tools/obligations_gate.py`**（**L5 试用期：warn + 非零退出**；
+    2026-09-30 起它作为 `ci_local.py` 的**只报告步骤**（`REPORT_ONLY_STEPS`，带到期日）被本机门禁
+    执行——**非零退出只打印命中数、不计入门禁失败**；升格判据是「跑过 N≥1 次且 0 命中」，
+    且 0 命中必须来自至少一次真实读数）。两条会被判据读的后果：`obligations_open > 0` 时
+    `check_volume.complete = false`（J1(c)）；**解除只由一次真实 pytest 运行判定**（J1(d)）——
+    "真实"是**结构化**的三条事实（`tool.pytest` 状态 ∈ `{ok, findings}`、`failing_tests` 在
+    `served_checkers` 里、选中的测试非空），不解析 reasons 文本，也不许由账本推断；
+    `obligations_open == 0` 却给不出「最近一次真实测试运行」= **没有依据**，门禁按命中处理。
+    没给 `--obligations` = **没有账本可读**（不是"0 条义务"）：账本摘要的键按"有没有给账本"
+    出现或缺失，两个读法必须能分开（第 46/50 条）。**门禁这一侧同一条纪律**：账本**文件不存在**
+    = **不适用**（`applicable=false`，不算命中，也**不算一次真实读数** —— 它凑不了升格判据里的
+    "0 命中"）；账本**存在**（哪怕是个空文件）却拿不出最近一次真实运行，仍按命中处理（见上句）。
+    账本协议自己的版本轴是 `policy.obligations.LEDGER_SCHEMA_VERSION`（第 55 条：加键就要动它），
+    门禁**报告**自己的版本轴是 `tools.obligations_gate.REPORT_SCHEMA_VERSION`。
 
 ## 临时文件与产物
 

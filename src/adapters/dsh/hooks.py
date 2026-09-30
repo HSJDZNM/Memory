@@ -57,9 +57,13 @@ from policy.models import (
     SCHEMA_VERSION,
     Decision,
     PolicyContextError,
+    RequiredAction,
     RuleSet,
     ValidationResult,
 )
+from policy.obligations import book_pending_findings
+from provenance.origin import Origin
+from provenance.origin_runtime import ORIGIN_BY_REASON_CODE, origin_from_failure
 
 from .adapter import (
     HOOK_EVENT_POST_TOOL_USE,
@@ -79,6 +83,7 @@ __all__ = [
     "EXIT_ALLOW",
     "EXIT_BLOCK",
     "AUDIT_SCHEMA_VERSION",
+    "ORIGIN_PREFIX",
     "PRE_EVIDENCE_STATUSES",
     "VERDICT_PREFIX",
     "VERDICT_SCHEMA_VERSION",
@@ -97,6 +102,7 @@ __all__ = [
     "EFFECTIVE_PATHS_PREFIX",
     "effective_paths",
     "effective_paths_line",
+    "origin_line",
     "run_hook",
     "sanitize",
     "verdict_line",
@@ -106,7 +112,17 @@ __all__ = [
 EXIT_ALLOW = 0
 EXIT_BLOCK = 2
 
-AUDIT_SCHEMA_VERSION = "1.0"
+# 1.1（台阶 3a / H1）：判定记录新增**受控** `decision_reason`（"这次 block 属于哪一类"）。
+# 判定记录是审计协议的一部分，改键集合就按它自己的规则递增版本号——**3a 当时**决策协议
+# （1.0）不动：这个值是**从已有字段派生**的，不是第二份判定（见 `decision_reason`）。
+# （台阶 3b 之后决策协议是 1.1，那是**另一套**协议，与本行的理由无关。）
+#
+# 1.2（台阶 3b / D-1(b)）：判定记录新增 `pending_findings` 通道。为什么必须加这个键：
+# 决策协议的 pending 移出 `violations` 之后，"判定了、有一条待实现"与"判定了、没违规"
+# 在账本上会重新变得一样（两者的 violations 都是空），而这正是 P1 修掉的那类同名两义。
+# 按统一规则（任何协议载荷加键或改语义都递增该协议自己的版本号）递增到 1.2——
+# 决策协议那一侧的 1.0→1.1 是**另一套**协议，两个版本各自演进。
+AUDIT_SCHEMA_VERSION = "1.2"
 
 # 反馈文本长度上限：阻断理由会进入模型上下文，必须足够短且不含敏感内容。
 FEEDBACK_MAX_CHARS = 4000
@@ -120,6 +136,14 @@ FEEDBACK_MAX_CHARS = 4000
 # 一律阻断，解析失败也一样（没有判定行 = 未知状态 = 失败关闭）。
 VERDICT_SCHEMA_VERSION = "1.0"
 VERDICT_PREFIX = "[policy] VERDICT "
+
+# 台阶 2（方案 §3.4 / R-g）：归因闭集的**机读**出口。
+#
+# 为什么不塞进 VERDICT 行：VERDICT 是 N18 的既有协议，消费方（JS 插件）按精确版本号读，
+# 改它的键集合就必须同步改两侧并让"版本不认识 → 未知状态"这条失败关闭重新走一遍。
+# 归因是**诊断**，不是判定：另起一行，读不到就只是读不到，任何一侧的不认识都不会改
+# allow/block。这一行的载荷形状由 provenance.origin 冻结（跨语言契约）。
+ORIGIN_PREFIX = "[policy] ORIGIN "
 
 # N21：带 --audit 时台账路径由审计路径派生，adapter 配置里的 enforcement_ledger 被覆盖。
 # 派生本身是对的（Phase 2 的记录与 Phase 4 的链要落在同一份证据里，两种 JSONL 协议不能
@@ -160,6 +184,10 @@ LEDGER_OVERRIDE_NOTE = (
 VIOLATIONS_NOTE = (
     "violations 是本次**真的报了违规**的规则；matched_rules 是本次**参与过判定**的规则；"
     "两者不是一回事，warning 命中只产出 allow_with_warnings。"
+    "pending_findings 是第三个、也是唯一一个**不是违规**的通道：「待实现」——选中的测试因"
+    "项目内目标还不存在而没能收集，覆盖它的测试尚未运行。它不阻断，也不进 violations，"
+    "所以一条 allow_with_warnings 记录可能 violations 为空而 pending_findings 非空："
+    "那种记录说的是「这次放行了、但有东西没能查成」，不是「什么都没发生」。"
     "没有 violations 键的记录（context_error / evidence_unavailable / event_replay 等）"
     "表示本次没有做出判定——「没判定」与「判定了、没违规」必须能分开读"
 )
@@ -168,8 +196,26 @@ VIOLATIONS_NOTE = (
 # （src/shop/order_service.py）也当成绝对路径，账本里于是只剩 "src<abs>"，
 # 而"这次查的是哪个文件"正是审计要回答的问题。边界 = 串首，或空白 / 引号 /
 # 括号 / 等号 / 冒号 / 逗号之后。
-_ABS_PATH_BOUNDARY = r"(?:(?<=[\s'\"(\[=:,])|^)"
+# 全角标点同样算边界：归因的 observation.result 是「（路径）」这种中英混排形态，
+# 只认 ASCII 括号会让整个绝对路径原样漏过（台阶 3a 实测，见 10-h4-field-diff / 11 号 §7.5）。
+_ABS_PATH_BOUNDARY = r"(?:(?<=[\s'\"(\[=:,\uff08\uff09\u3001\uff0c\u3002\uff1b\uff1a])|^)"
 _ABS_PATH_RE = re.compile(_ABS_PATH_BOUNDARY + r"(?:[A-Za-z]:[\\/]|\\\\|/)[^\s'\"]+")
+# 含空格的绝对路径：上一条在空白处截断，`C:\Program Files\nodejs\node.exe` 只会被抹掉
+# `C:\Program`，尾巴留在账本里（实测；这正是 11-step2-origin-closure.md §7.5 点名的真机串）。
+# 第二条整段匹配「盘符/UNC 起、到行尾或成对包边标点为止」，因此只在**成对包边或行尾**这一侧收敛，
+# 不会跨过句读吃掉后面的话；同一段被上一条先抹掉时它无副作用（幂等）。
+# 结构写成「卷标 + 一段段路径」，段内允许空格——但这**必然**多吞掉同一行里路径之后的
+# 尾随词（`...node.exe ENOENT` → `<abs>`）："哪些空格属于路径"在没有引号的语言里不可判。
+# 取舍按「失败关闭」写：**宁可多抹，也不留半截路径**（半截路径正是要修的那个缺陷），
+# 代价是同一行的诊断词可能一起消失——这个代价写在文档里，不假装没有。
+_ABS_PATH_COMPONENT = r"[^\\/\r\n'\"\[\]()\uff08\uff09\u3001\uff0c\u3002\uff1b\uff1a]+"
+_ABS_PATH_RELAXED = re.compile(
+    _ABS_PATH_BOUNDARY
+    + r"(?:[A-Za-z]:[\\/]|\\\\|/)"
+    + _ABS_PATH_COMPONENT
+    + r"(?:[\\/]" + _ABS_PATH_COMPONENT + r")*"
+    + r"(?:[ \t]+" + _ABS_PATH_COMPONENT + r")*"
+)
 _SECRET_RE = re.compile(
     r"(?i)\b(?:sk-[A-Za-z0-9_\-]{8,}|api[_-]?key\s*[=:]\s*\S+|authorization:\s*\S+|bearer\s+\S+)"
 )
@@ -219,6 +265,9 @@ def sanitize(
         for variant in variants:
             if variant:
                 text = text.replace(variant, "<repo>")
+    # 顺序要紧：先跑"整段"那条（它认得含空格的路径），再跑"到空白为止"那条兜住其余形态。
+    # 反过来写会把 `C:\Program Files\...` 先切成 `<abs> Files\...`，尾巴再也抹不掉（实测）。
+    text = _ABS_PATH_RELAXED.sub("<abs>", text)
     text = _ABS_PATH_RE.sub("<abs>", text)
     text = _SECRET_RE.sub("<redacted>", text)
     if len(text) > limit:
@@ -242,6 +291,41 @@ def _sanitized(value: Any, *, project_root: Optional[Path]) -> Any:
     if isinstance(value, (list, tuple)):
         return [_sanitized(item, project_root=project_root) for item in value]
     return value
+
+
+# H1：一次 block 属于哪一类。**受控闭集**，由判定载荷里已有的字段派生，绝不猜：
+#   approval_required    授权是前置条件（required_action=approval），没有可修的对象；
+#   policy_violation     至少一条 violation 是规则报的违规（可修）；
+#   evidence_unavailable 全部 violation 都是"平台没能查"（uncovered / blocker），改文件改不掉；
+#   None                 说不出来（例如 block + 空 violations 却没有审批要求）——
+#                        消费方必须按失败关闭处理，**不许把 None 读成某一种**。
+DECISION_REASON_APPROVAL_REQUIRED = "approval_required"
+DECISION_REASON_POLICY_VIOLATION = "policy_violation"
+DECISION_REASON_EVIDENCE_UNAVAILABLE = "evidence_unavailable"
+UNREPAIRABLE_VIOLATION_DETAILS = frozenset({"uncovered_checker", "blocker"})
+
+
+def decision_reason(decision: ValidationResult) -> Optional[str]:
+    """给一次判定算受控 `decision_reason`；allow / allow_with_warnings 返回 None。
+
+    为什么必须有它：`block` + `violations=[]` 是**合法**形态（审批门禁），而账本只写
+    "block + 空清单"时，读的人（和下游节点）只能把它读成"没有依据"。归类的规则是**结构**的
+    （required_action 与 evidence.kind），不解析任何中文。
+    """
+
+    if decision.decision is not Decision.BLOCK:
+        return None
+    if decision.required_action is RequiredAction.APPROVAL:
+        return DECISION_REASON_APPROVAL_REQUIRED
+    if not decision.violations:
+        return None
+    if all(
+        violation.evidence.kind == "validator"
+        and (violation.evidence.detail or "") in UNREPAIRABLE_VIOLATION_DETAILS
+        for violation in decision.violations
+    ):
+        return DECISION_REASON_EVIDENCE_UNAVAILABLE
+    return DECISION_REASON_POLICY_VIOLATION
 
 
 def _counts_by_severity(names: Iterable[str]) -> dict[str, int]:
@@ -351,6 +435,9 @@ class HookOutcome:
     event: Optional[PolicyEvent] = None
     executed: bool = False
     elapsed_ms: int = 0
+    # 台阶 2（§3.4）：失败时的结构化归因。默认 None = 这次没有归因（或不需要）。
+    # 它**不是**判定的一部分：allow/block 只看 exit_code 与 reason_code。
+    origin: Optional[Origin] = None
 
     @property
     def blocked(self) -> bool:
@@ -557,6 +644,10 @@ class DshPreExecuteHook:
     bridge: Optional[EnforcementBridge] = None
     # G3/M2：动手前取证的提供者。None = 按配置决定（声明并启用时用 Phase 5 真实现）。
     evidence_provider: Optional[EvidenceProvider] = None
+    # 台阶 2（§3.4 核验前置）：本次判定真正读的那份 adapter 配置，以及它是从哪来的。
+    # 有了它，"配置读不到"这条理由才有对象可核验；没有它就只能落 unknown_origin。
+    config_path: Optional[Path | str] = None
+    config_source: str = "未声明（调用方没有给出配置路径）"
 
     def __post_init__(self) -> None:
         """没有显式注入桥接层时，按配置自己装配一次。
@@ -798,13 +889,75 @@ class DshPreExecuteHook:
             # 也能读到它；它不表示"这条规则本身要求审批"。
             for item in violations:
                 item["required_action"] = decision.required_action.value
+        # 第三通道（台阶 3b / B2）：条目形状与 violations **逐字段相同**（同一个 Evidence
+        # 的字段集合、同一把排序键），只是通道不同——读者不需要为 pending 另学一套形状。
+        pending = [
+            {
+                "rule_id": finding.canonical_id,
+                "severity": finding.severity.value,
+                "message": finding.message,
+                "evidence": finding.evidence.model_dump(exclude_none=True),
+            }
+            for finding in sorted(decision.pending_findings, key=lambda item: item.sort_key)
+        ]
+        if decision.required_action is not None:
+            for item in pending:
+                item["required_action"] = decision.required_action.value
         return {
             "violations": _sanitized(violations, project_root=self.config.project_root),
             "violations_by_severity": _counts_by_severity(
                 violation.severity.value for violation in decision.violations
             ),
             "violations_note": VIOLATIONS_NOTE,
+            # 这个键永远存在（可能是空列表）：与 violations 同一条口径——「判定了、这条通道
+            # 里没有东西」是一个明确的结论，不是一个缺失的键。
+            "pending_findings": _sanitized(pending, project_root=self.config.project_root),
         }
+
+    def decision_reason_for_audit(self, decision: ValidationResult) -> Optional[str]:
+        """账本口径的受控 `decision_reason`（薄封装：归类规则只有一份实现）。"""
+
+        return decision_reason(decision)
+
+    def book_obligations(
+        self, decision: ValidationResult, *, event: PolicyEvent, record: Mapping[str, Any]
+    ) -> None:
+        """台阶 3c：把这次判定的「待实现」记进义务账（方案 §3.3）。
+
+        **只记账、不判罚**：这一段既不产出也不修改 decision，异常也不改变任何 allow/block
+        （L5 warn 期）。但失败必须**显式**写出来 —— 静默失败会让「这次没记上」与「这次没有义务」
+        长得一模一样，而那正是本台阶要消灭的读法。退出码语义因此一字不变：非 0 退出的唯一来源
+        仍是判定本身。
+
+        为什么解除不在这条路径上记：解除只认「一次**真实** pytest 运行」，而这份证据（这次到底
+        选中并执行了哪些测试）在预取证摘要里没有结构化字段。按 served_checkers 猜会把「选了一堆
+        用例却一个都没跑起来」读成跑过了 —— 那是往"义务被悄悄清掉"的方向错。所以 Hook 只记义务，
+        解除由 `python -m policy.check --obligations`（它手里有真流水线报告）记。
+        """
+
+        ledger = self.config.obligations_ledger
+        if ledger is None or not decision.pending_findings or not event.file:
+            return
+        snapshot = (record.get("pre_evidence") or {}).get("pending_implementation") or ()
+        try:
+            written = book_pending_findings(
+                ledger,
+                findings=decision.pending_findings,
+                target=event.file,
+                pending_snapshot=snapshot,
+            )
+        except Exception as error:  # noqa: BLE001 - 只记账：不改判定，但必须说出来
+            print(
+                "[policy] OBLIGATIONS LEDGER UNAVAILABLE "
+                + sanitize(str(error), project_root=self.config.project_root),
+                file=sys.stderr,
+            )
+            return
+        if written:
+            print(
+                "[policy] obligations recorded=" + str(written) + " ledger=" + ledger.name,
+                file=sys.stderr,
+            )
 
     def rule_visibility_not_applicable(self) -> dict[str, Any]:
         """没有文件维度的动作（Phase 4 执行类）：Phase 1 规则引擎完全不适用。
@@ -928,9 +1081,12 @@ class DshPreExecuteHook:
                 started=started, base_record=base_record,
             )
         except (LoaderError, OSError) as error:
+            detail = sanitize(str(error), project_root=self.config.project_root)
             return self._fail(
-                "config_error", sanitize(str(error), project_root=self.config.project_root),
+                "config_error", detail,
                 started=started, base_record=base_record,
+                # 台阶 2（R-g）：先把这条指控的证伪判据跑掉，再把它写进理由。
+                origin=self._origin_for("config_error", detail),
             )
         except Exception as error:  # noqa: BLE001 - 未知异常也必须失败关闭
             return self._fail(
@@ -1043,6 +1199,7 @@ class DshPreExecuteHook:
                     "拒绝在证明不了的情况下放行（绝不把「跳过」当成「通过」）",
                     started=started,
                     base_record=record,
+                    origin=self._origin_for("evidence_unavailable", detail),
                 )
             bundle = getattr(result, "bundle", None)
             if not isinstance(bundle, EvidenceBundle):
@@ -1078,6 +1235,11 @@ class DshPreExecuteHook:
         record["matched_rules"] = list(decision.matched_rules)
         record["skipped_rules"] = [item.rule_id for item in decision.skipped_rules]
         record["decision"] = decision.decision.value
+        # H1：判定记录必须答得出"这次 block 属于哪一类"，否则 block + 空 violations 会被
+        # 读成"没有依据"。None 时不写这个键（与 violations 同一条纪律：说不出来就不编）。
+        reason = decision_reason(decision)
+        if reason is not None:
+            record["decision_reason"] = reason
         record["required_action"] = (
             None if decision.required_action is None else decision.required_action.value
         )
@@ -1087,6 +1249,9 @@ class DshPreExecuteHook:
         )
         # P1：判定记录还要答得出"哪几条规则真的报了违规"（新增字段，既有字段不动）。
         record.update(self.violation_visibility(decision))
+        # 台阶 3c：义务账。放在审计内容已经成型之后、任何 gate 之前 —— 义务说的是
+        # "这次判定看见了什么"，与后续授权链路是否放行无关（它不改变判定，见方法注释）。
+        self.book_obligations(decision, event=event, record=record)
 
         if decision.decision is Decision.BLOCK:
             outcome = HookOutcome(
@@ -1122,6 +1287,13 @@ class DshPreExecuteHook:
             violation.canonical_id
             for violation in decision.violations
         ]
+        # B1：pending 不进 violations，但它同样必须让模型看得见——只读 violations 的话，
+        # "先写测试"的批次在模型眼里会变成 `ALLOWED WITH WARNINGS <tool> <file>:` 后面
+        # **空无一物**（"被警告了，但不知道警告什么"）。带「待实现」后缀是为了让这两种
+        # 条目在同一行里仍然分得开，不与真违规混成一个清单。
+        warnings.extend(
+            f"{finding.canonical_id}（待实现）" for finding in decision.pending_findings
+        )
         stderr = ""
         if decision.decision is Decision.ALLOW_WITH_WARNINGS:
             stderr = (
@@ -1376,8 +1548,14 @@ class DshPreExecuteHook:
         *,
         started: float,
         base_record: Mapping[str, Any],
+        origin: Optional[Origin] = None,
     ) -> HookOutcome:
-        """失败关闭：任何无法安全判定的情况都阻断，并给出可诊断但不含敏感信息的原因。"""
+        """失败关闭：任何无法安全判定的情况都阻断，并给出可诊断但不含敏感信息的原因。
+
+        台阶 2（§3.4）：带上 `origin` 时，一条**结构化归因**同时进审计与机读诊断行。
+        它是**诊断**不是判定——核验记录无权威，消费者不得据它 allow/block（所以它既不进
+        `decision` 也不进 `violations`）。归属由调用方给出（`_origin_for`），本函数不猜。
+        """
 
         event = None
         outcome = HookOutcome(
@@ -1387,9 +1565,34 @@ class DshPreExecuteHook:
                 reason_code=reason_code, event=event, decision=None, detail=detail
             ),
             elapsed_ms=int((self.clock() - started) * 1000),
+            origin=origin,
         )
-        self._audit({**base_record, "detail": detail}, outcome=outcome)
+        record: dict[str, Any] = {**base_record, "detail": detail}
+        if origin is not None:
+            # 审计里的归因同样要脱敏（AGENTS 第 16 条；2026-09-29 裁定不开例外）：
+            # detail 早就走 sanitize，origin 却整份直写——同一个字段族里两套口径。
+            record["origin"] = _sanitized(
+                origin.to_payload(), project_root=self.config.project_root
+            )
+        self._audit(record, outcome=outcome)
         return outcome
+
+    def _origin_for(self, reason_code: str, detail: str) -> Optional[Origin]:
+        """失败码 + 失败原文 → 结构化归因（**核验前置已执行**）。
+
+        本台阶只覆盖配置族：其余原因码由 `origin_from_failure` 显式落 `unknown_origin`
+        （"这条理由目前没有可执行的证伪判据"）——那本身就是一个要能被读出来的结论。
+        归因**绝不影响** allow/block：调用点拿到的仍然是同一个 reason_code 与 exit 2。
+        """
+
+        if reason_code not in ORIGIN_BY_REASON_CODE:
+            return None
+        return origin_from_failure(
+            reason_code=reason_code,
+            detail=detail,
+            config_path=self.config_path,
+            config_source=self.config_source,
+        )
 
 
 def _utc_now() -> str:
@@ -1518,6 +1721,11 @@ def run_hook(
     已经在 main() 里显式传 False。
     """
 
+    # 台阶 2 的纪律（R-d 的一条推论）：**不改判定的形状**。配置加载失败在库里仍然原样
+    # 抛出（生产入口 main() 把它翻成 reason_code=startup_error 的那条既有路径），归因由
+    # main() 用同一个 origin_from_failure 算——那里才拿得到 args.config。曾经在这里加过
+    # 一层 try/except 把它改写成 config_error：那是**改变判定载荷**，不属于本台阶的授权
+    # 范围，已撤回（字段级差集的口径见 10 号 §2）。
     config = load_config(config_path)
     rules = load_rule_set(config.rule_dirs, repo_root=config.rule_anchor)
 
@@ -1550,6 +1758,9 @@ def run_hook(
         "ledger": ledger,
         "capture_dir": None if capture_dir is None else Path(capture_dir),
         "bridge": bridge,
+        # 台阶 2：核验前置要的是"这次真的读的是哪份配置、从哪来"，不是重新拼一个路径。
+        "config_path": config_path,
+        "config_source": "--config（本次调用显式给出的 adapter 配置）",
     }
     if executor is not None:
         kwargs["executor"] = executor
@@ -1566,7 +1777,18 @@ def run_hook(
     )
     if report:
         outcome = hook._fail(  # noqa: SLF001 - 接线错误必须走同一条失败关闭路径
-            "wiring_error", report, started=hook.clock(), base_record={}
+            "wiring_error",
+            report,
+            started=hook.clock(),
+            base_record={},
+            # 接线族的对象是 hooks.json（不是 adapter 配置）：把**那一个**路径交进去，
+            # 归因才会指着读者真正该改的东西。
+            origin=origin_from_failure(
+                reason_code="wiring_error",
+                detail=report,
+                config_path=hooks_config_path,
+                config_source="--hooks-config（本次调用显式给出的接线配置）",
+            ),
         )
     elif (
         isinstance(raw_payload, Mapping)
@@ -1804,6 +2026,23 @@ def check_wiring(
     return ""
 
 
+def origin_line(origin: Origin, *, project_root: Optional[Path] = None) -> str:
+    """归因的机读行（台阶 2）。
+
+    与 `verdict_line` 分开：判定行是**契约**（消费方按精确版本号读，读不到按未知状态
+    失败关闭），归因行是**诊断**（读不到只是读不到，不改任何 allow/block）。
+
+    绝对路径不开例外（AGENTS 第 16 条，2026-09-29 裁定）：observation.result / object.value /
+    object.source 里的真机原文可能带绝对路径（实测：`--config <绝对路径>` 会整串出现在
+    object.source 与 observation.result 里）。**脱敏在 json.dumps 之前**做，载荷的键集合因此
+    一字不变（跨语言`payload_is_well_formed` 只校验形状与取值闭集）。
+    脱敏只处理字符串，不引入新的失败模式：它不改变 reason_code / exit_code。
+    """
+
+    payload = _sanitized(origin.to_payload(), project_root=project_root)
+    return ORIGIN_PREFIX + json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
 def verdict_line(
     *, reason_code: str, exit_code: int = EXIT_BLOCK, hook_event: Optional[str] = None
 ) -> str:
@@ -1920,6 +2159,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (DshEventError, LoaderError, OSError, ValueError) as error:
         print(f"[policy] BLOCKED (startup_error) detail: {error}", file=sys.stderr)
         print(verdict_line(reason_code="startup_error"), file=sys.stderr)
+        # 台阶 2（R-g）：这里正是配置族最常被误归因的地方——"起不来"很容易被读成
+        # "运行时没装"。核验前置先看一眼被点名的配置到底怎么了（路径不存在 / 是个目录 /
+        # 不是 UTF-8 / 其实好好的），再决定这条理由指着谁；核验证伪了自己人就落
+        # unknown_origin，**绝不**换一个对象继续指控。归因只进这一行诊断，不进判定。
+        print(
+            origin_line(
+                origin_from_failure(
+                    reason_code="startup_error",
+                    detail=str(error),
+                    config_path=args.config,
+                    config_source="--config（本次 Hook 进程显式给出的 adapter 配置）",
+                )
+            ),
+            file=sys.stderr,
+        )
         return EXIT_BLOCK
 
     try:
@@ -1938,6 +2192,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         print(verdict_line(reason_code="startup_error", hook_event=hook_event), file=sys.stderr)
+        # 归因**总要**给出一条：给不出对象时它就是 unknown_origin（写明"没有对象可核验"），
+        # 而不是缺席——缺席会让读者把"这次没归因"读成"这次归因没问题"。
+        # 函数内 import：config_path_in 只在异常路径上用得上，别给正常路径加依赖。
+        from provenance.origin import config_path_in
+
+        named = config_path_in(str(error))
+        print(
+            origin_line(
+                origin_from_failure(
+                    reason_code="startup_error",
+                    detail=str(error),
+                    config_path=named,
+                    config_source=(
+                        "从失败原文里取回（配置：--config " + str(args.config) + "）"
+                        if named is not None
+                        else "失败原文与 --config 都没有指名可核验的对象"
+                    ),
+                )
+            ),
+            file=sys.stderr,
+        )
         return EXIT_BLOCK
 
     if outcome.stderr:

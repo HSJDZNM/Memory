@@ -750,8 +750,8 @@
     "title": "Engineering Policy Platform API",
     "version": "1.0",
     "x-api-schema-version": "1.0",
-    "x-decision-schema-version": "1.0",
-    "x-policy-generation": "phase-1",
+    "x-decision-schema-version": "1.1",
+    "x-policy-generation": "decision-1.1",
     "x-service-version": "0.1.0"
   },
   "openapi": "3.1.0",

@@ -17,10 +17,16 @@ Phase 5 起默认走**验证器流水线**：先由 AST / 依赖图 / 外部工�
         验证器注册表不可用，以及"声明了 --changed 却没有 --operation"这种自相矛盾调用）
 
 CLI 输出面向人（--json 时输出面向机器），Engine 结果始终保持结构化。
---json 的顶层是 CLI 包装（context / rule_set / reported_imports / evidence / exit_code /
-layer_source / check_volume），其中 result 就是完整的 PolicyDecision 协议载荷，可被
-policy.parse_decision 直接消费；evidence 是本次验证器运行的完整事实
+--json 的顶层是 CLI 包装（output_schema_version / context / rule_set / reported_imports /
+evidence / exit_code / layer_source / check_volume），其中 result 就是完整的 PolicyDecision
+协议载荷，可被 policy.parse_decision 直接消费；evidence 是本次验证器运行的完整事实
 （验证器状态、工具版本与配置哈希、依赖、发现、阻断点）。
+
+**包装层也有自己的协议版本**（2026-09-30 裁定）：output_schema_version 只描述**外层包装**的形状，
+与决策协议（policy.models.SCHEMA_VERSION）各自演进、谁也不跟随谁。1.0 是**追认**的
+——它指"台阶 3c 之前的形状"（那时 check_volume 里还没有 obligations_open / obligations_note
+两个键，见台阶 3c 记录 §2.5）；当前形状记为 1.1。给包装加键 / 改语义都要按 AGENTS 第 55 条
+递增这个版本，因为消费方（脚本、门禁、手册）按它读键集合。
 
 两个**只增不改**的读数（07 号报告 P4 / P5）：
 
@@ -64,8 +70,10 @@ from .models import (
     PolicyContextError,
     RuleSet,
     ValidationResult,
+    Violation,
     canonical_identifier,
 )
+from .obligations import ObligationsError
 from .scope import match_scope
 
 __all__ = [
@@ -76,6 +84,7 @@ __all__ = [
     "LAYER_SOURCE_DECLARED",
     "LAYER_SOURCE_FILENAME_GUESS",
     "LAYER_SOURCE_PLATFORM_TEST_LAYOUT",
+    "OUTPUT_SCHEMA_VERSION",
     "SKIP_REASON_EVIDENCE_NOT_COLLECTED",
     "SKIP_REASON_MISSING_DIMENSION",
     "SKIP_REASON_SCOPE_MISMATCH",
@@ -100,6 +109,15 @@ __all__ = [
 EXIT_ALLOWED = 0
 EXIT_VIOLATION = 1
 EXIT_ERROR = 2
+
+# --json **外层包装**自己的协议版本（它不等于决策协议版本，也不跟随平台阶段）。
+# 1.0 是追认的形状：台阶 3c 给 check_volume 加了 obligations_open / obligations_note 两个键
+# （J1(c)），按 AGENTS 第 55 条"加键就是改协议"本应同批递增，当时只在记录里写了理由
+# （台阶 3c 记录 §2.5：把它当 CLI 包装、不是跨进程协议载荷）而没有版本号。2026-09-30 的裁定
+# 把这件事定下来：**1.0 = 台阶 3c 之前的形状，当前形状 = 1.1**，并登记进 AGENTS 第 55 条。
+# 消费方（脚本 / 门禁 / 学习手册）按它判断"外层键集合是哪一版"；决策载荷仍是 result 里的
+# SCHEMA_VERSION，两者互不代替。
+OUTPUT_SCHEMA_VERSION = "1.1"
 
 DEFAULT_RULE_DIRS = ("policies",)
 
@@ -218,6 +236,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--keep-temp",
         action="store_true",
         help="保留本次运行的临时目录（默认用完即删，目录在 .tmp/validators 下）",
+    )
+    parser.add_argument(
+        "--obligations",
+        default=None,
+        metavar="PATH",
+        help=(
+            "义务账本（JSONL）：本次判定里的「待实现」记进去、流水线里真实跑成的 pytest 运行"
+            "记进去并解除对应义务；check_volume 会据此给出 obligations_open。"
+            "不给这一项 = 不记账（不是「没有义务」）"
+        ),
     )
     return parser
 
@@ -464,6 +492,7 @@ def build_check_volume(
     result: ValidationResult,
     *,
     evidence: Any | None = None,
+    obligations: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """把"这次到底查了多少"写成结构化摘要（只读，不改变任何判定）。
 
@@ -483,6 +512,11 @@ def build_check_volume(
     本次上下文的实际取值逐一比较，列出"规则要、上下文没有"的维度名。
     `complete = not missing_dimensions`：声明得够不够全，与"有没有证据"是两条轴。
     `served_checkers` 只认证据报告（EvidenceBundle.served_checkers），不认声明。
+
+    台阶 3c（J1(c)）：调用方**显式**给出义务账摘要时，`complete` 还要再与 `obligations_open == 0`
+    取合取——一份"有规则根本没被查"的读数与一份"有义务还挂着"的读数都不该被读成完整判定。
+    没给账本时**不加任何键**：缺键的意思是"这次没有账本可读"，不是"0 条未结义务"
+    （两者必须能分开读，AGENTS 第 46/50 条）。
     """
 
     canonical = normalize_context(context)
@@ -529,7 +563,7 @@ def build_check_volume(
 
     missing.sort(key=_dimension_sort_key)
     served: tuple[str, ...] = () if evidence is None else tuple(evidence.served_checkers)
-    return {
+    volume = {
         "rule_count": len(rules.rules),
         "effective_rule_count": len(result.matched_rules),
         "skipped_rule_count": len(result.skipped_rules),
@@ -541,6 +575,12 @@ def build_check_volume(
         "complete": not missing,
         "note": CHECK_VOLUME_NOTE,
     }
+    if obligations is not None:
+        open_count = int(obligations["obligations_open"])
+        volume["obligations_open"] = open_count
+        volume["obligations_note"] = str(obligations["note"])
+        volume["complete"] = volume["complete"] and open_count == 0
+    return volume
 
 
 def render_check_volume(volume: Mapping[str, Any]) -> list[str]:
@@ -564,7 +604,7 @@ def render_check_volume(volume: Mapping[str, Any]) -> list[str]:
         f"  served_checkers: {served}",
         f"  missing_dimensions: {missing}",
     ]
-    if not volume["complete"]:
+    if volume["missing_dimensions"]:
         flags = ", ".join(DIMENSION_FLAGS.get(name, name) for name in volume["missing_dimensions"])
         lines.append(
             "INCOMPLETE: 本次有 "
@@ -572,6 +612,17 @@ def render_check_volume(volume: Mapping[str, Any]) -> list[str]:
             f"维度而根本没有被查（缺 {missing}）；补 {flags} 后重跑——"
             "skipped ≠ passed，这个 allow 比完整判定弱"
         )
+    if "obligations_open" in volume:
+        # 台阶 3c：义务账的读数是**单独一行**，不与「缺维度」混成同一句话——
+        # complete 可能因为两个不同的原因变成 false，理由必须说得出来（AGENTS 第 52 条）。
+        lines.append("  obligations_open: " + str(volume["obligations_open"]))
+        if volume["obligations_open"]:
+            lines.append(
+                "OPEN OBLIGATIONS: 本次有 "
+                + str(volume["obligations_open"])
+                + " 条未结义务（覆盖它的测试还没能真的跑起来）；"
+                "解除只由一次真实 pytest 运行判定——让测试真的跑一次，并带上同一个 --obligations 账本"
+            )
     return lines
 
 
@@ -629,25 +680,62 @@ def render_text(
 
     counts = result.severity_counts
     summary = ", ".join(f"{key}={counts[key]}" for key in sorted(counts))
+    if result.pending_findings:
+        # pending **不在** severity_counts 里（那是"违规"的分布，见 ValidationResult）。
+        # 不把它补进这一行，pending-only 的批次就会打出 decision=allow_with_warnings
+        # 配 required_action=None——一行读不出理由的 FAIL（台阶 3b 的 B5）。
+        summary = (summary + ", " if summary else "") + (
+            f"pending_findings={len(result.pending_findings)}"
+        )
     detail = summary or f"required_action={result.required_action.value}"
     lines.append(f"FAIL: decision={result.decision.value}（{detail}）")
     for violation in result.violations:
         lines.append("")
-        evidence = violation.evidence
-        location = f"{evidence.subject} @ {evidence.kind}"
-        if evidence.line is not None:
-            location += f":{evidence.line}"
-        lines.append(f"[{violation.severity.value}] {violation.canonical_id} {location}")
-        lines.append(f"  reason: {violation.message}")
+        lines.extend(_finding_lines(violation))
+    if result.pending_findings:
+        # 同一个渲染函数、另一个段标题：pending 条目的字段与 violations 逐字段同形，
+        # 但**不许**混在同一份清单里——"真的报了违规"与"这次没能查成"必须分开读。
+        lines.append("")
         lines.append(
-            f"  evidence: {evidence.kind}={evidence.value}"
-            + (f" — {evidence.detail}" if evidence.detail else "")
+            "pending_findings（"
+            + str(len(result.pending_findings))
+            + " 条：不是违规，是本次没能查成的说明）:"
         )
-        if evidence.kind == "dependency":
-            lines.append("  expected dependency direction: controller -> service -> repository")
+        for finding in result.pending_findings:
+            lines.append("")
+            lines.extend(_finding_lines(finding))
     if not result.violations:
-        lines.append("（本次没有违规记录：阻断来自授权门禁，不是违规）")
+        if result.required_action is not None:
+            lines.append("（本次没有违规记录：阻断来自授权门禁，不是违规）")
+        elif result.pending_findings:
+            lines.append(
+                "（本次没有违规记录：decision 是 "
+                + result.decision.value
+                + "，理由是上面 pending_findings 那一段，不是违规）"
+            )
     return chr(10).join(lines)
+
+
+def _finding_lines(entry: Violation) -> list[str]:
+    """单条发现的文本渲染：violations 与 pending_findings **共用这一份**。
+
+    两个通道的条目逐字段同形（同一个 _evidence_payload 形状），所以渲染也必须是同一份；
+    分开写两份会让它们将来各自漂移，而"读起来一样"正是这一次要把它们分开的原因。
+    """
+
+    evidence = entry.evidence
+    location = f"{evidence.subject} @ {evidence.kind}"
+    if evidence.line is not None:
+        location += f":{evidence.line}"
+    rendered = [
+        f"[{entry.severity.value}] {entry.canonical_id} {location}",
+        f"  reason: {entry.message}",
+        f"  evidence: {evidence.kind}={evidence.value}"
+        + (f" — {evidence.detail}" if evidence.detail else ""),
+    ]
+    if evidence.kind == "dependency":
+        rendered.append("  expected dependency direction: controller -> service -> repository")
+    return rendered
 
 
 def render_json(
@@ -685,8 +773,12 @@ def render_json(
         "reported_imports": list(imports),
         "evidence": None if report is None else report.to_payload(),
         "exit_code": exit_code,
-        # CLI 包装字段：result 之外的读数，不进决策协议载荷（协议仍是 schema_version 1.0）。
+        # CLI 包装字段：result 之外的读数，不进决策协议载荷（决策协议版本见
+        # policy.models.SCHEMA_VERSION，这里不写死一个字面量）。
         "layer_source": layer_source,
+        # 包装自己的版本（加键 / 改语义就要动它，AGENTS 第 55 条）：
+        # 它说的是"外层这些键是哪一版形状"，不替代 result 的 schema_version。
+        "output_schema_version": OUTPUT_SCHEMA_VERSION,
         "result": None if result is None else result.to_decision_dict(),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
@@ -744,6 +836,74 @@ def collect_evidence(
     config = load_config(root=config_root)
     request = build_validator_request(args, anchor=anchor, context=context, rules=rules)
     return run_pipeline(request, config=config, keep_temp=bool(args.keep_temp))
+
+
+def obligation_summary(
+    args: argparse.Namespace,
+    *,
+    context: PolicyContext,
+    result: ValidationResult,
+    report: Any | None,
+) -> Mapping[str, Any]:
+    """台阶 3c：把本次判定与本次流水线的事实记进义务账，并给出摘要。
+
+    记账是**只增**的：它不改变 `result`、不改变退出码（L5 warn 期的口径，方案 §3.3 的
+    "会话内只记账、不判罚"）。但账本读不懂 / 写不了时**失败关闭**（调用方返回退出码 2）——
+    `--obligations` 是调用方显式声明的输入，"声明了却读不懂"与"没声明"必须能分开读。
+
+    `python -m policy.check` 是**本机门禁**这一侧的记账点：它手里同时有判定（pending_findings）
+    与真流水线（这次 pytest 到底跑成没有），因此解除义务的那条 `test_run` 只能在这里记。
+    """
+
+    from .obligations import (
+        PYTEST_VALIDATOR_ID,
+        book_pending_findings,
+        real_pytest_run,
+        record_test_run,
+        summarize,
+    )
+
+    ledger = Path(args.obligations)
+    snapshot = ()
+    if report is not None:
+        snapshot = tuple(report.pending_implementation)
+    book_pending_findings(
+        ledger,
+        findings=result.pending_findings,
+        target=context.file,
+        pending_snapshot=[item.to_payload() for item in snapshot],
+    )
+    if report is not None:
+        record = report.record(PYTEST_VALIDATOR_ID)
+        if record is not None:
+            nodeids = selected_nodeids(report)
+            selected = tuple(
+                sorted({str(item).split("::")[0].replace("\\", "/") for item in nodeids})
+            )
+            record_test_run(
+                ledger,
+                target=context.file,
+                selected_tests=selected,
+                python_tests_executed=real_pytest_run(
+                    pytest_status=record.status.value,
+                    served_checkers=report.served_checkers,
+                    selected_tests=selected,
+                ),
+                source="policy.check",
+            )
+    return summarize(ledger)
+
+
+def selected_nodeids(report: Any) -> tuple[str, ...]:
+    """流水线报告里这次**选中**的测试（`selection.nodeids`；取不到就是空元组，不猜）。"""
+
+    selection = getattr(report, "selection", None)
+    if not isinstance(selection, Mapping):
+        return ()
+    nodeids = selection.get("nodeids")
+    if not isinstance(nodeids, (list, tuple)):
+        return ()
+    return tuple(str(item) for item in nodeids if item)
 
 
 def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
@@ -815,8 +975,19 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
         )
 
     # P5：读数与判定必须来自同一次运行——evidence 就是交给引擎的那个证据包。
+    obligations = None
+    if result is not None and args.obligations:
+        try:
+            obligations = obligation_summary(args, context=context, result=result, report=report)
+        except ObligationsError as error:
+            print(f"config error: 义务账本不可用：{error}", file=sys.stderr)
+            return EXIT_ERROR
     volume = (
-        None if result is None else build_check_volume(rules, context, result, evidence=evidence)
+        None
+        if result is None
+        else build_check_volume(
+            rules, context, result, evidence=evidence, obligations=obligations
+        )
     )
 
     if args.json:

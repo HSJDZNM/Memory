@@ -139,7 +139,11 @@ def evaluate(
             continue
         evaluated.append(rule)
 
+    # 两个发现通道分开收（台阶 3b / D-1(b)）：violations 是"真的报了违规"，
+    # pending_findings 是"这次没能查成（待实现）"。分流点在 handler 的返回值里，
+    # 引擎不按 message 文本或 severity 去猜某一条属于哪个通道。
     violations: list[Violation] = []
+    pending_findings: list[Violation] = []
     for rule in evaluated:
         checker = rule.enforcement.checker or ""
         if bundle is not None:
@@ -149,14 +153,19 @@ def evaluate(
                 continue
             # 三种状态必须分开（Q7）：证据到手（serves）/ 这次还查不了（pending_implementation）/
             # 证据没拿到（两者都不是 → 失败关闭）。中间那一种**不进** served_checkers，
-            # 也**不产生** Blocker；判定函数会为它产出 warning 级说明，
+            # 也**不产生** Blocker；判定函数会为它产出一条 pending_findings（severity 恒为 warning），
             # decision 因此是 allow_with_warnings，而不是普通 allow。
             pending = bundle.pending_for(checker)
             if not pending and not bundle.serves(checker):
                 violations.append(uncovered_checker_violation(rule, checker))
                 continue
-        violations.extend(checker_handler(checker)(rule, canonical, bundle))
+        findings = checker_handler(checker)(rule, canonical, bundle)
+        violations.extend(findings.violations)
+        pending_findings.extend(findings.pending_findings)
+    # 两个通道各排各的（同一把键 Violation.sort_key）：混排会让"这条属于哪个通道"
+    # 变成读者要重新猜的事，而这两个通道的语义恰好是本次要分开的东西。
     violations.sort(key=lambda item: item.sort_key)
+    pending_findings.sort(key=lambda item: item.sort_key)
 
     approval_rules = sorted(
         rule.canonical_id for rule in evaluated if rule.enforcement.requires_approval
@@ -164,13 +173,18 @@ def evaluate(
     required_action = RequiredAction.APPROVAL if approval_rules else None
 
     return ValidationResult(
-        decision=expected_decision(tuple(violations), required_action=required_action),
+        decision=expected_decision(
+            tuple(violations),
+            required_action=required_action,
+            pending=tuple(pending_findings),
+        ),
         request_id=canonical.request_id,
         trace_id=canonical.trace_id,
         rule_set_hash=rules.identity,
         matched_rules=tuple(sorted(rule.canonical_id for rule in evaluated)),
         skipped_rules=tuple(sorted([*skipped, *extra_skipped], key=lambda item: item.sort_key)),
         violations=tuple(violations),
+        pending_findings=tuple(pending_findings),
         required_action=required_action,
     )
 

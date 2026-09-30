@@ -16,6 +16,9 @@
 | `api_loop.py` | Phase 7 Policy API 闭环：本地引擎与 HTTP API 决定整份相等 / 两个协议消费者等价 / 超时与不可达都不返回 allow / 幂等重放与冲突 / 跨租户隔离 / readiness 反映真实依赖 / 观测日志可对外锚定 | `python tools/api_loop.py` |
 | `orchestration_loop.py` | Phase 8 编排闭环：在受控工作区里跑通编排工作流并重放失败 / 恢复路径，结论写到 `.tmp/artifacts/phase-8-orchestration-result.json` | `python tools/orchestration_loop.py` |
 | `validator_loop.py` | Phase 5 验证器闭环：ARCH-001 由 AST 证据判定 / 动态 import 与语法错误失败关闭 / 缺工具失败关闭 / 测试选择与失败 / 证据可重放 / 工具版本与配置可追溯 | `python tools/validator_loop.py` |
+| `provenance_loop.py` | 控制面封条（针脚）闭环：R-e 的五个场景——真判据 + 真声明跑成 pass / 运行期未声明的写者 → external_write 退 3 / 声明命中不到任何文件 → unprovable 退 3 / 空壳声明给不出判据级封条 → unprovable 退 3 / 仪器自证（把比对换成恒 pass 的替身，同一个场景不再报红）；读数写到 `.tmp/artifacts/provenance-loop-result.json` | `python tools/provenance_loop.py` |
+| `obligations_gate.py` | 台阶 3c 的义务账门禁（**L5 试用期：warn + 非零退出，不阻断**；2026-09-30 起登记为 `ci_local.py` 的**只报告步骤**——本机门禁会跑它并打印命中数，**非零退出不计入门禁失败**）：读义务账本给出 `obligations_open` / 已解除条数 / 最近一次真实 pytest 运行 / 树摘要；命中 = 有未结义务，或"声称 0 却没有真实运行"这种没有依据的读数；**账本文件不存在 = 不适用**（`applicable=false`，不算命中、也**不算一次真实读数**，凑不了升格判据里的"0 命中"；报告载荷版本 `REPORT_SCHEMA_VERSION` 1.0 → 1.1）；账本路径存在但不是文件、或协议不认识的账本退出 2。升格判据 = 跑过 N≥1 次且 0 命中（0 命中必须来自至少一次真实读数） | `python tools/obligations_gate.py --ledger .tmp/obligations/repo.jsonl` |
+| `exemption_expiry.py` | 豁免到期检查（**只报告**：退出码恒为 0，不改任何 allow / block）：读 `adapters/wiring-scope.yaml` 的边界声明与 `ci_local.py` 的 `REPORT_ONLY_STEPS`，**到期前 14 天提醒（`DUE`）、过期标红（`RED`）**；读不到写 `unprovable`，绝不把它读成"没有到期日"。它是 `ci_local` 的第二条只报告步骤 | `python tools/exemption_expiry.py`（`--json` / `--today` / `--scope`） |
 | `build_learning_notebook.py` | 生成学习手册 notebook 与纯 Python 版，并逐单元执行校验 | `python tools/build_learning_notebook.py` |
 | `phase6_cells.py` | Phase 6 学习手册的单元内容（被 `build_learning_notebook.py` 引用）；改手册内容改这里，然后运行 `python tools/build_learning_notebook.py --phase phase-6` | `python tools/build_learning_notebook.py --phase phase-6` |
 | `phase7_cells.py` | Phase 7 学习手册的单元内容（被 `build_learning_notebook.py` 引用）；改手册内容改这里，然后运行 `python tools/build_learning_notebook.py --phase phase-7` | `python tools/build_learning_notebook.py --phase phase-7` |
@@ -29,6 +32,31 @@
 | `ci_local.py` | 在本机按 CI 的顺序跑同一批检查：从 workflow 读出步骤，按"这次改了什么"选范围，bash-only 的步骤显式跳过并说明原因；`.venv` 不可用时可显式覆盖解释器；**同一工作树同时只允许一个实例真正执行**：排他锁落在 `.tmp/ci-local.lock`，第二个实例报出持锁者 pid 与起始时间后立刻退出 1（`--hook` 下即阻断推送），进程死掉锁由操作系统释放、不会留陈旧锁；执行路径**总是**在最后打印按耗时降序的汇总表（`--hook` 保持安静），`--timings` 另写 `.tmp/ci-local-timings.json` | `python tools/ci_local.py`（`--full` / `--list` / `--hook` / `--timings` / `--python <path>`） |
 | `install_hooks.py` | 安装 / 卸载 pre-push 钩子（调用 `ci_local.py --hook`，红了阻断推送；`git push --no-verify` 可跳过） | `python tools/install_hooks.py` |
 | `secret_scan.py` | 凭据扫描门禁：扫仓库自有文本文件里的确定形态凭据（与 `enforcement/audit.py` 共用一份模式定义），默认跳过逐字复制上游的离线镜像 | `python tools/secret_scan.py` |
+
+## 门禁退出码（控制面重构方案 §5.3 · 2026-09-30 写进数据）
+
+这一张表说的是**门禁判据**的退出码语义。它写在这里 = 写进数据：不要在脚本里各写一套
+（台阶 4 的"写声明"5 条之一，本轮只写声明、不建机制）。
+
+| 码 | 含义 |
+| --- | --- |
+| `0` | 全部判据 pass 且封条一致 |
+| `1` | 判据 fail（含反退化与差集非空） |
+| `2` | **用法错误**（保留给 CLI 惯例，与 Hook 的 `block` 无关） |
+| `3` | **封条失效**：`external_write`（`pre ≠ post`）或 `unprovable` |
+
+- **不与 Hook 的退出码复用**：Hook 的 `exit 2` 是**阻断**（AGENTS 第 10 条）；
+  这里的 `2` 只是"命令行用错了"，两套语义各自成文。
+- **编排器自己的退出码**（`tools/ci_local.py`）：`0` = 全部步骤通过；
+  `1` = 有步骤失败 / 拿不到排他锁 / workflow 里有未登记的步骤；
+  `2` = argparse 的用法错误。**它不返回 3**——`3` 由封条命令
+  （`python -m provenance.cli seal …`）给出，见 `src/provenance/cli.py` 的模块 docstring。
+- **只报告步骤**（`ci_local.py` 的 `REPORT_ONLY_STEPS`，见下）的非零退出**不改变**上面的结论：
+  它们只打印命中读数。
+- **门禁步骤表**（本机跑什么）由 `python tools/ci_local.py --list` 给出，分四类：
+  会跑（workflow 步骤，红了即退出 1）、本机跳过（bash-only，CI 上执行）、
+  登记豁免（`NOT_RUN_ON_HOST`，装环境类）、**只报告**（`REPORT_ONLY_STEPS`，带到期日）。
+  四类都必须逐条打印出来——"哪一步没跑"必须是一个能读到的结论，不是沉默。
 
 ## 不属于本项目的脚本
 

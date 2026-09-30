@@ -1,0 +1,116 @@
+# 边界裁定：平台治理什么、不治理什么（控制面重构方案 §3.5 的最小形态）。
+#
+# 纪律：每一条「不治理」都必须带 owner / reason / consequence / expires_at ——
+# 否则「不在范围内」就是一张永不过期的空白支票。报告（三数与五个差集）与工具化的
+# in_scope_not_wired 检查属于台阶 4/5，不在这里。
+#
+# 校验入口：python -m provenance.cli wiring-scope --check
+schema_version: "1"
+
+scope:
+  - id: governed-session-hook
+    decision: in_scope
+    kind: agent_runtime
+    owner: platform
+    reason: >-
+      受控会话（hooks 配置指向 adapters.dsh.hooks）由本仓库治理：判定、阻断、审计与
+      受控执行都是平台代码，接线失效必须失败关闭。
+    consequence: >-
+      接不上就不放行（Hook 退出码 2 = 阻断）；接线事实与留痕事实分别可读，见
+      python -m adapters.cli wiring。
+
+  - id: desktop-entry-points
+    decision: out_of_scope
+    kind: agent_runtime
+    owner: host
+    reason: >-
+      桌面 GUI 的 profile 装不装策略桥是主机配置，不是本仓库能负责的东西；让仓库门禁
+      去拦用户的桌面应用配置，只会把「正确的事做不了」变成「把门禁关掉」
+      （.github/workflows/phase-8.yml:266-272 已记过这条决定）。
+    consequence: >-
+      这些通道的接线事实只以报告形式给出（adapters.cli wiring 总是退出 0），
+      仓库不为它们签发任何 allow / block，也不把它们的缺席算成通过。
+    expires_at: "2026-12-31"
+    renewals: []
+
+  - id: ci-agent-runtime
+    decision: expected_absent
+    kind: agent_runtime
+    owner: ci
+    reason: >-
+      CI 机器上按设计没有 Agent 运行时：这是**声明**出来的缺席，不是靠跳过反推出来的。
+    consequence: >-
+      相关步骤显式报 skipped 并写明 reason（跳过的三种终态见 src/adapters/wiring.py），
+      不许把「跑不了」记成「通过」。
+    expires_at: "2026-12-31"
+    renewals: []
+
+  # ------------------------------------------------------------------ 台阶 4 · 写声明
+  #
+  # 2026-09-30 裁定 R16-4：本轮台阶 4 只做"写声明"5 条 + 到期检查（只报告），
+  # **不建任何机制**（governs 轴 / 声明差集 / 豁免到期机制 / 仪器自证一条都没建）。
+  # 下面这些就是那 5 条里落在本文件的四组（另外几组落在 tools/README.md 的退出码表、
+  # 方案 §4 台阶 4 的会话窗口与写权租约、以及 ci_local 的 REPORT_ONLY_STEPS）。
+  #
+  # **不接任何线**：这里只做"定性 + 到期日"，没有改任何 profile / hooks.json / adapter 配置。
+
+  # 三条**未声明的通道**（17 号报告 §2.2 清单乙点名：dsh:web / dsh:headless / dsh:verify-dead）。
+  # 它们今天的"红"来自"没人声明过它们算什么"，不是"该接没接"——按方案 §3.6 的判据，
+  # 处置是**写声明**而不是建机制。
+  - id: dsh-web-channel
+    decision: out_of_scope
+    kind: agent_runtime
+    owner: host
+    reason: >-
+      dsh:web（Web GUI 通道）接不接策略桥：**待使用者确认接线与否**。确认之前本仓库不替
+      使用者决定要不要接，也不把它的缺席算成缺口。
+    consequence: >-
+      只报告：它的接线事实出现在 python -m adapters.cli wiring 的清点里，仓库不为它
+      签发任何 allow / block，也不把"没接"读成"通过"。
+    expires_at: "2026-10-31"
+    renewals: []
+
+  - id: dsh-headless-channel
+    decision: out_of_scope
+    kind: agent_runtime
+    owner: host
+    reason: >-
+      dsh:headless（无界面通道）接不接策略桥：**待使用者确认接线与否**。这条通道的服务对象
+      可能是脚本化调用，接不接线是使用者的部署决定。
+    consequence: >-
+      只报告：接线事实出自 python -m adapters.cli wiring 的清点，仓库不为它签发
+      allow / block；到期日到了必须续期或改判。
+    expires_at: "2026-10-31"
+    renewals: []
+
+  - id: dsh-verify-dead-channel
+    decision: out_of_scope
+    kind: agent_runtime
+    owner: host
+    reason: >-
+      dsh:verify-dead（清点里"看着像死掉"的验证通道）接不接策略桥：**待使用者确认接线与否**。
+      它是不是真的废弃、要不要清掉，属于使用者那一侧的配置决定。
+    consequence: >-
+      只报告：清点会照实报它 not_wired，但仓库不据此拦任何东西，也不把这条读数
+      当成"平台少查了一步"；到期日到了必须续期或改判。
+    expires_at: "2026-10-31"
+    renewals: []
+
+  # 只写在 CI 注释里的那条边界裁定（.github/workflows/phase-8.yml:266-272）收进数据。
+  # 它说的不是"某条通道接没接"（那由 governed-session-hook 与 desktop-entry-points 承接），
+  # 而是**本仓库的门禁对使用者日常入口的检查形态**：清点步骤只报告，可失败形态是 --check。
+  - id: agent-channel-inventory-report-mode
+    decision: out_of_scope
+    kind: gate_check
+    owner: platform
+    reason: >-
+      平台治理受控会话、不治理使用者的日常入口：某个 GUI / CLI profile 装没装策略桥是主机配置，
+      不是本仓库能负责的东西；让仓库门禁去拦用户的日常配置，只会把"正确的事做不了"变成
+      "把门禁关掉"（这条决定此前只写在 CI 注释里，见 .github/workflows/phase-8.yml:266-272）。
+    consequence: >-
+      Agent 通道清点（python -m adapters.cli wiring）在这些通道上只报告、总是退出 0；
+      可失败形态是 python -m adapters.cli wiring --check（需要时再加 --require-runtime），
+      由 tests/contract/test_wiring_inventory.py 与 tools/governance_gap_probe.py 钉住。
+      仓库不为它们的接线缺席签发 allow，也不把缺席读成通过。
+    expires_at: "2026-12-31"
+    renewals: []

@@ -680,10 +680,12 @@ os.chdir(_previous_dir)  # 恢复工作目录
     markdown(
         """## 6. JSON 输出 = PolicyDecision 契约
 
---json 的顶层是 CLI 包装（context / rule_set / reported_imports / exit_code），
-Phase 5 起多了一段 evidence（验证器流水线的证据），治理修复轮又加了两项：
+--json 的顶层是 CLI 包装（output_schema_version / context / rule_set / reported_imports /
+exit_code），Phase 5 起多了一段 evidence（验证器流水线的证据），治理修复轮又加了两项：
 layer_source（这个层是声明的、平台测试路径推出来的、还是按文件名猜的）
 与 check_volume（这次到底查了多少：complete / missing_dimensions / blocking_capable_skipped）。
+包装层也有自己的协议版本 output_schema_version（当前 1.1；1.0 是追认的"台阶 3c 之前的形状"）——
+它只描述外层键集合，与 result 里的 schema_version 各自演进。
 其中 result 就是决策协议载荷：除了 Phase 0 就有的 decision、request_id、matched_rules、
 violations、policy_version，Phase 1 还加了 schema_version、trace_id、rule_set_hash、
 skipped_rules 与 required_action。
@@ -699,10 +701,11 @@ skipped_rules 与 required_action。
 
         `indent=2` 表示缩进两格，`sorted(payload)` 返回字典键名列表（排过序，便于核对）。
 
-这份输出有五个顶层键：`context`（这次检查的输入）、`rule_set`（规则集身份与来源）、
+这份输出的顶层键有八个：`context`（这次检查的输入）、`rule_set`（规则集身份与来源）、
 `result`（决策协议载荷）、`reported_imports`（被检查文件的 import 列表，仅供人参考，
 不参与判定——这是 Phase 0 就定下的显式边界）、`exit_code`（给脚本用的等价退出码）。
-后续阶段又加了三个：`evidence`（Phase 5）、`layer_source` 与 `check_volume`（治理修复轮）——
+后续阶段又加了四个：`evidence`（Phase 5）、`layer_source` 与 `check_volume`（治理修复轮）、
+`output_schema_version`（包装层自己的版本轴，2026-09-30 裁定）——
 "这次查了多少"必须能被读出来，否则两个 allow 长得一模一样。
 
 `exit_code` 属于 CLI 包装而不是决策协议：Phase 1 起 `result` 必须能被
@@ -721,7 +724,7 @@ payload = json.loads(
     )
 )
 
-print("顶层键:", sorted(payload))  # 实际是五个键，看下面输出的列表
+print("顶层键:", sorted(payload))  # 实际是八个键（含包装层自己的版本号），看下面输出的列表
 print("规则集身份:", payload["rule_set"]["identity"])  # 规则内容的 sha256 指纹
 print("规则集来源:", payload["rule_set"]["sources"])
 print()  # 空行，纯排版
@@ -886,7 +889,7 @@ Phase 0 手册已经讲过函数、类、模型与 YAML 缩进，这里只补 Ph
 | AND / OR | 跨维度是"都要满足"，同维度多值是"满足其一" | layer 与 language 都要中；列表里中一个即可 |
 | specificity | 命中的非通配维度数，只用于解释，不参与决策 | 命中 layer 与 language 就是 2 |
 | 失败关闭 fail-closed | 信息不全时拒绝执行，而不是默认放行 | 缺 layer 直接报错，不再猜一个值 |
-| 决策协议 schema_version | 决策载荷的版本号，看不懂就拒绝消费 | 1.0 |
+| 决策协议 schema_version | 决策载荷的版本号，看不懂就拒绝消费 | 1.1（台阶 3b 起；1.0 的载荷会被拒收） |
 | required_action | 决策要求调用方先完成的动作 | approval（人工审批） |
 | 快照 snapshot | 固定下来用于比对的历史输出 | tests/fixtures/decisions 下的 JSON |
 
@@ -1357,6 +1360,7 @@ assert approval_results["decision"] == "block", "审批门禁必须表达成 blo
 | matched_rules | 范围命中的规则（审计身份 编号@版本） |
 | skipped_rules | 范围没命中的规则，以及每个维度不命中的原因 |
 | violations | 违规记录：规则、严重级别、消息、结构化证据 |
+| pending_findings | 「待实现」的说明（项目内目标还没落地，覆盖它的测试跑不了）。**不是违规**，所以单开一个通道；它不阻断，但会让 decision 成为 allow_with_warnings |
 | required_action | 需要调用方先完成的前置动作 |
 | rule_set_hash | 规则集内容指纹，把决定绑定到具体规则版本 |
 | trace_id / request_id | 把检索、决策、执行、验证串成一条链 |
@@ -5127,6 +5131,9 @@ def check_phase_0_structure(namespace: dict) -> list[str]:
         "evidence",
         "exit_code",
         "layer_source",
+        # 2026-09-30 裁定：包装层也有自己的版本轴。手册写过的键名与实际载荷必须逐项对上，
+        # 加键就要在这张清单里出现，否则"文档说过的形状"会悄悄落后于实现（第 55 条）。
+        "output_schema_version",
         "reported_imports",
         "result",
         "rule_set",
@@ -5138,6 +5145,9 @@ def check_phase_0_structure(namespace: dict) -> list[str]:
     expected_decision = [
         "decision",
         "matched_rules",
+        # 台阶 3b：pending 的独立通道。它也必须在这个清单里，否则"文档写过的字段"
+        # 与实际载荷会在**新增键**这件事上悄悄分叉（那正是本次要修的毛病）。
+        "pending_findings",
         "policy_version",
         "request_id",
         "required_action",
@@ -5175,6 +5185,9 @@ def check_phase_1_structure(namespace: dict) -> list[str]:
         "evidence",
         "exit_code",
         "layer_source",
+        # 包装层自己的版本轴（2026-09-30 裁定）：Phase 1 的手册讲的正是"包装与协议是两层"，
+        # 这个键必须在清单里，读者才看得到两层各有各的版本号。
+        "output_schema_version",
         "reported_imports",
         "result",
         "rule_set",
@@ -5186,6 +5199,9 @@ def check_phase_1_structure(namespace: dict) -> list[str]:
     expected_decision = [
         "decision",
         "matched_rules",
+        # 台阶 3b：pending 的独立通道。它也必须在这个清单里，否则"文档写过的字段"
+        # 与实际载荷会在**新增键**这件事上悄悄分叉（那正是本次要修的毛病）。
+        "pending_findings",
         "policy_version",
         "request_id",
         "required_action",

@@ -161,15 +161,21 @@ def test_evaluate_decision_payload_equals_the_core_engine_result(tmp_root: Path)
         "matched_rules",
         "skipped_rules",
         "violations",
+        # 台阶 3b：pending 的独立通道（决策协议 1.1）
+        "pending_findings",
         "required_action",
         "policy_version",
     }
-    assert decision["schema_version"] == "1.0"
+    assert decision["schema_version"] == "1.1"
     assert decision["request_id"] == request_id and decision["trace_id"] == trace_id
     assert decision["decision"] == "block"
     assert body["tenant"] == "alpha"
     assert body["summary"]["decision"] == decision["decision"]
+    # B4（台阶 3b）：summary.violations 只数**真的报了违规**的条数，与决策载荷逐字段一致；
+    # pending 走另一个通道（同一个响应体里的 decision.pending_findings），不计进这个数。
+    # 这里是 block 场景，新通道是一个**明确的空列表**，不是缺失的键。
     assert body["summary"]["violations"] == len(decision["violations"]) == 1
+    assert decision["pending_findings"] == []
     assert body["rule_set"]["hash"] == decision["rule_set_hash"]
     assert body["rule_set"]["hash"].startswith("sha256:")
     assert body["rule_set"]["identity"] == ["ARCH-001@1"]
@@ -715,6 +721,87 @@ def test_validate_runs_the_real_pipeline_and_returns_a_decision(tmp_root: Path) 
     assert body["decision"]["decision"] == "allow"
     assert body["summary"]["decision"] == "allow"
     assert body["decision"]["request_id"] == "it-validate-1"
+    # B4：验证路由（唯一带证据的判定入口）同样给出两个通道；没有待实现时新通道是空列表。
+    assert body["decision"]["pending_findings"] == []
+    assert body["summary"]["violations"] == len(body["decision"]["violations"]) == 0
+
+
+def test_validate_reports_a_pending_finding_through_the_decision_channel(tmp_root: Path) -> None:
+    """B4 正例：经 API 的**待实现**（先写测试、实现还没落地）必须读成 allow_with_warnings。
+
+    为什么必须补这一条：台阶 3b 的 B4 只补了**不变量**断言（summary.violations 与
+    decision["violations"] 一致、pending 是空列表），而 /v1/policy/evaluate 结构上不产生
+    pending（没有证据），所以"经 API 的 pending"从来没有被验过——14 号 §5.2 已把这条
+    覆盖缺口登记在案。按 AGENTS 第 45 条：**覆盖不到就说覆盖不到**，不许把"跑了、是绿的"
+    当成覆盖；这条用例补的正是那个正例，走的是真流水线、真 pytest 子进程、真决策。
+
+    判据（J1(b) 在 API 侧的读法）：
+    - summary.violations == len(decision["violations"]) == 0：pending **不计进**违规数；
+    - decision["pending_findings"] 非空：可见性由同一个响应体里的决策载荷承接；
+    - decision == allow_with_warnings：待实现不阻断；
+    - 报告侧同时读得到：pending_implementation 非空、failing_tests **不在** served_checkers。
+    """
+
+    runtime, client, _ = build_api(
+        tmp_root, extra_rules=(REPO_ROOT / "policies" / "testing",)
+    )
+    project = tmp_root / "project"
+    tests_dir = project / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tests_dir / "test_order_service.py").write_text(
+        '"""取消订单的用例：先写测试，实现还没落地。"""' + chr(10) + chr(10)
+        + "from shop.order_service import cancel_order" + chr(10) + chr(10) + chr(10)
+        + "def test_cancel_returns_cancelled_status() -> None:" + chr(10)
+        + '    """取消订单返回 cancelled。"""' + chr(10) + chr(10)
+        + '    assert cancel_order(None, "order-1")["status"] == "cancelled"' + chr(10),
+        encoding="utf-8",
+        newline=chr(10),
+    )
+
+    response = client.post(
+        "/v1/validation/evaluate",
+        headers=auth(),
+        json=envelope(
+            "it-validate-pending",
+            context={
+                "file": "src/shop/order_service.py",
+                "layer": "service",
+                "language": "python",
+                "operation": "edit",
+            },
+            target="src/shop/order_service.py",
+            changed=["src/shop/order_service.py"],
+        ),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    decision = body["decision"]
+    report = body["report"]
+
+    assert decision["decision"] == "allow_with_warnings"
+    assert body["summary"]["decision"] == "allow_with_warnings"
+    # B4：违规数只数**真的报了违规**的规则；待实现走另一个通道。
+    assert body["summary"]["violations"] == len(decision["violations"]) == 0
+    assert decision["pending_findings"], decision
+    assert [item["rule_id"] for item in decision["pending_findings"]] == ["TESTING-002"]
+    # 待实现必须说得出"哪个测试模块因哪个项目内缺失的目标收集不了"（说不出就是无理由的放行）。
+    assert decision["pending_findings"][0]["evidence"]["value"] == (
+        "shop.order_service:cancel_order"
+    )
+    # 报告侧：拿到了「待实现」这条事实，但没查成的那条 checker 不许记成查过了。
+    [pending] = report["pending_implementation"]
+    assert pending["missing_targets"] == ["shop.order_service:cancel_order"]
+    assert pending["test_modules"] == ["tests/test_order_service.py"]
+    assert "failing_tests" not in report["served_checkers"]
+    assert report["blockers"] == []
+    # 请求级 JSONL 也读得到这次判定（14 号 §5.2 的第二条限制：此前**没有**任何用例
+    # 驱动出过一条 decision=allow_with_warnings 且 violations=0 的 API 日志行）。
+    rows = runtime.request_log.read_back()
+    assert len(rows) == 1
+    assert rows[0]["request_id"] == "it-validate-pending"
+    assert rows[0]["route"] == "validate"
+    assert rows[0]["decision"] == "allow_with_warnings"
+    assert rows[0]["violations"] == 0
 
 
 def test_validate_fails_closed_for_a_tenant_without_validators(tmp_root: Path) -> None:

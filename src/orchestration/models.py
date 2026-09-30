@@ -22,7 +22,7 @@ import json
 from enum import Enum
 from typing import Any, Final, Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from policy.models import POLICY_VERSION, SCHEMA_VERSION, Decision, Severity
 
@@ -51,7 +51,10 @@ __all__ = [
 ]
 
 # 编排状态协议版本。改字段语义 = 新版本；读不懂的状态必须拒绝（见 checkpoint 层）。
-STATE_SCHEMA_VERSION: Final[str] = "1.0"
+# 1.1（台阶 3a / H1+H10）：ValidationSummary 增受控 `reason_code`、ViolationRef 增证据通道
+# `evidence_kind` / `evidence_value`。两者都进 checkpoint 状态，因此旧版状态显式拒绝恢复
+# （协议自己的规则：改状态载荷就递增自己的版本号，不去改动决策协议）。
+STATE_SCHEMA_VERSION: Final[str] = "1.1"
 SUPPORTED_STATE_SCHEMA_VERSIONS: Final[frozenset[str]] = frozenset({STATE_SCHEMA_VERSION})
 
 _MAX_ID = 128
@@ -227,8 +230,66 @@ class PolicyTraceRef(StrictModel):
     reason: str = Field(default="", max_length=_MAX_TEXT)
 
 
+# H1：一次 block 属于哪一类——**受控闭集**（不留自由文本）。
+#
+# 为什么需要它：`block` + `violations=[]` 在判定层是**合法**形态（审批门禁就是这一种），
+# 而消费方修复节点把它读成「没有依据」，于是抛契约错误、整轮变 FAILED——一条「需要人批准」
+# 被翻译成了「编排自己坏了」。这里把「属于哪一类」算出来，让消费方有受控的东西可读。
+#
+# 为什么是**派生**而不是决策协议的新字段：判定协议（policy SCHEMA_VERSION）本轮不动——
+# 这些结论都能从已有的 required_action 与 violations 的证据通道算出来；多一个载荷字段
+# 等于多一条可能与判定矛盾的通道。
+REASON_APPROVAL_REQUIRED: Final[str] = "approval_required"
+REASON_POLICY_VIOLATION: Final[str] = "policy_violation"
+REASON_EVIDENCE_UNAVAILABLE: Final[str] = "evidence_unavailable"
+REASON_CODES: Final[frozenset[str]] = frozenset(
+    {REASON_APPROVAL_REQUIRED, REASON_POLICY_VIOLATION, REASON_EVIDENCE_UNAVAILABLE}
+)
+
+# 判定侧用这两类 evidence.kind + detail 表达「平台没能查」（不是代码缺陷）：
+# checkers.uncovered_checker_violation 写 kind="validator" + detail="uncovered_checker"，
+# blocker_violation 写 kind="validator" + detail="blocker"。它们改文件改不掉。
+UNREPAIRABLE_VIOLATION_DETAILS: Final[frozenset[str]] = frozenset(
+    {"uncovered_checker", "blocker"}
+)
+
+
+def decision_reason(
+    decision: Decision,
+    *,
+    required_action: Optional[str],
+    violations: Tuple["ViolationRef", ...],
+) -> Optional[str]:
+    """按**受控规则**给一次 block 归类；说不出来就返回 None（消费方失败关闭）。
+
+    规则（顺序即优先级，未知一律 None）：
+
+    1. required_action == "approval" → approval_required（授权是前置条件，不是发现）；
+    2. 有 violation 且**每一条**都是「平台没能查」→ evidence_unavailable；
+    3. 有 violation 且至少一条是规则报的违规 → policy_violation；
+    4. 其余（含 block + 空 violations 却说不出为什么）→ None。
+    """
+
+    if decision is not Decision.BLOCK:
+        return None
+    if required_action == "approval":
+        return REASON_APPROVAL_REQUIRED
+    if not violations:
+        return None
+    if all(item.evidence_value in UNREPAIRABLE_VIOLATION_DETAILS for item in violations):
+        return REASON_EVIDENCE_UNAVAILABLE
+    return REASON_POLICY_VIOLATION
+
+
 class ViolationRef(StrictModel):
-    """结构化 violation：修复节点只能基于它规划，不读自然语言。"""
+    """结构化 violation：修复节点只能基于它规划，不读自然语言。
+
+    `evidence_kind` / `evidence_value` 是**证据通道**（H10）：判定侧的 violation 靠
+    `evidence.kind` 区分"某条规则报了违规"与"关键验证器撤了证据"（`uncovered_checker` /
+    `blocker`），而"过桥"这一层原先只取 evidence 的 file/line，把 kind/value/detail
+    整段丢掉——于是修复节点只能靠中文 message 猜这条 violation 属于哪一类，而"靠文本猜"
+    正是平台一直在治的那件事。这里只搬引用，不搬正文。
+    """
 
     rule_id: str = Field(min_length=1, max_length=_MAX_ID)
     rule_version: int = Field(ge=1)
@@ -236,6 +297,8 @@ class ViolationRef(StrictModel):
     file: str = Field(default="", max_length=_MAX_PATH)
     line: Optional[int] = Field(default=None, ge=1)
     message: str = Field(default="", max_length=_MAX_TEXT)
+    evidence_kind: str = Field(default="", max_length=_MAX_ID)
+    evidence_value: str = Field(default="", max_length=_MAX_TEXT)
 
     @field_validator("file")
     @classmethod
@@ -259,6 +322,48 @@ class ValidationSummary(StrictModel):
     required_action: Optional[str] = Field(default=None, max_length=40)
     validators: Tuple[str, ...] = ()
     violations: Tuple[ViolationRef, ...] = ()
+    # H1：受控 reason。**派生字段，不进决策载荷**（决策协议仍是 1.0）——它回答的是
+    # "这次 block 属于哪一类"，由 `client.decision_reason` 从 required_action +
+    # violations 的 evidence 通道**算出来**，不是第二份判定。`None` = 说不出来，
+    # 消费方（repair）必须按失败关闭处理，不许猜。
+    reason_code: Optional[str] = Field(default=None, max_length=40)
+
+    @model_validator(mode="after")
+    def _reason_matches_findings(self) -> "ValidationSummary":
+        """没给就按同一套受控规则**派生**；给了就必须与发现一致（不许第二份判定）。
+
+        为什么要在这里做：摘要有两个来源（`DecisionOutcome.summary` / `ValidationOutcome.summary`）
+        与若干直接构造点（测试、恢复路径）。只在其中一处派生，别处就会出现"字段为空但其实是
+        审批门禁"的摘要——消费方于是又回到"读不出理由"的老问题上。
+        """
+
+        derived = decision_reason(
+            self.decision,
+            required_action=self.required_action,
+            violations=self.violations,
+        )
+        if self.reason_code is None:
+            # 模型是 frozen 的：派生值用 object.__setattr__ 落进去（pydantic 2 的
+            # after-validator 不接受"返回另一个实例"，见它的 UserWarning）。
+            object.__setattr__(self, "reason_code", derived)
+            return self
+        if self.reason_code not in REASON_CODES:
+            raise ValueError(
+                f"未知的 reason_code {self.reason_code!r}；只接受 {sorted(REASON_CODES)}，"
+                "拒绝在未知理由下继续"
+            )
+        if derived is not None and derived != self.reason_code:
+            raise ValueError(
+                f"reason_code 与发现不一致：{self.reason_code!r} != {derived!r}"
+                "（受控 reason 是从发现派生的，不许成为第二个判定通道）"
+            )
+        return self
+
+    @property
+    def reason(self) -> Optional[str]:
+        """受控 reason 的只读视图；说不出来时返回 None，**绝不返回一个默认值**。"""
+
+        return self.reason_code
 
     @property
     def failing(self) -> bool:

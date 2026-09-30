@@ -18,10 +18,23 @@ pytestmark = pytest.mark.integration
 PROJECT = "tests/fixtures/validators/project"
 
 
-def cli(*args: str) -> subprocess.CompletedProcess[str]:
+def subprocess_env() -> dict[str, str]:
+    """本文件里**所有**子进程都用这一份环境：源码路径与输出编码都固定。
+
+    子进程 stdout 的编码跟它自己的环境走（本机 `chcp` = 936 时默认写 GBK），而调用方
+    一律按 `encoding="utf-8"` 解码：父进程的 `PYTHONIOENCODING` 一换（或干脆没有这个
+    变量），同一个子进程就写出另一种字节，断言随环境改变。所以环境口径在这里钉死，
+    三处调用共用一份实现，不各自拼一份。
+    """
+
     env = dict(os.environ)
     env["PYTHONPATH"] = str(REPO_ROOT / "src")
     env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def cli(*args: str) -> subprocess.CompletedProcess[str]:
+    env = subprocess_env()
     return subprocess.run(
         [sys.executable, "-m", "validators.cli", *args],
         cwd=REPO_ROOT,
@@ -129,8 +142,7 @@ def test_check_command_exits_one_on_findings() -> None:
 
 
 def test_pipeline_command_matches_policy_check() -> None:
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(REPO_ROOT / "src")
+    env = subprocess_env()
     args = [
         "src/shop/order_controller_bad.py",
         "--layer",
@@ -214,9 +226,7 @@ def test_changed_from_git_uses_the_working_tree(tmp_root: Path) -> None:
 def policy_cli(*args: str) -> subprocess.CompletedProcess[str]:
     """在仓库根目录以子进程方式运行 python -m policy.check（只用于口径比对）。"""
 
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(REPO_ROOT / "src")
-    env["PYTHONIOENCODING"] = "utf-8"
+    env = subprocess_env()
     return subprocess.run(
         [sys.executable, "-m", "policy.check", *args],
         cwd=REPO_ROOT,

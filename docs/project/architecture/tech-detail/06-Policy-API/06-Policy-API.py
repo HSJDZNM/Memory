@@ -130,9 +130,9 @@ def pad(text, width, align="left"):
 #
 # | 版本 | 位置 | 值 | 变了意味着什么 |
 # | --- | --- | --- | --- |
-# | 传输协议 | `policy_api.models.API_SCHEMA_VERSION` | 1.0 | 线上请求 / 响应字段变了（删字段、改语义）= 新 API 版本，还必须显式更新 `api/openapi.json` 快照 |
-# | 决策协议 | `policy.models.SCHEMA_VERSION` | 1.0 | 决策载荷（PolicyDecision）变了 |
-# | 协议世代 | `policy.models.POLICY_VERSION` | phase-1 | 与决策协议同进同退，**不跟随平台阶段** |
+# | 传输协议 | `policy_api.models.API_SCHEMA_VERSION` | 1.0 | 线上请求 / 响应字段变了（删字段、**加键**或改语义）= 新 API 版本，还必须显式更新 `api/openapi.json` 快照 |
+# | 决策协议 | `policy.models.SCHEMA_VERSION` | 1.1 | 决策载荷（PolicyDecision）变了；1.0 → 1.1 是台阶 3b 的 pending 独立通道 |
+# | 协议世代 | `policy.models.POLICY_VERSION` | decision-1.1 | 与决策协议同进同退，**不跟随平台阶段** |
 #
 # `policy_api` 只从核心**取值**（`DECISION_PAYLOAD_SCHEMA_VERSION`、`POLICY_GENERATION`），
 # 不许自己算一个——"证据说 phase-5、载荷说 phase-1"这类漂移正是这条纪律要避免的。
@@ -158,7 +158,9 @@ print(pad("协议世代 POLICY_VERSION", 34) + core_models.POLICY_VERSION)
 print(pad("policy_api 只取值、不自算", 34) + str(api_models.POLICY_GENERATION == core_models.POLICY_VERSION))
 
 assert api_models.API_SCHEMA_VERSION == "1.0"
-assert decision_versions == ("1.0", "phase-1")
+# 台阶 3b：pending 移出 violations、新增 pending_findings 通道 → 决策协议 1.1、
+# 世代名 decision-1.1（传输协议没动：那是**另一套**协议）。
+assert decision_versions == ("1.1", "decision-1.1")
 assert api_models.POLICY_GENERATION == core_models.POLICY_VERSION
 assert api_models.DECISION_PAYLOAD_SCHEMA_VERSION == core_models.SCHEMA_VERSION
 
@@ -480,7 +482,7 @@ print("decision:", body["decision"]["decision"], "| 违规:",
       ", ".join(item["rule_id"] for item in body["decision"]["violations"]))
 print("规则集:", body["rule_set"]["identity"], "|", body["rule_set"]["rules"], "条规则")
 # 三个版本字段分属两套协议：api_version 是传输协议、decision.schema_version 是决策协议，
-# policy_version / generation 是协议世代名（phase-1），只与决策协议同进同退。
+# policy_version / generation 是协议世代名（台阶 3b 起是 decision-1.1），只与决策协议同进同退。
 assert body["api_version"] == API_SCHEMA_VERSION
 assert body["decision"]["schema_version"] == core_models.SCHEMA_VERSION
 assert body["policy_version"] == core_models.POLICY_VERSION == body["generation"]
@@ -640,7 +642,7 @@ print("      而超时、忙碌、依赖不可用与审计不可写，全部是�
 #   `policy.engine.evaluate` 一条路径——本机实测本地与经 API 的决策载荷**整份相等**，
 #   且 `budget_ms` / `idempotency_key` / `api_version` 这些传输字段没有渗进决策载荷；
 # - **两套版本各自演进**：`API_SCHEMA_VERSION`（传输协议 1.0）与
-#   `SCHEMA_VERSION` / `POLICY_VERSION`（决策协议 1.0 / phase-1）互不相干，
+#   `SCHEMA_VERSION` / `POLICY_VERSION`（台阶 3b 起是决策协议 1.1 / decision-1.1）互不相干，
 #   后者只能从核心取值——本次断言了 `POLICY_GENERATION == POLICY_VERSION`；
 # - **客户端不能自带证据或决策**：`evidence` / `decision` / `rule_set` / `decision_ref`
 #   都不是 `/v1/policy/evaluate` 的字段，带上它们一律 400 `body_invalid`；

@@ -62,6 +62,24 @@ def test_decision_table(
     assert expected_decision(findings, required_action=required_action) is expected
 
 
+def test_decision_table_with_the_pending_channel() -> None:
+    """pending 只参与**空判定**：它自己不阻断，也不会把 block 变轻（台阶 3b / D-1(b)）。
+
+    这是 U2（13 号 §2.3）的最小机器版本：四种 decision 在改动前后逐个相等。
+    """
+
+    pending = (violation(Severity.WARNING),)
+
+    assert expected_decision(()) is Decision.ALLOW
+    assert expected_decision((), pending=pending) is Decision.ALLOW_WITH_WARNINGS
+    assert expected_decision((violation(Severity.ERROR),), pending=pending) is Decision.BLOCK
+    # 审批门禁仍然是第一条、且与两个通道的取值无关。
+    assert (
+        expected_decision((), required_action=RequiredAction.APPROVAL, pending=pending)
+        is Decision.BLOCK
+    )
+
+
 def test_no_matching_rule_allows() -> None:
     rule_set = rules(make_rule(scope={"layer": "service"}))
 
@@ -256,7 +274,7 @@ def test_result_records_trace_hash_and_skipped_reasons() -> None:
     assert result.trace_id == "trace-42"
     assert result.rule_set_hash == rule_set.identity
     assert result.request_id == "req-123"
-    assert result.policy_version == "phase-1"
+    assert result.policy_version == "decision-1.1"
     assert result.skipped_rules == (
         SkippedRule(rule_id="ARCH-002@1", reasons=("layer controller != service",)),
     )

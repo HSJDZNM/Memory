@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from conftest import (
     VALIDATOR_PROJECT,
@@ -12,6 +13,7 @@ from conftest import (
     make_context,
     validators_config,
 )
+from policy.check import render_text
 from policy.engine import evaluate
 from policy.evidence import (
     Blocker,
@@ -27,7 +29,7 @@ from policy.evidence import (
     ValidatorRecord,
     ValidatorStatus,
 )
-from policy.models import Decision, RuleSet, Severity
+from policy.models import Decision, Evidence, RuleSet, Severity, ValidationResult, Violation
 from validators.docstrings import missing_docstring_evidence
 from validators.python_ast import parse_module
 from validators.selection import list_test_files, select_tests
@@ -473,15 +475,20 @@ def test_pending_implementation_warns_instead_of_blocking() -> None:
     result = evaluate(rules, make_context(), evidence=evidence)
 
     assert result.decision is Decision.ALLOW_WITH_WARNINGS
-    assert [item.canonical_id for item in result.violations] == ["TESTING-002@1"]
-    violation = result.violations[0]
-    assert violation.severity is Severity.WARNING  # 「待实现」不是违规，用 warning 表达
-    assert "待实现" in violation.message
-    assert "tests/test_audit_repository.py" in violation.message
-    assert "shop.audit_repository:AuditEntry" in violation.message
-    assert "本次写入被放行" in violation.message
+    # J1(b)：pending **不是违规**——violations 里一条 pending 都没有。
+    # 只断言这一半会被"把 pending 整条删掉"满足，所以下一行必须同时钉住"它还在"。
+    assert result.violations == ()
+    assert [item.canonical_id for item in result.pending_findings] == ["TESTING-002@1"]
+    finding = result.pending_findings[0]
+    assert finding.severity is Severity.WARNING  # 「待实现」不是违规，用 warning 表达
+    assert "待实现" in finding.message
+    assert "tests/test_audit_repository.py" in finding.message
+    assert "shop.audit_repository:AuditEntry" in finding.message
+    assert "本次写入被放行" in finding.message
     assert result.matched_rules == ("TESTING-002@1",)
-    assert result.severity_counts == {"warning": 1}
+    # severity_counts 是"违规"的分布：pending-only 因此是空的——这是对的口径，
+    # 不是漏统计（文本输出另有一段 pending，见 test_pending_only_prints_a_reason_line）。
+    assert result.severity_counts == {}
 
 
 def test_pending_implementation_is_readable_from_the_decision_payload() -> None:
@@ -493,12 +500,67 @@ def test_pending_implementation_is_readable_from_the_decision_payload() -> None:
     )
 
     payload = evaluate(rules, make_context(), evidence=evidence).to_decision_dict()
-    entry = payload["violations"][0]
+    entry = payload["pending_findings"][0]
 
     assert payload["decision"] == "allow_with_warnings"
+    # 两个通道在载荷里各占一个键，且**不是**同一份清单：violations 空、新通道非空。
+    assert payload["violations"] == []
     assert entry["severity"] == "warning"
     assert "待实现" in entry["message"]
     assert entry["evidence"]["value"] == "shop.audit_repository:AuditEntry"
+
+
+def test_the_pending_channel_refuses_a_blocking_severity() -> None:
+    """构造期不变量：`pending_findings` 只承载 warning。
+
+    为什么钉在**构造期**而不是靠调用方自觉：阻断判定只读 `violations`；如果 pending 能带
+    error/critical，"从 violations 搬到 pending"就成了一次静默放宽（D-1(b) 要避免的正是这个）。
+    构造期拒绝让它变成一个硬失败，而不是一个要靠人读出来才发现的口径缺失。
+    """
+
+    blocking = Violation(
+        rule_id="TESTING-002",
+        rule_version=1,
+        severity=Severity.ERROR,
+        message="待实现（这条不该能进 pending 通道）",
+        evidence=Evidence(kind="failing_tests", subject="tests/t.py", value="shop.x:y"),
+    )
+
+    with pytest.raises(ValidationError) as error:
+        ValidationResult(
+            decision=Decision.BLOCK,
+            request_id="req-1",
+            pending_findings=(blocking,),
+        )
+
+    assert "pending_findings" in str(error.value)
+    assert "error" in str(error.value)
+
+
+def test_pending_only_prints_a_reason_line_instead_of_an_empty_one() -> None:
+    """B5（台阶 3b）：pending-only 的决策在文本输出里必须**读得出理由**。
+
+    改动前这里打出的是 `FAIL: decision=allow_with_warnings（required_action=None）`——
+    括号里既不是级别分布、也不是审批门禁，读者从中读不出"为什么不是普通 allow"，
+    而这一行本来正是给人看的那一行。这条断言只钉"读得出"，措辞可以变。
+    """
+
+    rule = make_checker_rule("TESTING-002", checker="failing_tests", severity="error")
+    rules = RuleSet(rules=(rule,), source_paths=())
+    evidence = bundle(
+        validators=(record("tool.pytest", declared=("failing_tests",)),),
+        pending_implementation=(pending(),),
+    )
+    context = make_context()
+
+    text = render_text(context, rules, evaluate(rules, context, evidence=evidence))
+
+    assert "decision=allow_with_warnings" in text
+    # 空理由行必须消失：这一条是 B5 的全部要点。
+    assert "required_action=None" not in text
+    assert "pending_findings" in text
+    assert "TESTING-002@1" in text
+    assert "待实现" in text
 
 
 def test_pending_implementation_does_not_silence_other_checkers() -> None:

@@ -16,6 +16,10 @@
  * exit_code_zero 这类事后核对失败时，模型原本只能拿到一行策略错误，连自己命令的输出都看不到。
  * 它只发生在"已经要 block"的分支里，标了显式横幅，沿用同一条截断上限（README §9.8）。
  *
+ * 台阶 2（设计 §3.4）：拒绝理由同时带一条**结构化归因**（`origin`，闭集 + 核验前置），
+ * 消费方不必解析中文理由。它只进 runHook 的返回值：dsh 看到的仍然是 deny / block 两种形状，
+ * 放行/拒绝的判定一个字没变（"核验记录无权威"）。
+ *
  * 为什么需要它：dsh 0.1.5-rc.1 自带的 @deepseek-ai/dsh-hooks-claude-code 桥在本机
  * 实测「外部命令确实被调用了，但它的 exit 2 没有变成 deny」（证据见
  * src/adapters/dsh/README.md 第 8 节）。这个插件用同一条线协议补上那一步，
@@ -200,6 +204,125 @@ function blockFeedback(reason, toolResponse) {
   return blocks;
 }
 
+// ---------------------------------------------------------------- 归因闭集与核验前置（台阶 2）
+//
+// Q6 修好的是**理由文本**（给模型读的一句中文）；文本有两个弱点：消费方只能写正则去解析它，
+// 而且它说不出"这条归因凭什么成立"。台阶 2 把同一批事实升格成结构化的 `origin`
+// （设计《控制面重构方案》§3.4）：闭集 + 核验前置 + 写不出 fix 的 origin 不许存在。
+//
+// 这里**不新增任何共享结构**：闭集就是下面这几组字面量，形状只有 buildOrigin 一个产出点。
+// 它与 Python 侧（src/provenance/origin.py）是同一份跨语言契约，两侧各自逐字实现同一形状。
+// 归因记录**无权威**：它只进 runHook 的返回值与诊断，消费者不得据它 allow / block。
+const ORIGIN_VALUES = [
+  'project.workdir_missing',
+  'host.workdir_unreadable',
+  'agent_runtime.spawn_denied',
+  'agent_runtime.spawn_failed',
+  'unknown_origin',
+];
+const OBSERVATION_METHODS = ['stat', 'load', 'spawn', 'read', 'none'];
+const OBJECT_KINDS = ['path', 'file', 'command', 'workdir', 'runtime', 'unknown'];
+const ORIGIN_OBJECT_KIND = 'platform.attribution';
+
+// 每条归因都要写出"改成什么形态就能过"（设计 §3.4：写不出 fix 的 origin 不许存在）。
+const FIX_WORKDIR_MISSING = '创建这个目录（或把 config.projectDir 指向一个真实存在的目录），然后重跑这次调用';
+const FIX_WORKDIR_NOT_A_DIR = '把 config.projectDir 指向一个目录（现在这条路径不是目录），然后重跑';
+const FIX_WORKDIR_UNREADABLE = '先确认这个目录存在、可读、真的是目录（用一条 stat 看它的属性），看不到就先恢复它的访问权限，再重跑';
+const FIX_SPAWN_DENIED = '这是沙箱对"管道 stdio"的限制：在允许它的环境里重跑，或让 Hook 不依赖管道 stdio；在此之前不要改工作目录（目录这一侧已排除）';
+const FIX_SPAWN_FAILED = '把这条命令在**同一个工作目录**里单独跑一遍，按它自己的报错改命令 / 运行时（工作目录这一侧已排除）';
+const FIX_MISSING_ACTION = '先补一条可执行的修复动作（例如：写明这个对象的真实路径，并给出一条能验证它的检查命令），再重新取证；在此之前不许把它归到任何一侧';
+
+/**
+ * 产出一条结构化归因。纯函数：除读一次时钟（verified_at）之外不碰任何外部状态。
+ *
+ * 三条硬规则都在这里，不靠调用方自觉：
+ *   * **闭集**：取值不在 ORIGIN_VALUES 里 → 落 unknown_origin。**不抛异常**——插件里抛出去
+ *     的异常会变成"这次调用没被拦住"，那是失败关闭的反面；
+ *   * **fix**：写不出可执行的修复动作 → 不许产出那条指控，落 unknown_origin 并补一条**具体**
+ *     动作（"请联系管理员"不是修复动作）；
+ *   * **verified_at**：来自真实调用 new Date().toISOString()——核验没有时刻就等于没有观测。
+ *
+ * 前两条一旦触发，这条归因就是**作废**的：origin 落 unknown_origin、causal_link 落 unproven、
+ * verified 落 false——"归因没有建立起来"必须是一个整体，不许留半条还成立的痕迹。
+ */
+function buildOrigin(fields) {
+  const claimed = fields.origin;
+  const fix = typeof fields.fix === 'string' ? fields.fix.trim() : '';
+  const claimHolds = ORIGIN_VALUES.includes(claimed) && (claimed === 'unknown_origin' || fix !== '');
+  // 闭集外的取值 / 写不出修复动作 → **那条指控不许成立**：落 unknown_origin，因果链标成
+  // unproven，fix 换成一条具体的下一步动作（原来那条 fix 属于已经作废的指控，不能留下）。
+  const dropped = !claimHolds;
+  const effectiveFix = dropped && claimed !== 'unknown_origin' ? '' : fix;
+  return {
+    kind: ORIGIN_OBJECT_KIND,
+    origin: dropped ? 'unknown_origin' : claimed,
+    owner: typeof fields.owner === 'string' && fields.owner !== '' ? fields.owner : 'platform.attribution',
+    object: {
+      kind: OBJECT_KINDS.includes(fields.objectKind) ? fields.objectKind : 'unknown',
+      value:
+        typeof fields.objectValue === 'string' && fields.objectValue !== '' ? fields.objectValue : 'unknown',
+      source:
+        typeof fields.objectSource === 'string' && fields.objectSource !== '' ? fields.objectSource : 'unknown',
+    },
+    observation: {
+      method: OBSERVATION_METHODS.includes(fields.method) ? fields.method : 'none',
+      result: typeof fields.result === 'string' && fields.result !== '' ? fields.result : '没有可读的取证结果',
+      verified: dropped ? false : fields.verified === true,
+      verified_at: new Date().toISOString(),
+      run_scoped: true,
+    },
+    fix: effectiveFix !== '' ? effectiveFix : FIX_MISSING_ACTION,
+    causal_link: !dropped && fields.causalLink === 'proven' ? 'proven' : 'unproven',
+  };
+}
+
+/** 结构化记录里点名对象时的显示名：路径只留末段（与 Python 侧同口径）。 */
+function objectNameOf(value) {
+  if (typeof value !== 'string' || value === '') {
+    return 'unknown';
+  }
+  const parts = value.split(/[\\/]+/).filter((part) => part !== '');
+  return parts.length > 0 ? parts[parts.length - 1] : value;
+}
+
+/**
+ * 从「工作目录事实 + spawn 报错」推出最终归因（闭集内）。
+ *
+ * 核验前置的方向只有一条：工作目录这一侧**已被证伪**（stat 说它在）时，指控不许再指向目录，
+ * 只能落 agent_runtime.*，并按报错原文分"被沙箱拒绝"与"起不来"。反过来，stat 说它不在、
+ * 或读不到 → 归因就是那一侧，**不许照抄 spawn 的 ENOENT**（照抄它正是 Q6 那个误导）。
+ */
+function workdirFailureOrigin(command, workdir, cause) {
+  const observed = workdir.origin;
+  // 目录这一侧已被证明不可用（usable=false）→ 归因就是它。核验守卫若已把它降级成
+  // unknown_origin（写不出 fix），也照原样返回：**不许**换一个对象继续指控。
+  if (workdir.usable === false || observed.origin === 'host.workdir_unreadable') {
+    return observed;
+  }
+  if (observed.origin === 'unknown_origin') {
+    // 没有可核验的对象（未声明工作目录）：宁可不归因，也不猜一个对象出来。
+    return observed;
+  }
+  // 走到这里只剩一种：工作目录已被确认为目录（目录这一侧被证伪）→ 指控只能落在命令这一侧。
+  const text = typeof cause === 'string' ? cause : '';
+  const denied = text.includes('EPERM');
+  return buildOrigin({
+    origin: denied ? 'agent_runtime.spawn_denied' : 'agent_runtime.spawn_failed',
+    owner: 'agent_runtime',
+    objectKind: 'command',
+    objectValue: typeof command === 'string' ? command : '',
+    objectSource: 'config.command',
+    method: 'spawn',
+    result:
+      text !== ''
+        ? 'spawn 报错原文：' + text
+        : 'spawn 抛了异常但报错消息为空（工作目录这一侧已由 stat 排除）',
+    verified: true,
+    fix: denied ? FIX_SPAWN_DENIED : FIX_SPAWN_FAILED,
+    causalLink: 'proven',
+  });
+}
+
 /**
  * 工作目录的预检事实（Q6）。
  *
@@ -211,6 +334,9 @@ function blockFeedback(reason, toolResponse) {
  * usable=false 只表示**能证明**目录不可用（不存在 / 不是目录）：判定不可用就直接拒绝，
  * 不再去 spawn（真机上那一次 spawn 只会给出误导的 ENOENT）。查不出来的情况
  * （权限等）usable 仍为 true，交给 spawn 与 catch 分支——那两条路同样是失败关闭。
+ *
+ * 台阶 2：五种结论各带一条结构化 origin（闭集 + 核验前置）——"能不能证明目录可用"与
+ * "凭什么这么归因"是同一批事实的两面，不该只活在中文理由里。
  */
 function inspectWorkdir(cwd, source) {
   if (typeof cwd !== 'string' || cwd === '') {
@@ -218,6 +344,19 @@ function inspectWorkdir(cwd, source) {
       usable: true,
       text: '未声明可用的工作目录（config.projectDir 与会话 cwd 都不是非空路径）',
       attribution: '要改的话：在 config.projectDir 里显式声明 Hook 的工作目录（一个非空路径字符串）',
+      // 没有对象可核验（既没声明目录、也还没跑 spawn）：宁可不归因，也不猜一个对象出来。
+      origin: buildOrigin({
+        origin: 'unknown_origin',
+        owner: 'platform.attribution',
+        objectKind: 'workdir',
+        objectValue: 'unknown',
+        objectSource: source,
+        method: 'none',
+        result: '未声明工作目录（config.projectDir 与会话 cwd 都不是非空路径），没有可核验的对象',
+        verified: false,
+        fix: '在 config.projectDir 里显式声明一个非空路径，然后重新发起这次工具调用',
+        causalLink: 'unproven',
+      }),
     };
   }
   let stats;
@@ -232,12 +371,39 @@ function inspectWorkdir(cwd, source) {
         attribution:
           'Node 的 spawn 在 cwd 不存在时会把 ENOENT 归给可执行文件，不要据此判断"命令 / 运行时缺失"；' +
           '要改的是这个目录：创建它，或把 config.projectDir 指向真实存在的目录',
+        // 核验前置：这条指控的证据就是刚刚那次 statSync（真执行、真读到 ENOENT / ENOTDIR）。
+        origin: buildOrigin({
+          origin: 'project.workdir_missing',
+          owner: 'project',
+          objectKind: 'workdir',
+          objectValue: objectNameOf(cwd),
+          objectSource: source,
+          method: 'stat',
+          result: 'stat 观测：该路径不存在（' + String(code) + '）',
+          verified: true,
+          fix: FIX_WORKDIR_MISSING,
+          causalLink: 'proven',
+        }),
       };
     }
     return {
       usable: true,
       text: '工作目录读不到：' + cwd + '（来自 ' + source + '；' + messageOf(error) + '）',
       attribution: '要改的话：确认这个目录存在、可读，而且真的是一个目录',
+      // 读不到（非 ENOENT/ENOTDIR）：归因在 host 这一侧——它既不是"不存在"，也不该被说成
+      // "命令起不来"。这条观测证伪不了它，所以 causal_link=proven。
+      origin: buildOrigin({
+        origin: 'host.workdir_unreadable',
+        owner: 'host',
+        objectKind: 'workdir',
+        objectValue: objectNameOf(cwd),
+        objectSource: source,
+        method: 'stat',
+        result: 'stat 观测：statSync 抛错（非 ENOENT/ENOTDIR）：' + messageOf(error),
+        verified: true,
+        fix: FIX_WORKDIR_UNREADABLE,
+        causalLink: 'proven',
+      }),
     };
   }
   if (!stats.isDirectory()) {
@@ -245,6 +411,19 @@ function inspectWorkdir(cwd, source) {
       usable: false,
       text: '工作目录不是目录：' + cwd + '（来自 ' + source + '）',
       attribution: '要改的话：把 config.projectDir 指向一个目录',
+      // 同属"工作目录不可用"（usable=false），但理由不同：路径在、只是不是目录。
+      origin: buildOrigin({
+        origin: 'project.workdir_missing',
+        owner: 'project',
+        objectKind: 'workdir',
+        objectValue: objectNameOf(cwd),
+        objectSource: source,
+        method: 'stat',
+        result: 'stat 观测：该路径存在，但它不是一个目录（工作目录只接受目录）',
+        verified: true,
+        fix: FIX_WORKDIR_NOT_A_DIR,
+        causalLink: 'proven',
+      }),
     };
   }
   return {
@@ -252,6 +431,22 @@ function inspectWorkdir(cwd, source) {
     text: '工作目录已确认存在：' + cwd + '（来自 ' + source + '）',
     attribution:
       '问题不在目录这一侧，而在「要启动的命令」这一侧：命令能不能起、是否被沙箱拒绝，看上面的 spawn 报错',
+    // 核验前置：说"目录不存在"之前先 statSync —— 它其实在，那条指控被**证伪**了，所以结论
+    // 改成"问题不在目录这一侧"（agent_runtime.*），而不是换一个对象继续指控目录的别的毛病。
+    // 此刻 spawn 还没跑，因此因果链**尚未建立**（causal_link=unproven）；真跑起来之后由
+    // workdirFailureOrigin 按报错原文把它重建成 spawn_failed / spawn_denied。
+    origin: buildOrigin({
+      origin: 'agent_runtime.spawn_failed',
+      owner: 'agent_runtime',
+      objectKind: 'workdir',
+      objectValue: objectNameOf(cwd),
+      objectSource: source,
+      method: 'stat',
+      result: 'stat 观测：该路径存在且是目录 —— 目录这一侧被证伪，归因只能落在「要启动的命令」这一侧',
+      verified: true,
+      fix: FIX_SPAWN_FAILED,
+      causalLink: 'unproven',
+    }),
   };
 }
 
@@ -266,6 +461,10 @@ function messageOf(error) {
  * 三个部分各自可判定：**在哪个目录启动**（含它的来源与是否存在的问题）、**要启动什么**、
  * 以及原始报错；最后一句是按工作目录事实得出的归因（目录不存在 → 说明 spawn 的 ENOENT
  * 归错了对象，并给出要改哪里；目录已确认存在 → 问题在命令那一侧）。
+ *
+ * 台阶 2：同一个事实对再产出一条结构化 origin（闭集），返回 {reason, origin}。
+ * `reason` 是**跨侧契约**（dsh_sandbox_loop.py 的分类器按它分流），一个字都不改；
+ * origin 只是同一批事实的机读孪生，判定仍只由既有逻辑决定。
  */
 function hookFailureReason(command, workdir, cause) {
   const clauses = [workdir.text, '要启动的命令：' + command];
@@ -273,10 +472,21 @@ function hookFailureReason(command, workdir, cause) {
     clauses.push('spawn 报错：' + cause);
   }
   clauses.push(workdir.attribution);
-  return 'policy-hook: Hook 无法执行（' + clauses.join('；') + '），按失败关闭拒绝该工具调用';
+  return {
+    reason: 'policy-hook: Hook 无法执行（' + clauses.join('；') + '），按失败关闭拒绝该工具调用',
+    origin: workdirFailureOrigin(command, workdir, cause),
+  };
 }
 
-export function apply(ctx, config) {
+/**
+ * 装配"一次工具调用怎么跑 Hook"这条路径，返回 runHook。
+ *
+ * 为什么单独一个导出（**不是**新机制）：runHook 的返回值里带着结构化 origin，而 dsh 侧只认
+ * handler 转译出来的 deny / block 两种形状——归因在外面根本看不见。契约用例（真 node 驱动
+ * 真插件，见 tests/contract/test_policy_hook_chain.py）要观察它，就得有一个显式的接缝。
+ * `apply` 的返回值保持原样：dsh 读到的形状一个字没变，装配期校验也照旧在装配时抛错。
+ */
+export function createRunHook(ctx, config) {
   const command = config.command;
   if (typeof command !== 'string' || command.trim() === '') {
     throw new Error('policy-hook: config.command is required');
@@ -294,6 +504,9 @@ export function apply(ctx, config) {
    *
    * Q6：起不来的理由里"要启动什么"与"在哪个目录启动"分开写；工作目录不可用时点名那个
    * 目录（spawn 的 ENOENT 会指向可执行文件，照抄它只会把人带偏）。
+   *
+   * 台阶 2：同一条理由再带一条结构化 origin（闭集 + 核验前置）；它只出现在拒绝的返回值里，
+   * 放行路径**不产出**任何归因（不许给放行的调用编造一个"为什么"）。
    */
   const runHook = async (exec, { hookEvent, fields }) => {
     const hasProjectDir = config.projectDir !== undefined && config.projectDir !== null;
@@ -302,7 +515,8 @@ export function apply(ctx, config) {
     // spawn 之前先看工作目录：能证明它不可用时直接失败关闭，理由点名那个目录。
     const workdir = inspectWorkdir(cwd, cwdSource);
     if (!workdir.usable) {
-      return { allowed: false, reason: hookFailureReason(command, workdir, '') };
+      const outcome = hookFailureReason(command, workdir, '');
+      return { allowed: false, reason: outcome.reason, origin: outcome.origin };
     }
     const payload = JSON.stringify({
       session_id: exec.agent?.session?.header?.id ?? '',
@@ -330,10 +544,8 @@ export function apply(ctx, config) {
       // 起不来、被杀、被沙箱拒绝——都不能静默放行：按失败关闭阻断。
       // 归因同样按工作目录的真实状态走：目录在预检之后被删掉（或预检查不出来）时，
       // 这里重新看一眼，理由才不会把"目录没了"说成"命令找不到"。
-      return {
-        allowed: false,
-        reason: hookFailureReason(command, inspectWorkdir(cwd, cwdSource), messageOf(error)),
-      };
+      const outcome = hookFailureReason(command, inspectWorkdir(cwd, cwdSource), messageOf(error));
+      return { allowed: false, reason: outcome.reason, origin: outcome.origin };
     }
 
     const exitCode = result.exitCode;
@@ -362,6 +574,12 @@ export function apply(ctx, config) {
     }
     return { allowed: true, reason: '' };
   };
+
+  return runHook;
+}
+
+export function apply(ctx, config) {
+  const runHook = createRunHook(ctx, config);
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     const outcome = await runHook(exec, { hookEvent: 'PreToolUse', fields: {} });

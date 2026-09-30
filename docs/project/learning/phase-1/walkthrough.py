@@ -52,7 +52,7 @@ notebook 里每一段代码都按顺序出现在下面；直接运行本文件�
 # | AND / OR | 跨维度是"都要满足"，同维度多值是"满足其一" | layer 与 language 都要中；列表里中一个即可 |
 # | specificity | 命中的非通配维度数，只用于解释，不参与决策 | 命中 layer 与 language 就是 2 |
 # | 失败关闭 fail-closed | 信息不全时拒绝执行，而不是默认放行 | 缺 layer 直接报错，不再猜一个值 |
-# | 决策协议 schema_version | 决策载荷的版本号，看不懂就拒绝消费 | 1.0 |
+# | 决策协议 schema_version | 决策载荷的版本号，看不懂就拒绝消费 | 1.1（台阶 3b 起；1.0 的载荷会被拒收） |
 # | required_action | 决策要求调用方先完成的动作 | approval（人工审批） |
 # | 快照 snapshot | 固定下来用于比对的历史输出 | tests/fixtures/decisions 下的 JSON |
 #
@@ -550,6 +550,7 @@ assert approval_results["decision"] == "block", "审批门禁必须表达成 blo
 # | matched_rules | 范围命中的规则（审计身份 编号@版本） |
 # | skipped_rules | 范围没命中的规则，以及每个维度不命中的原因 |
 # | violations | 违规记录：规则、严重级别、消息、结构化证据 |
+# | pending_findings | 「待实现」的说明（项目内目标还没落地，覆盖它的测试跑不了）。**不是违规**，所以单开一个通道；它不阻断，但会让 decision 成为 allow_with_warnings |
 # | required_action | 需要调用方先完成的前置动作 |
 # | rule_set_hash | 规则集内容指纹，把决定绑定到具体规则版本 |
 # | trace_id / request_id | 把检索、决策、执行、验证串成一条链 |

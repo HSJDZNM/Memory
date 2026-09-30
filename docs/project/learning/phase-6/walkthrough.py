@@ -663,7 +663,8 @@ print('小结：「能跑通」与「可重放」是两件事——闭环把每�
 # ## 11. 边界与不做的事
 #
 # - **不做判定**：Adapter 只翻译、Runtime 只编排，allow / block 始终由 Policy Engine 决定；
-#   决策协议没有新增字段（仍是 schema_version 1.0 / policy_version phase-1）；
+#   决策协议没有新增字段（在本阶段当时是 schema_version 1.0 / phase-1；台阶 3b 起为
+#   1.1 / decision-1.1，那是判定载荷自己的事，与本层无关）；
 # - **不假设所有 Agent 都有同样的 Hook**：能力声明是数据，full 只是**能力上限**——写类动作
 #   还要求 Phase 5 证据与 Phase 4 授权链路同时到位，缺任一项都失败关闭；
 # - **只接入了一个真实产品**：仓库里只有 dsh 是真实产品，generic-json 与 legacy-post-only 是

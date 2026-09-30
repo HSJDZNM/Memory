@@ -553,6 +553,13 @@ class ApiRuntime:
             "api_version": API_SCHEMA_VERSION,
             "tenant": auth.tenant,
             "decision": _decision_payload(result),
+            # 台阶 3b（B4）：`violations` 的语义保持"真的报了违规的条数"不变——pending
+            # 移出之后，pending-only 的批次在这里是 0 而 decision 是 allow_with_warnings。
+            # 那个组合**不是**信息丢失：完整的决策载荷就在同一个响应体的 decision 里
+            # （带 pending_findings 通道）。13 号 B4 建议"另加一个 pending 计数键"，
+            # 按本次裁定的统一版本规则，给 API 载荷加键必须递增 API_SCHEMA_VERSION
+            # （1.0→1.1，会拒收 1.0 的客户端）——该后果不在裁定的清单里，因此**未加**，
+            # 登记在方案 §10 的 3b 行交评审。
             "summary": {
                 "decision": result.decision.value,
                 "violations": len(result.violations),
@@ -571,6 +578,9 @@ class ApiRuntime:
         }
         if request.include_evidence:
             body["skipped_rules"] = [item.model_dump(mode="json") for item in result.skipped_rules]
+        # 请求级 JSONL 的 facts：与 summary 同一条口径（violations 只数真违规）。
+        # 加一个 pending 计数键会递增 REQUEST_LOG_SCHEMA_VERSION（该记录有固定字段集），
+        # 理由与上面的 summary 相同：闸门是"加键=升版"，升版后果未经裁定 → 本批不加、登记待裁。
         facts = {
             "decision": result.decision.value,
             "rule_set_hash": result.rule_set_hash,
@@ -723,6 +733,9 @@ class ApiRuntime:
             )
         from retrieval.models import PolicyFact
 
+        # B7（台阶 3b）：pending_findings **不进** facts，这是有意的、不是漏读——
+        # 检索事实是"这次判定依据了哪几条违规"，pending 不是违规事实（它连违规都不是）。
+        # 把它塞进来会让检索层拿"待实现"当违规证据用。
         facts: dict[str, Any] = {}
         for violation in result.violations:
             identity = violation.canonical_id
@@ -801,6 +814,7 @@ class ApiRuntime:
                 "matched": len(result.matched_rules),
                 "skipped": len(result.skipped_rules),
             }
+            # 同上：不加键，理由与 evaluate 路由一致（登记在方案 §10）。
             facts = {
                 "decision": result.decision.value,
                 "rule_set_hash": result.rule_set_hash,

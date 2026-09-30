@@ -39,6 +39,7 @@ from typing import Any, Mapping, Optional, Sequence, Tuple
 
 from policy.evidence import EvidenceBundle
 from policy.models import PolicyContext, RuleSet
+from provenance.worktree import evidence_tree_digest
 
 from .adapter import TOOL_TABLE, AdapterConfig, PolicyEvent, ToolKind, glob_match
 
@@ -488,27 +489,13 @@ def _shadow_name(event: PolicyEvent) -> str:
 def _tree_digest(shadow: Path) -> str:
     """影子树的指纹：仓库相对路径 + 文件 sha256，按稳定顺序覆盖。
 
-    为什么不是文件系统遍历顺序：os.walk 的顺序取决于文件系统与创建顺序，同一棵树在两台
-    机器上会得到不同的摘要——而"相同输入必须得到逐字节相同的证据"（AGENTS 第 19 条）
-    要求它是确定的。这里先把每一行排序再哈希，于是顺序只由内容决定。
+    实现只有一份：`provenance.worktree.evidence_tree_digest`（方案 §3.1「四个名字、一份实现」）。
+    这里显式用**标注模式**（strict=False）：Phase 5 的取证摘要把指纹当标注用，读不到的副本
+    不该让整个判定变成 evidence_unavailable；封条路径一律走默认的严格模式——两种口径是
+    同一个函数的显式参数，不是两份实现。
     """
 
-    lines: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(shadow):
-        dirnames[:] = sorted(dirnames)
-        here = Path(dirpath)
-        for name in sorted(filenames):
-            candidate = here / name
-            if not candidate.is_file():
-                continue
-            try:
-                digest = sha256(candidate.read_bytes()).hexdigest()
-            except OSError:
-                # 读不到的文件不进指纹（权限 / 竞态）：指纹是标注，不是证据本身，
-                # 不该让"取证"这一步因为它失败——失败了整个判定会变成 evidence_unavailable。
-                continue
-            lines.append(f"{_relative(candidate, shadow)} {digest}")
-    return "sha256:" + sha256("\n".join(sorted(lines)).encode("utf-8")).hexdigest()
+    return evidence_tree_digest(shadow, strict=False).sha256
 
 
 def _describe_tree(
