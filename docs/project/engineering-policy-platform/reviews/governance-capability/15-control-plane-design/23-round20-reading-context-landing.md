@@ -418,6 +418,95 @@ python tools/ci_local.py --full --python .venv/Scripts/python.exe
 本线**没有**碰 `tools/ci_local.py` / `tests/unit/test_ci_local*.py` / `tools/phase_evidence.py`
 一个字符。
 
+**裁定④ 的其余两件**：第 20 轮把覆盖账与 Hook 审计留到"下一轮"。本轮（第 21 轮）**落了覆盖账**
+（`WIRING_SCHEMA_VERSION` 1.1 → 1.2，见 §9.3）；**Hook 审计（`AUDIT_SCHEMA_VERSION` 1.2 → 1.3）
+仍未动**——按指令，它等 `reading_context` 这一批在 `feat/rules-and-os-platform` 上跑满一轮再做。
+D-2 冻结的部分（`account` / `differences` / `governs` 轴）照旧不动。
+
+---
+
+## 9 第 21 轮 · 落地读数（R-d）与门禁
+
+- **树**：HEAD = `e71b5e0`（跑门禁前 `git status --porcelain -uall` 空；无并发门禁）。
+- **仪器落点**：`.tmp/step8/`（不提交）。除沿用 3b 那台（`.tmp/step3b/probe_decisions.py` +
+  `.tmp/step3b/json_field_diff.py`），本轮新增：`probe_byte_identity.py`（裁定①的直接判据）、
+  `probe_wiring_payload.py`（覆盖账载荷的 before/after）、`probe_step1_readings.py` /
+  `probe_step2_readings.py`（自证 + 硬约束扫描）、`measure_wiring_cost.py`（旁注开销）。
+
+### 9.1 裁定①：`check --json` 去掉 run（提交 `6255057`）
+
+| 尺子 | 读数 |
+| --- | --- |
+| 决策载荷（R1，10 个场景） | **0 条差异**：before / after 两份都是 23992 B、sha256 都是 `cfad8c32c59a57a4…`（与 22 号记的第 19 轮那个值相同） |
+| 包装层（65939 B → 65015 B） | **6 条**，全部是同一字段 `reading_context.run: 删除`（3 个入口 allow / block / `--check-rules` × 2 份读数）；**没有第二个键变化** |
+| 逐字节可重现（裁定①的判据） | 三个入口各跑两次，stdout **逐字节相同**（10593 / 10770 / 4298 B），且 `reading_context` 只有 4 个键（`source` / `tree` / `declarations` / `host`），**没有 run** |
+| 仪器的自证（AGENTS 第 45 条） | before 侧同一份读数的 first vs second **6 条**（正是 `run.id` / `run.started_at`）——尺子对随运行变化的字段不瞎；after 侧 **0 条** |
+| 硬约束扫描 | 差集里 `decision` / `violations` / `pending_findings` / `matched_rules` / `skipped_rules` / `required_action` 命中 **0** |
+
+**口径**：那 6 条是"每份读数各一条"，不是"6 个字段"——被删的只有一个键（`.tmp/step8/R2b-diff-step1.json`）。
+
+### 9.2 裁定②③④与 `tree.digest`：只动文档与判据（同一提交 `6255057`）
+
+21 号 §2.1（run 不在这份里；`tree.digest` 改 `workspace_tree_digest`）、§3（run 是有条件的；
+受限判据含 `sandbox_pipe_stdio_denied`）、§5（R4 真产物对照必须同环境）、新增 §9.2（四项裁定），
+外加 AGENTS 第 55 条、README、使用说明同步。**没有第二处代码改动**：这三条的落点是文档与判据措辞。
+
+### 9.3 覆盖账 `wiring --json`（提交 `e71b5e0`，21 号 §2.5）
+
+| 尺子 | 读数 |
+| --- | --- |
+| 载荷级差集 | **4 条** = 2 条（`reading_context: 新增`、`wiring_schema_version: "1.1" → "1.2"`）× 2 份读数（first / second）；没有第三条 |
+| 探针**文件级**那份 | 6 条 = 上面 4 条 + 2 条**仪器自己的** `stdout_bytes` 计数（24068 → 24831）——不是载荷变化 |
+| after 侧 first vs second | **2 条**：`reading_context.run.id` / `run.started_at`——这一份**保留 run**（裁定①只对 check 生效），同时是"尺子能报出 run"的自证 |
+| before 侧 first vs second | **0 条**（`--now` 钉死之后这份报告逐字节稳定；不钉死时 `age_seconds` 会随墙钟变，两次运行的字节不同） |
+| 决策载荷 | **0 条差异**（sha256 仍是 `cfad8c32…`） |
+| 旁注开销 | `wiring` 文本 **0.80 s** → `wiring --json` **1.81 s**（中位数，各 3 次）：**+1.01 s**，就是树摘要那一步；它只发生在 `--json` 这条出口 |
+| 硬约束扫描 | 0 命中（同上六个字段） |
+
+### 9.4 门禁（`--full`）
+
+**命令（逐字）**：`python tools/ci_local.py --full --python .venv/Scripts/python.exe`
+**树**：HEAD = `e71b5e0`（跑前工作树空；`.tmp/ci-local.lock` 没有被持有，本会话没有别的门禁作业）。
+
+| 项 | 读数 |
+| --- | --- |
+| **显式退出码** | **0** —— `本机检查全部通过（31 步）；只报告 2 步（非零退出不计入失败）` |
+| **耗时** | 门禁自己的汇总行 **5m 35.6s**（`=== 执行耗时（合计 5m 35.6s，33 步，最慢 5 步）===`）；外层秒表 **336.4 s** |
+| 选组 | `改动文件 811 个；执行 31 步（本机跳过 11 步，登记豁免 2 步，只报告 2 步）` |
+| 大头 | pytest **2m 06.6s**（37.7%）→ notebooks **1m 33.0s**（27.7%）→ 编排闭环 **1m 12.6s**（21.6%）→ 阶段验收证据 10.6s → 验证器闭环 6.7s |
+| 与第 20 轮对照 | 同一条命令在 `45b9962` 上是 **5m 02.9s**（汇总行同为 33 步；"执行 31 步"是选组口径，两个数不是一回事），本轮 **5m 35.6s**（同样 33 / 31）（**不相减**：改动面与机器负载都不同）。能对照的是同一步：pytest 1m52.0s → 2m06.6s（+14.6s）、notebooks 1m18.5s → 1m33.0s（+14.5s）。**已归因的一处**：覆盖账契约用例每次 `wiring --json` 多走一次树摘要（实测 +1.01 s/次，见 §9.3）；**其余差异（notebooks 那一步、机器负载）未归因**，不写"就是它" |
+| 只报告步骤 1 | 义务门禁：0 命中（退出码 0），读数 `hits=0 / 1 个账本（不适用 1：没有账本可读，不算一次真实读数）` |
+| 只报告步骤 2 | 豁免到期：0 命中（退出码 0），读数 `HITS: 0 / declared=8 due=0 expired=0 unprovable=0` |
+| 日志 | `.tmp/step8/ci-local-full-r21.log`（4958 B，sha256 `107c0c03b7531132…`）+ `.tmp/ci-local-logs/` 下 **33 个**分步日志 |
+| 第 9 步（沙箱闭环） | `ok 1.5s`；产物 `result=skipped`、`environment_skipped=true`、`dsh_startup_denied_kind=profile_write_denied`（被拒路径 `C:\Users\ZNM\.dsh\profiles\headless\cordis.yml`，`syscall=open`）、`host.sandbox=restricted`、`tree.revision=e71b5e0…` —— **受限上下文里的读数，不是真机读数**（第 45 条：环境跳过不是通过） |
+
+### 9.5 跑前快照 → 跑后逐个文件比对（第 9 步必然跑 `tools/dsh_sandbox_loop.py`）
+
+**禁令照样遵守**：**没有**直接跑 `tools/dsh_sandbox_loop.py`；它只作为门禁第 9 步被执行。
+跑前快照 `.tmp/e2e/before-gate-r21/20260930T213715/manifest.json`（受控目录 43 个文件的
+路径 / 字节 / mtime / sha256 + 产物副本 + HEAD + `git status`），跑后逐文件比对：
+
+| 项 | 读数 |
+| --- | --- |
+| 受控目录 | before/after 都是 **43 个文件**；内容**逐字节相同 43**、变了 0、新增 0、消失 0 |
+| 但"内容相同"不等于"没有被重写" | `.tmp/phase-2-sandbox/logs/{allow-run,block-run}.txt` 的 **mtime 变了**（21:08:33 → 21:39:48，正是第 9 步的时刻），sha256 两次都是 `2dc1a97b…`——**这两个文件被重写成了同样的内容**。两件事分开报，免得把"没变"读成"没跑" |
+| 产物 | `.tmp/artifacts/phase-2-sandbox-result.json`：3121 B；`db2fa89c…` → `31e419f7…`（**这一份每次都重写**：`timestamp` 与 `reading_context.run` 必然不同）；`result=skipped` / `environment_skipped=true` 两边一致 |
+| 与第 20 轮的不同 | 第 20 轮那两个日志文件**内容**也变了（before 来自 env 里没有 `DSH_HOME` 的 pre-push 运行）；本轮 before 与 after 同环境，所以内容相同。这正是裁定②要的那句话：**真产物对照必须同环境**，否则环境差异会混进差集 |
+| 仓库侧 | HEAD 仍 `e71b5e0`；`git status --porcelain -uall` **空** |
+| 这一步证明什么 | 门禁**没有动仓库**、**没有动受控项目的源码与配置**；它**不**证明端到端闭环跑通了（那是环境跳过） |
+
+### 9.6 未核实 / 待评审
+
+1. **真机端到端仍然没有真机读数**：本轮第 9 步与第 20 轮一样是 `profile_write_denied` 的环境跳过；
+   `host.sandbox=unrestricted` 这一档**只在合成探针里出现过**（第 20 轮 R4 的 `pass` 路径），真机上没采到。
+2. **pytest 增量的归因只做了一半**：已测的是覆盖账每次 `--json` 的 +1.01 s；"pytest 一共慢了多少、
+   其中多少是这次改动"**没有逐用例计时**，写在这里的 14.6 s 是**两次门禁的差**，不是归因。
+3. **`wiring --json` 的 before 侧是在改动前采的**：两次采集用同一条命令、同一个 `--now`、
+   同一台机器（相隔约 10 分钟）；期间的机器状态变化**没有单独取证**。
+4. **本轮没有跑 `--hook` 形态**：只跑了 `--full`；pre-push 的行为没有实测。
+5. **`tools/ci_local.py` / `tests/unit/test_ci_local*.py` / `tools/phase_evidence.py` 一个字都没动**
+   （文件归属），`git push` / `git fetch` 没有做。
+
 ---
 
 **本文件的三半是三次提交**：§1–§4.1 在 `45b9962`（门禁之前），§4.2–§7 是第 20 轮门禁之后的补记，
