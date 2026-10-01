@@ -55,18 +55,22 @@ def test_the_repository_declaration_is_valid() -> None:
     assert summary["channel_kinds"] == {"dsh-profile": "agent_runtime"}
     # 2026-10-01 第 25 轮（裁定⑤，24 号 §8.4）：12 条被发现的通道**每一条**都有显式 covers，
     # 因此这份读数不再是空的——它现在是「声明 × 发现」的连接键本身。
+    # 第 26 轮（裁定①，2026-10-01）：verify-bc / verify-gov / verify-manual 归到"受控会话"
+    # 那一档（governed-session-hook），dsh-verify-profiles 因此只剩 verify-exit2——
+    # 这份期望就是把那次改判**钉在数据上**（decision 一个都没改，改的是覆盖关系）。
     assert summary["covers"] == {
-        "governed-session-hook": ["dsh:governed", "dsh:governed-*"],
+        "governed-session-hook": [
+            "dsh:governed",
+            "dsh:governed-*",
+            "dsh:verify-bc",
+            "dsh:verify-gov",
+            "dsh:verify-manual",
+        ],
         "desktop-entry-points": ["dsh:desktop"],
         "dsh-web-channel": ["dsh:web"],
         "dsh-headless-channel": ["dsh:headless"],
         "dsh-verify-dead-channel": ["dsh:verify-dead"],
-        "dsh-verify-profiles": [
-            "dsh:verify-bc",
-            "dsh:verify-exit2",
-            "dsh:verify-gov",
-            "dsh:verify-manual",
-        ],
+        "dsh-verify-profiles": ["dsh:verify-exit2"],
     }
     # governs_tree 只列**写了**的那些（裁定④：没写 = 读取侧的 unknown，不进摘要）。
     assert summary["governs_tree"] == {"governed-session-hook": "other"}
