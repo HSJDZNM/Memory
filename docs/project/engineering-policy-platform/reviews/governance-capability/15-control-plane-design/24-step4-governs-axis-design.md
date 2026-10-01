@@ -331,6 +331,30 @@ IN_SCOPE_NOT_WIRED: 0 / discovered=12 declared=7 measured=7
 `at=2026-10-01`）。落地在提交 `26bf07b`（**只改** `adapters/wiring-scope.yaml`），
 结论同时写进 **17 号 §8.2**。
 
+### 8.4 裁定（2026-10-01 · 使用者授权评审方定夺）：`covers` 数据与「没写 `governs_tree`」的默认值
+
+§8 未核实第 3 条（8 个 `<external>` 通道里哪些是**有意**治理另一棵树）、第 4 条（12 个通道的
+`covers` 具体怎么写）与请评审第 4 条（`relation=other` 而 `tree.declared != other` 要不要第六格）
+在这一轮由使用者授权评审方定夺。裁定如下——数据落在 `adapters/wiring-scope.yaml`，
+**只写声明、不接任何线**（本轮第 2 步；读数见 23 号 §16.2）：
+
+| # | 通道（发现侧） | 裁定（声明侧） | 理由 |
+| --- | --- | --- | --- |
+| 1 | `dsh:governed` / `dsh:governed-grade` / `dsh:governed-grade-approval` / `dsh:governed-wmsvc` | 由既有声明 `governed-session-hook` 显式覆盖：`covers: ["dsh:governed", "dsh:governed-*"]` + `governs_tree: other` + `tree_ref: .tmp/governance-capability-*` | 这 4 条就是平台的**受控会话**本身（声明已是 `in_scope`），但它们的 `hooks_config` / `audit_path` / `bridge.entry` 三个目标都渲染成 `<external>/…`——**证据说**它们治理的是另一棵树，声明侧现在**承认**这件事，这正是 §2.1 那个声明位存在的理由。`tree_ref` 只放指针（仓库相对，不放正文、不放绝对路径） |
+| 2 | `dsh:desktop` | `desktop-entry-points` 加 `covers: ["dsh:desktop"]` | 把「`dsh:desktop` 正对应清单甲第 1 条」从**巧合**变成**连接键**（17 号 §2.2 的注）；既有声明的语义一个字不改 |
+| 3 | `dsh:web` / `dsh:headless` / `dsh:verify-dead` | 各自的既有声明各加一条 `covers`（一条通道一条） | 同上：§14.2⑤ 的可见性缺口正是「改判了却看不见」——显式 `covers` 让每条通道都能读到自己**被哪条声明覆盖**，而不是靠 kind 档去猜 |
+| 4 | `dsh:verify-bc` / `dsh:verify-exit2` / `dsh:verify-gov` / `dsh:verify-manual` | **新增**一条声明 `dsh-verify-profiles`（`out_of_scope`、`kind=agent_runtime`、`owner=host`、四条 `covers`、`expires_at=2026-12-31`、`renewals=[]`），reason 写「早先治理能力验证轮留下的测试 profile，与 `dsh-verify-dead-channel` 同组；使用者删除 profile 时须同批删除本声明」 | 这 4 条与 `dsh:verify-dead` 是**同一批**测试 profile，今天没有任何声明；而 §2.1 规则 3（同档冲突不挑一个）会把 12 条通道**全部**写成 `undeclared`。新增声明是**收缩承诺面**的动作（方案 §3.6 的判据）：不是接线，只是把「没人声明过」变成「声明过、且带到期日」 |
+| 5 | （口径）「写了 `covers` 但没写 `governs_tree`」的默认值 | **`unknown`**（不是 `self`）；**在 1.3 内改正、不升版**（23 号 §15.1 裁定④） | §2.1 的字段表把默认值写成 `self`——那是一个**没人写过的声明值**；而按 §2.1 的边界，「`relation=other` 而 `tree.declared != other`」**不进五个差集**，于是「默认 `self` + 证据 `other`」这对矛盾会**静默**存在。默认 `unknown` 与裁定③（拿不出证据写 `unknown`）是同一条纪律；`tree.declared_by` 仍写覆盖它的声明 id，因此「没有声明覆盖」与「声明覆盖了但没写 `governs_tree`」仍然**分得开** |
+
+**第 0.5 条的可见性缺口（§14.2⑤）因此闭合**：三条改判过的通道（`dsh:web` / `dsh:headless` /
+`dsh:verify-dead`）现在各自有显式 `covers`，它们出现在 `governs.declared_by` 里——
+「改判了却看不见」不再是缺口，**同一个载荷**里就能读到。
+
+**不改变的东西**（同一条纪律，逐条写下来）：`--check` 的判据与退出码、`result` / `failures` /
+`counts` / `fact_counts`、`channels[].status` / `wiring_status` / `freshness_status`、决策载荷与
+`VERDICT` 判定行——**一个字段都不动**。`out_of_scope_active` 这类读数**按真实结果报告**，
+不为归零改判（本轮的真实读数见 23 号 §16.2）。
+
 ---
 
 ## 9 复现命令（只读）
@@ -353,3 +377,5 @@ IN_SCOPE_NOT_WIRED: 0 / discovered=12 declared=7 measured=7
 
 **本文件是第 23 轮的第三个提交**（前两个：`096cb0d` 的 `declarations.test_layout` 改正与
 `025465a` 的 23 号 §12）；索引见同目录 `README.md`。
+
+**2026-10-01 第 25 轮补记**：本文件新增 §8.4（`covers` 数据与「没写 `governs_tree`」默认值的裁定）。
