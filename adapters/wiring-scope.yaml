@@ -20,6 +20,12 @@
 # 「同档多条声明判决不同 → 谁都定夺不了」不再发生，第 0.5 条的改判也**看得见**了。
 # `governs_tree` 只写在 governed-session-hook 上（证据说它治理另一棵树 → other）；
 # 其余声明**不写**，读取侧因此是 unknown（裁定④），不替它们认领 self。
+#
+# **2026-10-01 第 26 轮（裁定①，写进 23 号 §16 / 24 号 §8 / 25 号 §8）**：评审方更正——
+# verify-bc / verify-gov / verify-manual 是接在同一条受控桥上的会话，不是"验证轮留下的测试残留"，
+# 三条并入 governed-session-hook 的 covers（in_scope，governs_tree 已写 other，tree_ref 已覆盖
+# 它们的受控项目）；dsh-verify-profiles 因此只保留 verify-exit2。**decision 一个都没改**：
+# governed-session-hook 仍是 in_scope、dsh-verify-profiles 仍是 out_of_scope。
 schema_version: "2"
 
 # 发现侧 kind → 声明侧 kind：`adapters.cli wiring` 今天发现的通道全是 dsh-profile，
@@ -32,15 +38,18 @@ scope:
     decision: in_scope
     kind: agent_runtime
     owner: platform
-    # 受控会话的四条通道（24 号 §8.4 第 1 条）：显式覆盖优先于 kind 档。
-    covers: ["dsh:governed", "dsh:governed-*"]
+    # 受控会话的七条通道（24 号 §8.4 第 1 条的四条 + 2026-10-01 裁定① 并入的三条）：
+    # 显式覆盖优先于 kind 档。
+    covers: ["dsh:governed", "dsh:governed-*", "dsh:verify-bc", "dsh:verify-gov", "dsh:verify-manual"]
     # 证据（hooks_config / audit_path / bridge.entry 渲染成 <external>/…）说它治理的是
     # **另一棵树**：声明侧现在承认这件事；tree_ref 只放指针，不放正文、不放绝对路径。
     governs_tree: other
     tree_ref: .tmp/governance-capability-*
     reason: >-
       受控会话（hooks 配置指向 adapters.dsh.hooks）由本仓库治理：判定、阻断、审计与
-      受控执行都是平台代码，接线失效必须失败关闭。
+      受控执行都是平台代码，接线失效必须失败关闭。2026-10-01 评审更正：verify-gov /
+      verify-manual / verify-bc 也接在同一条受控桥上（前两条留痕新鲜），并入本条声明的
+      covers——"受控会话"这一档不从"测试残留"里读。
     consequence: >-
       接不上就不放行（Hook 退出码 2 = 阻断）；接线事实与留痕事实分别可读，见
       python -m adapters.cli wiring。
@@ -132,19 +141,20 @@ scope:
         note: >-
           使用者授权评审方定夺，理由见 24 号 §8。
 
-  # 与 dsh-verify-dead-channel **同组**的四条测试 profile（2026-10-01 裁定，24 号 §8.4 第 4 条）。
+  # 与 dsh-verify-dead-channel **同组**的那条测试 profile（2026-10-01 裁定，24 号 §8.4 第 4 条；
+  # 同日裁定① 把另外三条并入 governed-session-hook，本声明因此只剩 verify-exit2）。
   # 新增声明**不是接线**：只把「没人声明过」变成「声明过、且带到期日」（方案 §3.6 的收缩承诺面）。
   - id: dsh-verify-profiles
     decision: out_of_scope
     kind: agent_runtime
     owner: host
-    covers: ["dsh:verify-bc", "dsh:verify-exit2", "dsh:verify-gov", "dsh:verify-manual"]
+    covers: ["dsh:verify-exit2"]
     reason: >-
-      早先治理能力验证轮留下的测试 profile，与 dsh-verify-dead-channel 同组；使用者删除 profile 时须同批删除本声明
+      缺 hooks 配置、不活跃的验证轮测试 profile；使用者删除 profile 时须同批删除本声明
     consequence: >-
-      只报告：清点会照实报它们的接线事实（verify-bc 是 audit_never_written、verify-exit2 是
-      hooks_config_missing），仓库不为它们签发任何 allow / block，也不把这条读数当成
-      「平台少查了一步」；到期日到了必须续期或改判。
+      只报告：清点会照实报它的接线事实（verify-exit2 是 hooks_config_missing），
+      仓库不为它签发任何 allow / block，也不把这条读数当成「平台少查了一步」；
+      到期日到了必须续期或改判。
     expires_at: "2026-12-31"
     renewals: []
 
