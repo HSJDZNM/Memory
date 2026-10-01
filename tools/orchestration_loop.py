@@ -1410,6 +1410,27 @@ def scenario_idempotent_action(api: "Api") -> Scenario:
     task = controller_task("p8-idempotent", requirement="同一个动作不执行第二次")
     run = make_run("idempotent", task=task, author=ScriptedAuthor([change]), base_url=api.base_url)
     first = run.start()
+    if not run.runner.requests:
+        # 前置运行没走到"提出动作"那一步（平台 block / 不可用 / 装配失败）：以 FAIL 收场并写明原因。
+        # 直接取 requests[0] 会抛 IndexError，而 main() 的兜底只会把原因记成"场景自己崩了"——
+        # 那是一条**指错对象**的理由（AGENTS 第 52 条的同一条纪律）。
+        first_failure = first.failure.code.value if first.failure else None
+        decisions = [item["decision"] for item in compat_of(run).route_calls("evaluate")]
+        return Scenario(
+            "幂等：同一次动作不执行第二次",
+            False,
+            f"前置场景失败，没有可复用的请求（{first.status.value}/{first_failure}）："
+            f"平台判定 {decisions[:1]}",
+            {
+                "first_status": first.status.value,
+                "first_failure": first_failure,
+                "first_failure_detail": (
+                    None if first.failure is None else first.failure.detail
+                ),
+                "evaluate_calls": decisions[:2],
+                "tool_calls": 0,
+            },
+        )
     action_id = run.runner.requests[0].action_id
     second = run.start()
 

@@ -5,7 +5,9 @@
 - `ScriptedPolicyClient`：固定的 allow / block / error 响应。用它可以把"编排缺陷"
   和"平台缺陷"分开——状态机测试不该依赖真的规则集；
 - `ApiPolicyClient`：真实 HTTP（标准库 `urllib`），只走 Phase 7 的公开路由，
-  不导入 `policy.engine` 等内部实现；
+  不导入 `policy.engine` 等内部实现；**回环地址**（`127.0.0.1` / `::1` / `localhost`）
+  用**不读代理**的 opener，非回环地址保持 `urlopen`（部署场景可能需要代理）——
+  2026-10-01 第 0.5 条，背景见 23 号 §15.2；
 - `ResilientPolicyClient`：在任何实现外面加熔断：反复失败就停止调用平台。
 
 失败语义（与 Phase 7 的失败码一一对应，绝不"出错即放行"）：
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import (
@@ -411,6 +414,45 @@ def _check_trace(expected: Optional[str], received: Optional[str]) -> Optional[s
 # --------------------------------------------------------------------- HTTP 实现
 
 
+# 回环地址的三个**写法**（口径写死在这里）：别的回环写法（例如 `127.0.0.0/8` 里的其它地址）
+# 按**非回环**处理——它们照旧走 `urllib.request.urlopen`，与部署场景同一条路。
+LOOPBACK_HOSTS: Tuple[str, ...] = ("127.0.0.1", "::1", "localhost")
+
+
+def _is_loopback_base_url(base_url: str) -> bool:
+    """`base_url` 的主机是不是回环地址（大小写不敏感；IPv6 的 `[::1]` 去掉方括号）。"""
+
+    try:
+        host = urllib.parse.urlsplit(base_url).hostname
+    except ValueError:
+        # 解析不出来就当非回环：**只有能证明是回环**才走不读代理的那条路。
+        return False
+    return (host or "").lower() in LOOPBACK_HOSTS
+
+
+def _default_transport_opener(base_url: str) -> Callable[..., Any]:
+    """默认 opener：回环地址用**不读代理**的那一个，非回环地址保持 `urlopen`。
+
+    为什么（2026-10-01 第 0.5 条，背景见 23 号 §15.2）：`urllib.request.urlopen` 会按
+    `HTTP_PROXY` / `HTTPS_PROXY` / `no_proxy` 与平台设置决定是否走代理。本机 pre-push 门禁
+    出现过 `Policy API 502 unknown`（空响应体），而平台自身不产生 502——推断是**回环请求**
+    被送进了系统代理（未核实）。回环地址是本机的，代理对它没有任何意义，因此这里显式构造
+    一个**空代理表**的 opener；非回环地址不改：部署场景的 Policy API 可能真的在代理后面。
+
+    机制（读标准库源码核过，不是猜的）：`ProxyHandler.__init__` 为**每一个**代理条目装一个
+    `<scheme>_open` 方法（`urllib/request.py:766-775`），空映射一个都不装；`add_handler`
+    只登记"有可识别方法"的处理器（同文件 `:408-453`），于是这个 opener 上**根本没有代理
+    处理器**；而 `build_opener` 的 skip 集合同时把**读环境变量**的默认 `ProxyHandler` 去掉了
+    （同文件 `:555-564`）。净效果：请求直接发往源站，`HTTP_PROXY` / `HTTPS_PROXY` 一概不看。
+
+    注入的 `opener` 参数优先级不变（`ApiPolicyClient.__init__` 先看它）。
+    """
+
+    if _is_loopback_base_url(base_url):
+        return urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+    return urllib.request.urlopen
+
+
 class ApiPolicyClient:
     """Phase 7 Policy API 的 HTTP 客户端（标准库实现，走公开路由）。"""
 
@@ -427,7 +469,7 @@ class ApiPolicyClient:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
-        self._opener = opener or urllib.request.urlopen
+        self._opener = opener or _default_transport_opener(self.base_url)
         self.paths: list[str] = []
 
     # -- 传输 ---------------------------------------------------------------
