@@ -15,9 +15,11 @@
 #                  24 号 §8.4 / 23 号 §15.1）
 #   tree_ref       governs_tree=other 时的指针（仓库相对路径或 <outside-workspace>；只放指针）
 #
-# **本轮不写 covers / governs_tree**（2026-10-01 裁定③）：8 个目标在工作区之外的通道
-# （渲染成 <external>/…）"是不是有意治理另一棵树"按证据判定，拿不出证据写 unknown；
-# 需要写声明的清单交使用者，本轮不替使用者写。
+# **2026-10-01 第 25 轮（裁定⑤）**：covers 全部写上——12 条被发现的通道，每一条都有一条
+# **显式**声明覆盖它（逐条清单与理由见 24 号 §8.4，读数见 23 号 §16.2）。这样
+# 「同档多条声明判决不同 → 谁都定夺不了」不再发生，第 0.5 条的改判也**看得见**了。
+# `governs_tree` 只写在 governed-session-hook 上（证据说它治理另一棵树 → other）；
+# 其余声明**不写**，读取侧因此是 unknown（裁定④），不替它们认领 self。
 schema_version: "2"
 
 # 发现侧 kind → 声明侧 kind：`adapters.cli wiring` 今天发现的通道全是 dsh-profile，
@@ -30,6 +32,12 @@ scope:
     decision: in_scope
     kind: agent_runtime
     owner: platform
+    # 受控会话的四条通道（24 号 §8.4 第 1 条）：显式覆盖优先于 kind 档。
+    covers: ["dsh:governed", "dsh:governed-*"]
+    # 证据（hooks_config / audit_path / bridge.entry 渲染成 <external>/…）说它治理的是
+    # **另一棵树**：声明侧现在承认这件事；tree_ref 只放指针，不放正文、不放绝对路径。
+    governs_tree: other
+    tree_ref: .tmp/governance-capability-*
     reason: >-
       受控会话（hooks 配置指向 adapters.dsh.hooks）由本仓库治理：判定、阻断、审计与
       受控执行都是平台代码，接线失效必须失败关闭。
@@ -41,6 +49,7 @@ scope:
     decision: out_of_scope
     kind: agent_runtime
     owner: host
+    covers: ["dsh:desktop"]
     reason: >-
       桌面 GUI 的 profile 装不装策略桥是主机配置，不是本仓库能负责的东西；让仓库门禁
       去拦用户的桌面应用配置，只会把「正确的事做不了」变成「把门禁关掉」
@@ -79,6 +88,7 @@ scope:
     decision: out_of_scope
     kind: agent_runtime
     owner: host
+    covers: ["dsh:web"]
     reason: >-
       使用者暂不建设前端页面；Web GUI 通道与 desktop-entry-points 同口径，不治理；建设前端时改判
     consequence: >-
@@ -94,6 +104,7 @@ scope:
     decision: out_of_scope
     kind: agent_runtime
     owner: host
+    covers: ["dsh:headless"]
     reason: >-
       用户侧 headless 基础 profile 属于使用者日常入口，按 agent-channel-inventory-report-mode 的裁定不治理；平台自己的 headless 调用（dsh_sandbox_loop）每次都用 --patch 挂策略 Hook，已在受控范围内
     consequence: >-
@@ -109,6 +120,7 @@ scope:
     decision: out_of_scope
     kind: agent_runtime
     owner: host
+    covers: ["dsh:verify-dead"]
     reason: >-
       早先治理能力验证轮（verify-* 一组）留下的测试 profile，不是真实入口；仓库内没有任何引用；如果使用者删除该 profile，须同批删除本声明
     consequence: >-
@@ -119,6 +131,22 @@ scope:
       - at: "2026-10-01"
         note: >-
           使用者授权评审方定夺，理由见 24 号 §8。
+
+  # 与 dsh-verify-dead-channel **同组**的四条测试 profile（2026-10-01 裁定，24 号 §8.4 第 4 条）。
+  # 新增声明**不是接线**：只把「没人声明过」变成「声明过、且带到期日」（方案 §3.6 的收缩承诺面）。
+  - id: dsh-verify-profiles
+    decision: out_of_scope
+    kind: agent_runtime
+    owner: host
+    covers: ["dsh:verify-bc", "dsh:verify-exit2", "dsh:verify-gov", "dsh:verify-manual"]
+    reason: >-
+      早先治理能力验证轮留下的测试 profile，与 dsh-verify-dead-channel 同组；使用者删除 profile 时须同批删除本声明
+    consequence: >-
+      只报告：清点会照实报它们的接线事实（verify-bc 是 audit_never_written、verify-exit2 是
+      hooks_config_missing），仓库不为它们签发任何 allow / block，也不把这条读数当成
+      「平台少查了一步」；到期日到了必须续期或改判。
+    expires_at: "2026-12-31"
+    renewals: []
 
   # 只写在 CI 注释里的那条边界裁定（.github/workflows/phase-8.yml:266-272）收进数据。
   # 它说的不是"某条通道接没接"（那由 governed-session-hook 与 desktop-entry-points 承接），
