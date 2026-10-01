@@ -1328,3 +1328,226 @@ tree_ref: <outside-workspace>                # 或仓库相对路径；只放指
 在 `requests` 为空时**以 FAIL 收场并写明原因**（「前置场景失败，没有可复用的请求」），
 不许让 `IndexError` 把真实原因盖成「场景自己崩了」——`main()` 的兜底会把异常记成 FAIL，
 但**读的人只会看到 `IndexError`**，那是一条指错对象的理由（AGENTS 第 52 条的同一条纪律）。
+---
+
+## 16 第 25 轮 · 落地读数（第 0.5 条、裁定④、covers 数据、预算）与门禁
+
+- **执行**：2026-10-01（本机）；控制面重构会话（**唯一写者**）。
+- **依据**：23 号 §15 的六条裁定与第 0.5 条背景；24 号 §8.4 的 covers 裁定；
+  AGENTS 第 45（仪器要能失败）/ 48（读数属于哪棵树）/ 50（口径诚实）/ 55（加键就是改协议）条。
+- **树与提交链**：`f4a46a6`（本轮起点）→ `629eb22`（§15 + 24 号 §8.4，只写文档）→ `9064b51`（第 0.5 条）
+  → `6787031`（裁定④ 的默认值改正）→ `0dd7358`（covers 数据，**只改** `adapters/wiring-scope.yaml`）
+  → `f568a99`（声明读数用例）→ `9631617`（25 号 R-h 设计稿）→ 本节。
+- **仪器落点**：`.tmp/step12/`（不提交）；本节读数都可用 §16.7 的命令重采。
+
+### 16.0 环境自检、第 0.5 条与它的自证
+
+**环境自检（先做，且它当场红了一次）**：
+
+| 项 | 读数 |
+| --- | --- |
+| 起点 | 分支 `refactor/control-plane` @ `f4a46a6`，`git status --porcelain -uall` **空** |
+| 解释器 | `.venv\Scripts\python.exe` = Python 3.13.11（打包自 Anaconda） |
+| ACL 残留（**必须记下来**） | `.tmp/tmp/pytest-of-ZNM` 是上一轮全量 pytest 留下的受限权限目录。**实测**：`pytest -n auto` 在建立 basetemp 时 `PermissionError: [WinError 5] … pytest-of-ZNM` → `INTERNALERROR`（不是用例失败，是收集期就崩）。本会话的文件策略先是 `workspace-write`，`Remove-Item` / `[IO.Directory]::Delete` / 改名**三种都退「拒绝访问」**；策略改为 `danger-full-access` 之后一次删掉（`still there? False`），再跑 `pytest -n auto` → `13 passed in 4.06s` |
+| 仪器在位 | `.tmp/step3b/probe_decisions.py`、`.tmp/step9/probe_verdict_lines.py`、`.tmp/step11/probe_wiring_entries.py`、`.tmp/step7/volatile.py`、`.tmp/step3b/json_field_diff.py` 都在 |
+
+**第 0.5 条 a（回环地址不读代理）**：`ApiPolicyClient` 的 `base_url` 主机是 `127.0.0.1` / `::1` /
+`localhost`（大小写不敏感）时用 `urllib.request.build_opener(urllib.request.ProxyHandler({}))`，
+非回环地址保持 `urllib.request.urlopen`，注入的 `opener` 优先级不变。
+**机制是读过标准库源码的**（不是猜）：`ProxyHandler.__init__` 为每个代理条目装一个 `<scheme>_open`
+方法（`urllib/request.py:766-775`），空映射一个都不装；`add_handler` 只登记「有可识别方法」的处理器
+（`:408-453`），于是这个 opener 上**根本没有代理处理器**，而 `build_opener` 的 skip 集合同时把
+**读环境变量**的默认 `ProxyHandler` 去掉（`:555-564`）。
+
+**第 0.5 条 b（空 `requests` 以 FAIL 收场）**：`scenario_idempotent_action` 新增守卫；
+`scenario_human_approval` 早有守卫（此前无用例覆盖，本轮补上）。
+
+**自证（AGENTS 第 45 条：修复前会红）**——两次显式变异，各自只红对应用例：
+
+| 变异 | 结果 |
+| --- | --- |
+| 把 `_default_transport_opener` 换回 `urllib.request.urlopen` | `test_loopback_base_url_gets_an_opener_with_an_empty_proxy_table` **FAILED**（`1 failed, 3 passed`） |
+| 把新守卫写成 `if False:` | `test_idempotent_scenario_reports_fail_instead_of_index_error` **FAILED**（`1 failed, 1 passed`） |
+| 两次变异都撤回之后 | `6 passed in 0.32s` |
+
+**用例里的对照**：伪造 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`（并删掉 `no_proxy`）之后，
+**默认 opener 的代理表非空**（对照组，证明伪造的变量真的会被读走），而回环 opener 上**没有非空代理表**。
+**未核实**：08:21 那条 `Policy API 502 unknown` 本身**没有被复现**——本轮只把一条无法证伪的环境依赖
+（回环请求读代理设置）从代码里去掉，**不主张**它就是那次 502 的成因（§15.2 的「不主张」一字不改）。
+
+### 16.1 第 1 步 · 裁定④：没写 `governs_tree` 读作 `unknown`（提交 `6787031`）
+
+**改动**：`src/provenance/wiring_scope.py`（`governs_tree` 改为可选 + `declared_governs_tree()`；
+`unknown` **不是可写取值**，写了加载期报错；`as_json` 的 `governs_tree` 摘要改为「只列写了的那些」）、
+`src/adapters/wiring.py`（读 `declared_governs_tree()`；没写时把原因写进 `note`）、
+`adapters/wiring-scope.yaml` 的**字段表注释**、24 号 §2.1（JSON 例子 + 字段表 + 更正注记）、两条用例。
+**加载期 FATAL 一条没加**；`1.3` **没有升版**（1.3 尚未进 feat，同 `policy.check` 1.2 的先例）。
+
+**R-d（两把尺子；before = `9064b51`，after = `6787031`；产物 `.tmp/step12/`）**：
+
+| # | 尺子 | before | after | 差集 | 判定 |
+| --- | --- | --- | --- | --- | --- |
+| R1 | 决策载荷（10 个场景） | 23992 B | **逐字节相同** | **0 条** | ✅ |
+| R2' | `VERDICT` 判定行（144 行 + 插件字面量） | 24403 B、`8B0F538E4BB97F1C…` | **逐字节相同** | **0 条**（`VERDICT_SCHEMA_VERSION` 仍 `1.0`） | ✅ |
+| R5 | 覆盖账 `--json`（三个入口） | 46460 B | 46460 B | 第一把尺子每份 **1 条**（`reading_context.tree.revision` 换树）；残差尺子每份 **5 条**（5 处归属读数） | ✅ 0 条未预注册 |
+| R6 | 声明文件读数 `wiring-scope --check --json` | 474 B | **逐字节相同** | **0 条** | ✅ |
+| R7 | 门禁形态退出码 | 默认 0 / `--check` 1 / `--require-runtime` 1 | **逐个相同** | **0 条** | ✅ |
+
+**硬约束逐字段核对（三个入口全 OK）**：`result` / `failures` / `counts` / `fact_counts` / `probe` /
+`tools` / `channels[].status` / `.wiring_status` / `.freshness_status` /`channels[].governs` /
+`account`+`differences`+`headline`+`red_conditions` 的键骨架 / `reading_context` 除归属读数外逐字段相同。
+**`--check` 判据仍只读 `failures`**（一个字段都没动）。
+
+### 16.2 第 2 步 · covers 数据（提交 `0dd7358`）与真实读数
+
+**声明读数**（`provenance.cli wiring-scope --check --json`，474 → **988 B**）：
+
+| 键 | before | after |
+| --- | --- | --- |
+| `declared` | 7 | **8**（新增 `dsh-verify-profiles`） |
+| `by_decision` | in_scope 1 / out_of_scope 5 / expected_absent 1 | in_scope 1 / **out_of_scope 6** / expected_absent 1 |
+| `covers` | `{}` | **6 条声明、10 条 pattern**（9 条精确 + `dsh:governed-*` 一条 glob） |
+| `governs_tree` | `{}` | `{"governed-session-hook": "other"}`（其余声明**没写** = 读取侧 `unknown`） |
+| 退出码 | 0 | **0** |
+
+**覆盖账读数**（`adapters.cli wiring --json --now 2026-10-01T00:00:00+08:00 --observe-sessions 0`，
+46460 → **34755 B**，**变小 11705 B**：`declaration_conflicts` 那 12 条候选清单消失了）：
+
+| 格 | before | after（**实测**） | 预期 | 判定 |
+| --- | --- | --- | --- | --- |
+| `declaration_conflicts` | 12 | **0** | 0 | ✅ |
+| `discovered_not_declared`（undeclared） | 0 | **0** | 0 | ✅ |
+| `in_scope_not_wired` | 0 | **0**（`is_red: false`、`enforced: false`） | 0 | ✅ |
+| `out_of_scope_active` | 0 | **3**（`dsh:verify-bc` / `dsh:verify-gov` / `dsh:verify-manual`） | 按真实结果报告 | ✅ 真实读数，**没有为归零改判** |
+| `out_of_scope_expired` | 0 | **0** | —— | ✅ |
+| `declared_not_discovered` | 1 | **2**（`ci-agent-runtime` / `agent-channel-inventory-report-mode`） | 未预注册 | ⚠ **见下** |
+| `account` | discovered 12 / declared 7 / measured 7 | discovered **12** / declared **8** / measured **7** | —— | ✅ |
+| `headline.machine_line` | `IN_SCOPE_NOT_WIRED: 0 / discovered=12 declared=7 measured=7` | `… declared=8 …` | —— | ✅ |
+
+**12 条通道逐条读数**（`governs.decision` / `declared_by` / `tree.declared` / `tree.relation`）：
+
+| 通道 | decision | declared_by | tree.declared | tree.relation |
+| --- | --- | --- | --- | --- |
+| `dsh:governed` / `-grade` / `-grade-approval` / `-wmsvc` | `in_scope` | `governed-session-hook` | **`other`** | `other` |
+| `dsh:desktop` | `out_of_scope` | `desktop-entry-points` | `unknown` | `unknown` |
+| `dsh:web` / `dsh:headless` / `dsh:verify-dead` | `out_of_scope` | 各自的声明 | `unknown` | `unknown` |
+| `dsh:verify-bc` / `-exit2` / `-gov` / `-manual` | `out_of_scope` | `dsh-verify-profiles` | `unknown` | **`other`**（四条都是：三个目标渲染成 `<external>/…`） |
+
+**裁定④ 在这里看得见**：`dsh:verify-*` 四条通道的 `relation=other`（证据说目标在探测根之外），
+而声明侧**没写** `governs_tree` → `declared=unknown`。**若默认值还是 `self`**，这四行会同时读得出
+「声明说治理本仓库这棵树」与「证据说不在探测根里」——**而这对矛盾不进五个差集**（24 号 §2.1 的边界），
+会静默存在。这正是裁定④ 要修的东西。
+
+**⚠ 两处必须评审的读数**（都**没有**为了好看去改判）：
+
+1. **`out_of_scope_active = 3`**。`dsh-verify-profiles` 把四条测试 profile 定性为 `out_of_scope`，
+   其中三条此刻**真的接上了线**（`wiring_status` 是 wired）。按方案的判据（§3.5 的五个差集、
+   `out_of_scope_active` 是「声明不治理、却发现它在生效」），这是**真实缺口**，不是读错了：
+   它要么该改判 `in_scope`，要么该拆掉那条通道上的桥。本轮**只报告**，一个字节都没改判；
+2. **`declared_not_discovered` 由 1 变成 2**：显式 `covers` 生效之后，`kind` 档不再兜底，
+   `ci-agent-runtime`（`expected_absent`）不再绑定任何通道，于是它出现在这个差集里。
+   **它的 `reason` 文本此刻不精确**：该格对 `ci-agent-runtime` 写的是「本机没有发现它覆盖的那类通道」，
+   而本机**有** `agent_runtime` 档的通道（12 条 `dsh-profile`）——只是它们都被显式 `covers` 领走了。
+   这是 `wiring.py` 里**理由措辞**的问题（不是判定问题）：要么给这一格补第三种成因
+   （「它的 kind 档有通道，但那些通道已被显式 covers 覆盖」），要么改这条声明的 `decision`。
+   **本轮不动它**（第 2 步按指令只改数据文件）；登记在此，请评审定夺。
+
+**R-d（before = `6787031`，after = `9631617` 上的 s2 读数）**：
+
+| # | 尺子 | 读数 | 判定 |
+| --- | --- | --- | --- |
+| R1 | 决策载荷 | **逐字节相同**（23992 B） | ✅ |
+| R2' | `VERDICT` 判定行 | **逐字节相同**（24403 B） | ✅ |
+| R5 | 覆盖账三个入口 | 46460 → 34755 B；第一把尺子每份 **74 条**（73 条覆盖账数据 + `tree.revision`）、残差 **78 条** | ✅ **0 条未预注册** |
+| R6 | 声明读数 | 474 → 988 B，第一把尺子 **11 条**（全是声明侧键） | ✅ |
+| R7 | 退出码 | 默认 **0/0**、`--check` **1/1**、`--require-runtime` **1/1**、声明 `--check` **0/0** | ✅ |
+| 硬约束 | 三个入口逐字段 | `result` / `failures` / `counts` / `fact_counts` / `probe` / `tools` / 通道两根轴与总状态 / 四块键骨架 / `reading_context`（除归属读数） | ✅ **全 OK** |
+
+**豁免到期读数**（`tools/exemption_expiry.py`，只报告）：`HITS: 0 / declared=**9** due=0 expired=0 unprovable=0`
+（7 条带 `expires_at` 的声明 + 2 条门禁只报告步骤），与预期一致；退出码 **0**。
+
+**为什么有一个提交单独红**：`0dd7358` 只改数据文件（按指令），而 `tests/unit/test_provenance_wiring_scope.py`
+钉住了那一份声明的读数，于是它单独红了一条（`1 failed, 2067 passed`）；下一个提交 `f568a99` 只改用例期望
+（`16 passed`）。这条红**是数据文件与钉住它的用例分属两个提交的必然结果**，不是缺陷；
+把两件事并进一个提交会违反「第 2 步只改 `adapters/wiring-scope.yaml`」。
+
+### 16.3 预算对账（口径 = 新增行，`git diff --numstat f4a46a6..HEAD`）
+
+| 桶 | 台阶 4 累计（§14.5，截至 `f4a46a6`） | 本轮属于台阶 4 的 | 本轮全部 | 台阶 4 累计（含本轮） | 复核线 | 余量 |
+| --- | --- | --- | --- | --- | --- | --- |
+| src | 1426 | **+41**（`wiring.py` 9 / `wiring_scope.py` 32） | +85（另含 `client.py` 44） | **1467** | 1950 | 483 |
+| tests | 1933 | **+82**（`test_wiring_inventory.py` 4 / `test_provenance_wiring_scope.py` 78） | +287（另含两个新用例文件 205） | **2015** | 2100 | **85** |
+| tools | 893 | 0 | +21（`orchestration_loop.py`） | 893 | —— | —— |
+| 数据 / 文档 | 1849 | +34（声明）/ +92（文档） | 同 | 1975 | —— | —— |
+
+**第二个口径要单列**：若把第 0.5 条稳定性小修（src 44 / tools 21 / tests 205）也算进来，
+「台阶 4 累计」是 **src 1511 / tests 2220** —— **tests 已经越过复核线 120 行**。
+两个口径的差别就是这笔账算不算台阶 4 的；**请评审定夺**（25 号 §8 第 2 条）。
+**两个口径下 R-h 的结论相同：tests 必然越过，src 不越过**（估计见 25 号 §7）。
+### 16.4 门禁（`--full`）
+
+**命令（逐字）**：`python tools/ci_local.py --full --python .venv/Scripts/python.exe`
+
+| 次 | 树 | **显式退出码** | **耗时** | 步数 | 结果 |
+| --- | --- | --- | --- | --- | --- |
+| 第一次 | `9631617`（本节落地之前的最终树） | **0** | 门禁自报 **5m 07.7s**（外部秒表 308.4 s） | 执行 **31** 步 + 只报告 **2** 步（本机跳过 11、登记豁免 2） | 全通过 |
+
+- **日志**：`.tmp/step12/ci-local-full-r25.log`（4988 B）；分步日志 `.tmp/ci-local-logs/`；
+- **最慢五步**：`Unit, contract, integration and security tests` 2m 09.4s（42.0%）、
+  `Learning notebooks are in sync` 1m 12.2s（23.5%）、`Orchestration closed loop` 1m 05.0s（21.1%）、
+  `Phase 8 acceptance evidence` 7.6s、`Validator closed loop` 6.5s；
+- **第 29 步（`--hook` 的编号）/第 30 步（`--full` 的编号）`Orchestration closed loop` = ok 1m 05.0s**
+  ——§15.2 登记的那条 502 就发生在这个步骤上（**编号是推算**，见 §15.2）；
+- **两条只报告步骤的读数**：义务门禁 `0 命中`（`hits=0 / 1 个账本（不适用 1：没有账本可读，不算一次真实读数）`）；
+  豁免到期 `HITS: 0 / declared=9 due=0 expired=0 unprovable=0` ← **第 2 步的 `declared=9` 在门禁里读得到**；
+- **判定行**：`本机检查全部通过（31 步）；只报告 2 步（非零退出不计入失败）`。
+
+### 16.5 跑前快照 → 跑后逐个文件比对（第 9 步必然跑 `tools/dsh_sandbox_loop.py`）
+
+| 项 | 读数 |
+| --- | --- |
+| 快照 | `.tmp/e2e/before-gate-r25/20261001T092631/manifest.json`（HEAD `9631617`、`git status` 为空） |
+| 受控目录 | before/after 都是 **81 个文件**；逐字节相同 **79**、内容变了 **2**、新增 0、消失 0 |
+| 变了的两个 | `.tmp/phase-2-sandbox/logs/{allow-run,block-run}.txt`：`2ab540972f1d1a75… → 2dc1a97ba8eea1c8…`（两份内容相同：这次 dsh 进程真的起来了，日志被重写） |
+| 内容相同但 mtime 变了 | **6** 个（受控项目的 `dsh-adapter.yaml` / `hooks.json` / `patch.yml` / `AGENTS.md` / `order_controller.py` / `order_service.py`）——受控目录每次由闭环重建，「内容没变」不等于「没被重写」 |
+| 产物 | `3122 B → 3121 B`；两边都 `result=skipped` / `environment_skipped=true`；`tree.revision`：`f4a46a6… → 9631617…`；`host.dsh_home`：`<unset> → <outside-workspace>`——**这正是 `reading_context` 要回答的问题**：两份读数不属于同一棵树、也不属于同一个环境 |
+| 仓库侧 | HEAD 仍 `9631617`；`git status --porcelain -uall` **空** |
+| 这一步证明什么 | 门禁**没有动仓库**、**没有动受控项目的源码与配置**；它**不**证明端到端闭环跑通了（那是环境跳过） |
+
+### 16.6 未核实 / 待评审
+
+1. **08:21 那条 `Policy API 502 unknown` 没有被复现**：第 0.5 条的处置只去掉一条环境依赖，不主张成因（§15.2 / §16.0）；
+2. **§16.2 的两处 ⚠**：`out_of_scope_active = 3` 是真实缺口；`declared_not_discovered` 那一格的 `reason` 措辞
+   对 `ci-agent-runtime` 不精确——两条都**只报告、不改判**，请评审定夺；
+3. **R-h 的预算与缩小方案**（25 号 §7）：整包会越过 tests 复核线 95–215 行；
+4. **复核线的分子口径**：含不含第 0.5 条这类非台阶 4 的稳定性小修（两个口径分别是 2015 / 2220）；
+5. **文件归属**：`tools/ci_local.py` / `tests/unit/test_ci_local*.py` / `tools/phase_evidence.py` **一个字都没动**；
+   `git push` / `git fetch` 没有做（`origin/refactor/control-plane` 仍指向 `1e9df8c`，「远端此刻的状态」**未核实**）；
+6. **ACL 残留是本机环境问题**（§16.0）：本轮删掉了它、没有修它的成因——
+   「下一次全量 pytest 会不会再留一个」**未核实**；
+7. **第 1 步在 R6 上看不见**：声明读数载荷逐字节相同（§16.1），因为当时的声明文件里没有 `covers`——
+   「默认值改了」只在**有 covers 的树**上显形（§16.2 的通道行）。这不是缺口，但写下来，
+   免得被读成「改了等于没改」；
+8. **门禁只跑了 `--full`**；`--hook` 形态本轮没跑（§16.4 的步号推算基于 `_plan_steps(False)` 的读数，不是实跑）。
+
+### 16.7 复现命令（只读或只写 `.tmp`）
+
+```powershell
+# 两把尺子（R1 / R2 撇 / R5 / R6 / R7 + 硬约束逐字段核对）
+.venv\Scripts\python.exe .tmp\step12\scan_rd.py --left before --right after --profile step1
+.venv\Scripts\python.exe .tmp\step12\scan_rd.py --left after --right s2 --profile step2
+
+# 采集（before / after / s2 各跑一次；每个入口两次取自证）
+.venv\Scripts\python.exe .tmp\step12\probe_wiring_entries.py --side s2
+.venv\Scripts\python.exe .tmp\step3b\probe_decisions.py --out .tmp/step12/decisions-s2.json
+.venv\Scripts\python.exe .tmp\step9\probe_verdict_lines.py --out .tmp/step12/verdict-s2.json
+
+# 声明与到期读数（第 2 步的正题）
+$env:PYTHONPATH='src'; .venv\Scripts\python.exe -m provenance.cli wiring-scope --check --json
+.venv\Scripts\python.exe tools\exemption_expiry.py
+
+# 门禁 + 快照比对
+.venv\Scripts\python.exe tools\ci_local.py --full --python .venv/Scripts/python.exe
+.venv\Scripts\python.exe .tmp\step12\snapshot_before_gate.py
+.venv\Scripts\python.exe .tmp\step12\compare_after_gate.py
+```
