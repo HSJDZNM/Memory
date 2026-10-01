@@ -15,6 +15,12 @@ owner / reason / consequence / expires_at——否则「不在范围内」就成
 并且**不新增任何加载期 FATAL**：一个 schema "1" 的合法文件在 "2" 的加载器下必须照样加载。
 对**新字段**的未知枚举取值仍按核心约束 3 报错（例如 `governs_tree: othr`）——那条 FATAL 与
 既有的 `decision` 是同一类，不是新的加载条件。
+
+**裁定④（2026-10-01，24 号 §8.4 / 23 号 §15.1）**：`governs_tree` 的读法改过一次，仍在 "2" 内、
+**不升版**（1.3 尚未发布，同 `policy.check` 1.2 的先例）：**写了**就按写的算，**没写就是 `unknown`**，
+不再默认 `self`。"默认 `self` + 证据 `other`"这对矛盾按 24 号 §2.1 的边界**不进五个差集**，
+会静默存在；而"拿不出证据写 unknown"与裁定③ 是同一条纪律。加载期 FATAL 一条没加：
+`unknown` 不是一个可以写进声明文件的取值（写了会被拒绝），它只是**读取侧**对"没写"的翻译。
 """
 
 from __future__ import annotations
@@ -38,8 +44,11 @@ SCHEMA_VERSION = "2"
 ACCEPTED_SCHEMA_VERSIONS: Tuple[str, ...] = ("1", "2")
 # decision 的三个取值：在范围内 / 不在范围内 / 预期缺席（方案 §3.5）。
 DECISIONS: Tuple[str, ...] = ("in_scope", "out_of_scope", "expected_absent")
-# governs_tree 的两个取值：这条声明覆盖的通道治理的是**本仓库这棵树**，还是**有意治理另一棵树**。
+# governs_tree 的**两个可写取值**：这条声明覆盖的通道治理的是**本仓库这棵树**，
+# 还是**有意治理另一棵树**。**没写**不属于这两个值里的任何一个（见下一条）。
 GOVERNS_TREE_VALUES: Tuple[str, ...] = ("self", "other")
+# 没写 `governs_tree` 时**读取侧**的取值（2026-10-01 裁定④）：不替声明认领 `self`。
+GOVERNS_TREE_UNWRITTEN = "unknown"
 
 
 class WiringScopeError(Exception):
@@ -92,8 +101,9 @@ class ScopeEntry(BaseModel):
     # 显式覆盖：glob 作用于发现侧（adapters.cli wiring）的 channel_id。显式覆盖**优先于**
     # kind 档（24 号 §2.1 规则 1）：同档多条声明判决不同时，只有显式覆盖能定夺，不猜。
     covers: Tuple[str, ...] = ()
-    # 这条声明覆盖的通道是不是**有意**治理另一棵树（默认 self = 本仓库这棵树）。
-    governs_tree: str = "self"
+    # 这条声明覆盖的通道是不是**有意**治理另一棵树。**没写 = None**（不是 self）：
+    # 读取侧用 `declared_governs_tree()` 取 `unknown`（裁定④；在 1.3 内改正、不升版）。
+    governs_tree: str | None = None
     # 只放指针（仓库相对路径，或 <outside-workspace>），不放正文、不放绝对路径（第 16/34 条）；
     # governs_tree=self 时不写。
     tree_ref: str | None = None
@@ -123,11 +133,14 @@ class ScopeEntry(BaseModel):
 
     @field_validator("governs_tree")
     @classmethod
-    def _tree(cls, value: str) -> str:
+    def _tree(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         if value not in GOVERNS_TREE_VALUES:
             raise ValueError(
                 f"未知 governs_tree {value!r}：只接受 {' / '.join(GOVERNS_TREE_VALUES)}"
-                "（未知枚举不静默忽略——核心约束 3；这不是新增的加载条件，与 decision 同类）"
+                "（未知枚举不静默忽略——核心约束 3；这不是新增的加载条件，与 decision 同类）。"
+                "`unknown` 是**没写**时读取侧的取值，不是可写取值（裁定④）"
             )
         return value
 
@@ -146,6 +159,17 @@ class ScopeEntry(BaseModel):
                 "没有到期日的「不在范围内」是一张永不过期的空白支票（方案 §3.5）"
             )
         return self
+
+    def declared_governs_tree(self) -> str:
+        """这条声明**声称**治理哪棵树：写了就按写的算，**没写一律 `unknown`**（裁定④）。
+
+        `unknown` 不是可写取值（写了会被加载期拒绝）——它是**读取侧**对「没写」的翻译：
+        拿不出证据就不替声明认领 `self`。`tree.declared_by` 仍然写覆盖它的那条声明 id，
+        因此「没有声明覆盖」（此时 declared_by 是 null）与「声明覆盖了但没写 governs_tree」
+        分得开。
+        """
+
+        return self.governs_tree if self.governs_tree is not None else GOVERNS_TREE_UNWRITTEN
 
 
 class WiringScope(BaseModel):
@@ -195,10 +219,12 @@ class WiringScope(BaseModel):
             # schema "2" 的新字段：**只列写了的那些**（空 = 没有人写，不是"写空了"）。
             "channel_kinds": dict(sorted(self.channel_kinds.items())),
             "covers": {entry.id: list(entry.covers) for entry in self.scope if entry.covers},
+            # **只列写了的那些**（含显式写的 `self`）：裁定④ 之后"写了 self"与"没写"
+            # 分得开——没写是读取侧的 `unknown`，不出现在这份摘要里。
             "governs_tree": {
                 entry.id: entry.governs_tree
                 for entry in self.scope
-                if entry.governs_tree != "self"
+                if entry.governs_tree is not None
             },
         }
 

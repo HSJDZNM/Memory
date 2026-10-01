@@ -131,10 +131,13 @@ def test_a_schema_1_declaration_still_loads(tmp_root: Path) -> None:
 
     assert scope.schema_version == "1"
     assert scope.channel_kinds == {}
-    # 没写的新字段落在各自的默认值上：covers 空、governs_tree=self、tree_ref 无。
+    # 没写的新字段落在各自的默认值上：covers 空、governs_tree **没写**（None）、tree_ref 无。
     assert scope.scope[0].covers == ()
-    assert scope.scope[0].governs_tree == "self"
+    assert scope.scope[0].governs_tree is None
     assert scope.scope[0].tree_ref is None
+    # 裁定④（2026-10-01）：没写 = **读取侧**的 unknown，不是 self。
+    assert scope.scope[0].declared_governs_tree() == "unknown"
+    assert scope.as_json()["governs_tree"] == {}
 
 
 def test_schema_2_optional_fields_load_and_unknown_values_are_rejected(tmp_root: Path) -> None:
@@ -159,6 +162,56 @@ def test_schema_2_optional_fields_load_and_unknown_values_are_rejected(tmp_root:
 
     with pytest.raises(WiringScopeError):
         load_wiring_scope(_write(tmp_root, text.replace("governs_tree: other", "governs_tree: othr")))
+
+
+def test_covers_without_governs_tree_reads_as_unknown(tmp_root: Path) -> None:
+    """裁定④（2026-10-01，24 号 §8.4）：**写了 covers 但没写 governs_tree** → 读取侧 unknown。
+
+    为什么不是锦上添花：按 24 号 §2.1 的边界，「`relation=other` 而 `tree.declared != other`」
+    **不进五个差集**——默认 `self` 会让这对矛盾**静默存在**。
+    """
+
+    text = (
+        'schema_version: "2"\n'
+        "channel_kinds:\n  dsh-profile: agent_runtime\n"
+        "scope:\n"
+        + IN_SCOPE
+        + '    covers: ["dsh:governed", "dsh:governed-*"]\n'
+    )
+    scope = load_wiring_scope(_write(tmp_root, text))
+
+    assert scope.scope[0].covers == ("dsh:governed", "dsh:governed-*")
+    assert scope.scope[0].governs_tree is None
+    assert scope.scope[0].declared_governs_tree() == "unknown"
+    # 摘要只列**写了**的那些：没写的不出现（「没有人写」与「写空了」分得开）。
+    assert scope.as_json()["governs_tree"] == {}
+
+
+def test_an_explicit_self_is_reported_while_an_omission_is_not(tmp_root: Path) -> None:
+    """写了 `self` 与没写分得开：前者进摘要（那是**有人写过的声明值**），后者不进。"""
+
+    text = (
+        'schema_version: "2"\n'
+        "scope:\n"
+        + IN_SCOPE
+        + "    governs_tree: self\n"
+        + OUT_OF_SCOPE
+    )
+    scope = load_wiring_scope(_write(tmp_root, text))
+
+    assert scope.scope[0].declared_governs_tree() == "self"
+    assert scope.scope[1].declared_governs_tree() == "unknown"
+    assert scope.as_json()["governs_tree"] == {"governed-session-hook": "self"}
+
+
+def test_unknown_is_not_a_writable_governs_tree_value(tmp_root: Path) -> None:
+    """`unknown` 是读取侧的翻译，**不是可写取值**：显式写它在加载期就报错（不静默接受）。"""
+
+    text = 'schema_version: "2"\nscope:\n' + IN_SCOPE + "    governs_tree: unknown\n"
+    with pytest.raises(WiringScopeError) as failure:
+        load_wiring_scope(_write(tmp_root, text))
+
+    assert "governs_tree" in str(failure.value)
 
 
 def test_missing_file_and_broken_yaml_are_rejected(tmp_root: Path) -> None:

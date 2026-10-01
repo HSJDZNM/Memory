@@ -830,10 +830,10 @@ def test_governs_uses_explicit_covers_and_flags_in_scope_not_wired(
     # 通道自己的目标渲染成 <external>/… → relation=other（证据就是那个字段名）。
     assert channel["governs"]["tree"]["relation"] == "other"
     assert channel["governs"]["tree"]["evidence"] == ["bridge.entry"]
-    # 声明侧没写 governs_tree → 取 schema 的默认值 self：于是这一行同时读得出
-    # "声明说它治理本仓库这棵树"与"证据说它的目标在探测根之外"这对**矛盾**。
-    # 按 24 号 §2.1 的边界，它不进五个差集，只出现在通道行（见 23 号 §14.2 的登记）。
-    assert channel["governs"]["tree"]["declared"] == "self"
+    # 声明侧没写 governs_tree → 裁定④（2026-10-01）之后读作 unknown，**不是** self：
+    # "默认 self + 证据 other"这对矛盾按 24 号 §2.1 的边界不进五个差集，默认 self 会让它
+    # 静默存在；declared_by 仍指得出是哪条声明，两件事因此分得开（23 号 §15.1 裁定④）。
+    assert channel["governs"]["tree"]["declared"] == "unknown"
     assert channel["governs"]["tree"]["declared_by"] == "governed-session-hook"
 
     not_declared = payload["differences"]["discovered_not_declared"]

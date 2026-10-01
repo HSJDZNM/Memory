@@ -10,7 +10,9 @@
 # 且不新增任何加载期 FATAL。本版新增的四个字段（本条声明文件今天只用了第一个）：
 #   channel_kinds  发现侧 kind → 声明侧 kind 的映射（**数据**，不是代码里的分支）
 #   covers         条目级显式覆盖（glob 作用于 channel_id；显式优先于 kind 档）
-#   governs_tree   条目级：这条声明覆盖的通道是不是**有意**治理另一棵树（self 默认 / other）
+#   governs_tree   条目级：这条声明覆盖的通道是不是**有意**治理另一棵树（写了才是 self /
+#                  other；**没写 = unknown**，读取侧不替它认领 self —— 2026-10-01 裁定④，
+#                  24 号 §8.4 / 23 号 §15.1）
 #   tree_ref       governs_tree=other 时的指针（仓库相对路径或 <outside-workspace>；只放指针）
 #
 # **本轮不写 covers / governs_tree**（2026-10-01 裁定③）：8 个目标在工作区之外的通道

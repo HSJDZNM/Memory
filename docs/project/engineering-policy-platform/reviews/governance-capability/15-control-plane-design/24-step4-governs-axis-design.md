@@ -71,7 +71,7 @@
   "expired": false,                        // 只报告：不改 status / 不改退出码
   "tree": {
     "relation": "other",                   // self | other | unknown（由通道自己声明的目标算出）
-    "declared": null,                      // self | other | null（声明里的 governs_tree）
+    "declared": "unknown",                 // self | other | unknown（声明里的 governs_tree；**没写 = unknown**，裁定④）
     "declared_by": null,
     "evidence": ["hooks_config", "audit_path", "bridge.entry"]  // relation 是从哪几个字段读出来的
   },
@@ -91,8 +91,16 @@
 
 | 字段 | 取值 | 语义 |
 | --- | --- | --- |
-| `governs_tree` | `self`（默认） / `other` | 这条声明覆盖的通道**有意**治理另一棵树（不是本仓库这棵树） |
+| `governs_tree` | `self` / `other`；**没写 = `unknown`**（2026-10-01 裁定④，见 §8.4） | 这条声明覆盖的通道**有意**治理另一棵树（不是本仓库这棵树）；**没写不替它认领 `self`** |
 | `tree_ref` | 指针：仓库相对路径，或 `<outside-workspace>` | **只放指针、不放正文、不放绝对路径**（第 16/34 条）；`governs_tree=self` 时不写 |
+
+> **更正（2026-10-01 裁定④，在 1.3 内改正、不升版）**：`governs_tree` 的原口径是「`self`（默认）」。
+> 裁定④ 把**没写**的读法改成 `unknown`——理由：按 §2.1 的边界，「`relation=other` 而
+> `tree.declared != other`」**不进五个差集**，于是「默认 `self` + 证据 `other`」这对矛盾会
+> **静默存在**；而「拿不出证据写 `unknown`」与裁定③ 是同一条纪律。`unknown` **不是可写取值**
+> （写进声明文件会被加载期拒绝），它只是读取侧对「没写」的翻译；`tree.declared_by` 仍写覆盖它的
+> 声明 id，所以「没有声明覆盖」与「声明覆盖了但没写」分得开。裁定理由见 **§8.4**，落地与 R-d 见
+> **23 号 §16.1**。
 
 通道行的 `tree.relation` 由**通道自己声明的目标**算出：`hooks_config` / `audit_path` /
 `bridge.entry` 里出现 `<external>/…`（`wiring.py` 既有的渲染口径，不新造一套）→ `other`；

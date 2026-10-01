@@ -2129,8 +2129,9 @@ class _Governs:
             "expired": self.expired,
             "tree": {
                 "relation": self.relation,
-                # 裁定③：拿不出证据（没人写过 governs_tree）就写 unknown，不写 null——
-                # null 与“读不到”分不开（第 50 条：同名两义一律改名）。
+                # 裁定③/④：拿不出证据就写 unknown，不写 null——null 与“读不到”分不开
+                # （第 50 条：同名两义一律改名）。裁定④（2026-10-01）把“声明覆盖了但没写
+                # governs_tree”也归进这一档；`declared_by` 仍然指得出是哪条声明。
                 "declared": self.tree_declared,
                 "declared_by": self.tree_declared_by,
                 "evidence": list(self.tree_evidence),
@@ -2177,10 +2178,15 @@ def _governs_for(
                 entry = candidates[0]
                 declared_by = entry.id
                 expires_at = entry.expires_at
-                tree_declared = entry.governs_tree
+                # 裁定④（2026-10-01，24 号 §8.4）：**没写** `governs_tree` 就是 `unknown`，
+                # 不替声明认领 `self`——"默认 self + 证据 other"这对矛盾按 24 号 §2.1 的边界
+                # 不进五个差集，会静默存在。
+                tree_declared = entry.declared_governs_tree()
                 tree_declared_by = entry.id
                 expired = _is_expired(expires_at, as_of)
                 note = "由声明 " + entry.id + " 覆盖（匹配方式 " + how + "）：decision=" + decision
+                if entry.governs_tree is None:
+                    note += "；这条声明没写 governs_tree，tree.declared 写 unknown（裁定④）"
             else:
                 note = (
                     "同档 " + str(len(candidates)) + " 条声明判决一致（" + listed + "）：decision="
