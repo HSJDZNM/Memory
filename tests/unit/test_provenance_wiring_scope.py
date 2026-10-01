@@ -45,14 +45,31 @@ def test_the_repository_declaration_is_valid() -> None:
     summary = scope.as_json()
 
     assert summary["schema_version"] == "2"
-    assert summary["declared"] >= 2
-    assert summary["by_decision"]["in_scope"] >= 1
+    assert summary["declared"] == 8
+    assert summary["by_decision"] == {
+        "in_scope": 1,
+        "out_of_scope": 6,
+        "expected_absent": 1,
+    }
     # schema "2" 的数据侧：发现侧 kind → 声明侧 kind 的映射（24 号 §2.1 规则 2）。
     assert summary["channel_kinds"] == {"dsh-profile": "agent_runtime"}
-    # 裁定③：本轮**不写** covers / governs_tree —— 这两个读数因此是空的
-    # （"空"是一个明确读数：没有人写过，不是"写空了"）。
-    assert summary["covers"] == {}
-    assert summary["governs_tree"] == {}
+    # 2026-10-01 第 25 轮（裁定⑤，24 号 §8.4）：12 条被发现的通道**每一条**都有显式 covers，
+    # 因此这份读数不再是空的——它现在是「声明 × 发现」的连接键本身。
+    assert summary["covers"] == {
+        "governed-session-hook": ["dsh:governed", "dsh:governed-*"],
+        "desktop-entry-points": ["dsh:desktop"],
+        "dsh-web-channel": ["dsh:web"],
+        "dsh-headless-channel": ["dsh:headless"],
+        "dsh-verify-dead-channel": ["dsh:verify-dead"],
+        "dsh-verify-profiles": [
+            "dsh:verify-bc",
+            "dsh:verify-exit2",
+            "dsh:verify-gov",
+            "dsh:verify-manual",
+        ],
+    }
+    # governs_tree 只列**写了**的那些（裁定④：没写 = 读取侧的 unknown，不进摘要）。
+    assert summary["governs_tree"] == {"governed-session-hook": "other"}
 
 
 def test_two_decisions_load_and_are_counted(tmp_root: Path) -> None:
