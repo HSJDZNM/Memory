@@ -367,6 +367,28 @@ IN_SCOPE_NOT_WIRED: 0 / discovered=12 declared=7 measured=7
 `VERDICT` 判定行——**一个字段都不动**。`out_of_scope_active` 这类读数**按真实结果报告**，
 不为归零改判（本轮的真实读数见 23 号 §16.2）。
 
+### 8.5 裁定（2026-10-03 · 评审方二次更正）：实验 profile 的收尾、第六格与 `reason` 文案
+
+§8.4 第 4 条（新增 `dsh-verify-profiles`，把 `verify-bc` / `verify-exit2` / `verify-gov` /
+`verify-manual` 收进一条测试 profile 声明）与 §8 请评审第 4 条（`relation=other` 而
+`tree.declared != other` 要不要第六格）在这一天被**二次更正**。逐条裁定与落地（读数见 23 号 §17）：
+
+| # | 原问题 | 裁定（逐字口径） | 落地 |
+| --- | --- | --- | --- |
+| ① | §8.4 第 4 条 + 第 26 轮把三条并入 `governed-session-hook` | `verify-bc` / `verify-dead` / `verify-exit2` / `verify-gov` / `verify-manual` 是**治理能力验证轮的实验 profile**，**不是受控会话**（04 号 §5.2 的 E7-failclosed；05 号的清理建议「只有 governed 是交付物」；仓库代码里零引用）。第 26 轮那次并入是**评审方的错误**；round-20 的 `out_of_scope_active=3` 是**真实读数** | `f6cc503`：`governed-session-hook.covers` 撤回三条（**decision 一个都没改**） |
+| ② | §8.4 第 4 条新增的那两条声明 | 使用者已把这 5 个 profile 移到 `C:\Users\ZNM\.dsh-profiles-backup-20261003`（可还原，没有删除）；**声明随宿主同批收尾**：删除 `dsh-verify-profiles` 与 `dsh-verify-dead-channel` | 同上 |
+| ③ | §2.1 里这一格的 `reason` 口径 | `declared_not_discovered` 的 `reason` 要按**真实成因**分开写：kind 没映射 / kind 有映射且本机有同类通道（被别人的显式 covers 领走了）/ 有映射但一条都没有 | `d930af8` |
+| ④ | §8 请评审第 4 条（第六格给谁） | 第六格给 **`expected_absent_present`**（声明 `expected_absent`、**却**被发现的通道），**不是**给"树声明与证据不一致"；只报告：`is_red=count>0`、`enforced=false`、`would_exit_code=1`；**1.3 内加、不升版** | `d2d90fa`（§2.2 的字段表已同步） |
+| ⑤ | 25 号 §7 的 R-h 方案 A | 挪到**第二十三轮**（feat 合入之后） | 本轮不做 |
+
+**"树声明与证据不一致"（`relation=other` 而 `tree.declared != other`）仍然不进任何一格**——
+它在通道行与 `headline` 的注里可见（§2.1 的边界不动）；第六格被另一个问题拿走了，这件事本身
+写在 §2.1 的 2026-10-03 补记里，免得下次有人按"第六格"去读它。
+
+**不改变的东西**（同一条纪律）：`--check` 的判据与退出码、`result` / `failures` / `counts` /
+`fact_counts`、`channels[].status` / `wiring_status` / `freshness_status`、决策载荷与
+`VERDICT` 判定行——**一个字段都不动**；`WIRING_SCHEMA_VERSION` 仍 `1.3`。
+
 ---
 
 ## 9 复现命令（只读）

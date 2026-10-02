@@ -1563,3 +1563,186 @@ $env:PYTHONPATH='src'; .venv\Scripts\python.exe -m provenance.cli wiring-scope -
 .venv\Scripts\python.exe .tmp\step12\snapshot_before_gate.py
 .venv\Scripts\python.exe .tmp\step12\compare_after_gate.py
 ```
+
+## 17 第 27 轮 · 2026-10-03 评审裁定①②③④⑤ 的落地读数与门禁（**WIRING 1.3 的定稿**）
+
+- **执行**：2026-10-03（本机）；控制面重构会话（**唯一写者**）。
+- **依据**：2026-10-03 的五条评审裁定（§17.1）、24 号 §8.5；AGENTS 第 45（仪器要能失败）/
+  48（读数属于哪棵树）/ 50（口径诚实）/ 55（加键就是改协议）条。
+- **树与提交链**：`088349a`（本轮起点）→ `f6cc503`（第 1 步：数据收尾，**只改**
+  `adapters/wiring-scope.yaml`）→ `f0880b6`（用例期望，按指令另起一个提交）→
+  `d930af8`（第 2 步：`reason` 文案）→ `d2d90fa`（第 3 步：第六格 + 24 号 §2.2 字段表）
+  → 本节。
+- **仪器落点**：`.tmp/step14/`（不提交）：`probe_wiring_entries.py`（三个入口 × 两次自证 +
+  声明读数 + 默认形态退出码）、`scan_rd.py`（三把尺子 + 硬约束）、`realnow.py`（真实 now 对照）。
+  **钉死的输入**：`--now 2026-10-03T00:00:00+08:00`、`--observe-sessions 0`、不传 `--dsh-home`
+  （走默认发现：`$DSH_HOME = C:\Users\ZNM\.dsh`，只读）。
+
+### 17.0 环境自检（第 0 步）
+
+| 项 | 读数 |
+| --- | --- |
+| 起点 | 分支 `refactor/control-plane` @ `088349a`，`git status --porcelain` **空** |
+| 解释器 | `.venv\Scripts\python.exe` = Python 3.13.11（打包自 Anaconda） |
+| **正题：`dsh:verify-*` 已不在清点里** | `adapters.cli wiring --json` 发现 **7 条**通道（`dsh:desktop` / `dsh:governed` / `-grade` / `-grade-approval` / `-wmsvc` / `dsh:headless` / `dsh:web`），**一条 `dsh:verify-*` 都没有**；`~/.dsh/profiles` 只剩 `desktop` / `governed` / `governed-grade` / `governed-grade-approval` / `governed-wmsvc` / `headless` / `web` / `node_modules` |
+| 5 个 profile 的去处 | `C:\Users\ZNM\.dsh-profiles-backup-20261003` 下有 `verify-bc` / `verify-dead` / `verify-exit2` / `verify-gov` / `verify-manual`（**可还原，没有删除**）——裁定① 的处置（选项 3）已由使用者完成 |
+| ACL 残留（**第二次遇到，形态与 §16.0 不同**） | `.tmp/tmp/pytest-of-ZNM` 又留下了（上一轮全量 pytest 建的）：`Remove-Item`、`New-Item`（在它里面建子目录）、`os.scandir` **三种都退「拒绝访问」**（策略 `workspace-write`，`sandbox.denied=false` —— 拒的是 Windows ACL，不是 DSH 沙箱），于是 `pytest -n auto` 在 `_pytest/pathlib.py:187` 直接 `INTERNALERROR: PermissionError [WinError 5]`。**处置**：`Rename-Item .tmp\tmp → .tmp/tmp-acl-residue-<HHMMSS>`（重命名父目录**不需要**子项的权限，实测成功），再让门禁重建 `.tmp/tmp`。**没有**走上一轮那条 `danger-full-access` 的路：本轮两次升级请求（120 s / 560 s）都**没有得到应答**（§17.7） |
+
+### 17.1 裁定（2026-10-03，五条）
+
+| # | 裁定（逐字口径） | 落地 |
+| --- | --- | --- |
+| ① | 评审方**二次更正**：`verify-bc` / `verify-dead` / `verify-exit2` / `verify-gov` / `verify-manual` 是**治理能力验证轮的实验 profile**（证据：04 号 §5.2 的 E7-failclosed；05 号的清理建议「只有 governed 是交付物」；仓库代码里零引用）。上一轮把 `verify-bc`/`gov`/`manual` 并入 `in_scope` 是**评审方的错误**；round-20 的 `out_of_scope_active=3` 是**真实读数**。处置走**选项 3**：使用者已把这 5 个 profile 移到 `C:\Users\ZNM\.dsh-profiles-backup-20261003`（可还原） | `f6cc503`：`governed-session-hook.covers` 撤回三条（§17.2） |
+| ② | **声明随宿主同批收尾**：删除 `dsh-verify-profiles` 与 `dsh-verify-dead-channel` 两条声明；**用新提交改，不改写历史** | 同上（`f6cc503`） |
+| ③ | `ci-agent-runtime` 的 `declared_not_discovered.reason` 措辞改准（**1.3 内**） | `d930af8`（§17.3） |
+| ④ | 加**第六格** `expected_absent_present`：被 `expected_absent` 声明覆盖、**却**被发现的通道，逐条计数，**只报告**（`is_red=count>0`、`enforced=false`）；**1.3 内加、不升版** | `d2d90fa`（§17.4） |
+| ⑤ | R-h 方案 A（25 号 §7）挪到**第二十三轮**（feat 合入之后） | 本轮**不做**；25 号正文不改写 |
+
+**纪律**：`WIRING_SCHEMA_VERSION` 全程停在 **`1.3`**（1.3 还没进 feat，与 `policy.check` 1.2 的先例同）；
+**任何 decision 一个都没改**；没有新增任何阻断步骤（`--check` 的判据仍只读 `failures`）。
+
+### 17.2 第 1 步 · 数据收尾（`f6cc503` + 用例期望 `f0880b6`）
+
+**改动**（只在声明文件里）：`governed-session-hook.covers` 撤回 `dsh:verify-bc` / `dsh:verify-gov` /
+`dsh:verify-manual`（回到 24 号 §8.4 第 1 条的四条通道）；删除 `dsh-verify-profiles` /
+`dsh-verify-dead-channel` 两条声明；文件头登记二次更正与处置。
+
+**声明读数**（`provenance.cli wiring-scope --check --json`，988 → **731 B**）：
+
+| 键 | before | after（实测） | 预期 | 判定 |
+| --- | --- | --- | --- | --- |
+| `declared` | 8 | **6** | —— | ✅ |
+| `by_decision` | in_scope 1 / out_of_scope 6 / expected_absent 1 | in_scope 1 / **out_of_scope 4** / expected_absent 1 | —— | ✅ |
+| `covers` | 6 条声明、10 条 pattern | **4 条声明、6 条 pattern** | —— | ✅ |
+| `governs_tree` | `{"governed-session-hook": "other"}` | **不变** | 不变 | ✅ |
+| 退出码 | 0 | **0** | 0 | ✅ |
+
+**覆盖账读数**（`adapters.cli wiring --json --now 2026-10-03T00:00:00+08:00 --observe-sessions 0`，
+22898 → **21986 B**）：
+
+| 格 / 数 | before | after（**实测**） | 预期（本轮指令） | 判定 |
+| --- | --- | --- | --- | --- |
+| `declaration_conflicts` | 0 | **0** | 0 | ✅ |
+| `discovered_not_declared` | 0 | **0** | 0 | ✅ |
+| `in_scope_not_wired` | 0 | **0**（`is_red: false`、`enforced: false`） | 按真实读数报告 | ✅ |
+| `out_of_scope_active` | 0 | **0** | 0 | ✅ |
+| `out_of_scope_expired` | 0 | **0** | —— | ✅ |
+| `declared_not_discovered` | 4 | **2** | 「只剩 `ci-agent-runtime`」 | ⚠ **不一致，见下** |
+| `account` | 7 / 8 / 4 | **discovered 7 / declared 6 / measured 4** | —— | ✅ |
+| `headline.machine_line` | `… declared=8 …` | `IN_SCOPE_NOT_WIRED: 0 / discovered=7 declared=6 measured=4` | —— | ✅ |
+| 三处退出码 | 默认 0 / `--check` 1 / `--require-runtime` 1 | **逐个相同** | 相同 | ✅ |
+
+**⚠ 必须评审的一处**：`declared_not_discovered` 我报 **2**，不是 1。除 `ci-agent-runtime`
+（`expected_absent`）之外，还有 `agent-channel-inventory-report-mode`：它的 `kind=gate_check`
+**不是通道**（`channel_kinds` 的值里没有任何发现侧 kind 映射到它），所以它**永远**落在这一格
+——这与本轮裁定①②无关，**before 侧就已经是 2 条**（§16.2 的同一格当时也是这两条 + 两条 verify-*）。
+**按真实读数报告，没有为了对齐指令去改判或删掉那条声明。**
+
+**7 天新鲜度窗口（指令点名要分别报的那一项）**：**真实 now 与钉死 now 逐项相同**，
+`in_scope_not_wired` 两次都是 **0**——**没有出现到期导致的非零**：
+
+| 通道 | `last_record_at` | age（真实 now） | 窗口 | 剩余 | 真实 / 钉死 |
+| --- | --- | --- | --- | --- | --- |
+| `dsh:governed` | `2026-09-26T12:27:10.904188Z` | 537043 s | 604800 s | **+67757 s（18.8 h）** | fresh / fresh |
+| `dsh:governed-grade` | `2026-09-26T12:16:03.859961Z` | 537710 s | 604800 s | **+67090 s（18.6 h）** | fresh / fresh |
+| `dsh:governed-grade-approval` | `2026-09-26T12:17:05.694417Z` | 537649 s | 604800 s | **+67151 s（18.7 h）** | fresh / fresh |
+| `dsh:governed-wmsvc` | `2026-09-27T00:26:57.726469Z` | 493857 s | 604800 s | **+110943 s（30.8 h）** | fresh / fresh |
+| `dsh:desktop` / `headless` / `web` | 无留痕 | —— | 604800 s | —— | unevaluated / unevaluated |
+
+`account` 两次都是 **7 / 6 / 4**；`out_of_scope_active`、`declared_not_discovered` 也逐个相同。
+
+**但有一条必须分开说**：`tests/contract/test_wiring_inventory.py` 里**先于本轮**就有 3 条用例的
+**夹具**留痕是 `2026-09-25T11:59:00Z`，而它们**不带 `--now`**（走真实墙钟）——今天
+（2026-10-03）age = 624828 s > 604800 s，于是这 3 条红：
+`test_wiring_check_exits_zero_only_for_a_wired_channel` / `test_wiring_json_contract` /
+`test_wiring_verdict_agrees_with_the_hook_self_check`。**证明它与本轮无关**：把声明文件的改动
+`git stash` 之后在 `088349a` 的树上重跑同一批用例，**同样 3 failed / 38 passed**，报错逐字相同。
+这不是清点读数的到期，是**测试夹具的墙钟到期**；本轮**不改任何东西**（指令：不改）。
+
+**R-d（第 1 步；before = `a1` @ `088349a`，after = `b1` @ `f0880b6`）**：
+
+| # | 尺子 | 读数 | 判定 |
+| --- | --- | --- | --- |
+| R1 | 决策载荷（10 个场景） | 23992 B，**逐字节相同** | ✅ |
+| R2' | `VERDICT` 判定行（144 行 + 插件字面量） | 24403 B，**逐字节相同** | ✅ |
+| R5 | 覆盖账三个入口 | 22898 → 21986 B；第一把尺子每份 **8 条**（声明读数 4 条 + 覆盖账 4 条）、残差 **12 条**；**0 条未预注册** | ✅ |
+| R6 | 声明文件读数 | 988 → 731 B，7 条差集全部预注册 | ✅ |
+| R7 | 退出码 | 默认 0/0、`--check` 1/1、`--require-runtime` 1/1、声明 `--check` 0/0、默认形态 0/0 | ✅ |
+| 硬约束 | 三个入口逐字段 | `result` / `failures` / `counts` / `fact_counts` / `probe` / `tools` / 通道三字段 / `reading_context`（除归属读数）**全 OK** | ✅ |
+
+**唯一的那条红**（§16.2 同型）：`f6cc503` 只改数据文件（按指令），于是
+`tests/unit/test_provenance_wiring_scope.py::test_the_repository_declaration_is_valid` 单独红了一条
+（`1 failed, 2067 passed`；下一个提交 `f0880b6` 只改那份期望 → `3 failed, 134 passed`，
+剩下的 3 条就是上面那 3 条预存在的红）。这是「数据与钉住它的用例分属两个提交」的必然结果。
+
+### 17.3 第 2 步 · `reason` 措辞（`d930af8`，只改 `src/adapters/wiring.py`）
+
+**改的是什么**：新增 `_declared_not_discovered_reason()`，把这一格的三**种成因分开写**——
+（a）`kind` 在 `channel_kinds` 的值里没有；（b）有映射、且本机**有**同类通道（真实成因是
+它们都被**其它声明的显式 covers** 领走了）；（c）有映射、但一条都没有。同类通道条数是**算出来**的
+（`kind_counts`），不是写死的数字。
+
+| | 文本 |
+| --- | --- |
+| before | `本机没有发现它覆盖的那类通道` |
+| after | `它的 kind=agent_runtime 在本机有 7 条通道被发现了，但它们都被**其它声明的显式 covers** 领走了（显式覆盖优先于 kind 档）：这条声明因此一条通道都没绑定到` |
+
+**R-d（before = `b1` @ `f0880b6`，after = `c1` @ `d930af8`）**：
+
+| # | 尺子 | 读数 | 判定 |
+| --- | --- | --- | --- |
+| R1 | 决策载荷 | 23992 B，**逐字节相同** | ✅ |
+| R2' | `VERDICT` 判定行 | 24403 B，**逐字节相同** | ✅ |
+| R5 | 覆盖账三个入口 | 21986 → **22150 B**；第一把尺子每份 **2 条** = **1 条 reason 文本**（预注册）+ 1 条 `reading_context.tree.revision`（归属读数）；**0 条未预注册** | ✅ |
+| R6 | 声明文件读数 | 731 B，**逐字节相同** | ✅ |
+| R7 | 退出码 | 五个读数逐个相同 | ✅ |
+| 硬约束 | 三个入口逐字段 | 全 OK（含 `channels[].governs` 键骨架） | ✅ |
+
+**指令要求的"差集里只出现这一条 reason 文本"成立**：三个入口各 **1 条**预注册差异，没有第二条
+业务字段进入差集。
+
+### 17.4 第 3 步 · 第六格 `expected_absent_present`（`d2d90fa`）
+
+**改的是什么**：`DIFFERENCE_KEYS` / `CHANNEL_DIFFERENCE_KEYS` 加 `expected_absent_present`；
+`_coverage()` 逐条计数（通道级形状：`channel_id` / `declared_by` / `decision` /
+`wiring_status` / `freshness_status` / `remedy`）；红条件
+`red_conditions.expected_absent_present`：**`is_red = count > 0`、`enforced = false`**，
+`would_exit_code: 1`、`promote_when` 与 `in_scope_not_wired` **同一句话**；
+`differences.note` 与 `headline.text` 同步成"六个差集 / expected_absent 却被发现"。
+**`WIRING_SCHEMA_VERSION` 不动**（1.3 内加，不升版）。
+
+**用例**（复用 `.tmp/step13/probe-ea2` 的场景）：`ci-agent-runtime`（`expected_absent`）
+显式 `covers: ["dsh:verify-bc"]`，而 `verify-bc` 这个 profile 真的在本机 →
+这一格 `count=1`、红条件 `is_red=true` / `enforced=false`、通道自己仍然退出 0，且
+`discovered_not_declared` / `in_scope_not_wired` / `declared_not_discovered` **一个都不被它影响**。
+
+**自证（AGENTS 第 45 条：修复前会红）**：把计数条件从 `decision == GOVERNS_EXPECTED_ABSENT`
+改成 `GOVERNS_IN_SCOPE` → `assert grid["count"] == 1` 得 `0 == 1` **FAILED**；
+撤回变异 → `1 passed`。
+
+**R-d（before = `c1` @ `d930af8`，after = `d1` @ `d2d90fa`）**：
+
+| # | 尺子 | 读数 | 判定 |
+| --- | --- | --- | --- |
+| R1 | 决策载荷 | 23992 B，**逐字节相同** | ✅ |
+| R2' | `VERDICT` 判定行 | 24403 B，**逐字节相同** | ✅ |
+| R5 | 覆盖账三个入口 | 22150 → **22873 B**；第一把尺子每份 **5 条** = **4 条预注册**（新增格 + `differences.note` + `headline.text` + 新增红条件）+ 1 条归属读数；**0 条未预注册**；硬约束里的"格数只按预注册变"也钉住了 `+expected_absent_present` 这一个键（含 `red:` 那一份） | ✅ |
+| R6 | 声明文件读数 | 731 B，**逐字节相同** | ✅ |
+| R7 | 退出码 | 五个读数逐个相同（`--check` 仍只读 `failures`） | ✅ |
+| 硬约束 | 三个入口逐字段 | 全 OK | ✅ |
+
+**本机今天的真实读数**：`expected_absent_present.count = 0`（7 条通道没有一条落在
+`expected_absent` 声明下）——**这一格今天是空的，不是缺的**（红条件块照常存在）。
+
+### 17.5 预算对账（口径 = 新增行，`git diff --numstat`）
+
+| 桶 | `088349a` 时台阶 4 累计 | 本轮属于台阶 4 的 | 台阶 4 累计（含本轮） | 复核线 | 余量 |
+| --- | --- | --- | --- | --- | --- |
+| src | 1467 | **+92**（`wiring.py`：措辞 37 + 第六格 55） | **1559** | 1950 | 391 |
+| tests | 2026 | **+70**（`test_wiring_inventory.py` 63 + `test_provenance_wiring_scope.py` 7） | **2096** | 2100 | **4** |
+| tools | 893 | 0 | 893 | —— | —— |
+| 数据 / 文档 | —— | +24（声明文件）+10（24 号 §2.2）+ 本节 | —— | —— | —— |
+
+**两桶都没越线，但 tests 只余 4 行**——按指令"越线就停下复核"，本轮**停在线上**：
+后续若要再加用例，先按这条读数复核。`tools/ci_local.py` / `tests/unit/test_ci_local*.py` /
+`tools/phase_evidence.py` / `.github/workflows/*` **一个字都没动**（文件归属）。
