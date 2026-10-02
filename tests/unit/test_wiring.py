@@ -1324,7 +1324,10 @@ def test_no_declaration_is_unavailable_not_zero(tmp_root: Path) -> None:
     profile = make_profile(home, "desktop")
     _write(profile / "cordis.patch.yml", "[]\n")
 
-    payload = probe_wiring(dsh_home=home, observed_sessions=0).to_dict()
+    # 走本文件的 probe()（默认 now=NOW）：这是全文件唯一一处直调 probe_wiring 的地方，
+    # 原先没钉 now —— 断言与时间无关，但"读夹具留痕的用例一律钉 now"这条口径不该有例外
+    # （2026-10-03 稳定性清点，见 23 号 §18）。
+    payload = probe(home).to_dict()
 
     assert payload["account"]["declared"] == {
         "status": "unavailable",
