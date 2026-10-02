@@ -2129,4 +2129,360 @@ $env:STEP28_SHIFT_DAYS = "18"
 
 # 文件归属（CI 线一个字没动，差集应为空）
 git diff --numstat 3be25c9..HEAD -- tools/ci_local.py tests/unit/test_ci_local.py tests/unit/test_ci_local_report_only.py tools/phase_evidence.py .github/workflows
+
+## 19 第 29 轮 · 2026-10-03 裁定（§18.9）落地、R-h（仪器自证）方案 A 与门禁
+
+- **执行**：2026-10-03（本机）；控制面重构会话（**唯一写者**）。
+- **依据**：本轮指令（五步）；2026-10-03 对 §18.9 的裁定；25 号 §7 的方案 A；
+  AGENTS 第 45（仪器要能失败）/ 48（读数属于哪棵树、哪一刻）/ 50（口径诚实）/
+  55（加键就是改协议）/ 56（账本不存在 = 不适用）条。
+- **树与提交链**：`8738d72`（起点）→ `4a681f4`（第 1 步：`test_exemption_expiry`
+  钉死时刻，**只改测试**）→ `a8ca287`（第 2 步：R-h 落地 = 工具 + 登记表 + 用例 + 声明键 + 两处登记）
+  → `6caa330`（第 2 步补：默认输出补 `HITS:` 行——把 R-h 接成只报告步骤的前置条件）
+  → `cc282df`（门禁第 20 步抓到的末尾空行）→ 本节 + 26 号交接清单 + README 索引行。
+- **文件归属**：`tools/ci_local.py`、`tests/unit/test_ci_local*.py`、`tools/phase_evidence.py`、
+  `.github/workflows/*` 属 **CI 线**，本轮**一个字都没动**（差集 0 行，复现命令见 §19.10）。
+
+### 19.0 环境自检（第 0 步）
+
+| 项 | 读数 |
+| --- | --- |
+| 起点 | 分支 `refactor/control-plane` @ `8738d72`，`git status --porcelain` **空** |
+| 解释器 | `.venv\Scripts\python.exe` = Python 3.13.11 |
+| 允许删的对象 | 指令允许删 `.tmp/tmp/pytest-of-*`：**实测删不掉**（与 §16.0 / §17.0 / §18.0 同型；`icacls` 显示 `Everyone:(I)(CI)(DENY)(DC)`，`Remove-Item` 报 UnauthorizedAccessException）。处置沿用"改名让路"：**本轮共 7 次**把 `.tmp/tmp` 改名成 `.tmp/tmp-acl-residue-<HHMMSS>` |
+| 清点正题 | R-h 的对象清单：门禁步骤 **44** / 探针 CHECKS **13** / 封条场景 **5** / 只报告步骤 **2** = **64**（25 号 §1 记的是 63，差 1 的原因见 §19.3） |
+
+**本轮最重要的环境事实（新）：`pytest -n auto` 在本会话的 `workspace-write` 形态下必然 INTERNALERROR。**
+§18.0 只记了"起不来"，本轮把它定位成四步（全部只读 .tmp，不碰仓库文件）：
+
+| # | 实验 | 读数 |
+| --- | --- | --- |
+| 1 | 门禁自带的 pytest 步（`.tmp\tmp\pytest-of-ZNM` 作为 basetemp 根） | `INTERNALERROR`：`PermissionError [WinError 5]`，发生在 `make_numbered_dir` → `os.scandir('.tmp\tmp\pytest-of-ZNM')` |
+| 2 | 换一个**全新**的 `.tmp/tmp`（改名让路之后） | **同样红** ⇒ 不是残渣问题，是"另一个进程建的目录扫不到" |
+| 3 | 预建 `pytest-of-ZNM` 再跑 | 换了个位置红：`os.open('...\pytest-9\.lock', O_CREAT)` → `PermissionError [Errno 13]`（**不能在别的进程建的目录里建文件**） |
+| 4 | `PYTEST_ADDOPTS=--basetemp=.tmp/<一个路径>` | 测试**全过**（16 passed）但退出码 1 / 3：收尾的 `rm_rf` / `chmod` 被拒（同一条"别建的目录动不了"） |
+| **可行解** | `PYTEST_XDIST_AUTO_NUM_WORKERS=0`（让 `-n auto` 解析成 **0 个 worker**，进程内跑） | 同一条命令 `rc=0`、`6 passed`，没有 worker 节点 |
+
+**申请过一次放宽**（`danger-full-access`，与 §18 同型、只针对门禁这一条命令，理由写在那条命令上）：
+审批未落地，外层程序在 120 s 上限被掐，**门禁没有以放宽形态跑过**（形态差别见 §19.7）。
+
+### 19.1 裁定（2026-10-03，对 §18.9 八条的逐条处置）
+
+**先对齐编号**（口径诚实）：指令里的"第 1/2/3 条"按**内容**对应 §18.9 的第 **2/3/4** 条；
+"其余 5 条" = §18.9 的第 1、5、6、7、8 条。下表按 §18.9 的序号逐条给处置。
+
+| §18.9 | 事项 | 处置 |
+| --- | --- | --- |
+| 1 | `-n auto` 起不来要不要做成一次性诊断 | **部分落在本轮**：定位实验（§19.0 四步）+ 不改判据的绕法（`PYTEST_XDIST_AUTO_NUM_WORKERS=0`）已给出；"是哪个令牌 / 哪条策略加的 DENY ACE"**仍未做**（未核实，见 §19.9 第 1 条） |
+| 2 | 裁定①的名单与实测不一致（按实测修） | **接受**（指令第 1 条）：§18.2 的按实测修法**维持**，一字不改；两条"名单外"的用例与三条预防性钉死继续有效——本轮全量套件 **2077 passed / 1 skipped**（§19.7）覆盖了它们 |
+| 3 | `test_exemption_expiry` 的 docstring 比断言活得久 | **落地**（指令第 2 条）：**不加** `expired == 0`；工具支持钉死（**旗标叫 `--today`，不是 `--now`**）→ 钉死时刻后再断言（`4a681f4`，§19.2） |
+| 4 | 文本形态只报计数 | **接受**（指令第 3 条）：wiring 那份**不加行**；本轮 R-h 的文本输出用**同一条口径**（只报计数 + 机器行，逐条明细只在 `--json`，§19.3） |
+| 5 | `declared_not_discovered` 的边界（声明整个不写 `channel_kinds` ⇒ 该格读 0） | **维持**：判据不变、文档不改。今天这一格读 **1**（`ci-agent-runtime`，见 §18.3），边界未触发；它是已知边界，不是漏洞（那些条目一条都没消失） |
+| 6 | R-h 方案 A 挪到第 24 轮 | **本轮已落地**（就是这一轮）：方案 A 的含义一字未改——对象表 + 三态判据 + 只报告载荷，`mutation_id` 全空、存量对象写 `gap_note`（§19.3） |
+| 7 | `git push` / `git fetch` 没做，远端状态未核实 | **维持禁令**：本轮同样没有 push / fetch；**本地**读数：`origin/refactor/control-plane` 的引用停在 `8738d72`（= 本轮起点，也是使用者说的"已推送"那一个），本轮领先 **4 个提交**（4 个代码提交；加上文档提交是 5）；"远端此刻的状态"**未核实**（没有 fetch） |
+| 8 | `.tmp/tmp` 的 ACL 残留成因没修 | **仍未修**（成因未核实）；本轮把它从"删不掉"扩到"xdist 起不来"（§19.0 四步），并给出绕法；"要不要把 `-n auto` 的可用形态写进环境前提"请评审定夺（§19.9 第 1/2 条） |
+
+### 19.2 第 1 步 · `test_exemption_expiry` 钉死时刻（`4a681f4`，**只改测试**）
+
+改的是什么（`tests/unit/test_exemption_expiry.py`，+19/−3）：
+
+- `test_the_repository_declarations_are_readable_today` →
+  `…_at_a_pinned_moment`（"today"与"钉死"是两件事，AGENTS 第 50 条）；
+- 新增 `PINNED_TODAY = "2026-10-03"`，跑 `--json --today PINNED_TODAY`；
+- 新增断言 `payload["today"] == PINNED_TODAY`：**没有它，钉子就是装饰**——`--today`
+  被悄悄撤掉也照样绿；
+- 删掉旧 docstring 里"今天没有到期项"那句**没有断言支撑**的话；
+- **不加** `expired == 0`（那会把"到期"变成一条新的到期炸弹，到期日一到 pre-push 就红）。
+
+| 读数 | 结果 |
+| --- | --- |
+| 本文件 | **10 passed** |
+| 变异自证 | 把 `--today` 的值换成 `2026-01-01` → 该用例 **FAILED**（`assert '2026-01-01' == '2026-10-03'`）；撤回后 sha256 与变异前**逐字节相同**（`3B127BCB…`） |
+| 工具侧 | 默认输出与 `--json` 载荷**一个字节都没动** |
+
+**为什么不是"只改 docstring"**：指令给的是两条路——工具支持钉死就走第一条。工具确实支持
+（旗标是 `--today`），所以走了钉死那条。
+
+### 19.3 第 2 步 · R-h 落地（`a8ca287` + `6caa330`）
+
+**交付物**：
+
+| 文件 | 内容 |
+| --- | --- |
+| `tools/instrument_self_proof.py`（新，+937） | 只报告仪器：四族对象（AST 读常量）→ 四格红条件 → 只报告载荷；退出码恒 0 |
+| `validation/instrument-checks.yaml`（新，+618） | 检查登记表：**64 行 × 8 字段**；存量对象一律 `gap_note: 存量检查，未做变异自证`、`mutation_id` 全空（方案 A） |
+| `tests/unit/test_instrument_self_proof.py`（新，+277） | **7 条**用例（见下） |
+| `src/provenance/reading_context.py`（+4） | 新声明键 `DECLARATION_INSTRUMENT_CHECKS = "instrument_checks"` |
+| `tools/README.md`（+1 行）/ `AGENTS.md`（+6/−1） | 脚本清单登记 / 版本轴登记（第 55 条） |
+
+**四族对象（本轮实跑读数）**：
+
+| 族 | 条数 | 身份是怎么取到的 |
+| --- | --- | --- |
+| 门禁步骤 | **44** | `.github/workflows/*.yml` 里带非空 run 块的步骤；名字即身份 |
+| 治理缺口探针 | **13** | `tools/governance_gap_probe.py` 的 `CHECKS` 常量 → 每个函数里 `Check(id="Gxx")` 的**字面量** |
+| 判据级封条场景 | **5** | `tools/provenance_loop.py` 的 `SCENARIOS` 常量 → 每个场景自己声明的 id 字面量 |
+| 本机只报告步骤 | **2** | `tools/ci_local.py` 的 `REPORT_ONLY_STEPS` → 每条的 `name` 字面量 |
+| **合计** | **64** | —— |
+
+**与 25 号 §1 的 63 差 1 的原因（照实写）**：25 号第 4 族只登记了**义务门禁** 1 条，漏了同一张
+`REPORT_ONLY_STEPS` 里的**豁免到期**那一条。本轮按实跑读数登记为 2 条，因此 44+13+5+2 = **64**。
+（25 号 §6 第 1 条自己写过"改它要同步 `exemption_expiry` 的读数（`declared` 会 9 → 10）"，
+说明那张表本来就有两条，只是 §1 的实数只数了 1 条。）
+
+**枚举用 AST，不 import 被检查的仪器**：本工具是只报告的读数，不该为了读一张清单去执行探针 / 闭环 / 门禁
+——那会带来副作用，也会把"读不到清单"变成安静的空集合。常量换成运行时构造、文件不在、函数名对不上，
+一律 `unavailable` + reason。场景 id / check id **只认源码里的字面量**，不从函数名推导
+（推导会造出第二套名字）。
+
+**四格红条件**（每格与 `adapters.cli wiring` 的 `red_conditions` 同形状：`status` /
+`count` / `items[]` / `is_red` / `red_when` / `enforced: false` /
+`would_exit_code: 1` / `promote_when` / `note`）：
+
+| 格 | 判据 | 今天的读数 |
+| --- | --- | --- |
+| `no_check_id` | 对象在清单里、登记表里没有它的 `check_id` | **0** |
+| `no_mutation_and_no_gap_note` | `mutation_id` 缺失 **且** `gap_note` 缺失（含**空白串**） | **0** |
+| `patch_not_applicable` | 按 `mutation_id` 取的补丁在**影子树**上打不上（记录 / 补丁读不到也算） | **0**（旁边注明"登记表里 0 行声明了 mutation_id"） |
+| `check_id_without_object` | 登记表里的 `check_id` 在清单里找不到对象（双向比对的另一半） | **0** |
+
+**第四格不是 25 号 §2 的"第四态"**：它是同一份「双向比对」的另一半（方案 §3.2 原文
+「任一边悬空即红」）。它与第一格**必须分开命名**（AGENTS 第 50 条：同名两义一律改名）：
+第一格是"对象没有被登记"，第四格是"登记了一个不存在的对象"。这一处与下面的键集合一并请评审确认。
+
+**载荷（`--json`）**：`schema_version` / `mode` / `note` /
+`reading_context` / `mutations_root` / `objects` / `checks[]` /
+`red_conditions` / `headline`。比 25 号 §3 的键表多四个，逐个给理由：`mode` 与
+`note`（与 `exemption_expiry` 的只报告载荷同族）；`mutations_root`（态③ 的补丁从哪读）；
+`objects.table`（登记表自己的 status / path / rows / reason——"表读不到"与"表里没有这一条"必须分得开）。
+`checks[]` 每行比 25 号多一个 `object_id`：`check_id` 为 null 时（态①）必须还能指认是哪个对象。
+**既有载荷一个键都没加**；本载荷自带版本轴 `INSTRUMENT_SELF_PROOF_SCHEMA_VERSION = "1.0"`
+（**首次建轴**，已登记进 AGENTS 第 55 条那张表）。
+
+**态③ 的"影子树"是哪棵树（AGENTS 第 48 条）**：`git apply --cached` 作用于**索引**，所以做法是
+自己的 `GIT_INDEX_FILE` + `git read-tree HEAD`（影子树 = **HEAD 那棵树**），再
+`git apply --cached --check <补丁>`。`--check` 只判"打不打得上"，**真实索引与工作树都不碰**。
+原型实测（`.tmp/step29/proto_patch_check.py`）：好补丁 `rc=0` / context 对不上的补丁
+`rc=1`（`patch does not apply`）/ 坏补丁 `rc=128`（`corrupt patch`），
+前后 `git status` 都是空。因此这一格的读数是"**相对 HEAD 那棵树**打不打得上"，与当前未提交的改动无关
+——这句话写进了工具 docstring，也写进了这一格的 `red_when`。
+
+**默认输出两行机器行**（`6caa330` 补的）：
+
+    INSTRUMENT_SELF_PROOF: no_check_id=0 no_mutation_and_no_gap_note=0 patch_not_applicable=0 check_id_without_object=0 / objects=64 declared=64
+    HITS: 0 / no_check_id=0 no_mutation_and_no_gap_note=0 patch_not_applicable=0 check_id_without_object=0 / objects=64 declared=64
+
+第二行是**跨文件契约**：`ci_local.report_only_reading()` 读的就是 `HITS:` 行（与
+`exemption_expiry.py` 同族），因此把 R-h 接成只报告步骤**不需要改读取器**——这正是 25 号 §6 第 1 条
+那件事的前置条件（写它的理由与"不带 `--json` 的理由"，见 26 号交接清单）。
+
+**用例 7 条**（指令要求 5 条：三态各一条 + 两条反退化各一条）：
+
+| # | 用例 | 对应 |
+| --- | --- | --- |
+| 1 | 表里只留 1 行 → `no_check_id` = 其余全部，且逐行 `check_id: null` | 态① |
+| 2 | 一行同时去掉 `mutation_id` 与 `gap_note`（**空白串**）→ 0 → 1 → 撤回回 0 | 态②（含"修复前会红"的自证） |
+| 3 | 声明了 `mutation_id`：补丁打得上 → 0；换成打不上 → 1；记录读不到 → 1 | 态③（含反退化：这一格不是恒红） |
+| 4 | 表读不到 → 四格 `unavailable` + `count: null`（不是 0），机器行里没有 `=0` | 反退化① |
+| 5 | 表里只写 1 条 / 多一条"谁也不是"的 `check_id` → 两个方向都报红 | 反退化②（双向比对） |
+| 6 | **指令之外**：加载器拒绝 `last_run` / `status` / `passed` / `observed_*`（方案 §3.2「只放指针」）、未知字段、未知枚举、重复 id、错的 `schema_version` | 方案 §3.2 的加载期规则 |
+| 7 | **指令之外**：默认输出的 `HITS:` 行被**真的** `ci_local.report_only_reading()` 读出（0 / 2 / `unavailable` 三种） | 26 号交接清单的跨侧契约 |
+
+多出的两条写在这里请评审确认：第 6 条是"只放指针"这条加载期规则的**自证**（没有它，"表里不许写运行结果"
+就只是一句注释）；第 7 条是为了让 CI 线接上去时**不改读取器**——没有一个用例钉住，那一行随时会在下一次改动里变形。
+
+**变异自证（AGENTS 第 45 条）**：对工具做**三处**变异——① 态① 的计数恒 0；② 空白 `gap_note`
+判成"有"；③ `unavailable` 写成 0 ——读数：**4 条 FAILED**（态①、态②、反退化①、反退化②），
+另 2 条不受影响；撤回后 `sha256` 与变异前**逐字节相同**（`20E06B26…`），7 passed。
+
+**同一棵树两次运行**（25 号 §5 的 R8）：剥掉 `reading_context.run` 之后**逐字节相同**
+（16287 B，两次），`headline.machine_line` 一致。
+
+**方案 A 的已知代价（照实写）**：登记表 64 行的 `mutation_id` **全是空的**，所以态③ 今天
+**没有可评的变异**——那一格的 0 旁边写着"0 行声明了 mutation_id"，`objects.with_mutation_id = 0`。
+它不是"变异都验过"，而是"还没有变异自证"；真变异执行器（25 号 §7 的方案 B/C）不在本轮。
+
+### 19.4 R-d（before = `g1` @ `8738d72` / after = `g2` @ `cc282df`）
+
+**预注册（本轮指令）**：**除归属读数外一处都不许变**（本轮是一个新仪器 + 一张新数据表 + 一个声明键常量，
+它不该改变任何既有载荷）。归属读数 = `reading_context` 的 `tree.digest` / `tree.revision` /
+`run.id` / `run.started_at`（以及 `obligations_gate` 顶层的 `tree_digest`）；
+**声明摘要不算归属读数**（本轮一个声明文件都不该改）——比 §18 的扫描器更严。
+
+| # | 尺子 | 读数 | 判定 |
+| --- | --- | --- | --- |
+| R1 | 决策载荷（10 个场景） | 23992 → 23992 B，**逐字节相同** | ✅ |
+| R2' | `VERDICT` 判定行（144 行 + 插件字面量） | 24403 → 24403 B，**逐字节相同** | ✅ |
+| R2 | `policy.check --json` 三个入口 | 各 **1** 条归属读数（ruler2 2 条：`run.id` / `run.started_at`），**0 条未预注册** | ✅ |
+| R3 | `obligations_gate --json` / `exemption_expiry --json` | 各 1 条归属读数；**0 条未预注册** | ✅ |
+| R3 | 豁免**默认输出**（`HITS:` 行所在的整段文本） | **逐字节相同** | ✅ |
+| R3 | **审计记录**（11 fixture × 3 模式，只比 `records`） | 102 条归属读数（51 条记录 × run.id/started_at），**0 条未预注册** | ✅ |
+| R5 | 覆盖账三个入口 | 各 4 条归属读数（run.id / run.started_at / tree.digest / tree.revision）；**0 条未预注册**；硬约束 **15/15 OK** | ✅ |
+| R6 | `wiring-scope --check --json` | 731 → 731 B，**逐字节相同** | ✅ |
+| R7 | 退出码 | 默认 0/0、`--check` 1/1、`--require-runtime` 1/1、声明 0/0、默认形态两次 0/0；`check --json` 0/1/0 两边相同；两条只报告 0/0 | ✅ |
+| **合计** | 未预注册 / 硬约束命中 | **0** | ✅ |
+
+**仪器与它的自证（AGENTS 第 45 条）**：仪器落 `.tmp/step29/`（不提交）：`run_entries.py`
+（原样复用 §17/§18 的采集脚本，只换落点）、`scan_rd.py`（本轮新建的扫描器，两把尺子与 §17/§18 逐字相同：
+第一把 = `.tmp/step7/volatile.py` + `.tmp/step3b/json_field_diff.py`，第二把不剔任何叶子）、
+`selfcheck_control.py`（负数对照）、`snapshot_before_gate.py` / `compare_after_gate.py`、
+`proto_patch_check.py`（态③ 原型）。
+
+**这台仪器第一版是错的（两次，都记下来）**：
+
+1. 自证用了探针打印的 `selfcontrol_identical`（**按逐字节判**）——台阶 4 之后每份载荷都带
+   `reading_context.run`，两次运行**必然**不同，于是它凭空报了一条**假红**；改成"剥掉归属读数后
+   逐字段比"才回到 0（与 §23 §3.5 同一条教训）；
+2. 决策载荷的自证读了 `payload["same_tree_rerun_identical"]`——那个字段**根本不在载荷里**
+   （是探针的 stdout 打印），于是又一个假红；改成比较两次采集的载荷本身。
+
+**负数对照（证明这把尺子真的会红）**：把 `g1` 的全部产物复制成 `g1c`，只动两处——
+`wiring-default` 的 `counts.wired`（+1）与 `reading_context.run.id`。扫描器读数：
+**2 条命中**（`counts.wired: 5 -> 4` + 该入口的硬约束 FAIL），其余 12 份产物 **0**，
+归属读数那一处**没有**被报红 ⇒ 尺子既会红、也没有把归属读数算成差异。
+
+**审计那一族的"声明剔除"不是本轮新造的口径**：`grant_id` / `grant_expires_at` /
+`verified_at` / `recorded_at` / `elapsed_ms` / `timestamp` 逐字取自
+`.tmp/step9/compare_r3.py` 的 `VOLATILE_LEAVES`（第 22 轮的声明，依据是那一轮的
+before/before-run2 自证）；本轮另加 `audit-g1/g2` 的**同侧两次采集自证**（各 102 条归属读数、
+0 条未预注册）。第一次扫出来的 10 条"未预注册"全部是这四个字段——把声明接上之后归零。
+
+**唯一一处分类口径调整**：`obligations_gate` 顶层的 `tree_digest` 第一把尺子按设计剔
+`_digest` 后缀、第二把尺子会列出来；它是"读数属于哪棵树"的摘要，因此归到**归属读数**
+（扫描器注释里写明了这一条，不是静默放宽）。
+
+### 19.5 真实 `now` 与钉死 `now`：`in_scope_not_wired` 两次都是 **0**（照实写，不改）
+
+用 §17/§18 同一台仪器（`.tmp/step28/real_vs_pinned.py`，口径逐字相同）：
+
+| now | `in_scope_not_wired` | 四条 `governed` 的 freshness |
+| --- | --- | --- |
+| 钉死 `2026-10-03T00:00:00+08:00` | **0**（`is_red=false`、`enforced=false`） | 全 `fresh`（剩余 20.3–32.4 h） |
+| 真实墙钟（本机 `2026-10-03T04:2x+08:00` = `2026-10-02T20:2xZ`） | **0** | 全 `fresh`（剩余 16.1–28.3 h） |
+
+**与背景那句话的关系（口径诚实，不改任何读数）**：本轮实测**两次都是 0**——四条 `governed` 通道
+**还没有**越窗。按 §18.5 的逐条越窗时刻（`governed-grade` **2026-10-03T12:16Z** → `-approval`
+12:17Z → `governed` 12:27Z → `governed-wmsvc` **2026-10-04T00:26Z**），
+`in_scope_not_wired` 读到 **4** 需要**四条全部越窗**，也就是 **2026-10-04T00:26Z 之后**。
+所以"真实读数 = 4"是**越窗之后**的事实，今天还不是；本轮的机器墙钟是 `2026-10-03T04:2x+08:00`
+（= `2026-10-02T20:2xZ`），评审若在 `2026-10-04T00:26Z` 之后复核，同一个命令会读到 4
+——**那是同一个真实读数，不是缺陷**。`--check` 今天已经是 1（三条 `not_wired` 让
+`failures` 非空），越窗**不会**新增阻断行为；`in_scope_not_wired` 是**只报告**条件。
+
+### 19.6 预算对账（口径 = 新增行，`git diff --numstat 8738d72..HEAD`）
+
+| 桶 | `8738d72` 时台阶 4 累计 | 本轮 | 台阶 4 累计（含本轮） | 硬上限 | 余量 |
+| --- | --- | --- | --- | --- | --- |
+| src | 1611 | **+4**（`reading_context.py` 的声明键） | **1615** | 3250 | 1635 |
+| tests | 2174 | **+296**（`test_exemption_expiry.py` +19 / `test_instrument_self_proof.py` +277） | **2470** | 3500 | 1030 |
+| tools | 893 | **+938**（`instrument_self_proof.py` +937 / `README.md` +1） | **1831** | —— | —— |
+| 数据 / 文档 | —— | `instrument-checks.yaml` +618；`AGENTS.md` +6/−1；本节与 26 号 | —— | —— | —— |
+
+**与 25 号 §7 的估计对账（口径诚实）**：25 号把 R-h 估在 **src 260–440 / tests 180–300**。落地把逻辑放进了
+`tools/`（**单一消费方**，与 `exemption_expiry.py` / `obligations_gate.py` 同型），
+于是 **src 只多了 4 行**、tests 在估计区间内（+296）、`tools` 桶 +938。
+两个口径下都不越过硬上限；tests 的**复核线 2100** 在 §18 已由裁定④允许越过（现 2470 / 3500）。
+
+### 19.7 门禁（`--full`）—— **两次**：第一次退 1（真的抓到了东西），第二次在最终树退 0
+
+**命令（逐字）**：`python tools/ci_local.py --full --python .venv/Scripts/python.exe`
+
+| 项 | 第一次（树 `6caa330`） | 第二次（**最终树 `cc282df`**） |
+| --- | --- | --- |
+| **显式退出码** | **1** | **0** |
+| **耗时** | 门禁自报 **9m 15.7 s**（33 步） | 门禁自报 **9m 15.2 s**（33 步 = 执行 31 + 只报告 2）；墙钟 **555.7 s** |
+| 失败 | **1 处**：#20 文本规范 —— `tests\unit\test_instrument_self_proof.py: 文件以多个空行结尾` | **0 处**（`本机检查全部通过（31 步）；只报告 2 步`） |
+| pytest 步 | rc=0（6m 29.1 s） | rc=0（6m 29.1 s）；日志末行 **2077 passed / 1 skipped / 3 warnings in 387.57 s**（2070 → **+7** = 本轮新用例） |
+| #9 真实 dsh 沙箱闭环 | ok（环境跳过） | ok：`result=skipped` / `environment_skipped=true` / `host.sandbox=restricted`，退出码 0 并写明 reason 与复现命令 |
+| 两条只报告 | 义务门禁 0 命中；豁免到期 `HITS: 0 / declared=7 due=0 expired=0 unprovable=0` | 同（义务账本 1 个但**不适用**：没有账本可读，不算一次真实读数） |
+| 最慢五步（第二次） | —— | pytest 6m 29.1 s（70.1%）/ 手册同步 1m 07.4 s（12.1%）/ 编排闭环 1m 00.8 s（11.0%）/ 阶段证据 7.0 s（1.3%）/ 验证器闭环 6.0 s（1.1%） |
+
+**第一次那条红是门禁抓到的真东西**：追加用例时文件末尾多留了一个换行（与 §14 的 `8baff4e`、
+§18.7 的 `99ae4d9` 同型），`fix(test)` `cc282df` 修掉（**只删一个换行**）；
+自跑 `tools/check_text_conventions.py` = 660 个文本文件、问题 **0** 处。
+
+**环境形态（口径诚实，这一条比读数更重要）**：第二次门禁的调用比标准形态**多了一个环境变量**
+`PYTEST_XDIST_AUTO_NUM_WORKERS=0` —— 它只把 `-n auto` 解析成 **0 个 worker**（pytest 进程内跑），
+理由是 §19.0 的四步实验（xdist 在本会话的 `workspace-write` 下必然 INTERNALERROR）。
+**判据、步骤、退出码语义一个都没改**；代价是 pytest 步 6m 29（并行形态下约 2 分钟）。
+另有**两次没跑成**的尝试，都记下来：① 第一次完整尝试被外层程序的 120 s 上限掐掉（跑到 #29/31）；
+② 申请 `danger-full-access` 放宽（与 §18 同型）**未获批**、同样被 120 s 上限掐掉
+——所以**没有**"放宽形态下的门禁读数"。
+
+**覆盖边界（口径诚实）**：这两次门禁跑在 `6caa330` 与 `cc282df` 上。
+**记录读数的文档提交在它们之后**（本节 + 26 号 + README 索引行），它们**只改文档、没有再跑第三次门禁**
+——与 §16.4/§17.6/§18.7 的同一条口径；每次提交前都重跑 `tools/check_text_conventions.py`。
+
+### 19.8 跑前快照 → 跑后逐个文件比对（第 9 步必然跑 `tools/dsh_sandbox_loop.py`）
+
+| 项 | 读数 |
+| --- | --- |
+| 快照 | `.tmp/e2e/before-gate-r29/20261003T041939/manifest.json`（HEAD `cc282df`、`git status` 为空） |
+| 受控目录 | before/after 都是 **105 个文件**；**逐字节相同 105**、内容变了 0、新增 0、消失 0 |
+| 内容相同但 mtime 变了 | **8** 个（受控项目的 `dsh-adapter.yaml` / `hooks.json` / `patch.yml` / `AGENTS.md` / `order_controller.py` / `order_service.py` + `logs/allow-run.txt` / `logs/block-run.txt`）——受控目录每次由闭环重建，「内容没变」不等于「没被重写」 |
+| 产物 | 3121 B → 3121 B；两边都 `result=skipped` / `environment_skipped=true` / `host.sandbox=restricted`；`tree.revision`：`6caa330…` → **`cc282df…`**（这一份读数属于门禁跑的那棵树）；`run.id` / `started_at` 变了（归属读数） |
+| 仓库侧 | HEAD 仍 `cc282df`；`git status --porcelain` **空** |
+| 这一步证明什么 | 门禁**没有动仓库**、**没有动受控项目的源码与配置**（105 个文件内容逐个相同）；它**不**证明端到端闭环跑通了（那是环境跳过） |
+
+### 19.9 未核实 / 待评审
+
+1. **`-n auto` 在 `workspace-write` 下起不来的成因没有修**（§19.0）：本会话把它从"起不来"
+   定位到"跨进程建的目录动不了"（四步实验），但**是哪个令牌 / 哪条策略加的 DENY ACE 未核实**；
+   本轮门禁是在 `PYTEST_XDIST_AUTO_NUM_WORKERS=0`（进程内跑）下绿的——判据与步骤一个没改，
+   代价是 pytest 步 6m 29（并行约 2 分钟）。**请评审定夺**：把这条写进环境前提，还是把 `-n auto`
+   的可用形态当成门禁的前置条件（或交给 CI 线做一次性诊断）；
+2. **放宽请求没有落地**（`danger-full-access`）：审批未取得，外层程序在 120 s 上限被掐，
+   因此**没有**"放宽形态下的门禁读数"；两次门禁都在 `workspace-write` 下跑；
+3. **态③ 没有真变异过**：方案 A 的 `mutation_id` 全空，影子树 + `git apply --check` 那条路
+   只有**合成补丁**（用例里的两个补丁 + 原型）走过，**没有**真实变异体验证过；
+4. **`validation/mutations/` 的落点仍未裁定**（25 号 §8 第 4 条）：工具默认读它，今天它不存在
+   （不报错，只在有 `mutation_id` 时才去读）；
+5. **第一把尺子的覆盖边界**：`json_field_diff.py` 按设计剔掉 `_digest` / `sha256` /
+   `timestamp` 这类叶子（§18.4 写明），所以"逐字节相同"那几把尺子**看不见**这些字段的变化；
+   本轮用第二把尺子 + 归属读数把可见面上的差异逐条列了出来，**没有**逐字节核对那几类被剔的叶子；
+6. **`git push` / `git fetch` 没有做**（会话禁令）：远端状态未核实；**本地**引用停在
+   `8738d72`（本轮起点），本轮领先 4 个代码提交（加文档提交 5 个）——数值取自
+   `git rev-list --count origin/refactor/control-plane..HEAD`；
+7. **`.tmp/tmp` 的 ACL 残留成因**同第 1 条（未核实）；本轮共改名让路 **7 次**；
+8. **26 号交接清单里的三条**（接上去之后的门禁耗时 / CI 上的读数 / 升格轮次怎么记）都**未实测**，
+   写在 26 号 §5 里。
+
+### 19.10 复现命令（只读或只写 `.tmp`）
+
+```powershell
+# 环境自检的正题：R-h 的四族实数与四格读数（退出码恒 0）
+.venv\Scripts\python.exe tools\instrument_self_proof.py
+.venv\Scripts\python.exe tools\instrument_self_proof.py --json
+
+# R-h 自己的用例（三态 + 两条反退化 + 加载器 + 跨侧契约）与第 1 步的用例
+.venv\Scripts\python.exe -m pytest tests/unit/test_instrument_self_proof.py tests/unit/test_exemption_expiry.py -q
+
+# 态③ 的原型（影子索引 = HEAD 那棵树；真实索引与工作树都不碰）
+.venv\Scripts\python.exe .tmp\step29\proto_patch_check.py
+
+# R-d（before = g1 @ 8738d72 / after = g2 @ cc282df）：六台仪器 + 一把扫描器
+.venv\Scripts\python.exe .tmp\step3b\probe_decisions.py --out .tmp\step29\decisions-g2.json
+.venv\Scripts\python.exe .tmp\step9\probe_verdict_lines.py --out .tmp\step29\verdictlines-g2.json
+.venv\Scripts\python.exe .tmp\step7\probe_check_wrapper.py --out .tmp\step29\wrapper-g2.json
+.venv\Scripts\python.exe .tmp\step7\probe_report_tools.py --out .tmp\step29\report-g2.json
+.venv\Scripts\python.exe .tmp\step29\run_entries.py --side g2
+.venv\Scripts\python.exe .tmp\step9\probe_audit_records.py --tag g2 --out .tmp\step29\audit-g2.json
+.venv\Scripts\python.exe .tmp\step29\scan_rd.py --left g1 --right g2   # 退出码 0 = 没有未预注册
+
+# 负数对照（证明这把尺子会红）：复制成 g1c 后只动两处
+.venv\Scripts\python.exe .tmp\step29\selfcheck_control.py
+.venv\Scripts\python.exe .tmp\step29\scan_rd.py --left g1c --right g1
+
+# 真实 now 与钉死 now 各一次
+.venv\Scripts\python.exe .tmp\step28\real_vs_pinned.py
+
+# 门禁 + 跑前快照 / 跑后比对（注意那个环境变量：见 §19.0 / §19.7）
+.venv\Scripts\python.exe .tmp\step29\snapshot_before_gate.py
+$env:PYTEST_XDIST_AUTO_NUM_WORKERS = "0"
+python tools\ci_local.py --full --python .venv/Scripts/python.exe
+.venv\Scripts\python.exe .tmp\step29\compare_after_gate.py
+
+# 文件归属（CI 线一个字没动，差集应为空）
+git diff --numstat 8738d72..HEAD -- tools/ci_local.py tests/unit/test_ci_local.py tests/unit/test_ci_local_report_only.py tools/phase_evidence.py .github/workflows
+```
 ```
