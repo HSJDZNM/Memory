@@ -2040,7 +2040,7 @@ git diff --numstat 088349a..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 
 **命令（逐字）**：`python tools/ci_local.py --full --python .venv/Scripts/python.exe`
 
-| 项 | 第一次（树 `ebf4fa5`） | 第二次（**最终树 `99ae4d9`**） |
+| 项 | 第一次（树 `ebf4fa5`） | 第二次（**门禁跑的那棵树 `99ae4d9`**） |
 | --- | --- | --- |
 | **显式退出码** | **1** | **0** |
 | **耗时** | 门禁自报 **4m 44.3 s**（33 步） | 门禁自报 **5m 09.0 s**（33 步 = 执行 31 + 只报告 2） |
@@ -2059,6 +2059,11 @@ git diff --numstat 088349a..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 开头会清空）；这一轮的审批策略随后被使用者改成 `never`。**2026-10-03 03:0x 使用者把会话文件
 策略改成 `danger-full-access`**（审批同时关闭），此后 `pytest -n auto` 正常，上表两次门禁都是
 在这个形态下跑的。**这是环境条件的改变，不是本轮的代码改动**（与 §17.6 同型）。
+
+**覆盖边界（口径诚实）**：这两次门禁跑在 **`99ae4d9`** 上。**记录读数的三个文档提交在它之后**
+（`09d32bc` 本节 §18.7/§18.8 + README、`82628b6` 本节的提交链与领先数自我更正、以及本节末尾
+这一句所在的第四次文档提交），它们**只改文档、没有再跑第三次门禁**——与 §16.4/§17.6 的同一条
+口径；每次提交前都重跑过 `tools/check_text_conventions.py`（657 个文本文件、问题 **0** 处）。
 
 ### 18.8 跑前快照 → 跑后逐个文件比对（第 9 步必然跑 `tools/dsh_sandbox_loop.py`）
 
