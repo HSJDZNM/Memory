@@ -1850,7 +1850,8 @@ git diff --numstat 088349a..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 - **树与提交链**：`3be25c9`（起点）→ `0b3d078`（第 1 步 a：通道清点用例钉死 `now`，**只改测试**）
   → `7b9ee99`（第 1 步 b：审批形状用例钉死门禁的 `now`，**只改测试**）→ `9074053`（第 2 步：
   WIRING 1.3→1.4 + 24 号 §2.2/§3）→ `1890b09`（第 1 步 c：单元用例改走 `probe()`，**只改测试**）
-  → 本节。
+  → `ebf4fa5`（本节前半段 + README 索引行）→ `99ae4d9`（门禁第 20 步抓到的末尾空行）
+  → `09d32bc`（§18.7/§18.8 + README 索引行）。
 - **仪器落点**：`.tmp/step28/`（不提交）：`clock_shift_all.py`（全仓时钟平移；两版仪器的翻车都
   写在文件头）、`test_control_clock_is_shifted.py`（仪器自证：无插件必须红）、`run_entries.py`
   （**原样复用** §17 的 `probe_wiring_entries.py`，只换输出目录）、`read_real.py` /
@@ -2090,7 +2091,8 @@ git diff --numstat 088349a..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
    但**`channel_kinds` 缺失时这一格会读作 0** 这件事值得评审知道。
 6. **R-h 方案 A 挪到第二十四轮**（25 号 §7）：本轮**不做**；25 号正文一字未改。
 7. **`git push` / `git fetch` 没有做**（会话禁令）：「远端此刻的状态」**未核实**；
-   `origin/refactor/control-plane` 停在 `088349a`，本地领先 9 个提交。
+   `origin/refactor/control-plane` 停在 `088349a`（本地引用读数），本节写成时本地领先
+   **14 个提交**（`git rev-list --count origin/refactor/control-plane..HEAD`）。
 8. **`.tmp/tmp` 的 ACL 残留成因没修**：本轮仍是"改名让路"；下一次全量 pytest 会不会再留一个
    **未核实**（§17.8 第 3 条同款）。
 
