@@ -331,4 +331,3 @@ def test_the_default_output_carries_a_hits_line_the_gate_can_read(tmp_root, caps
     count, text = ci_local.report_only_reading(step, capsys.readouterr().out)
     assert text.startswith("HITS: unavailable"), text
     assert count is None, text
-
