@@ -1866,7 +1866,7 @@ git diff --numstat 088349a..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 | 起点 | 分支 `refactor/control-plane` @ `3be25c9`，`git status --porcelain` **空** |
 | 解释器 | `.venv\Scripts\python.exe` = Python 3.13.11 |
 | 允许删的对象 | 指令允许删 `.tmp/tmp/pytest-of-*`：**实测删不掉**——`Remove-Item` / `cmd rmdir` / `icacls` / `Get-ChildItem` 四种在它上面全是"拒绝访问"（ACL 残留，**第三次出现**，与 §16.0 / §17.0 同型）。处置用 §17.0 那一招：`Rename-Item .tmp\tmp → .tmp/tmp-acl-residue-<HHMMSS>`（重命名父目录不需要子项权限，实测成功；本轮共 6 次） |
-| **新事实：`-n auto` 在 `workspace-write` 下起不来** | 清干净之后仍然 `INTERNALERROR: PermissionError [WinError 5]`——栈是 `xdist/workermanage.py:340 → _pytest/tmpdir.py:213 → make_numbered_dir_with_cleanup → os.scandir(.tmp/tmp/pytest-of-ZNM)`。**单进程 pytest 正常**（全量 2069 passed / 6m52s）。xdist 的 basetemp 目录由 worker 建、controller 读不到，这是**环境（沙箱）条件**，与 §17.6 记录同型：上一轮也是使用者把会话切到 `danger-full-access` 之后 `-n auto` 才正常。**本轮没有申请放宽**；门禁那一步的实际形态见 §18.7 |
+| **新事实：`-n auto` 在 `workspace-write` 下起不来** | 清干净之后仍然 `INTERNALERROR: PermissionError [WinError 5]`——栈是 `xdist/workermanage.py:340 → _pytest/tmpdir.py:213 → make_numbered_dir_with_cleanup → os.scandir(.tmp/tmp/pytest-of-ZNM)`。**单进程 pytest 正常**（全量 2069 passed / 6m52s）。xdist 的 basetemp 目录由 worker 建、controller 读不到，这是**环境（沙箱）条件**，与 §17.6 记录同型：上一轮也是使用者把会话切到 `danger-full-access` 之后 `-n auto` 才正常。**本轮 02:59 申请过一次放宽**（`danger-full-access`）：审批挂起、程序在 580 s 上限被掐掉，随后使用者把会话策略自行改成 `danger-full-access`；全部实际读数见 §18.7 |
 | 清点正题 | 默认发现 + 钉死 now：**7 条**通道，`dsh:verify-*` 一条都没有（与 §17.0 相同） |
 | `.tmp/tmp` 之外 | 允许范围内的清理只做了改名让路；`.tmp/step28/` 是本轮仪器与产物的落点，**不提交** |
 
@@ -2060,10 +2060,10 @@ git diff --numstat 088349a..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 策略改成 `danger-full-access`**（审批同时关闭），此后 `pytest -n auto` 正常，上表两次门禁都是
 在这个形态下跑的。**这是环境条件的改变，不是本轮的代码改动**（与 §17.6 同型）。
 
-**覆盖边界（口径诚实）**：这两次门禁跑在 **`99ae4d9`** 上。**记录读数的三个文档提交在它之后**
-（`09d32bc` 本节 §18.7/§18.8 + README、`82628b6` 本节的提交链与领先数自我更正、以及本节末尾
-这一句所在的第四次文档提交），它们**只改文档、没有再跑第三次门禁**——与 §16.4/§17.6 的同一条
-口径；每次提交前都重跑过 `tools/check_text_conventions.py`（657 个文本文件、问题 **0** 处）。
+**覆盖边界（口径诚实）**：这两次门禁跑在 **`99ae4d9`** 上。**记录读数的文档提交在它之后**
+（`09d32bc` 的 §18.7/§18.8 + README 索引行，以及其后只改文档的更正提交——含本节末尾这一句），
+它们**只改文档、没有再跑第三次门禁**——与 §16.4/§17.6 的同一条口径；每次提交前都重跑过
+`tools/check_text_conventions.py`（657 个文本文件、问题 **0** 处）。
 
 ### 18.8 跑前快照 → 跑后逐个文件比对（第 9 步必然跑 `tools/dsh_sandbox_loop.py`）
 
@@ -2079,8 +2079,8 @@ git diff --numstat 088349a..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 ### 18.9 未核实 / 待评审
 
 1. **`-n auto` 起不来是环境条件，不是代码问题**（§18.0）：本轮**单进程**跑的全量套件；
-   门禁那一步的形态与实际读数见 §18.7。**要不要再申请一次 `danger-full-access` 让门禁回到
-   §17.6 的 xdist 形态，请评审/使用者定夺**——本轮按"没有证据不申请"的纪律**没有**发起升级请求。
+   两次 `--full` 门禁都在使用者改成的 `danger-full-access` 形态下完成（§18.7）。**这个环境问题没修**：
+   要不要把它做成一次性诊断（哪个令牌建的 basetemp、为什么 controller 读不到），**请评审定夺**。
 2. **裁定① 的名单与实测不一致**（§18.2）：名单里 3 条只有 1 条真红，另两条红的是
    `test_wiring_check_exits_zero_only_for_a_wired_channel` 与 `test_wiring_json_contract`。
    我按**实测**修（5 条 + 2 处预防性钉死），没有按名字修。
