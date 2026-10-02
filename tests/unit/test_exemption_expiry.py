@@ -14,6 +14,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+# 钉死的"今天"：仓库自身那条读数（下面 test_..._at_a_pinned_moment）用它，
+# 这样真实时钟推移不会改变这条用例的结论，也不会让 docstring 与断言各说各话。
+PINNED_TODAY = "2026-10-03"
+
 EXPIRED_SCOPE = """schema_version: "1"
 scope:
   - id: probe-out-of-scope
@@ -103,12 +107,24 @@ def test_json_payload_separates_the_two_lists(tmp_root, capsys):
     assert any(source.endswith("wiring-scope.yaml") for source in sources)
 
 
-def test_the_repository_declarations_are_readable_today(capsys):
-    """仓库自身的读数：今天没有到期项，且退出码为 0（这一步永远不阻断）。"""
+def test_the_repository_declarations_are_readable_at_a_pinned_moment(capsys):
+    """仓库自身的读数：**以钉死时刻为准**，且退出码为 0（这一步永远不阻断）。
+
+    2026-10-03 裁定（第 29 轮指令第 1 条）：**不加** expired == 0 —— 那会把"到期"变成一条
+    **新的到期炸弹**（到期日一到 pre-push 就红）；工具支持钉死"今天"（--today），所以先把
+    读数钉在一个固定时刻上，再断言。旧 docstring 里"今天没有到期项"那句话**没有断言支撑**
+    （跑的是真实时钟、断言却只有 unprovable / declared），它的寿命比断言长——这句已经删掉，
+    换成"这棵树在钉死时刻上读得到"这件事本身；读数属于哪个时刻由 --today 与载荷里的
+    today 两个字段一起给出（AGENTS 第 48 条：读数要说得出自己属于哪一刻）。
+
+    名字从 test_the_repository_declarations_are_readable_today 改成 …_at_a_pinned_moment：
+    "today" 与"钉死"是两件事，同一个名字不许两义（AGENTS 第 50 条）。
+    """
 
     module = _load()
-    assert module.run(["--json"]) == 0
+    assert module.run(["--json", "--today", PINNED_TODAY]) == 0
     payload = json.loads(capsys.readouterr().out)
+    assert payload["today"] == PINNED_TODAY, "钉子没生效：读数不属于钉死的那个时刻"
     assert payload["counts"]["unprovable"] == 0
     assert payload["counts"]["declared"] >= 4
 
