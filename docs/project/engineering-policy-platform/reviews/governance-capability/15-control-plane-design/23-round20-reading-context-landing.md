@@ -2209,9 +2209,9 @@ git diff --numstat 3be25c9..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 
 | 文件 | 内容 |
 | --- | --- |
-| `tools/instrument_self_proof.py`（新，+937） | 只报告仪器：四族对象（AST 读常量）→ 四格红条件 → 只报告载荷；退出码恒 0 |
+| `tools/instrument_self_proof.py`（新，+980） | 只报告仪器：四族对象（AST 读常量）→ 四格红条件 → 只报告载荷；退出码恒 0 |
 | `validation/instrument-checks.yaml`（新，+618） | 检查登记表：**64 行 × 8 字段**；存量对象一律 `gap_note: 存量检查，未做变异自证`、`mutation_id` 全空（方案 A） |
-| `tests/unit/test_instrument_self_proof.py`（新，+277） | **7 条**用例（见下） |
+| `tests/unit/test_instrument_self_proof.py`（新，+333） | **7 条**用例（见下） |
 | `src/provenance/reading_context.py`（+4） | 新声明键 `DECLARATION_INSTRUMENT_CHECKS = "instrument_checks"` |
 | `tools/README.md`（+1 行）/ `AGENTS.md`（+6/−1） | 脚本清单登记 / 版本轴登记（第 55 条） |
 
@@ -2374,14 +2374,15 @@ before/before-run2 自证）；本轮另加 `audit-g1/g2` 的**同侧两次采�
 | 桶 | `8738d72` 时台阶 4 累计 | 本轮 | 台阶 4 累计（含本轮） | 硬上限 | 余量 |
 | --- | --- | --- | --- | --- | --- |
 | src | 1611 | **+4**（`reading_context.py` 的声明键） | **1615** | 3250 | 1635 |
-| tests | 2174 | **+296**（`test_exemption_expiry.py` +19 / `test_instrument_self_proof.py` +277） | **2470** | 3500 | 1030 |
-| tools | 893 | **+938**（`instrument_self_proof.py` +937 / `README.md` +1） | **1831** | —— | —— |
-| 数据 / 文档 | —— | `instrument-checks.yaml` +618；`AGENTS.md` +6/−1；本节与 26 号 | —— | —— | —— |
+| tests | 2174 | **+352**（`test_exemption_expiry.py` +19 / `test_instrument_self_proof.py` +333） | **2526** | 3500 | 974 |
+| tools | 893 | **+981**（`instrument_self_proof.py` +980 / `README.md` +1） | **1874** | —— | —— |
+| 数据 / 文档 | —— | `instrument-checks.yaml` +618；`AGENTS.md` +6/−1；本节 +356；26 号 +156；README 索引 +3/−2 | —— | —— | —— |
 
 **与 25 号 §7 的估计对账（口径诚实）**：25 号把 R-h 估在 **src 260–440 / tests 180–300**。落地把逻辑放进了
 `tools/`（**单一消费方**，与 `exemption_expiry.py` / `obligations_gate.py` 同型），
-于是 **src 只多了 4 行**、tests 在估计区间内（+296）、`tools` 桶 +938。
-两个口径下都不越过硬上限；tests 的**复核线 2100** 在 §18 已由裁定④允许越过（现 2470 / 3500）。
+于是 **src 只多了 4 行**、`tools` 桶 +981、tests **+352**——比 25 号估的 180–300 **略高 52 行**，
+多出来的是两条**指令之外**的用例（加载器「只放指针」+ `HITS:` 跨侧契约，见 §19.3）。
+两个口径下都不越过硬上限；tests 的**复核线 2100** 在 §18 已由裁定④允许越过（现 2526 / 3500）。
 
 ### 19.7 门禁（`--full`）—— **两次**：第一次退 1（真的抓到了东西），第二次在最终树退 0
 
@@ -2410,8 +2411,10 @@ before/before-run2 自证）；本轮另加 `audit-g1/g2` 的**同侧两次采�
 ——所以**没有**"放宽形态下的门禁读数"。
 
 **覆盖边界（口径诚实）**：这两次门禁跑在 `6caa330` 与 `cc282df` 上。
-**记录读数的文档提交在它们之后**（本节 + 26 号 + README 索引行），它们**只改文档、没有再跑第三次门禁**
-——与 §16.4/§17.6/§18.7 的同一条口径；每次提交前都重跑 `tools/check_text_conventions.py`。
+**记录读数的文档提交在它们之后**（本节 + 26 号 + README 索引行，**以及其后只改文档的更正提交**
+——含 §19.6 预算读数改成最终 `numstat` 的那一次、以及本节末尾这一句），它们**只改文档、没有再跑第三次门禁**
+——与 §16.4/§17.6/§18.7 的同一条口径；每次提交前都重跑 `tools/check_text_conventions.py`
+（最近一次读数：661 个文本文件、问题 **0** 处）。
 
 ### 19.8 跑前快照 → 跑后逐个文件比对（第 9 步必然跑 `tools/dsh_sandbox_loop.py`）
 
