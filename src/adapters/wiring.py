@@ -2292,6 +2292,32 @@ def _channel_item(
     return item
 
 
+def _declared_not_discovered_reason(
+    entry: Any, *, mapped_kinds: set[str], kind_counts: Mapping[str, int]
+) -> str:
+    """「声明了、本机没发现」这一格的 reason：三种成因分开写（AGENTS 第 50 条）。
+
+    ③（2026-10-03 评审裁定）：旧文案对 `ci-agent-runtime` 写「本机没有发现它覆盖的那类通道」，
+    而本机**有** `agent_runtime` 档的通道（7 条 dsh-profile）——只是它们全被**其它声明的显式
+    covers** 领走了。成因不同、改法也不同：前者要删声明或改 kind，后者要给这条声明自己写
+    covers（或撤回领走那些通道的显式 covers）。所以这里逐条算出真实成因，不再用一句话兜两种情形。
+    """
+
+    if entry.kind not in mapped_kinds:
+        return (
+            "它的 kind=" + entry.kind + " 没有任何发现侧 kind 映射到它"
+            "（channel_kinds 的值里没有）：本机没有这类通道"
+        )
+    peers = kind_counts.get(entry.kind, 0)
+    if peers:
+        return (
+            "它的 kind=" + entry.kind + " 在本机有 " + str(peers) + " 条通道被发现了，"
+            "但它们都被**其它声明的显式 covers** 领走了（显式覆盖优先于 kind 档）："
+            "这条声明因此一条通道都没绑定到"
+        )
+    return "本机没有发现它覆盖的那类通道（kind=" + entry.kind + " 的通道一条都没有）"
+
+
 def _coverage(
     channels: Sequence[ChannelReport],
     declared: DeclaredScope,
@@ -2368,6 +2394,15 @@ def _coverage(
         ]
         not_discovered = [entry for entry in declared.entries if entry.id not in bound]
         mapped_kinds = set(declared.channel_kinds.values())
+        # ③（2026-10-03 评审裁定）：这一格的 reason 要说清**为什么**一条通道都没绑定到它。
+        # kind 档有映射、本机也确实发现了那一档的通道时，「本机没有发现它覆盖的那类通道」
+        # 是**错的**——真实成因是那些通道都被其它声明的**显式 covers** 领走了
+        # （显式覆盖优先于 kind 档，24 号 §2.1 规则 1）。所以先数一遍每一档的通道数。
+        kind_counts: dict[str, int] = {}
+        for channel in channels:
+            mapped = declared.channel_kinds.get(channel.kind)
+            if mapped is not None:
+                kind_counts[mapped] = kind_counts.get(mapped, 0) + 1
 
         grids["discovered_not_declared"] = {
             "count": len(no_candidate),
@@ -2401,13 +2436,8 @@ def _coverage(
                     "declaration_id": entry.id,
                     "decision": entry.decision,
                     "kind": entry.kind,
-                    "reason": (
-                        "本机没有发现它覆盖的那类通道"
-                        if entry.kind in mapped_kinds
-                        else (
-                            "它的 kind=" + entry.kind + " 没有任何发现侧 kind 映射到它"
-                            "（channel_kinds 的值里没有）：本机没有这类通道"
-                        )
+                    "reason": _declared_not_discovered_reason(
+                        entry, mapped_kinds=mapped_kinds, kind_counts=kind_counts
                     ),
                     "remedy": _REMEDY_DECLARED_NOT_DISCOVERED,
                 }
