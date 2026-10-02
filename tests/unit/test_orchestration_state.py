@@ -19,6 +19,7 @@ contract / integration / security 三个标记（`--strict-markers` 下用未登
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -683,6 +684,13 @@ def test_approval_gate_rejects_unusable_records(
     assert status_for(excinfo.value) is RunStatus.NEEDS_HUMAN
 
 
+# 这条用例的审批记录日期是**写死**的（granted 2020-01-01 / expires 2099-01-01），而门禁默认
+# 读真实墙钟（src/orchestration/approvals.py 的 _now）——不钉死的话它的"爆炸日"就是
+# 2099-01-01（或本机时钟早于 2020-01-01）。2026-10-03 稳定性清点：显式注入一个落在两者
+# 之间的 now，结论只由载荷决定，不由跑测试那天决定。
+_PINNED_APPROVAL_NOW = datetime(2026, 10, 3, tzinfo=timezone.utc)
+
+
 def test_approval_record_from_phase4_is_the_only_accepted_shape(tmp_root) -> None:
     """审批语义来自 Phase 4：门禁读的就是 ApprovalRecord 的 JSON，本包不发明第二种格式。"""
 
@@ -703,13 +711,19 @@ def test_approval_record_from_phase4_is_the_only_accepted_shape(tmp_root) -> Non
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     assert ApprovalRecord.model_validate(payload).approval_id == "approval-9"
-    use = _use(ApprovalGate(path, approval_roles=("reviewer",)), _gate_state())
+    use = _use(
+        ApprovalGate(path, approval_roles=("reviewer",), clock=lambda: _PINNED_APPROVAL_NOW),
+        _gate_state(),
+    )
     assert use.approval_id == "approval-9"
 
     payload["unexpected"] = "x"
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     with pytest.raises(ApprovalError) as excinfo:
-        _use(ApprovalGate(path, approval_roles=("reviewer",)), _gate_state())
+        _use(
+            ApprovalGate(path, approval_roles=("reviewer",), clock=lambda: _PINNED_APPROVAL_NOW),
+            _gate_state(),
+        )
     assert excinfo.value.code is FailureCode.APPROVAL_MISSING
 
 
