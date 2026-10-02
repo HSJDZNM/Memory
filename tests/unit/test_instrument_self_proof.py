@@ -275,3 +275,60 @@ def test_the_registry_is_pointer_only_and_strict(tmp_root):
     with pytest.raises(module.InstrumentChecksError) as info:
         module.load_checks(path)
     assert "schema_version" in str(info.value)
+
+# --- 跨文件契约：默认输出的 HITS: 行（ci_local 的只报告读数按它取命中数） ------------------
+
+
+def _load_ci_local():
+    spec = importlib.util.spec_from_file_location(
+        "ci_local_for_instrument_contract", REPO_ROOT / "tools" / "ci_local.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    module.__name__ = spec.name
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_default_output_carries_a_hits_line_the_gate_can_read(tmp_root, capsys):
+    """跨侧契约：**真的读取器**（ci_local.report_only_reading）读真的默认输出。
+
+    这一行是 25 号 §6 第 1 条那把钥匙：有了它，把本工具接成只报告步骤就只是往
+    REPORT_ONLY_STEPS 里加一行数据，**读取器一个字都不用改**（与 exemption_expiry 同族）。
+    未评时那行写 unavailable，读取器照原文给出读数、**不猜**命中数（count 是 None，不是 0）。
+    """
+
+    module = _load()
+    ci_local = _load_ci_local()
+    step = ci_local.ReportOnlyStep(
+        name="Instrument self-proof (report only)",
+        args=("tools/instrument_self_proof.py",),
+        reason="回归用例：跨侧读数契约（这一步还没有登记进 ci_local，见 26 号交接清单）",
+        expires_at="2026-12-31",
+        adopted="2026-10-03",
+        reads="默认输出里的 HITS: 行",
+    )
+    assert "--json" not in step.args, "这一步的读数判据是文本行，不是载荷"
+
+    rows = _rows()
+    assert module.run(["--checks", str(_shadow(tmp_root, rows))]) == 0
+    count, text = ci_local.report_only_reading(step, capsys.readouterr().out)
+    assert text.startswith("HITS:"), text
+    assert count == 0, text
+    assert "no_mutation_and_no_gap_note=0" in text
+
+    # HITS 是**四格合计**：两条没有自证的行 → 读作 2（不是"某三格之一"）
+    mutated = copy.deepcopy(rows)
+    mutated[0]["gap_note"] = ""
+    mutated[1]["gap_note"] = None
+    assert module.run(["--checks", str(_shadow(tmp_root, mutated))]) == 0
+    count, text = ci_local.report_only_reading(step, capsys.readouterr().out)
+    assert count == 2, text
+
+    # 未评：登记表读不到 → 那行写 unavailable，读取器照原文给出读数、不猜
+    assert module.run(["--checks", str(tmp_root / "missing.yaml")]) == 0
+    count, text = ci_local.report_only_reading(step, capsys.readouterr().out)
+    assert text.startswith("HITS: unavailable"), text
+    assert count is None, text
+

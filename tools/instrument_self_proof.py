@@ -81,8 +81,15 @@ r"""仪器自证（**只报告**）：每条仪器检查都要能证明自己会
 
     python tools/instrument_self_proof.py [--checks PATH] [--mutations DIR] [--json]
 
-默认输出一行机器行 `INSTRUMENT_SELF_PROOF: <四格计数> / objects=<n> declared=<n>`；
-`--json` 给完整载荷。退出码恒为 0。
+默认输出**两行**机器行：
+
+1. `INSTRUMENT_SELF_PROOF: <四格计数> / objects=<n> declared=<n>`——本工具自己的读数；
+2. `HITS: <四格合计> / <四格逐项> / objects=<n> declared=<n>`——**跨文件契约**：
+   `tools/ci_local.py` 的 `report_only_hits()` 读的就是这一行（与
+   `tools/exemption_expiry.py` 的 `HITS:` 行同族），所以把本工具接成**只报告步骤**
+   不需要改读取器；任一格未评时写 `unavailable`，读取器照原文给出读数、不猜命中数。
+
+`--json` 给完整载荷。退出码恒为 0（用法错误由 argparse 给 2，与判据无关）。
 """
 
 from __future__ import annotations
@@ -166,7 +173,8 @@ POINTER_ONLY_PREFIXES = ("observed_",)
 MUTATION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 _PROMOTE_WHEN = (
-    "跑过 N≥1 次且三态合计 0 命中（0 命中必须来自至少一次真实读数）——与 L5 上线闸同型"
+    "跑过 N≥1 次且**四格**合计 0 命中（三态 + 双向比对的另一半；0 命中必须来自至少一次真实读数）"
+    "——与 L5 上线闸同型"
 )
 _REPORT_ONLY_NOTE = (
     "只报告期：本块不改任何退出码（本工具退出码恒为 0）；升格前必须先有一轮 warn + 非零退出"
@@ -859,6 +867,39 @@ def machine_line(payload: dict) -> str:
     )
 
 
+def hits_line(payload: dict) -> str:
+    """`HITS:` 机器行（**跨文件契约**）：`tools/ci_local.py` 的 `report_only_hits()` 读的就是它。
+
+    形状与 `tools/exemption_expiry.py` 的 `HITS:` 行同族：`HITS: <四格合计> / <四格逐项> /
+    objects=<n> declared=<n>`。任一格未评 → 写 `unavailable`：`ci_local` 的读取器对
+    "有 HITS: 行但读不出整数"照原文给出读数、**不猜**命中数（与"未评不是 0"同一条口径）。
+    有这一行，把本工具接成**只报告步骤**就只是加一行数据（`REPORT_ONLY_STEPS`），
+    读取器一个字都不用改——这也是 25 号 §6 第 1 条要求 CI 线做的那件事的前置条件。
+    """
+
+    cells = [payload["red_conditions"][key] for key in RED_KEYS]
+    total = (
+        "unavailable"
+        if any(cell["status"] != STATUS_AVAILABLE for cell in cells)
+        else str(sum(int(cell["count"]) for cell in cells))
+    )
+    objects = payload["objects"]
+    tail = "objects=" + (
+        "unavailable" if objects["discovered"] is None else str(objects["discovered"])
+    )
+    tail += " declared=" + (
+        "unavailable" if objects["declared"] is None else str(objects["declared"])
+    )
+    return (
+        "HITS: "
+        + total
+        + " / "
+        + " ".join(key + "=" + _lookup(payload, key) for key in RED_KEYS)
+        + " / "
+        + tail
+    )
+
+
 def _headline_text(payload: dict) -> str:
     objects = payload["objects"]
     return (
@@ -925,6 +966,8 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         mark = "unavailable" if cell["status"] != STATUS_AVAILABLE else str(cell["count"])
         print("  [" + ("红" if cell["is_red"] else "ok") + "] " + key + ": " + mark)
     print("  " + payload["headline"]["machine_line"])
+    # 跨文件契约：ci_local 的 report_only_hits() 读这条 HITS: 行（同 exemption_expiry）。
+    print("  " + hits_line(payload))
     print("  " + payload["headline"]["text"])
     return 0
 
