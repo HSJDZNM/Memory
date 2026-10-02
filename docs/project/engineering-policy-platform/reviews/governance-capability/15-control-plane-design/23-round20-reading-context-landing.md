@@ -2035,6 +2035,41 @@ git diff --numstat 088349a..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 `tools/ci_local.py` / `tests/unit/test_ci_local*.py` / `tools/phase_evidence.py` /
 `.github/workflows/*` **一个字都没动**（差集 0 行，复核命令见 §18.10）。
 
+### 18.7 门禁（`--full`）—— **两次**：第一次退 1（真的抓到了东西），第二次在最终树退 0
+
+**命令（逐字）**：`python tools/ci_local.py --full --python .venv/Scripts/python.exe`
+
+| 项 | 第一次（树 `ebf4fa5`） | 第二次（**最终树 `99ae4d9`**） |
+| --- | --- | --- |
+| **显式退出码** | **1** | **0** |
+| **耗时** | 门禁自报 **4m 44.3 s**（33 步） | 门禁自报 **5m 09.0 s**（33 步 = 执行 31 + 只报告 2） |
+| 失败 | **1 处**：#20 文本规范 —— `23 号：文件以多个空行结尾` | **0 处**（`本机检查全部通过（31 步）；只报告 2 步`） |
+| pytest 步 | rc=0（1m 58.8 s） | rc=0（2m 01.3 s）；日志末行 **2070 passed / 1 skipped / 4 warnings in 120.04 s** |
+| #9 真实 dsh 沙箱闭环 | ok（环境跳过） | ok：`result=skipped` / `environment_skipped=true` / `host.sandbox=restricted`，退出码 0 并写明 reason 与复现命令 |
+| 两条只报告 | 义务门禁 0 命中；豁免到期 `HITS: 0 / declared=7 due=0 expired=0 unprovable=0` | 同（`hits=0`，账本 1 个但**不适用**：没有账本可读，不算一次真实读数） |
+| 最慢五步（第二次） | —— | pytest 2m 01.3 s（39.3%）/ 手册同步 1m 19.4 s（25.7%）/ 编排闭环 1m 03.9 s（20.7%）/ 阶段证据 7.2 s（2.3%）/ 验证器闭环 6.0 s（1.9%） |
+
+**第一次那条红是门禁抓到的真东西**：追加 §18 时文件末尾多了一个空行（与 §14 的 `8baff4e` 同型），
+`fix(docs)` `99ae4d9` 修掉；自跑 `tools/check_text_conventions.py` = 657 个文本文件、问题 **0** 处。
+**没有**为了让门禁变绿而放宽任何检查，也没有新增任何阻断步骤。
+
+**沙箱形态（口径诚实）**：02:59 发起的那一次带着 `danger-full-access` 升级请求，**审批挂起**、
+程序在 580 s 上限被掐掉——**它有没有跑完未核实**（输出没有落盘，`.tmp/ci-local-logs/` 每次运行
+开头会清空）；这一轮的审批策略随后被使用者改成 `never`。**2026-10-03 03:0x 使用者把会话文件
+策略改成 `danger-full-access`**（审批同时关闭），此后 `pytest -n auto` 正常，上表两次门禁都是
+在这个形态下跑的。**这是环境条件的改变，不是本轮的代码改动**（与 §17.6 同型）。
+
+### 18.8 跑前快照 → 跑后逐个文件比对（第 9 步必然跑 `tools/dsh_sandbox_loop.py`）
+
+| 项 | 读数 |
+| --- | --- |
+| 快照 | `.tmp/e2e/before-gate-r28/20261003T031417/manifest.json`（HEAD `99ae4d9`、`git status` 为空） |
+| 受控目录 | before/after 都是 **93 个文件**；**逐字节相同 93**、内容变了 0、新增 0、消失 0 |
+| 内容相同但 mtime 变了 | **8** 个（受控项目的 `dsh-adapter.yaml` / `hooks.json` / `patch.yml` / `AGENTS.md` / `order_controller.py` / `order_service.py` + `logs/allow-run.txt` / `logs/block-run.txt`）——受控目录每次由闭环重建，「内容没变」不等于「没被重写」 |
+| 产物 | 3121 B → 3121 B；两边都 `result=skipped` / `environment_skipped=true` / `host.sandbox=restricted`；`tree.revision`：`ebf4fa5…` → **`99ae4d9…`**（这一份读数现在属于门禁跑的那棵树）；`run.id` / `started_at` 变了（归属读数） |
+| 仓库侧 | HEAD 仍 `99ae4d9`；`git status --porcelain` **空** |
+| 这一步证明什么 | 门禁**没有动仓库**、**没有动受控项目的源码与配置**（93 个文件内容逐个相同）；它**不**证明端到端闭环跑通了（那是环境跳过） |
+
 ### 18.9 未核实 / 待评审
 
 1. **`-n auto` 起不来是环境条件，不是代码问题**（§18.0）：本轮**单进程**跑的全量套件；
