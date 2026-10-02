@@ -21,11 +21,16 @@
 # `governs_tree` 只写在 governed-session-hook 上（证据说它治理另一棵树 → other）；
 # 其余声明**不写**，读取侧因此是 unknown（裁定④），不替它们认领 self。
 #
-# **2026-10-01 第 26 轮（裁定①，写进 23 号 §16 / 24 号 §8 / 25 号 §8）**：评审方更正——
-# verify-bc / verify-gov / verify-manual 是接在同一条受控桥上的会话，不是"验证轮留下的测试残留"，
-# 三条并入 governed-session-hook 的 covers（in_scope，governs_tree 已写 other，tree_ref 已覆盖
-# 它们的受控项目）；dsh-verify-profiles 因此只保留 verify-exit2。**decision 一个都没改**：
-# governed-session-hook 仍是 in_scope、dsh-verify-profiles 仍是 out_of_scope。
+# **2026-10-03 第 27 轮（评审裁定①②，写进 23 号 §17 / 24 号 §8.5）**：评审方**二次更正**——
+# 2026-10-01 那次把 verify-bc / verify-gov / verify-manual 并入 governed-session-hook 的 covers，
+# 是**评审方的错误**：verify-bc / verify-dead / verify-exit2 / verify-gov / verify-manual 是
+# **治理能力验证轮的实验 profile**，不是受控会话（证据：04 号 §5.2 的 E7-failclosed；05 号的清理
+# 建议"只有 governed 是交付物"；仓库代码里零引用）。使用者已于 2026-10-03 把这 5 个 profile 移到
+# C:\Users\ZNM\.dsh-profiles-backup-20261003（**可还原，没有删除**），本机因此再也发现不到
+# `dsh:verify-*`。**处置（选项 3）**：撤回并入的三条 covers，并删除 `dsh-verify-profiles` 与
+# `dsh-verify-dead-channel` 两条声明（它们覆盖的 profile 已不存在）。**decision 一个都没改**：
+# governed-session-hook 仍是 in_scope。第 26 轮读数里的 `out_of_scope_active=3` 是**当时的真实
+# 读数**（不是读错）；这一次归零来自**数据本身变了**（profile 移出本机），不是把读数改小。
 schema_version: "2"
 
 # 发现侧 kind → 声明侧 kind：`adapters.cli wiring` 今天发现的通道全是 dsh-profile，
@@ -38,18 +43,19 @@ scope:
     decision: in_scope
     kind: agent_runtime
     owner: platform
-    # 受控会话的七条通道（24 号 §8.4 第 1 条的四条 + 2026-10-01 裁定① 并入的三条）：
-    # 显式覆盖优先于 kind 档。
-    covers: ["dsh:governed", "dsh:governed-*", "dsh:verify-bc", "dsh:verify-gov", "dsh:verify-manual"]
+    # 受控会话的四条通道（24 号 §8.4 第 1 条）：显式覆盖优先于 kind 档。
+    # 2026-10-03 裁定①：第 26 轮并入的三条（verify-bc / verify-gov / verify-manual）已撤回——
+    # 它们是验证轮的实验 profile，不是受控会话。
+    covers: ["dsh:governed", "dsh:governed-*"]
     # 证据（hooks_config / audit_path / bridge.entry 渲染成 <external>/…）说它治理的是
     # **另一棵树**：声明侧现在承认这件事；tree_ref 只放指针，不放正文、不放绝对路径。
     governs_tree: other
     tree_ref: .tmp/governance-capability-*
     reason: >-
       受控会话（hooks 配置指向 adapters.dsh.hooks）由本仓库治理：判定、阻断、审计与
-      受控执行都是平台代码，接线失效必须失败关闭。2026-10-01 评审更正：verify-gov /
-      verify-manual / verify-bc 也接在同一条受控桥上（前两条留痕新鲜），并入本条声明的
-      covers——"受控会话"这一档不从"测试残留"里读。
+      受控执行都是平台代码，接线失效必须失败关闭。2026-10-03 评审二次更正：上次并入的
+      verify-gov / verify-manual / verify-bc 是治理能力验证轮的实验 profile（证据见文件头
+      的裁定①②），covers 已撤回——"受控会话"这一档只从真实受控入口读。
     consequence: >-
       接不上就不放行（Hook 退出码 2 = 阻断）；接线事实与留痕事实分别可读，见
       python -m adapters.cli wiring。
@@ -91,8 +97,9 @@ scope:
   # **不接任何线**：这里只做"定性 + 到期日"，没有改任何 profile / hooks.json / adapter 配置。
 
   # 三条**未声明的通道**（17 号报告 §2.2 清单乙点名：dsh:web / dsh:headless / dsh:verify-dead）。
-  # 它们今天的"红"来自"没人声明过它们算什么"，不是"该接没接"——按方案 §3.6 的判据，
-  # 处置是**写声明**而不是建机制。
+  # 它们当时的"红"来自"没人声明过它们算什么"，不是"该接没接"——按方案 §3.6 的判据，
+  # 处置是**写声明**而不是建机制。2026-10-03 裁定② 之后这里只剩两条：`dsh-verify-dead` 的
+  # 对应声明**已删除**（那个 profile 是验证轮的实验 profile，已随宿主一起移出本机）。
   - id: dsh-web-channel
     decision: out_of_scope
     kind: agent_runtime
@@ -125,38 +132,10 @@ scope:
         note: >-
           使用者授权评审方定夺，理由见 24 号 §8。
 
-  - id: dsh-verify-dead-channel
-    decision: out_of_scope
-    kind: agent_runtime
-    owner: host
-    covers: ["dsh:verify-dead"]
-    reason: >-
-      早先治理能力验证轮（verify-* 一组）留下的测试 profile，不是真实入口；仓库内没有任何引用；如果使用者删除该 profile，须同批删除本声明
-    consequence: >-
-      只报告：清点会照实报它 not_wired，但仓库不据此拦任何东西，也不把这条读数
-      当成"平台少查了一步"；到期日到了必须续期或改判。
-    expires_at: "2026-12-31"
-    renewals:
-      - at: "2026-10-01"
-        note: >-
-          使用者授权评审方定夺，理由见 24 号 §8。
-
-  # 与 dsh-verify-dead-channel **同组**的那条测试 profile（2026-10-01 裁定，24 号 §8.4 第 4 条；
-  # 同日裁定① 把另外三条并入 governed-session-hook，本声明因此只剩 verify-exit2）。
-  # 新增声明**不是接线**：只把「没人声明过」变成「声明过、且带到期日」（方案 §3.6 的收缩承诺面）。
-  - id: dsh-verify-profiles
-    decision: out_of_scope
-    kind: agent_runtime
-    owner: host
-    covers: ["dsh:verify-exit2"]
-    reason: >-
-      缺 hooks 配置、不活跃的验证轮测试 profile；使用者删除 profile 时须同批删除本声明
-    consequence: >-
-      只报告：清点会照实报它的接线事实（verify-exit2 是 hooks_config_missing），
-      仓库不为它签发任何 allow / block，也不把这条读数当成「平台少查了一步」；
-      到期日到了必须续期或改判。
-    expires_at: "2026-12-31"
-    renewals: []
+  # 2026-10-03 裁定②：原 `dsh-verify-dead-channel` 与 `dsh-verify-profiles` 两条声明**已删除**——
+  # 它们覆盖的 profile（verify-dead / verify-exit2）是验证轮的实验 profile，使用者已把这 5 个
+  # profile 移到 C:\Users\ZNM\.dsh-profiles-backup-20261003（可还原）。声明随宿主同批收尾：
+  # 留着它们只会让「声明了、本机没发现」这一格长期非零，而那一格要说的是**真实缺口**。
 
   # 只写在 CI 注释里的那条边界裁定（.github/workflows/phase-8.yml:266-272）收进数据。
   # 它说的不是"某条通道接没接"（那由 governed-session-hook 与 desktop-entry-points 承接），
