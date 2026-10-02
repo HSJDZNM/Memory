@@ -1,0 +1,618 @@
+# 仪器自证（R-h）的检查登记表：**平台自己的仪器**逐条登记 + 逐条说明它凭什么算数。
+#
+# 谁读它：tools/instrument_self_proof.py（只报告，退出码恒为 0）。它把本表与**四族实际可枚举的
+# 对象**双向比对，差集非空即红；每条对象必须至少有 mutation_id（变异自证）或 gap_note（缺口说明）
+# 之一。判据与口径写在那个工具的模块 docstring 里，设计稿见 25 号，落地读数见 23 号 §19。
+#
+# 只放指针（方案 §3.2 原文）：本表**不许**出现 last_run / status / passed / observed_* ——
+# 出现即加载期报错（那是运行结果，不是声明）。加载器同时拒绝未知字段、未知枚举、重复 check_id。
+#
+# 四族与实数（2026-10-03 的实跑读数，复现命令见 23 号 §19）：
+#   gate_step          44  .github/workflows/*.yml 里带非空 run 块的步骤（本机执行 31 / bash-only 11 / 登记豁免 2）
+#   gap_probe_check    13  tools/governance_gap_probe.py 的 CHECKS（G01–G13，手工仪器，未接进本机门禁）
+#   seal_scenario       5  tools/provenance_loop.py 的 SCENARIOS（手工仪器，未接进本机门禁）
+#   report_only_step    2  tools/ci_local.py 的 REPORT_ONLY_STEPS（本机门禁的只报告步骤，带到期日）
+#   合计               64
+#   25 号 §1 记的是 63 = 44 + 13 + 5 + **1**：第 4 族当时只登记了义务门禁一条，
+#   漏了同表里的豁免到期检查。差 1 的原因写在这里，读数以本轮的实跑为准。
+#
+# gap_note 的统一措辞（方案 A：mutation_id 全空、不做任何变异执行）：**存量检查，未做变异自证**。
+# 这条缺口是**显式记账**，不是静默：R-h 的三态判据会把「既没有 mutation_id 又没有 gap_note」
+# 的行报红，而本表每一行都写了它——所以今天三态合计 0 命中，读的人同时能看见
+# objects.with_mutation_id = 0（这一格不是"变异都验过"，是"没有可评的变异"）。
+#
+# 字段取值域（加载器逐行校验）：
+#   owner           ci-line        = 文件属 CI 线（.github/workflows/*、tools/ci_local.py）
+#                   control-plane  = 文件属控制面重构会话（tools/ 下其余脚本）
+#   evidence_level  exit_code（退出码 + 日志）/ report（机读读数载荷）/ seal（判据级封条读数）
+#   severity        blocking（在 CI 或本机门禁上红了就是失败）/ advisory（手工仪器或只报告步骤）
+#
+# command 是给评审读的**指针**，逐字取自该对象自己的出处：
+#   gate 行 = workflow run 块的**第一行**（多行脚本的第一行可能是 set +e 这类控制行，那仍是真值；
+#   要看全貌请打开 .github/workflows/phase-8.yml 的 run 块）；probe 行 = 该 check 自己的 --only 调用；
+#   seal 行 = 该闭环的调用（它没有单场景开关，5 行因此同一条命令，靠 covers 分辨是哪一个场景）；
+#   report-only 行 = ci_local 里那一行的 args。**加载器不比对 command 文本**（比对的是 check_id）。
+#
+# covers 的口径：能取自对象自己声明的文字就不另写一套——
+#   probe 13 行逐字取该 check 的 title，seal 5 行逐字取该场景的 what（都是源码里的字面量）；
+#   gate 44 行与 report-only 2 行是短句（步骤名/ 步骤说明的浓缩，供人读）。
+# 版本轴：只有这一个（与 adapters/wiring-scope.yaml 同形）。形状变了就递增它，
+# 加载器只接受它认识的版本号，读到别的版本一律报错（未知一律拒绝，不静默忽略）。
+schema_version: "1"
+checks:
+
+  - check_id: "gate-step:Repository consistency gate"
+    owner: ci-line
+    command: ".venv/bin/python tools/check_repo_consistency.py"
+    covers: "仓库一致性：依赖锁 / 文档与配置 / 工具清单"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Secret scan gate"
+    owner: ci-line
+    command: ".venv/bin/python tools/secret_scan.py"
+    covers: "仓库自有文本里的确定性凭据形态"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Unit, contract, integration and security tests"
+    owner: ci-line
+    command: ".venv/bin/python -m pytest tests/unit tests/contract tests/integration tests/security -q -n auto --dist loadfile --junit-xml=.tmp/artifacts/tests-all-report.xml"
+    covers: "四个 pytest 套件（并写出 junit 报告）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Rule set self-check"
+    owner: ci-line
+    command: ".venv/bin/python -m policy.check --check-rules"
+    covers: "规则集加载与自检（--check-rules）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:AST evidence replay (good fixture must pass)"
+    owner: ci-line
+    command: ".venv/bin/python -m policy.check examples/good_controller.py --layer controller"
+    covers: "证据重放：好夹具必须过"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:AST evidence replay (bad fixture must block with a line number)"
+    owner: ci-line
+    command: "set +e"
+    covers: "证据重放：坏夹具必须带行号阻断"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:External tool probe"
+    owner: ci-line
+    command: ".venv/bin/python -m validators.cli probe"
+    covers: "外部工具探针（Ruff / mypy / pytest 是否可用）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Validator closed loop"
+    owner: ci-line
+    command: ".venv/bin/python tools/validator_loop.py"
+    covers: "验证器闭环（ARCH-001 由 AST 证据判定等）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:dsh hook wiring self-check"
+    owner: ci-line
+    command: ".venv/bin/python -m adapters.dsh.hooks    --config examples/dsh/dsh-adapter.yaml    --hooks-config examples/dsh/hooks.json --self-check"
+    covers: "dsh Hook 接线自检（配置读得到 + 预算不等式）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Real dsh sandbox loop (skipped without dsh)"
+    owner: ci-line
+    command: ".venv/bin/python tools/dsh_sandbox_loop.py"
+    covers: "真实 dsh 沙箱闭环（无 dsh 时环境跳过，绝不记成 pass）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Agent version vs host version"
+    owner: ci-line
+    command: ".venv/bin/python -m adapters.cli host-version --record-check"
+    covers: "宿主观测记录 vs manifest 声明（CI 形态，不探测宿主）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Retrieval corpus integrity"
+    owner: ci-line
+    command: ".venv/bin/python -m retrieval.cli verify"
+    covers: "检索语料 / 镜像 manifest 哈希一致性"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Retrieval evaluation baseline (gated on FTS5)"
+    owner: ci-line
+    command: ".venv/bin/python tools/retrieval_eval.py --method both --rebuild"
+    covers: "检索评测基线（FTS5 门槛 + 向量对照）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Tool registry must match its approved hashes"
+    owner: ci-line
+    command: ".venv/bin/python -m enforcement.cli registry --verify"
+    covers: "受控执行注册表 vs 已审核哈希"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Enforcement self-check"
+    owner: ci-line
+    command: ".venv/bin/python -m enforcement.cli self-check --audit .tmp/artifacts/ci-enforcement-audit.jsonl --ledger .tmp/artifacts/ci-enforcement-ledger.jsonl"
+    covers: "受控执行层自检（审计 / 台账可写）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Controlled execution closed loop"
+    owner: ci-line
+    command: ".venv/bin/python tools/enforcement_loop.py"
+    covers: "受控执行闭环（允许一次 / 重放阻断 / 回滚）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Audit chain verification"
+    owner: ci-line
+    command: ".venv/bin/python -m enforcement.cli verify --audit .tmp/phase-4-demo/audit.jsonl"
+    covers: "审计摘要链校验"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Learning notebook structure"
+    owner: ci-line
+    command: ".venv/bin/python tools/check_notebook.py    docs/project/learning/phase-0/walkthrough.ipynb    docs/project/learning/phase-1/walkthrough.ipynb    docs/project/learning/phase-2/walkthrough.ipynb    docs/project/learning/phase-3/walkthrough.ipynb    docs/project/learning/phase-4/walkthrough.ipynb    docs/project/learning/phase-5/walkthrough.ipynb    docs/project/learning/phase-6/walkthrough.ipynb    docs/project/learning/phase-7/walkthrough.ipynb    docs/project/learning/phase-8/walkthrough.ipynb"
+    covers: "学习手册 notebook 结构"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Learning notebooks are in sync"
+    owner: ci-line
+    command: ".venv/bin/python tools/build_learning_notebook.py --check"
+    covers: "学习手册代码单元与实现同步（只在 --full 跑）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Tech-detail notebooks are in sync"
+    owner: ci-line
+    command: ".venv/bin/python docs/project/architecture/tech-detail/build_notebooks.py --check"
+    covers: "技术讲解 notebook 与内容源同步"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Text conventions (UTF-8 / LF / trailing whitespace)"
+    owner: ci-line
+    command: ".venv/bin/python tools/check_text_conventions.py"
+    covers: "文本约定：UTF-8 / LF / 行尾空白 / 结尾换行"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Multi-agent conformance suite"
+    owner: ci-line
+    command: ".venv/bin/python -m adapters.cli check"
+    covers: "多 Agent 一致性套件（语义场景由 Adapter 渲染）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Adapter support matrix is approved"
+    owner: ci-line
+    command: ".venv/bin/python -m adapters.cli matrix"
+    covers: "Adapter 支持矩阵与已审核哈希"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Adapter event fixtures exist"
+    owner: ci-line
+    command: ".venv/bin/python -m adapters.cli events"
+    covers: "规范事件夹具存在性"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Agent channel wiring inventory"
+    owner: ci-line
+    command: ".venv/bin/python -m adapters.cli wiring"
+    covers: "通道清点（发现 × 声明，报告模式恒退 0）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Multi-agent closed loop"
+    owner: ci-line
+    command: ".venv/bin/python tools/agent_loop.py"
+    covers: "多 Agent 闭环（命名空间 / trace / 熔断 / 能力上限）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Policy API self-check"
+    owner: ci-line
+    command: ".venv/bin/python -m policy_api.cli self-check"
+    covers: "Policy API 自检（核心层不依赖 Web 框架）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Policy API contract snapshot"
+    owner: ci-line
+    command: ".venv/bin/python -m policy_api.cli openapi --check"
+    covers: "Policy API 契约快照一致"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Policy API closed loop"
+    owner: ci-line
+    command: ".venv/bin/python tools/api_loop.py"
+    covers: "Policy API 闭环（本地与 HTTP 决定整份相等）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Orchestration self-check"
+    owner: ci-line
+    command: ".venv/bin/python -m orchestration.cli self-check"
+    covers: "编排层自检（消费者，不是平台的一部分）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Orchestration closed loop"
+    owner: ci-line
+    command: ".venv/bin/python tools/orchestration_loop.py"
+    covers: "编排闭环（恢复 / 审批 / 幂等 / 状态机）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Phase 8 acceptance evidence"
+    owner: ci-line
+    command: ".venv/bin/python tools/phase_evidence.py --suite-reports .tmp/artifacts/tests-all-report.xml"
+    covers: "阶段验收证据（引用本次 junit 报告，不重跑套件）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Example replay (explicit dependencies still supported)"
+    owner: ci-line
+    command: "set +e"
+    covers: "示例重放：显式依赖仍然受支持"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Scope skip reason is reported"
+    owner: ci-line
+    command: ".venv/bin/python -m policy.check examples/good_controller.py --layer service    --dependencies repository | tee /tmp/skip.txt"
+    covers: "scope 跳过必须写出原因"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Validator registry is loadable"
+    owner: ci-line
+    command: ".venv/bin/python -m validators.cli registry --json > /tmp/validators.json"
+    covers: "验证器注册表可加载"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Validator registry declares what is implemented"
+    owner: ci-line
+    command: ".venv/bin/python - <<'PY'"
+    covers: "注册表声明的验证器都已经实现"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Validators fail closed when a checker has no evidence"
+    owner: ci-line
+    command: "set +e"
+    covers: "没有任何验证器为某个 checker 供证据时失败关闭"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Syntax errors fail closed"
+    owner: ci-line
+    command: "set +e"
+    covers: "语法错误失败关闭"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Retrieval index is idempotent"
+    owner: ci-line
+    command: ".venv/bin/python -m retrieval.cli index --json > /tmp/index-1.json"
+    covers: "检索索引幂等（同输入两次建库一致）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Retrieval refuses to answer without sources"
+    owner: ci-line
+    command: "set +e"
+    covers: "无来源的检索必须拒绝作答"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Enforcement refuses unknown parameters"
+    owner: ci-line
+    command: "set +e"
+    covers: "受控执行拒绝未知参数"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Policy API ASGI contract"
+    owner: ci-line
+    command: ".venv/bin/python - <<'PY'"
+    covers: "Policy API ASGI 契约（真传输层）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Install pinned dependencies"
+    owner: ci-line
+    command: "uv venv"
+    covers: "装锁定依赖（登记豁免：本机用已有 .venv）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gate-step:Install external linter (ruff)"
+    owner: ci-line
+    command: 'uv pip install "ruff>=0.6,<1"'
+    covers: "装 ruff（登记豁免：本机用已有工具）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: blocking
+
+  - check_id: "gap-probe:G01"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G01"
+    covers: "Agent Teams / 主会话通道没有装检查站：未接线是否成为可发现的显式状态"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "gap-probe:G02"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G02"
+    covers: "动手前拦了、动手后没核对：post 钩子是否注册并真的转发，post 记录是否落账"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "gap-probe:G03"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G03"
+    covers: "跳过与通过在账本上长得一样：受治理动作的审计能否区分两者"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "gap-probe:G04"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G04"
+    covers: "命令类工具结构性不可用：审批能否按工具+参数模式+时效+次数上限签发"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "gap-probe:G05"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G05"
+    covers: "工作目录等于项目根被判越界：范围口径是否统一，越界是否仍然拒绝"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "gap-probe:G06"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G06"
+    covers: "依赖规则只认行首字面写法：换写法 / 换入口是否仍然放行"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "gap-probe:G07"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G07"
+    covers: "分层靠文件名，失效是静默的：审计里能否看出「未命中任何分层规则」"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "gap-probe:G08"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G08"
+    covers: "**/ 匹配不到根目录文件：通配符语义是否与「零层目录」一致且不误伤"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "gap-probe:G09"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G09"
+    covers: "「跑代码」工具没有第二道闸：危险代码是否在审批之外另有结构性检查"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "gap-probe:G10"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G10"
+    covers: "工具白名单跟不上工具升级：工具表、manifest 与本会话真实工具的差集"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "gap-probe:G11"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G11"
+    covers: "注入内容零留痕：进入 AI 上下文的项目约定文档是否有来源与哈希记录"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "gap-probe:G12"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G12"
+    covers: "「故障即拦住」只在自建插件里：插件契约与接线自检缺席是否失败关闭"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "gap-probe:G13"
+    owner: control-plane
+    command: "python tools/governance_gap_probe.py --root . --phase after --only G13"
+    covers: "没人能自动发现哪个通道没接线：wiring --check 对未接线/配置读不到必须非 0"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "seal-scenario:pass-sealed-check"
+    owner: control-plane
+    command: "python tools/provenance_loop.py"
+    covers: "真判据（本台阶单测）跑完，声明输入与工作树都没有变"
+    evidence_level: seal
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "seal-scenario:external-write"
+    owner: control-plane
+    command: "python tools/provenance_loop.py"
+    covers: "判据运行期间往声明的输入里写一笔（未声明的写者）"
+    evidence_level: seal
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "seal-scenario:unprovable-decl"
+    owner: control-plane
+    command: "python tools/provenance_loop.py"
+    covers: "声明里有一条 glob 命中不到任何文件：证明不了，不给 pass"
+    evidence_level: seal
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "seal-scenario:no-declaration"
+    owner: control-plane
+    command: "python tools/provenance_loop.py"
+    covers: "声明是空壳（只有注释）：给不出判据级封条，不许 pass"
+    evidence_level: seal
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "seal-scenario:self-check-comparator"
+    owner: control-plane
+    command: "python tools/provenance_loop.py"
+    covers: "把比对换成恒 pass 的替身，同一个场景不再报红——证明那条红来自比对本身"
+    evidence_level: seal
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "report-only:Obligations gate (report only)"
+    owner: ci-line
+    command: "python tools/obligations_gate.py --ledger .tmp/obligations/repo.jsonl --json"
+    covers: "义务账读数（未结义务 / 是否真跑过一次测试）；账本不存在 = 不适用"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
+
+  - check_id: "report-only:Exemption expiry report (report only)"
+    owner: ci-line
+    command: "python tools/exemption_expiry.py"
+    covers: "豁免到期读数（边界声明 + 只报告步骤表）；HITS: 机器行是跨文件契约"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory

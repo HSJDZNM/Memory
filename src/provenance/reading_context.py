@@ -82,6 +82,7 @@ from .worktree import ProvenanceError, workspace_tree_digest
 
 __all__ = [
     "DECLARATIONS",
+    "DECLARATION_INSTRUMENT_CHECKS",
     "OUTSIDE_WORKSPACE",
     "SANDBOX_RESTRICTED",
     "SANDBOX_UNKNOWN",
@@ -158,8 +159,11 @@ DECLARATION_ADAPTER_CONFIG = "adapter_config"
 DECLARATION_WIRING_SCOPE = "wiring_scope"
 DECLARATION_OBLIGATIONS_LEDGER = "obligations_ledger"
 DECLARATION_REPORT_ONLY_STEPS = "report_only_steps"
+# 仪器自证（R-h）读的那张检查登记表：validation/instrument-checks.yaml。
+DECLARATION_INSTRUMENT_CHECKS = "instrument_checks"
 DECLARATIONS = (
     DECLARATION_ADAPTER_CONFIG,
+    DECLARATION_INSTRUMENT_CHECKS,
     DECLARATION_OBLIGATIONS_LEDGER,
     DECLARATION_REGISTRY,
     DECLARATION_REPORT_ONLY_STEPS,

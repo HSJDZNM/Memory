@@ -477,7 +477,12 @@
       `hook_spawn_denied_*` / `dsh_config_failure_*`）；1.1 = 第 19 轮形状，**两条写盘路径**
       （完整跑 / dsh 不可用）都带这个键，消费者不必靠"某个键在不在"猜代际；
       1.2 = 现形状：两条路径都多一份 `reading_context`（台阶 4 第一件），其中 `host.sandbox` 是
-      2026-09-30 裁定①的落点——**不单独设状态轴**，只加这一个枚举）。
+      2026-09-30 裁定①的落点——**不单独设状态轴**，只加这一个枚举）；
+      `tools.instrument_self_proof.INSTRUMENT_SELF_PROOF_SCHEMA_VERSION`（仪器自证读数——
+      **1.0 = 首次建轴**：R-h 方案 A 的对象表 + 三态判据 + 只报告载荷，四格红条件
+      `no_check_id` / `no_mutation_and_no_gap_note` / `patch_not_applicable` /
+      `check_id_without_object`；它**只报告、退出码恒 0，没有接进本机门禁**，接法与交接见
+      `docs/project/engineering-policy-platform/reviews/governance-capability/15-control-plane-design/26-ci-line-handoff-instrument-self-proof.md`）。
     **已登记、但还没有版本轴的载荷**（第一次改键时必须引入 1.1——不许"只加一个键"了事）：
     **台阶 4 第二件之后这一档是空的**——原先登记在这里的 `tools/exemption_expiry.py --json`
     已按本条首次建轴（`EXEMPTION_REPORT_SCHEMA_VERSION = "1.1"`，见上）。
