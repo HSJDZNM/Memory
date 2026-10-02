@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -115,13 +116,24 @@ def wired_home(tmp_root: Path) -> Path:
 
 
 # N20 的 CLI 级复现固定用 --now：留痕的新鲜度不该由跑测试那天的墙钟决定。
+#
+# 2026-10-03 评审裁定①：同一条纪律必须覆盖**直接调 probe_wiring** 的用例。夹具留痕写死
+# `2026-09-25T11:59:00Z`，不传 now 就是拿**真实墙钟**去减它——一过 7 天窗口
+# （2026-10-02T11:59:00Z）必然红，而它红的是测试夹具的记忆，不是被测代码。所以本文件里
+# 每一个**读夹具留痕**的用例都把这一刻钉死：CLI 级用 `--now`，函数级用 `now=FIXED_NOW`，
+# 同一个时刻两条路。唯一的例外是 `test_default_probe_never_reports_a_vacuous_pass`——
+# 它刻意走**默认发现路径**（真实 `~/.dsh`，换了 now 就不是"默认"了），而它断言的只有
+# "不许 vacuous pass"与通道排序，两者都与时间无关（时钟平移下同样绿，见 23 号 §18 的自证）。
+FIXED_NOW_TEXT = "2026-09-25T12:00:00Z"
+FIXED_NOW = datetime.fromisoformat(FIXED_NOW_TEXT.replace("Z", "+00:00"))
+
 WIRING_ARGV: tuple[str, ...] = (
     "--root",
     str(REPO_ROOT),
     "--json",
     "wiring",
     "--now",
-    "2026-09-25T12:00:00Z",
+    FIXED_NOW_TEXT,
     "--observe-sessions",
     "0",
     "--check",
@@ -146,7 +158,11 @@ def test_wiring_check_exits_zero_only_for_a_wired_channel(tmp_root: Path, capsys
     home = wired_home(tmp_root)
 
     code, out, _ = run_cli(
-        ["--root", str(REPO_ROOT), "wiring", "--dsh-home", str(home), "--check"], capsys
+        [
+            "--root", str(REPO_ROOT), "wiring", "--dsh-home", str(home),
+            "--now", FIXED_NOW_TEXT, "--check",
+        ],
+        capsys,
     )
 
     assert code == 0, out
@@ -251,7 +267,10 @@ def test_wiring_json_contract(tmp_root: Path, capsys: Any) -> None:
     home = wired_home(tmp_root)
 
     code, out, _ = run_cli(
-        ["--root", str(REPO_ROOT), "--json", "wiring", "--dsh-home", str(home), "--check"],
+        [
+            "--root", str(REPO_ROOT), "--json", "wiring", "--dsh-home", str(home),
+            "--now", FIXED_NOW_TEXT, "--check",
+        ],
         capsys,
     )
 
@@ -477,7 +496,11 @@ def test_wiring_output_contains_no_absolute_paths(tmp_root: Path, capsys: Any) -
     home = wired_home(tmp_root)
 
     _, out, err = run_cli(
-        ["--root", str(REPO_ROOT), "--json", "wiring", "--dsh-home", str(home)], capsys
+        [
+            "--root", str(REPO_ROOT), "--json", "wiring", "--dsh-home", str(home),
+            "--now", FIXED_NOW_TEXT,
+        ],
+        capsys,
     )
 
     combined = out + err
@@ -635,7 +658,9 @@ def test_wiring_verdict_agrees_with_the_hook_self_check(tmp_root: Path, dsh_proj
         json.dumps({"timestamp": "2026-09-25T11:59:00Z"}) + "\n",
     )
     assert check_wiring(config, hooks_config_path=good) == ""
-    good_status = probe_wiring(dsh_home=home, observed_sessions=0).channels[0].status
+    good_status = probe_wiring(
+        dsh_home=home, observed_sessions=0, now=FIXED_NOW
+    ).channels[0].status
     assert good_status is ChannelStatus.WIRED, good_status
 
     bad = _write(
@@ -644,7 +669,9 @@ def test_wiring_verdict_agrees_with_the_hook_self_check(tmp_root: Path, dsh_proj
     )
     report = check_wiring(config, hooks_config_path=bad)
     assert report != ""
-    bad_status = probe_wiring(dsh_home=home, observed_sessions=0).channels[0].status
+    bad_status = probe_wiring(
+        dsh_home=home, observed_sessions=0, now=FIXED_NOW
+    ).channels[0].status
     assert bad_status is ChannelStatus.NOT_WIRED, bad_status
 
 
@@ -665,7 +692,9 @@ def test_missing_hooks_config_agrees_with_the_hook_self_check(
 
     missing = profile / ".policy" / "hooks.json"
     assert check_wiring(config, hooks_config_path=missing) != ""
-    status = probe_wiring(dsh_home=home, observed_sessions=0).channels[0].status
+    status = probe_wiring(
+        dsh_home=home, observed_sessions=0, now=FIXED_NOW
+    ).channels[0].status
     assert status is ChannelStatus.HOOKS_CONFIG_MISSING, status
 
 
@@ -694,7 +723,7 @@ def test_timeout_budget_check_agrees_with_the_hook_self_check(
 
     # 运行期判错 -> 清点必须也是失败态（不是"只记一条 warning"）。
     assert check_wiring(config, hooks_config_path=hooks_path) != ""
-    channel = probe_wiring(dsh_home=home, observed_sessions=0).channels[0]
+    channel = probe_wiring(dsh_home=home, observed_sessions=0, now=FIXED_NOW).channels[0]
     assert channel.timeout_budget["ok"] is False
     assert channel.status is ChannelStatus.TIMEOUT_BUDGET_VIOLATED
     assert channel.ok is False
@@ -816,7 +845,7 @@ def test_governs_uses_explicit_covers_and_flags_in_scope_not_wired(
     code, out, _ = run_cli(
         [
             "--root", str(root), "--json", "wiring", "--dsh-home", str(home),
-            "--now", "2026-09-25T12:00:00Z", "--observe-sessions", "0",
+            "--now", FIXED_NOW_TEXT, "--observe-sessions", "0",
         ],
         capsys,
     )
@@ -884,7 +913,7 @@ def test_expected_absent_covering_a_discovered_channel_is_counted(
     code, out, _ = run_cli(
         [
             "--root", str(root), "--json", "wiring", "--dsh-home", str(home),
-            "--now", "2026-09-25T12:00:00Z", "--observe-sessions", "0",
+            "--now", FIXED_NOW_TEXT, "--observe-sessions", "0",
         ],
         capsys,
     )
@@ -921,7 +950,7 @@ def test_same_tier_conflicting_declarations_are_not_guessed(tmp_root: Path, caps
     code, out, _ = run_cli(
         [
             "--root", str(root), "--json", "wiring", "--dsh-home", str(home),
-            "--now", "2026-09-25T12:00:00Z", "--observe-sessions", "0",
+            "--now", FIXED_NOW_TEXT, "--observe-sessions", "0",
         ],
         capsys,
     )
