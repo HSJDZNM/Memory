@@ -1839,3 +1839,253 @@ $env:PYTHONPATH='src'; .venv\Scripts\python.exe -m adapters.cli wiring --json --
 # 文件归属（CI 线一个字没动）
 git diff --numstat 088349a..HEAD -- tools/ci_local.py tests/unit/test_ci_local.py tools/unit/test_ci_local_groups.py tools/phase_evidence.py .github/workflows
 ```
+
+---
+
+## 18 第 28 轮 · 2026-10-03 评审裁定①②③④ 的落地（**WIRING 1.4 的定稿**）与门禁
+
+- **执行**：2026-10-03（本机）；控制面重构会话（**唯一写者**）。
+- **依据**：2026-10-03 的四条评审裁定（§18.1）；AGENTS 第 45（仪器要能失败）/ 48（读数属于哪棵树）/
+  50（口径诚实）/ 55（加键就是改协议）条。
+- **树与提交链**：`3be25c9`（起点）→ `0b3d078`（第 1 步 a：通道清点用例钉死 `now`，**只改测试**）
+  → `7b9ee99`（第 1 步 b：审批形状用例钉死门禁的 `now`，**只改测试**）→ `9074053`（第 2 步：
+  WIRING 1.3→1.4 + 24 号 §2.2/§3）→ `1890b09`（第 1 步 c：单元用例改走 `probe()`，**只改测试**）
+  → 本节。
+- **仪器落点**：`.tmp/step28/`（不提交）：`clock_shift_all.py`（全仓时钟平移；两版仪器的翻车都
+  写在文件头）、`test_control_clock_is_shifted.py`（仪器自证：无插件必须红）、`run_entries.py`
+  （**原样复用** §17 的 `probe_wiring_entries.py`，只换输出目录）、`read_real.py` /
+  `real_vs_pinned.py`（真实读数与 7 天窗口）、`scan_rd.py`（两把尺子 + 硬约束，预注册规则在文件头）。
+  **钉死的输入**：`--now 2026-10-03T00:00:00+08:00`、`--observe-sessions 0`、不传 `--dsh-home`
+  （走默认发现：`$DSH_HOME = C:\Users\ZNM\.dsh`，只读）——与 §17 逐字相同，读数可比。
+
+### 18.0 环境自检（第 0 步）
+
+| 项 | 读数 |
+| --- | --- |
+| 起点 | 分支 `refactor/control-plane` @ `3be25c9`，`git status --porcelain` **空** |
+| 解释器 | `.venv\Scripts\python.exe` = Python 3.13.11 |
+| 允许删的对象 | 指令允许删 `.tmp/tmp/pytest-of-*`：**实测删不掉**——`Remove-Item` / `cmd rmdir` / `icacls` / `Get-ChildItem` 四种在它上面全是"拒绝访问"（ACL 残留，**第三次出现**，与 §16.0 / §17.0 同型）。处置用 §17.0 那一招：`Rename-Item .tmp\tmp → .tmp/tmp-acl-residue-<HHMMSS>`（重命名父目录不需要子项权限，实测成功；本轮共 6 次） |
+| **新事实：`-n auto` 在 `workspace-write` 下起不来** | 清干净之后仍然 `INTERNALERROR: PermissionError [WinError 5]`——栈是 `xdist/workermanage.py:340 → _pytest/tmpdir.py:213 → make_numbered_dir_with_cleanup → os.scandir(.tmp/tmp/pytest-of-ZNM)`。**单进程 pytest 正常**（全量 2069 passed / 6m52s）。xdist 的 basetemp 目录由 worker 建、controller 读不到，这是**环境（沙箱）条件**，与 §17.6 记录同型：上一轮也是使用者把会话切到 `danger-full-access` 之后 `-n auto` 才正常。**本轮没有申请放宽**；门禁那一步的实际形态见 §18.7 |
+| 清点正题 | 默认发现 + 钉死 now：**7 条**通道，`dsh:verify-*` 一条都没有（与 §17.0 相同） |
+| `.tmp/tmp` 之外 | 允许范围内的清理只做了改名让路；`.tmp/step28/` 是本轮仪器与产物的落点，**不提交** |
+
+### 18.1 裁定（2026-10-03，四条）
+
+| # | 裁定（逐字口径） | 落地 |
+| --- | --- | --- |
+| ① | **墙钟定时炸弹是最高优先级的稳定性缺陷**：`test_wiring_inventory.py` 里 3 条 `*_agrees_with_the_hook_self_check` 没传 `now`，固定时间戳超过 7 天就必然失败，feat 上每次推送都被 pre-push 挡住。修法：传入固定的 `now`；并全仓 grep 所有"写死日期 + 真实时钟"的测试，一并修掉、列出清单。**记入稳定性桶，不计入台阶 4** | `0b3d078` + `7b9ee99` + `1890b09`（§18.2） |
+| ② | 第六格 `expected_absent_present` 是 **1.3 发布之后**加的键，按第 55 条与"进了 feat 即发布"，`WIRING_SCHEMA_VERSION` **1.3 → 1.4**，消费方同批改。`reason` 文字的修正不算改语义，不涉及升版 | `9074053`（§18.3） |
+| ③ | 1.4 里一起修：`declared_not_discovered` **只统计通道类声明**（`kind` 能映射到发现侧 kind 的那些）；`gate_check` 这类非通道声明不进这一格，改为**单独列出**（`differences.declared_not_discovered.excluded_non_channel`，带 id 与 kind），**不许消失**。预期 `declared_not_discovered = 1`（`ci-agent-runtime`） | 同上（§18.3，实测 = 1 ✅） |
+| ④ | 台阶 4 同意越过 tests 复核线，**上限为硬上限 3.5k**；每轮报告累计数 | §18.6（tests 累计 **2174** / 3500） |
+
+**纪律**：**任何 decision 一个都没改**；没有新增任何阻断步骤（`--check` 判据仍只读 `failures`）；
+第 9 步（真实 dsh 沙箱闭环）跑前拍快照、跑后比对（§18.8）。
+
+### 18.2 第 1 步 · 墙钟定时炸弹（`0b3d078` + `7b9ee99` + `1890b09`，**只改测试**）
+
+**先更正裁定的名单（口径诚实）**：裁定① 点名 3 条 `*_agrees_with_the_hook_self_check`，而
+**实测只有其中 1 条**是墙钟炸弹；真正红的两条**不在名单里**。判据不是名字，是"夹具留痕写死 +
+不传 `now` + 断言落在留痕轴上"：
+
+| 用例（`tests/contract/test_wiring_inventory.py`） | 修复前（2026-10-03 实测） | 为什么 |
+| --- | --- | --- |
+| `test_wiring_check_exits_zero_only_for_a_wired_channel` | **红**（不在名单里） | 断言 `code == 0`；`WIRED` 要求 `freshness = FRESH`，夹具 2026-09-25T11:59:00Z + 7 天窗口在 2026-10-02T11:59:00Z 已过 → STALE → 退 1 |
+| `test_wiring_json_contract` | **红**（不在名单里） | 断言 `freshness_status=fresh` / `fact_counts.freshness_ok=1` / `result=pass` |
+| `test_wiring_verdict_agrees_with_the_hook_self_check` | **红**（名单里的第 1 条） | `good_status is ChannelStatus.WIRED` 走留痕轴 |
+| `test_missing_hooks_config_agrees_with_the_hook_self_check` | **绿** | 断言是接线轴（`HOOKS_CONFIG_MISSING`）：`combine_status` 在接线不成立时**根本不读留痕**，与墙钟无关 |
+| `test_timeout_budget_check_agrees_with_the_hook_self_check` | **绿** | 同上（`TIMEOUT_BUDGET_VIOLATED` 也由接线轴决定） |
+
+**修法**：`FIXED_NOW_TEXT = "2026-09-25T12:00:00Z"` / `FIXED_NOW = datetime.fromisoformat(...)`
+一个常量、两条路（CLI 级 `--now`、函数级 `now=FIXED_NOW`）；同文件里另外 3 处
+`--now 2026-09-25T12:00:00Z` 字面量收进同一个常量（同一个时刻不许两种拼法）。**名单里另外两条
+绿的一并钉死**：同一条口径，不留例外。
+
+| 读数 | 修复前 | 修复后 |
+| --- | --- | --- |
+| 本文件（26 条） | **3 failed / 23 passed** | **26 passed** |
+| 全量套件 | 3 failed / 2066 passed（§17.6 的读数） | **2069 passed / 1 skipped / 412.78 s**（单进程） |
+| 全量套件 + 时钟平移 18 天 | —— | **2069 passed / 1 skipped / 411.61 s** |
+
+**变异 1（指令要求：把夹具时间戳改到更久以前）**：`2026-09-25T11:59:00Z → 2026-09-20T11:59:00Z`
+——相对**真实墙钟**已是 12.3 天（**越窗**），相对**钉死 now** 只有 5 天（窗内）。5 条用例在
+真实时钟与 +18 天平移两种读数下**都全绿** ⇒ 结论里已经没有真实时钟这一项（变异后文件字节
+恢复原样，sha256 与变异前逐字节相同）。
+
+**变异 2（反变异：把 `--now` 撤掉）**：同一条用例在 +18 天平移下 **1 failed / 4 passed**
+⇒ 钉子真的承重、仪器真的有牙（这一条同时是"修复前会红"的复现）。
+
+**仪器自证（AGENTS 第 45 条）**：`.tmp/step28/test_control_clock_is_shifted.py` 无插件**必红**、
+带插件（+18 天）**必绿**。仪器自己翻过两次车，两次都记在 `clock_shift_all.py` 的文件头：
+第一版把"判定用的原件"也换成了 shim，于是后扫到的模块全部漏打（**假绿**）；第二版把
+`datetime` **类**换成子类，于是 `adapters.wiring` 的 `isinstance(now, clock.datetime)` 对普通
+`datetime` 判 False，凭空造出 3 条**假红**。现版用代理类透传 `__instancecheck__` /
+`__subclasscheck__`，只改 `now()` / `utcnow()`。
+
+**全仓清单（裁定① 要的交付物）**：
+
+| 桶 | 条数 | 明细 |
+| --- | --- | --- |
+| **炸弹·已修** | 4 | 上面表里那 3 条 + `tests/unit/test_orchestration_state.py::test_approval_record_from_phase4_is_the_only_accepted_shape`（审批记录写死 `granted 2020-01-01` / `expires 2099-01-01`，门禁默认读真实 `utc_now()` ⇒ **爆炸日 2099-01-01**，或本机时钟早于 2020；`7b9ee99` 注入 `clock=lambda: _PINNED_APPROVAL_NOW`） |
+| 评审点名但与墙钟无关、仍一并钉死 | 3 | `test_missing_hooks_config_…` / `test_timeout_budget_check_…`（接线轴）+ `test_wiring_output_contains_no_absolute_paths`（只断言输出无绝对路径） |
+| 潜伏但已核、一并钉死 | 1 | `tests/unit/test_wiring.py::test_no_declaration_is_unavailable_not_zero`：真实墙钟确实进了读数，但断言落在"读不到 ≠ 0"上；`1890b09` 改走本文件的 `probe()`（默认 `now=NOW`） |
+| **刻意保留真实时钟、不改** | 1 | `test_default_probe_never_reports_a_vacuous_pass`：它刻意走**默认发现路径**（真实 `~/.dsh`，换了 `now` 就不是"默认"），断言只有"不许 vacuous pass"与通道排序 |
+| 已核不影响、**未修**（**请评审裁定**） | 2 | ① `tests/contract/test_policy_hook_chain.py` 里对 `datetime.now()` 断言 `abs(now - verified_at) < 600`——那是**同一次运行内**两次真实读数的一致性检查，不随墙钟推移失效（只有时钟回拨/前跳 >10 min 或产物被重放才会红）；② `tests/unit/test_exemption_expiry.py::test_the_repository_declarations_are_readable_today` 跑 `--json` 不钉 `--today`，但断言只有 `unprovable == 0` / `declared >= 4`：2026-10-31（ci_local 只报告步骤的豁免）与 2026-12-31（`wiring-scope.yaml` 的四条 out_of_scope）之后 docstring 里"今天没有到期项"会变成**没有断言支撑**的说法，而用例**不会红**。补 `expired == 0` 会把"到期"变成一条**新的**到期炸弹（到期日一到 pre-push 就红），本轮**不做** |
+| 已排除（分组 + 计数） | 88 处字面量 | `tests/` 下 88 处日期时间字面量逐条回溯：A 显式注入 `now`/`as_of`/`--now`/`clock`（≈55）；B 过去锚点（3，例如 `2026-09-01` 断言 STALE）；C 存在性/解析/格式化/排序（≈17）；D 相对真实时钟取差值（≈8）；另有 3 组 `time.sleep` + `monotonic` 的性能/超时用例（与日期无关） |
+
+**仪器核对（不是只靠 grep）**：平移 **+18 天**、**+180 天**全量绿；平移 **+27000 天**（约 2100 年）
+与 **-3000 天**（约 2018 年）时**只剩**上面第 4 条红——修完它，三种读数下
+`tests/unit/test_orchestration_state.py` 都是 50 passed。
+
+### 18.3 第 2 步 · WIRING 1.4（`9074053`）
+
+**改的是什么**（`src/adapters/wiring.py`）：
+
+- `WIRING_SCHEMA_VERSION` `"1.3"` → **`"1.4"`**，版本史注释把 1.4 认领的两处写清楚：
+  (a) 第六格 `differences.expected_absent_present` + 同名红条件（裁定④，`d2d90fa`）——它加在
+  1.3 **进入 feat 之后**，当时那句"1.3 尚未发布、格内改正"因此不成立；
+  (b) 本格的通道类过滤与 `excluded_non_channel`。**`reason` 文案修正**（`d930af8`）不算改语义。
+- `_coverage()`：`non_channel = [e for e in not_discovered if e.kind not in mapped_kinds]` 分出去，
+  分子只留通道类；同格新增 `excluded_non_channel`（每项 `declaration_id` / `decision` / `kind` /
+  `reason`）；**读不到时它同样是明确的空列表**，不是缺键。
+- `_declared_not_discovered_reason()` 去掉已经不可达的第三种成因（那些声明改由
+  `_excluded_non_channel_reason()` 说明），两种成因的文案一字未改。
+
+**真实读数**（`--now 2026-10-03T00:00:00+08:00`、默认发现）：
+
+| 键 | before（1.3） | after（1.4，实测） | 预期 | 判定 |
+| --- | --- | --- | --- | --- |
+| `wiring_schema_version` | `1.3` | **`1.4`** | 1.4 | ✅ |
+| `declared_not_discovered.count` | 2 | **1** | 1 | ✅ |
+| `declared_not_discovered.items` | 2 项 | **1 项**（`ci-agent-runtime` / `expected_absent` / `agent_runtime`） | 只剩 ci-agent-runtime | ✅ |
+| `declared_not_discovered.excluded_non_channel` | ——（键不存在） | **1 项**（`agent-channel-inventory-report-mode` / `out_of_scope` / `gate_check`） | 单独列出、带 id 与 kind | ✅ |
+| `headline.text` | `…声明未发现 2…` | `…声明未发现 1…` | 随计数 | ✅ |
+| `account` | 7 / 6 / 4 | **7 / 6 / 4** | 不变 | ✅ |
+| 其余五格 + `red_conditions` | 0 / 0 / 0 / 0 / 0 | **逐个相同** | 不变 | ✅ |
+
+**自证（AGENTS 第 45 条）**：把过滤撤掉（回到旧口径）→ 新用例
+`test_non_channel_declarations_are_excluded_but_never_disappear` **FAILED**（`assert 2 == 1`，
+以及 `excluded == []`）；撤回变异 → **1 passed**。三个 wiring 测试文件 **139 passed**。
+
+**同批改的引用点（第 55 条）**：`tests/contract/test_wiring_inventory.py` 里钉死版本号的字面量
+断言 + 新用例；24 号 §2.2 字段表与 §3 版本轴补记。**没有别的消费方**：全仓 grep
+`wiring_schema_version` / `declared_not_discovered` / `in_scope_not_wired` 在 `tools/` 下 **0 命中**
+（`tools/governance_gap_probe.py` 只驱动三个入口、不读这几格）；门禁第 24 步跑的是**默认形态**
+（`.github/workflows/phase-8.yml:277-278` 的 `python -m adapters.cli wiring`，报告模式、恒退 0）。
+
+### 18.4 R-d（before = `e1` @ `7b9ee99` / after = `f1`）
+
+**预注册（本轮指令）**：覆盖账**只允许**三处变化——`wiring_schema_version`（版本号）、
+`differences.declared_not_discovered`（及它下面的一切）、`headline.text`（同一件事的传播：
+那一句里的"声明未发现 N"）。其余一律算未预注册。硬约束：`result` / `failures` / `counts` /
+`fact_counts` / `probe` / `tools`、`channels[].status` / `.wiring_status` / `.freshness_status`、
+`channels[].governs` 键骨架、其余五格、`red_conditions`、`differences.status/reason/note`、
+`reading_context`（除归属读数）。
+
+| # | 尺子 | 读数 | 判定 |
+| --- | --- | --- | --- |
+| R1 | 决策载荷（10 个场景，`policy.engine.evaluate` 唯一入口） | 23992 → 23992 B，**逐字节相同** | ✅ |
+| R2' | `VERDICT` 判定行（144 行 + 插件字面量，§17 同一把尺子 `probe_verdict_lines.py`） | 24403 → 24403 B，**逐字节相同** | ✅ |
+| R2'' | `VERDICT` 生产入口 14 个用例（补充读数） | 7403 → 7403 B，**逐字节相同** | ✅ |
+| R5 | 覆盖账三个入口 | 22873 → **22845 B**；第一把尺子每份 **5 条**、**全部预注册**；第二把尺子每份 **8 条** = 5 条预注册 + **3 条归属读数**（`reading_context.run.id` / `run.started_at` / `tree.digest`）；**0 条未预注册** | ✅ |
+| R6 | 声明文件读数（`wiring-scope --check --json`） | 731 → 731 B，**逐字节相同** | ✅ |
+| R7 | 退出码 | 默认 0/0、`--check` 1/1、`--require-runtime` 1/1、声明 `--check` 0/0、默认形态两次 0/0 | ✅ |
+| 硬约束 | 三个入口逐字段 | 15 项**全 OK**（三入口 × 5 类：判定/事实字段、通道两根轴与总状态、governs 骨架、其余五格与红条件、reading_context） | ✅ |
+
+**"0 差异"的边界要说清（口径诚实）**：第一把尺子（`.tmp/step3b/json_field_diff.py`）**按设计
+剔掉**叶子键名 `recorded_at` / `timestamp` / `elapsed_ms` / `duration_ms` / `verified_at` /
+`action_id` / `event_id` / `tool_use_id` / `generated_at` 与后缀 `_digest` / `digest` /
+`sha256` / `tree_digest`（所以 `tree.digest` 不在它里面）；第二把尺子**不剔任何叶子**，把
+它们逐条列出来（本轮就是那 3 条归属读数）。**这 5 条差集本身**（`count` / `items` /
+`excluded_non_channel` / `headline.text` / `wiring_schema_version`）逐条见 §18.3 的表。
+**"逐字节相同"的那几把尺子不含任何墙钟字段**：`R1` 的载荷没有时间字段，`R2'` 是判定行矩阵
+与插件摘要，`R6` 是声明文件的形状读数——所以它们可以直接按字节判。
+
+### 18.5 真实 `now` 与钉死 `now`：`in_scope_not_wired` **各报一次**（7 天窗口）
+
+裁定要求"用钉死的 now 和真实 now 各报一次；用真实 now 读到 4 是真实读数，照实写，不改"。
+**今天（2026-10-03T02:xx+08:00）两次都是 0**——四条 `governed` 通道**还没**越窗：
+
+| 通道 | `last_record_at` | age（真实 now） | 窗口 | 剩余 | 真实 / 钉死 |
+| --- | --- | --- | --- | --- | --- |
+| `dsh:governed` | `2026-09-26T12:27:10.904188Z` | 541610 s | 604800 s | **+63190 s（17.6 h）** | fresh / fresh |
+| `dsh:governed-grade` | `2026-09-26T12:16:03.859961Z` | 542277 s | 604800 s | **+62523 s（17.4 h）** | fresh / fresh |
+| `dsh:governed-grade-approval` | `2026-09-26T12:17:05.694417Z` | 542215 s | 604800 s | **+62585 s（17.4 h）** | fresh / fresh |
+| `dsh:governed-wmsvc` | `2026-09-27T00:26:57.726469Z` | 498423 s | 604800 s | **+106377 s（29.5 h）** | fresh / fresh |
+
+- `in_scope_not_wired` 两次都是 **0**（`is_red=false`、`enforced=false`），`result` 两次都是 `fail`
+  （`dsh:desktop` / `headless` / `web` 三条 not_wired，与 `in_scope` 判定无关——它们是
+  `out_of_scope`），`account` 两次都是 **7 / 6 / 4**。
+- **逐条越窗时刻**（照实写，不改读数）：`governed-grade` **2026-10-03T12:16Z**（+08:00 20:16）→
+  `governed-grade-approval` 12:17Z → `governed` 12:27Z → `governed-wmsvc` **2026-10-04T00:26Z**。
+  也就是说裁定预告的"`in_scope_not_wired` 读到 4"会在**2026-10-04 00:26Z 之后**出现，届时它是
+  **真实读数**（照实写、不改）。它是**只报告**条件（`enforced=false`），不改任何退出码；
+  `--check` 今天已经是 1（三条 not_wired 让 `failures` 非空），所以越窗**不会**新增阻断行为。
+
+### 18.6 预算对账（口径 = 新增行，`git show --numstat`）
+
+| 桶 | `3be25c9` 时台阶 4 累计 | 本轮属于台阶 4 的 | 台阶 4 累计（含本轮） | 复核线 | 余量 |
+| --- | --- | --- | --- | --- | --- |
+| src | 1559 | **+52**（`wiring.py`） | **1611** | 1950 | 339 |
+| tests | 2096 | **+78**（`test_wiring_inventory.py`） | **2174** | 2100（**已越线 +74**，裁定④ 允许） | 硬上限 3500 → 1326 |
+| tools | 893 | 0 | 893 | —— | —— |
+| 数据 / 文档 | —— | +11（24 号 §2.2/§3）+ 本节 | —— | —— | —— |
+
+**稳定性桶**（裁定①：**不计入台阶 4**）：`0b3d078` tests +40/−11、`7b9ee99` tests +16/−2、
+`1890b09` tests +4/−1 ⇒ **+60 / −14，只改测试**。
+`tools/ci_local.py` / `tests/unit/test_ci_local*.py` / `tools/phase_evidence.py` /
+`.github/workflows/*` **一个字都没动**（差集 0 行，复核命令见 §18.10）。
+
+### 18.9 未核实 / 待评审
+
+1. **`-n auto` 起不来是环境条件，不是代码问题**（§18.0）：本轮**单进程**跑的全量套件；
+   门禁那一步的形态与实际读数见 §18.7。**要不要再申请一次 `danger-full-access` 让门禁回到
+   §17.6 的 xdist 形态，请评审/使用者定夺**——本轮按"没有证据不申请"的纪律**没有**发起升级请求。
+2. **裁定① 的名单与实测不一致**（§18.2）：名单里 3 条只有 1 条真红，另两条红的是
+   `test_wiring_check_exits_zero_only_for_a_wired_channel` 与 `test_wiring_json_contract`。
+   我按**实测**修（5 条 + 2 处预防性钉死），没有按名字修。
+3. **`test_exemption_expiry.py` 的 docstring 比它的断言活得久**（§18.2 的清单）：**未修**，
+   理由与两个备选写在表里——补 `expired == 0` 会制造一条**新的**到期炸弹，所以**请评审裁定**。
+4. **文本形态只报计数**：`headline.text` 里只有"声明未发现 1"，非通道清单只在 `--json` 的
+   `excluded_non_channel` 里。裁定③ 点名的是那个载荷键（"例如 …excluded_non_channel，带 id 和
+   kind"），所以**人类输出没有加行**（"只加行"是允许的，但那是本轮预注册之外的改动）。
+   **要不要在文本输出里也加一行，请评审裁定。**
+5. **`declared_not_discovered` 的边界**：判据是"声明的 `kind` 出现在 `channel_kinds` 的值集里"。
+   若某份声明文件**整个不写** `channel_kinds`，那么它的每一条"声明未发现"都会落进
+   `excluded_non_channel`、`count` 读作 0。这是判定的直接推论（不是漏洞：那些条目一条都没消失），
+   但**`channel_kinds` 缺失时这一格会读作 0** 这件事值得评审知道。
+6. **R-h 方案 A 挪到第二十四轮**（25 号 §7）：本轮**不做**；25 号正文一字未改。
+7. **`git push` / `git fetch` 没有做**（会话禁令）：「远端此刻的状态」**未核实**；
+   `origin/refactor/control-plane` 停在 `088349a`，本地领先 9 个提交。
+8. **`.tmp/tmp` 的 ACL 残留成因没修**：本轮仍是"改名让路"；下一次全量 pytest 会不会再留一个
+   **未核实**（§17.8 第 3 条同款）。
+
+### 18.10 复现命令（只读或只写 `.tmp`）
+
+```powershell
+# 环境自检的正题：清点里没有 dsh:verify-*；版本号与那一格
+.venv\Scripts\python.exe .tmp\step28\read_real.py
+
+# 真实 now 与钉死 now 各报一次（7 天窗口 + 逐条越窗时刻）
+.venv\Scripts\python.exe .tmp\step28\real_vs_pinned.py
+
+# 墙钟两点：修复前的 3 条红（在 3be25c9 上同样红）
+.venv\Scripts\python.exe -m pytest tests/contract/test_wiring_inventory.py -q -k "exits_zero_only or json_contract or verdict_agrees"
+# 仪器自证：无插件必须红、带插件必须绿
+$env:PYTHONPATH = "$pwd\.tmp\step28;$pwd\src"
+.venv\Scripts\python.exe -m pytest .tmp/step28/test_control_clock_is_shifted.py -q
+.venv\Scripts\python.exe -m pytest .tmp/step28/test_control_clock_is_shifted.py -q -p clock_shift_all
+# 全量：真实时钟 / 时钟 +18 天（本轮读数：两边都 2069 passed / 1 skipped）
+.venv\Scripts\python.exe -m pytest tests/unit tests/contract tests/integration tests/security -q
+$env:STEP28_SHIFT_DAYS = "18"
+.venv\Scripts\python.exe -m pytest tests/unit tests/contract tests/integration tests/security -q -p clock_shift_all
+
+# R-d（before = e1 @ 7b9ee99 / after = f1）：三把尺子 + 硬约束，退出码 0 = 没有未预注册
+.venv\Scripts\python.exe .tmp\step3b\probe_decisions.py --out .tmp\step28\decisions-f1.json
+.venv\Scripts\python.exe .tmp\step9\probe_verdict_lines.py --out .tmp\step28\verdictlines-f1.json
+.venv\Scripts\python.exe .tmp\step28\run_entries.py --side f1
+.venv\Scripts\python.exe .tmp\step28\scan_rd.py --left e1 --right f1
+
+# 文件归属（CI 线一个字没动，差集应为空）
+git diff --numstat 3be25c9..HEAD -- tools/ci_local.py tests/unit/test_ci_local.py tests/unit/test_ci_local_report_only.py tools/phase_evidence.py .github/workflows
+```
+
