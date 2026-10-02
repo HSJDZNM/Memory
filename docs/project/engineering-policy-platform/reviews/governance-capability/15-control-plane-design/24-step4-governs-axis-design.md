@@ -107,11 +107,13 @@
 三个字段都读不到 → `unknown`；其余 → `self`。今天是 **8 个通道** `relation=other`、
 **0 条声明**写过 `governs_tree`。
 
-**边界（先写下来）**：`relation=other` 而 `tree.declared != other` **不进五个差集**——
-五个差集是"声明 × 发现"的闭集（方案 §3.5），多一格就是第六格；这件事只出现在通道行与
-`headline` 的注里。**要不要给它一格，请评审裁定**（§8）。
+**边界（先写下来）**：`relation=other` 而 `tree.declared != other` **不进差集**——
+差集是"声明 × 发现"的闭集（方案 §3.5）；这件事只出现在通道行与 `headline` 的注里。
+**要不要给它一格，请评审裁定**（§8）。
+> **2026-10-03 补记**：第六格最后给了另一个问题——`expected_absent_present`（声明说这条通道
+> 按设计不该在，而它被发现了）。上面这条"树声明与实际不一致"仍然**不进**任何一格，见 **§8.5**。
 
-### 2.2 声明差集（三数 + 五个差集）
+### 2.2 声明差集（三数 + 六个差集）
 
 **要加的顶层键**：`account` / `differences` / `headline`。
 
@@ -140,8 +142,9 @@
 - `measured` 另有候选口径"至少接线轴有结论"=12；本稿按**两根轴都评过**（=7），
   因为它才区分得出"量过"与"读不到"（§8 第 1 条请评审确认）。
 
-**`differences` 五个差集**（每格 = `count` 整数 + `items` 列表；列表按 `channel_id` 稳定排序；
-每项带 `channel_id` / `declared_by` / `decision` / `wiring_status` / `freshness_status` / `remedy`）：
+**`differences` 六个差集**（每格 = `count` 整数 + `items` 列表；列表按 `channel_id` 稳定排序；
+每项带 `channel_id` / `declared_by` / `decision` / `wiring_status` / `freshness_status` / `remedy`；
+第六格是 **2026-10-03 裁定④** 在 1.3 内补的，口径见 **§8.5**）：
 
 | 键 | 定义 | 今天（**预测**，机制未落地） |
 | --- | --- | --- |
@@ -150,6 +153,7 @@
 | `in_scope_not_wired` | 声明 `in_scope`、而通道两根轴不都成立 | **红条件**；候选见 §2.3 |
 | `out_of_scope_active` | 声明 `out_of_scope`、而 `wiring_status=wired` | 0（4 条 `out_of_scope` 通道都不 wired） |
 | `out_of_scope_expired` | 声明 `out_of_scope` 且 `expires_at` 已过 | 0（今天 2026-10-01；最近一条 2026-10-31） |
+| `expected_absent_present` | 声明 `expected_absent`、而这条通道**被发现了**（第六格，2026-10-03 裁定④；1.3 内加、**不升版**） | 0（本机 7 条通道没有一条落在 `expected_absent` 声明下）；probe-ea2 那个场景里是 **1** |
 
 **`headline`**：一句稳定的人读文本 + 一条**机器行**（与 `HITS:` 同型：只加行、不改既有行）：
 

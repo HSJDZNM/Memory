@@ -399,6 +399,8 @@ def test_wiring_schema_version_is_pinned_to_a_literal() -> None:
     1.2 -> 1.3：顶层新增 account / differences / headline / red_conditions 四个键，每个通道新增
     governs 分档（24 号 §2.1/§2.2 + §8.3 裁定②）——同样只做报告：--check 的判据、退出码、
     result / failures / counts / fact_counts 与两根事实轴一个都不动。
+    1.3 **尚未发布**（还没进 feat），所以 2026-10-03 裁定④ 给 differences 补的第六格
+    expected_absent_present（含同名红条件）**在 1.3 内**、版本号不动。
     另一条用例 `test_wiring_json_contract` 只比常量与载荷是否一致，钉不住"版本号本身变了"。
     """
 
@@ -846,6 +848,67 @@ def test_governs_uses_explicit_covers_and_flags_in_scope_not_wired(
     red = payload["red_conditions"]["in_scope_not_wired"]
     assert red["count"] == 1 and red["is_red"] is True and red["enforced"] is False
     assert payload["differences"]["out_of_scope_active"]["count"] == 0
+
+
+EXPECTED_ABSENT_DECLARATION = """\
+schema_version: "2"
+channel_kinds:
+  dsh-profile: agent_runtime
+scope:
+  - id: ci-agent-runtime
+    decision: expected_absent
+    kind: agent_runtime
+    owner: ci
+    reason: CI 机器上按设计没有 Agent 运行时。
+    consequence: 相关步骤显式报 skipped 并写明 reason。
+    covers: ["dsh:verify-bc"]
+    expires_at: "2026-12-31"
+"""
+
+
+def test_expected_absent_covering_a_discovered_channel_is_counted(
+    tmp_root: Path, capsys: Any
+) -> None:
+    """第六格（2026-10-03 裁定④）：expected_absent 声明覆盖到**被发现**的通道 → 计数 1。
+
+    场景复用 `.tmp/step13/probe-ea2`（`ci-agent-runtime` 显式 covers `dsh:verify-bc`，而那个
+    profile 真的在本机）。它既不算"未声明"、也不进其余五格——这一格就是把「声明说它不该在，
+    它却在了」变成可读的读数。**只报告**：is_red=count>0、enforced=false、通道自己仍然 pass。
+    """
+
+    root = tmp_root / "root"
+    write_declaration(root, EXPECTED_ABSENT_DECLARATION)
+    home = make_home(tmp_root)
+    add_profile(home, "verify-bc", profile_patch(home / "profiles" / "verify-bc"))
+
+    code, out, _ = run_cli(
+        [
+            "--root", str(root), "--json", "wiring", "--dsh-home", str(home),
+            "--now", "2026-09-25T12:00:00Z", "--observe-sessions", "0",
+        ],
+        capsys,
+    )
+
+    assert code == 0  # 只报告：默认形态仍然退出 0
+    payload = json.loads(out)
+    channel = payload["channels"][0]
+    assert channel["channel_id"] == "dsh:verify-bc"
+    assert channel["governs"]["decision"] == "expected_absent"
+    assert channel["governs"]["declared_by"] == "ci-agent-runtime"
+    grid = payload["differences"]["expected_absent_present"]
+    assert grid["count"] == 1
+    item = grid["items"][0]
+    assert item["channel_id"] == "dsh:verify-bc"
+    assert item["declared_by"] == "ci-agent-runtime"
+    assert item["decision"] == "expected_absent"
+    assert item["remedy"]
+    red = payload["red_conditions"]["expected_absent_present"]
+    assert red["count"] == 1 and red["is_red"] is True and red["enforced"] is False
+    assert red["would_exit_code"] == 1
+    # 这一格不影响其余任何一格：它既不进"未声明"，也不进"in_scope 未接线"。
+    assert payload["differences"]["discovered_not_declared"]["count"] == 0
+    assert payload["differences"]["in_scope_not_wired"]["count"] == 0
+    assert payload["differences"]["declared_not_discovered"]["count"] == 0
 
 
 def test_same_tier_conflicting_declarations_are_not_guessed(tmp_root: Path, capsys: Any) -> None:

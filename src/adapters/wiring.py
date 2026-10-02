@@ -110,7 +110,10 @@ READING_GUIDE = (
 # 1.3：顶层新增 account / differences / headline / red_conditions 四个键，每个通道新增 governs
 #      分档（24 号 §2.1/§2.2 + §8.3 裁定②）。**全部只报告**：--check 的判据与退出码、
 #      result / failures / counts / fact_counts 与两根轴一个字段都不动；红条件只以
-#      red_conditions.in_scope_not_wired.enforced = false 的**显式未接线**形态出现。
+#      red_conditions.<格>.enforced = false 的**显式未接线**形态出现。
+#      1.3 **尚未发布**（还没进 feat），因此 2026-10-03 裁定④ 加的第六格
+#      `differences.expected_absent_present`（含同名红条件）**在 1.3 内**、不升版；
+#      它与 in_scope_not_wired 同型：只报告、不改任何退出码。
 #      顶层加键 = 改协议（AGENTS 第 55 条），因此 1.2 → 1.3。
 WIRING_SCHEMA_VERSION = "1.3"
 
@@ -348,13 +351,16 @@ TREE_UNKNOWN = "unknown"
 DECLARATION_AVAILABLE = "available"
 DECLARATION_UNAVAILABLE = "unavailable"
 
-# 五个差集（“声明 × 发现”的闭集，24 号 §2.2）+ 同档冲突（§2.1 规则 3）。
+# 六个差集（“声明 × 发现”的闭集，24 号 §2.2 + 2026-10-03 裁定④ 的第六格）+ 同档冲突
+# （§2.1 规则 3）。第六格 expected_absent_present 回答的是另一件事：声明说这条通道
+# **按设计不该在**，而它**真的在**——它不进其余五格，但也不该没有任何读数。
 DIFFERENCE_KEYS: tuple[str, ...] = (
     "discovered_not_declared",
     "declared_not_discovered",
     "in_scope_not_wired",
     "out_of_scope_active",
     "out_of_scope_expired",
+    "expected_absent_present",
     "declaration_conflicts",
 )
 # 通道级的那几格：每一项都带 channel_id / declared_by / decision / wiring_status /
@@ -364,6 +370,7 @@ CHANNEL_DIFFERENCE_KEYS: tuple[str, ...] = (
     "in_scope_not_wired",
     "out_of_scope_active",
     "out_of_scope_expired",
+    "expected_absent_present",
     "declaration_conflicts",
 )
 
@@ -590,7 +597,7 @@ class WiringReport:
         }
 
     def coverage(self) -> dict[str, Any]:
-        """三数 / 五个差集 / 红条件 / headline（24 号 §2.2 与 §2.3；全部只报告）。"""
+        """三数 / 六个差集 / 红条件 / headline（24 号 §2.2 与 §2.3；全部只报告）。"""
 
         return _coverage(
             self.channels,
@@ -2180,7 +2187,7 @@ def _governs_for(
                 expires_at = entry.expires_at
                 # 裁定④（2026-10-01，24 号 §8.4）：**没写** `governs_tree` 就是 `unknown`，
                 # 不替声明认领 `self`——"默认 self + 证据 other"这对矛盾按 24 号 §2.1 的边界
-                # 不进五个差集，会静默存在。
+                # 不进差集，会静默存在。
                 tree_declared = entry.declared_governs_tree()
                 tree_declared_by = entry.id
                 expired = _is_expired(expires_at, as_of)
@@ -2245,6 +2252,12 @@ _REMEDY_OUT_OF_SCOPE_ACTIVE = (
 _REMEDY_OUT_OF_SCOPE_EXPIRED = (
     "续期（renewals 加一条并改 expires_at）或改判；到期读数以 tools/exemption_expiry.py 为准"
     "（那是唯一实现）"
+)
+# 第六格（2026-10-03 裁定④）：声明说这条通道**按设计不该在**，而它**真的在**。
+_REMEDY_EXPECTED_ABSENT_PRESENT = (
+    "三种改法：把这条通道从本机移走（它本来就不属于这台机器），或把声明的 decision 改成"
+    " in_scope / out_of_scope（它其实该在这台机器上），或写明这条读数为什么本来就该红；"
+    "只报告：本台阶不改任何退出码"
 )
 _REMEDY_DECLARATION_CONFLICTS = (
     "给这条通道写一条显式 covers 定夺（显式覆盖优先于 kind 档），或把同档声明的 decision"
@@ -2326,7 +2339,7 @@ def _coverage(
     enumerated: bool,
     not_enumerated_reason: str,
 ) -> dict[str, Any]:
-    """三数 + 五个差集 + 红条件 + headline（24 号 §2.2 / §2.3；全部只报告）。
+    """三数 + 六个差集 + 红条件 + headline（24 号 §2.2 / §2.3；全部只报告）。
 
     三态纪律（裁定④）：**没枚举到通道**或**声明读不到**时，三数与每一格都写 unavailable /
     `count: null` + reason——0 是“枚举过、一个都没有”，不许拿它冒充“这次读不到”。
@@ -2363,8 +2376,9 @@ def _coverage(
         "status": DECLARATION_AVAILABLE if computable else DECLARATION_UNAVAILABLE,
         "reason": None if computable else "；".join(gaps),
         "note": (
-            "五个差集是“声明 × 发现”的闭集（24 号 §2.2）；declaration_conflicts 是同档冲突"
-            "（§2.1 规则 3），它不占第六格、只在这里逐条列出"
+            "六个差集是“声明 × 发现”的闭集（24 号 §2.2；第六格 expected_absent_present 见"
+            " 2026-10-03 裁定④）；declaration_conflicts 是同档冲突（§2.1 规则 3），"
+            "它不占这六格、只在这里逐条列出"
         ),
     }
     grids: dict[str, dict[str, Any]] = {key: {"count": None, "items": []} for key in DIFFERENCE_KEYS}
@@ -2391,6 +2405,11 @@ def _coverage(
             c
             for c in channels
             if governs[c.channel_id].decision == GOVERNS_OUT_OF_SCOPE and governs[c.channel_id].expired
+        ]
+        # 第六格（2026-10-03 裁定④）：**被发现的**通道里，声明说它按设计不该在的那些。
+        # 与其余五格一样只报告：它是"声明与现实的矛盾"，不是"该接没接"。
+        expected_absent_present = [
+            c for c in channels if governs[c.channel_id].decision == GOVERNS_EXPECTED_ABSENT
         ]
         not_discovered = [entry for entry in declared.entries if entry.id not in bound]
         mapped_kinds = set(declared.channel_kinds.values())
@@ -2465,9 +2484,37 @@ def _coverage(
                 for c in out_of_scope_expired
             ],
         }
+        grids["expected_absent_present"] = {
+            "count": len(expected_absent_present),
+            "items": [
+                _channel_item(c, governs[c.channel_id], remedy=_REMEDY_EXPECTED_ABSENT_PRESENT)
+                for c in expected_absent_present
+            ],
+        }
 
     red_count = grids["in_scope_not_wired"]["count"]
+    expected_absent_count = grids["expected_absent_present"]["count"]
     red_conditions = {
+        # 第六格（2026-10-03 裁定④）：与 in_scope_not_wired **同型**——只报告、enforced=false、
+        # 不改任何退出码；--check 的判据仍然是"failures 非空即 1"，不读本块。
+        "expected_absent_present": {
+            "status": DECLARATION_AVAILABLE if computable else DECLARATION_UNAVAILABLE,
+            "count": expected_absent_count,
+            "is_red": bool(expected_absent_count),
+            "red_when": (
+                "differences.expected_absent_present.count > 0"
+                "（声明 expected_absent 的通道被发现了）"
+            ),
+            "enforced": False,
+            "would_exit_code": 1,
+            "promote_when": (
+                "跑过 N≥1 次且 0 命中（0 命中必须来自至少一次真实读数）——与 L5 上线闸同型"
+            ),
+            "note": (
+                "只报告期：本块不改任何退出码；--check 的判据与今天逐字相同"
+                "（failures 非空即 1，不读本块）"
+            ),
+        },
         "in_scope_not_wired": {
             "status": DECLARATION_AVAILABLE if computable else DECLARATION_UNAVAILABLE,
             "count": red_count,
@@ -2505,6 +2552,7 @@ def _coverage(
         + "、in_scope 未接线 " + _count_text(grids["in_scope_not_wired"])
         + "、out_of_scope 却生效 " + _count_text(grids["out_of_scope_active"])
         + "、out_of_scope 已过期 " + _count_text(grids["out_of_scope_expired"])
+        + "、expected_absent 却被发现 " + _count_text(grids["expected_absent_present"])
         + "（全部只报告）"
     )
     return {
