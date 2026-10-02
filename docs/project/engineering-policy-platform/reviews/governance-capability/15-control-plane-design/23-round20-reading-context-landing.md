@@ -1586,7 +1586,7 @@ $env:PYTHONPATH='src'; .venv\Scripts\python.exe -m provenance.cli wiring-scope -
 | 解释器 | `.venv\Scripts\python.exe` = Python 3.13.11（打包自 Anaconda） |
 | **正题：`dsh:verify-*` 已不在清点里** | `adapters.cli wiring --json` 发现 **7 条**通道（`dsh:desktop` / `dsh:governed` / `-grade` / `-grade-approval` / `-wmsvc` / `dsh:headless` / `dsh:web`），**一条 `dsh:verify-*` 都没有**；`~/.dsh/profiles` 只剩 `desktop` / `governed` / `governed-grade` / `governed-grade-approval` / `governed-wmsvc` / `headless` / `web` / `node_modules` |
 | 5 个 profile 的去处 | `C:\Users\ZNM\.dsh-profiles-backup-20261003` 下有 `verify-bc` / `verify-dead` / `verify-exit2` / `verify-gov` / `verify-manual`（**可还原，没有删除**）——裁定① 的处置（选项 3）已由使用者完成 |
-| ACL 残留（**第二次遇到，形态与 §16.0 不同**） | `.tmp/tmp/pytest-of-ZNM` 又留下了（上一轮全量 pytest 建的）：`Remove-Item`、`New-Item`（在它里面建子目录）、`os.scandir` **三种都退「拒绝访问」**（策略 `workspace-write`，`sandbox.denied=false` —— 拒的是 Windows ACL，不是 DSH 沙箱），于是 `pytest -n auto` 在 `_pytest/pathlib.py:187` 直接 `INTERNALERROR: PermissionError [WinError 5]`。**处置**：`Rename-Item .tmp\tmp → .tmp/tmp-acl-residue-<HHMMSS>`（重命名父目录**不需要**子项的权限，实测成功），再让门禁重建 `.tmp/tmp`。**没有**走上一轮那条 `danger-full-access` 的路：本轮两次升级请求（120 s / 560 s）都**没有得到应答**（§17.7） |
+| ACL 残留（**第二次遇到，形态与 §16.0 不同**） | `.tmp/tmp/pytest-of-ZNM` 又留下了（上一轮全量 pytest 建的）：`Remove-Item`、`New-Item`（在它里面建子目录）、`os.scandir` **三种都退「拒绝访问」**（策略 `workspace-write`，`sandbox.denied=false` —— 拒的是 Windows ACL，不是 DSH 沙箱），于是 `pytest -n auto` 在 `_pytest/pathlib.py:187` 直接 `INTERNALERROR: PermissionError [WinError 5]`。**处置**：`Rename-Item .tmp\tmp → .tmp/tmp-acl-residue-<HHMMSS>`（重命名父目录**不需要**子项的权限，实测成功），再让门禁重建 `.tmp/tmp`。**没有**走上一轮那条 `danger-full-access` 的路：本轮两次升级请求（120 s / 560 s）都**没有得到应答**；后半段使用者把策略改成 `danger-full-access`（§17.6） |
 
 ### 17.1 裁定（2026-10-03，五条）
 
@@ -1746,3 +1746,94 @@ $env:PYTHONPATH='src'; .venv\Scripts\python.exe -m provenance.cli wiring-scope -
 **两桶都没越线，但 tests 只余 4 行**——按指令"越线就停下复核"，本轮**停在线上**：
 后续若要再加用例，先按这条读数复核。`tools/ci_local.py` / `tests/unit/test_ci_local*.py` /
 `tools/phase_evidence.py` / `.github/workflows/*` **一个字都没动**（文件归属）。
+
+### 17.6 门禁（`--full`）
+
+**命令（逐字）**：`python tools/ci_local.py --full --python .venv/Scripts/python.exe`
+
+| 项 | 读数 |
+| --- | --- |
+| **显式退出码** | **1** |
+| **耗时** | 门禁自报 **4m 17.1s**（外部秒表 **257.8 s**）；33 步（执行 **31** 步 + 只报告 **2** 步） |
+| 失败（2 处） | #3 `Unit, contract, integration and security tests`（rc=1，1m 47.3s）、#31 `Phase 8 acceptance evidence`（rc=1，6.6s） |
+| 最慢五步 | pytest 1m 47.3s（41.7%）/ 手册同步 1m 00.5s（23.5%）/ 编排闭环 54.9s（21.4%）/ 阶段证据 6.6s（2.6%）/ 验证器闭环 5.3s（2.0%） |
+| #9 `Real dsh sandbox loop` | **ok 1.4s**（本机**环境跳过**：结论载荷 `result=skipped` / `environment_skipped=true`，见 §17.7） |
+| pytest 步 | **3 failed, 2066 passed, 1 skipped, 4 warnings in 106.21s**；日志第一行就是逐字命令：`.venv\Scripts\python.exe -m pytest tests/unit tests/contract tests/integration tests/security -q -n auto --dist loadfile --junit-xml=.tmp/artifacts/tests-all-report.xml` |
+| 两条只报告读数 | 义务门禁 `0 命中`（`hits=0 / 1 个账本（不适用 1：没有账本可读，不算一次真实读数）`）；豁免到期 **`HITS: 0 / declared=7 due=0 expired=0 unprovable=0`** ← 第 1 步的 `declared=7` 在门禁里读得到 |
+| 两处失败**同源** | 第 31 步引用第 3 步刚写出的 junit 报告（`phase_evidence: result=fail cases=2070 failures=3（tests/contract 3）`）——**不是两个独立缺陷**，是同一份 3 条红在两个步骤上的投影 |
+
+**这 3 条红是"先于本轮"的**（§17.2 已给出证明）：三条用例的**夹具**留痕是
+`2026-09-25T11:59:00Z`、且**不带 `--now`**（走真实墙钟），今天 age = 624828 s > 604800 s。
+把声明文件改动 `git stash` 之后在 `088349a` 上重跑同一批用例 → **同样 3 failed / 38 passed**，
+报错逐字相同。本轮按指令**"不改任何东西"**，因此门禁在**失败形态**下收场：这是**环境的墙钟**，
+不是本轮改动引入的红，也不是新增的阻断步骤（`--check` 判据与退出码一个都没动）。
+
+**沙箱形态（口径诚实）**：本轮前半段的文件策略是 `workspace-write`，实测 pytest 的 `-n auto`
+直接 `INTERNALERROR`（§17.0 的 ACL 残留），两次 `danger-full-access` 升级请求（120 s / 560 s）
+**都没有得到应答**；**2026-10-03 01:40 前后使用者把会话文件策略改成 `danger-full-access`**
+（审批提示同时关闭），此后 `pytest -n auto` 正常（先跑 `tests/unit/test_wiring.py` 冒烟
+→ `96 passed in 5.54s`），门禁才跑得起来。**这是环境条件的改变，不是本轮的代码改动。**
+同一形态下把 4 个 `tmp-acl-residue-*` 与 `.tmp/tmp` 一并删掉（实测 `remaining: 2` = 既有的
+`tmp2` / `tmp3`）。
+
+### 17.7 跑前快照 → 跑后逐个文件比对（第 9 步必然跑 `tools/dsh_sandbox_loop.py`）
+
+| 项 | 读数 |
+| --- | --- |
+| 快照 | `.tmp/e2e/before-gate-r27/20261003T013957/manifest.json`（HEAD `ca7b2a6`、`git status` 为空） |
+| 受控目录 | before/after 都是 **93 个文件**；逐字节相同 **91**、内容变了 **2**、新增 0、消失 0 |
+| 变了的两个 | `.tmp/phase-2-sandbox/logs/{allow-run,block-run}.txt`：`2ab540972f1d1a75… → 2dc1a97ba8eea1c8…`（两份内容相同：这次 dsh 进程真的起来了，日志被重写） |
+| 内容相同但 mtime 变了 | **6** 个（受控项目的 `dsh-adapter.yaml` / `hooks.json` / `patch.yml` / `AGENTS.md` / `order_controller.py` / `order_service.py`）——受控目录每次由闭环重建，「内容没变」不等于「没被重写」 |
+| 产物 | `3122 B → 3121 B`；两边都 `result=skipped` / `environment_skipped=true` / `host.sandbox=restricted`；`tree.revision`：`088349a… → ca7b2a6…`；`host.dsh_home`：`<unset> → <outside-workspace>` |
+| 仓库侧 | HEAD 仍 `ca7b2a6`；`git status --porcelain` **空** |
+| 这一步证明什么 | 门禁**没有动仓库**、**没有动受控项目的源码与配置**（内容逐个相同）；它**不**证明端到端闭环跑通了（那是环境跳过） |
+
+### 17.8 未核实 / 待评审
+
+1. **门禁退出码 1 的唯一成因**是那 3 条**先于本轮**的墙钟到期用例（§17.2 的复现证明 + §17.6 的同源
+   说明）。本轮按指令"不改任何东西"——**要不要单开一次"给这三条夹具钉死 `--now`"的小修，请评审定夺**
+   （那是测试夹具问题，不在本轮的四步里；补它会让 tests 桶再涨，而 tests 只剩 4 行余量）。
+2. **`declared_not_discovered` 实测是 2，不是 1**（§17.2 的 ⚠）：第二条是
+   `agent-channel-inventory-report-mode`（`kind=gate_check`，不是通道）。**没有为了对齐指令去改判或
+   删声明**。要不要把它从通道声明里移出去（或给这一格补第四种成因文案），**请评审定夺**。
+3. **ACL 残留的成因没修**：本轮只是"改名让路 + 事后删除"，"下一次全量 pytest 会不会再留一个"
+   **未核实**。把它做成一次性诊断（哪个令牌建的、为什么不可读）**没做**。
+4. **R-h（25 号 §7 的方案 A）挪到第二十三轮**（裁定⑤）：本轮**不做**，25 号正文一字未改。
+5. **文件归属**：`tools/ci_local.py` / `tests/unit/test_ci_local*.py` / `tools/phase_evidence.py` /
+   `.github/workflows/*` **一个字都没动**——复核命令见 §17.9（差集 0 行）。
+6. **`git push` / `git fetch` 没有做**：`origin/refactor/control-plane` 仍指向 `088349a`，
+   「远端此刻的状态」**未核实**。
+7. **本轮的 3 条红与清点读数无关**：清点侧的真实 now 与钉死 now **逐项相同**（§17.2），
+   `in_scope_not_wired` 两次都是 0；到期的只是测试夹具的固定时间戳。
+8. **`--timings` 没给**：本轮没写 `.tmp/ci-local-timings.json`（步耗时用的是门禁自己打印的汇总表 +
+   逐步日志）。
+
+### 17.9 复现命令（只读或只写 `.tmp`）
+
+```powershell
+# 环境自检的正题：清点里没有 dsh:verify-*
+$env:PYTHONPATH='src'; .venv\Scripts\python.exe -m adapters.cli wiring --json --now 2026-10-03T00:00:00+08:00 --observe-sessions 0
+
+# 真实 now 与钉死 now 的对照（7 天窗口）
+.venv\Scripts\python.exe .tmp\step14\realnow.py
+
+# 三步的 R-d（三把尺子 + 硬约束）：a1 = 088349a / b1 = f0880b6 / c1 = d930af8 / d1 = d2d90fa
+.venv\Scripts\python.exe .tmp\step14\scan_rd.py --left a1 --right b1 --profile data
+.venv\Scripts\python.exe .tmp\step14\scan_rd.py --left b1 --right c1 --profile wording
+.venv\Scripts\python.exe .tmp\step14\scan_rd.py --left c1 --right d1 --profile cell6
+
+# 声明与到期读数
+.venv\Scripts\python.exe -m provenance.cli wiring-scope --check --json   # 需 PYTHONPATH=src
+.venv\Scripts\python.exe tools\exemption_expiry.py
+
+# 先于本轮的那 3 条红（在 088349a 上同样红）
+.venv\Scripts\python.exe -m pytest tests/contract/test_wiring_inventory.py -q -k "exits_zero_only_for_a_wired_channel or json_contract or verdict_agrees"
+
+# 门禁 + 快照比对
+.venv\Scripts\python.exe tools\ci_local.py --full --python .venv/Scripts/python.exe
+.venv\Scripts\python.exe .tmp\step14\snapshot_before_gate.py
+.venv\Scripts\python.exe .tmp\step14\compare_after_gate.py
+
+# 文件归属（CI 线一个字没动）
+git diff --numstat 088349a..HEAD -- tools/ci_local.py tests/unit/test_ci_local.py tools/unit/test_ci_local_groups.py tools/phase_evidence.py .github/workflows
+```
