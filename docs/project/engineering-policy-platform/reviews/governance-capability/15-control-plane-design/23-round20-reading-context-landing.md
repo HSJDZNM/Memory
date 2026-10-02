@@ -1768,6 +1768,8 @@ $env:PYTHONPATH='src'; .venv\Scripts\python.exe -m provenance.cli wiring-scope -
 报错逐字相同。本轮按指令**"不改任何东西"**，因此门禁在**失败形态**下收场：这是**环境的墙钟**，
 不是本轮改动引入的红，也不是新增的阻断步骤（`--check` 判据与退出码一个都没动）。
 
+**覆盖边界（口径诚实）**：这次门禁跑在 **`ca7b2a6`** 上（= 第 1–3 步的代码 / 数据 / 用例 + 本节前半段与 24 号 §8.5 的落地树）。**记录这次读数的两个文档提交在它之后**（本节后半段与 README 索引行），它们只改文档、**没有再跑第三次门禁**——与 §16.4 的同一条口径，提交前重跑过 `tools/check_text_conventions.py`（657 个文本文件、问题 0 处）。
+
 **沙箱形态（口径诚实）**：本轮前半段的文件策略是 `workspace-write`，实测 pytest 的 `-n auto`
 直接 `INTERNALERROR`（§17.0 的 ACL 残留），两次 `danger-full-access` 升级请求（120 s / 560 s）
 **都没有得到应答**；**2026-10-03 01:40 前后使用者把会话文件策略改成 `danger-full-access`**
