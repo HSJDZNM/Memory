@@ -115,7 +115,19 @@ READING_GUIDE = (
 #      `differences.expected_absent_present`（含同名红条件）**在 1.3 内**、不升版；
 #      它与 in_scope_not_wired 同型：只报告、不改任何退出码。
 #      顶层加键 = 改协议（AGENTS 第 55 条），因此 1.2 → 1.3。
-WIRING_SCHEMA_VERSION = "1.3"
+# 1.4：**这是"形状的名字"，不是"提交的名字"**——1.3 发布之后又有两处改动落进这份载荷，
+#      一起由这次显式递进认领（AGENTS 第 55 条；2026-10-03 评审裁定②③，读数见 23 号 §18）：
+#      (a) 第六格 `differences.expected_absent_present` 与 `red_conditions.expected_absent_present`
+#          （裁定④，提交 d2d90fa）：它加在 1.3 **进入 feat 之后**——1.3 已于 2026-10-01 13:33 进
+#          feat（= 已发布），当时那句"1.3 尚未发布、格内改正"因此不成立，这个键由 1.4 认领；
+#      (b) `declared_not_discovered` **只统计通道类声明**（kind 出现在 channel_kinds 的值里的
+#          那些），`gate_check` 这类非通道声明改为在同格的 `excluded_non_channel` 里逐条列出
+#          （带 id 与 kind；"不许消失"是裁定③ 的原话）。同一格下 count / items 换了口径，
+#          headline.text 里那个计数跟着变。**reason 文案的修正**（提交 d930af8）不算改语义，
+#          不涉及升版。
+#      **只报告**：--check 的判据与退出码、result / failures / counts / fact_counts、两根事实轴、
+#      红条件与其余五格一个字段都不动。
+WIRING_SCHEMA_VERSION = "1.4"
 
 DEFAULT_STALE_AFTER_SECONDS = 7 * 24 * 3600
 DEFAULT_OBSERVED_SESSIONS = 8
@@ -2305,22 +2317,33 @@ def _channel_item(
     return item
 
 
-def _declared_not_discovered_reason(
-    entry: Any, *, mapped_kinds: set[str], kind_counts: Mapping[str, int]
-) -> str:
-    """「声明了、本机没发现」这一格的 reason：三种成因分开写（AGENTS 第 50 条）。
+def _excluded_non_channel_reason(entry: Any) -> str:
+    """非通道声明（kind 不在 channel_kinds 的值里）为什么**不进**这一格。
+
+    2026-10-03 评审裁定③：`gate_check` 这类声明管的是别的事（门禁的检查形态），
+    "声明了、本机没发现"对它不是缺口；但把它从读数里删掉才是——所以它逐条列在这里。
+    """
+
+    return (
+        "它的 kind=" + entry.kind + " 不在 channel_kinds 的值里：这不是一条**通道类**声明，"
+        "所以不进「声明未发现」这一格（2026-10-03 评审裁定③）；列在这里是为了让它**不消失**"
+        "——它不是通道缺口，但「这条声明本机没发现」这件事仍然读得到"
+    )
+
+
+def _declared_not_discovered_reason(entry: Any, *, kind_counts: Mapping[str, int]) -> str:
+    """「声明了、本机没发现」这一格的 reason：两种成因分开写（AGENTS 第 50 条）。
 
     ③（2026-10-03 评审裁定）：旧文案对 `ci-agent-runtime` 写「本机没有发现它覆盖的那类通道」，
     而本机**有** `agent_runtime` 档的通道（7 条 dsh-profile）——只是它们全被**其它声明的显式
     covers** 领走了。成因不同、改法也不同：前者要删声明或改 kind，后者要给这条声明自己写
     covers（或撤回领走那些通道的显式 covers）。所以这里逐条算出真实成因，不再用一句话兜两种情形。
+
+    同一条裁定还把第三种成因（kind 没有映射到任何发现侧 kind）**移出了这一格**：那些声明由
+    调用方送进 `excluded_non_channel`（见 `_excluded_non_channel_reason`），因此本函数只会在
+    通道类声明上被调用。
     """
 
-    if entry.kind not in mapped_kinds:
-        return (
-            "它的 kind=" + entry.kind + " 没有任何发现侧 kind 映射到它"
-            "（channel_kinds 的值里没有）：本机没有这类通道"
-        )
     peers = kind_counts.get(entry.kind, 0)
     if peers:
         return (
@@ -2382,6 +2405,8 @@ def _coverage(
         ),
     }
     grids: dict[str, dict[str, Any]] = {key: {"count": None, "items": []} for key in DIFFERENCE_KEYS}
+    # 读不到时 excluded_non_channel 同样是一个**明确的空列表**，不是缺键（第 51 条的同一条口径）。
+    grids["declared_not_discovered"]["excluded_non_channel"] = []
 
     if computable:
         bound: set[str] = set()
@@ -2413,6 +2438,12 @@ def _coverage(
         ]
         not_discovered = [entry for entry in declared.entries if entry.id not in bound]
         mapped_kinds = set(declared.channel_kinds.values())
+        # ③（2026-10-03 评审裁定）：这一格只统计**通道类**声明——kind 出现在 channel_kinds
+        # 的值里的那些（也就是"能映射到某个发现侧 kind"）。`gate_check` 这类声明管的是别的
+        # 事（门禁的检查形态），"声明了、本机没发现"对它不是通道缺口；让它长期占着这一格的
+        # 分子，只会把这一格的真实缺口淹掉。**不许消失**：非通道的那些逐条进 excluded_non_channel。
+        non_channel = [entry for entry in not_discovered if entry.kind not in mapped_kinds]
+        not_discovered = [entry for entry in not_discovered if entry.kind in mapped_kinds]
         # ③（2026-10-03 评审裁定）：这一格的 reason 要说清**为什么**一条通道都没绑定到它。
         # kind 档有映射、本机也确实发现了那一档的通道时，「本机没有发现它覆盖的那类通道」
         # 是**错的**——真实成因是那些通道都被其它声明的**显式 covers** 领走了
@@ -2455,12 +2486,20 @@ def _coverage(
                     "declaration_id": entry.id,
                     "decision": entry.decision,
                     "kind": entry.kind,
-                    "reason": _declared_not_discovered_reason(
-                        entry, mapped_kinds=mapped_kinds, kind_counts=kind_counts
-                    ),
+                    "reason": _declared_not_discovered_reason(entry, kind_counts=kind_counts),
                     "remedy": _REMEDY_DECLARED_NOT_DISCOVERED,
                 }
                 for entry in not_discovered
+            ],
+            # 非通道声明：不进分子，也不许消失（裁定③ 的原话）。带 id 与 kind。
+            "excluded_non_channel": [
+                {
+                    "declaration_id": entry.id,
+                    "decision": entry.decision,
+                    "kind": entry.kind,
+                    "reason": _excluded_non_channel_reason(entry),
+                }
+                for entry in non_channel
             ],
         }
         grids["in_scope_not_wired"] = {

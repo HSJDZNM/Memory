@@ -420,10 +420,17 @@ def test_wiring_schema_version_is_pinned_to_a_literal() -> None:
     result / failures / counts / fact_counts 与两根事实轴一个都不动。
     1.3 **尚未发布**（还没进 feat），所以 2026-10-03 裁定④ 给 differences 补的第六格
     expected_absent_present（含同名红条件）**在 1.3 内**、版本号不动。
+    1.3 -> 1.4：1.3 已随 feat 发布（2026-10-01 13:33 进 feat），于是**发布之后**落进这份载荷的
+    两处改动一起由这次显式递进认领（第 55 条 / 裁定②③）——(a) 第六格
+    differences.expected_absent_present 与它的红条件（裁定④，提交 d2d90fa，当时按"1.3 尚未
+    发布"处理，而 1.3 其实已发布）；(b) declared_not_discovered 只统计通道类声明、非通道声明
+    进同格的 excluded_non_channel（裁定③）——同一格里 count / items 换了口径、再多一个键，
+    headline.text 里的计数随之变化；reason 文案修正（d930af8）不算改语义、不涉及升版。
+    --check 判据、退出码与其余五格一个字段都不动。
     另一条用例 `test_wiring_json_contract` 只比常量与载荷是否一致，钉不住"版本号本身变了"。
     """
 
-    assert WIRING_SCHEMA_VERSION == "1.3"
+    assert WIRING_SCHEMA_VERSION == "1.4"
 
 
 def test_missing_dsh_home_fails_the_check_and_says_so(tmp_root: Path, capsys: Any) -> None:
@@ -940,6 +947,74 @@ def test_expected_absent_covering_a_discovered_channel_is_counted(
     assert payload["differences"]["declared_not_discovered"]["count"] == 0
 
 
+NON_CHANNEL_DECLARATION = """\
+schema_version: "2"
+channel_kinds:
+  dsh-profile: agent_runtime
+scope:
+  - id: desktop-entry-points
+    decision: out_of_scope
+    kind: agent_runtime
+    owner: host
+    reason: 桌面通道是主机配置。
+    consequence: 只报告。
+    covers: ["dsh:desk*"]
+    expires_at: "2026-12-31"
+  - id: ci-agent-runtime
+    decision: expected_absent
+    kind: agent_runtime
+    owner: ci
+    reason: CI 机器上按设计没有 Agent 运行时。
+    consequence: 相关步骤显式报 skipped 并写明 reason。
+    expires_at: "2026-12-31"
+  - id: agent-channel-inventory-report-mode
+    decision: out_of_scope
+    kind: gate_check
+    owner: platform
+    reason: 平台治理受控会话、不治理使用者的日常入口。
+    consequence: 清点只报告、总是退出 0。
+    expires_at: "2026-12-31"
+"""
+
+
+def test_non_channel_declarations_are_excluded_but_never_disappear(
+    tmp_root: Path, capsys: Any
+) -> None:
+    """裁定③（2026-10-03）：declared_not_discovered 只统计**通道类**声明。
+
+    同一份声明文件里放两条都"没被发现"的声明：一条 kind=agent_runtime（通道类，进分子），
+    一条 kind=gate_check（不是通道——**不进分子，但也不许消失**：逐条列在 excluded_non_channel
+    里，带 id 与 kind）。判据就是 channel_kinds 的**值集**，不是"看起来像不像通道"的直觉。
+    """
+
+    root = tmp_root / "root"
+    write_declaration(root, NON_CHANNEL_DECLARATION)
+    home, _profile = wired_home_without_audit(tmp_root)
+
+    code, out, _ = run_cli(
+        [
+            "--root", str(root), "--json", "wiring", "--dsh-home", str(home),
+            "--now", FIXED_NOW_TEXT, "--observe-sessions", "0",
+        ],
+        capsys,
+    )
+
+    assert code == 0  # 只报告：非通道声明不进任何阻断路径
+    payload = json.loads(out)
+    grid = payload["differences"]["declared_not_discovered"]
+    assert grid["count"] == 1
+    assert [item["declaration_id"] for item in grid["items"]] == ["ci-agent-runtime"]
+    excluded = grid["excluded_non_channel"]
+    assert [item["declaration_id"] for item in excluded] == ["agent-channel-inventory-report-mode"]
+    assert excluded[0]["kind"] == "gate_check"
+    assert excluded[0]["decision"] == "out_of_scope"
+    assert excluded[0]["reason"]  # 说得出为什么被移出去，不是无声地丢掉
+    # 这一格不影响其余任何一格，也不改任何退出码。
+    assert payload["differences"]["discovered_not_declared"]["count"] == 0
+    assert payload["differences"]["in_scope_not_wired"]["count"] == 0
+    assert "声明未发现 1" in payload["headline"]["text"]
+
+
 def test_same_tier_conflicting_declarations_are_not_guessed(tmp_root: Path, capsys: Any) -> None:
     """规则 3：同一通道被多条同档声明命中而判决不同 → undeclared + 逐条冲突，不挑一个。"""
 
@@ -1004,6 +1079,8 @@ def test_the_three_numbers_are_unavailable_not_zero_when_nothing_is_enumerated(
     assert differences["reason"]
     assert differences["in_scope_not_wired"]["count"] is None
     assert differences["in_scope_not_wired"]["items"] == []
+    # 读不到时 excluded_non_channel 也是**明确的空列表**，不是缺键（第 51 条的同一条口径）。
+    assert differences["declared_not_discovered"]["excluded_non_channel"] == []
     red = payload["red_conditions"]["in_scope_not_wired"]
     assert red["count"] is None and red["is_red"] is False and red["enforced"] is False
     assert "unavailable" in payload["headline"]["machine_line"]

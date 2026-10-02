@@ -149,7 +149,7 @@
 | 键 | 定义 | 今天（**预测**，机制未落地） |
 | --- | --- | --- |
 | `discovered_not_declared` | 发现到、却没有声明覆盖 | 依赖 `covers` 怎么写——**未核实** |
-| `declared_not_discovered` | 声明了、本机没发现 | 2（`ci-agent-runtime` 是 `expected_absent`；`agent-channel-inventory-report-mode` 的 `kind=gate_check` 不是通道） |
+| `declared_not_discovered` | **通道类**声明里"声明了、本机没发现"的那些——判据是 `kind` 出现在 `channel_kinds` 的**值集**里；非通道声明不进这一格，逐条列在同格的 `excluded_non_channel`（**2026-10-03 裁定③**，WIRING 1.3→1.4） | **1**（`ci-agent-runtime`）；`agent-channel-inventory-report-mode`（`kind=gate_check`）在 `excluded_non_channel` 里，带 id 与 kind |
 | `in_scope_not_wired` | 声明 `in_scope`、而通道两根轴不都成立 | **红条件**；候选见 §2.3 |
 | `out_of_scope_active` | 声明 `out_of_scope`、而 `wiring_status=wired` | 0（4 条 `out_of_scope` 通道都不 wired） |
 | `out_of_scope_expired` | 声明 `out_of_scope` 且 `expires_at` 已过 | 0（今天 2026-10-01；最近一条 2026-10-31） |
@@ -216,6 +216,16 @@ IN_SCOPE_NOT_WIRED: 0 / discovered=12 declared=7 measured=7
 
 **不是版本轴的同名字段**：`wiring-scope.yaml` 的 `expires_at` / `owner` 是声明内容，
 不随载荷版本走；`--check` / `--require-runtime` 是 CLI 开关，不是协议。
+
+> **2026-10-03 补记（第 28 轮 · WIRING 1.3 → 1.4）**：上面那句"拆开落地时每拆一次都要再递增
+> 一格"在**裁定③**上兑现了——`declared_not_discovered` 只统计通道类声明、非通道声明进同格的
+> `excluded_non_channel`，**同一格的 count / items 换了口径、再多一个键**，所以
+> `WIRING_SCHEMA_VERSION` 1.3 → **1.4**（1.3 已随 feat 发布 = `088349a`，不再走"尚未发布、
+> 格内改正"那条路；AGENTS 第 55 条）。同批改的引用点：`src/adapters/wiring.py`（常量 +
+> 版本史注释）、`tests/contract/test_wiring_inventory.py`（钉死版本号的字面量断言 + 一条新用例）、
+> 本文件 §2.2 的那一行。**只报告不变**：`--check` 判据、退出码、`result` / `failures` /
+> `counts` / `fact_counts`、两根事实轴、`red_conditions` 与其余五格一个字段都不动
+> （R-d 逐条见 **23 号 §18**）。
 
 ---
 
