@@ -480,11 +480,11 @@ uv run python tools/orchestration_loop.py
 ### 测试
 
 ```powershell
-uv run python -m pytest tests/unit -q            # 575 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类、API DTO/配置/预算/幂等/指标、编排状态/上限/失败码/checkpoint/审批语义
-uv run python -m pytest tests/contract -q        # 182 用例：决策协议快照 + dsh/多 Agent 映射契约 + 检索端口契约 + 受控执行协议 + 验证器证据协议 + API 传输契约（OpenAPI 快照 / 版本钉死 / 核心层不依赖框架）+ 编排引擎等价（两个引擎逐字段一致）与依赖方向
-uv run python -m pytest tests/integration -q     # 258 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环、验证器流水线、多 Agent 运行时、HTTP API（ASGI 进程内）、编排恢复/幂等/平台故障与真注册表端到端
-uv run python -m pytest tests/security -q        # 84 用例：注入、越权、缓存失效、检索与验证器失败关闭、审批伪造、日志失效、多 Agent 对抗、API 未认证/跨租户/不可达（不返回 allow）、编排的伪造审批与恢复绕过
-uv run python -m pytest -q                       # 全部收集 1099 用例；本机实跑 1098 passed、1 skipped（Windows 不允许普通用户创建符号链接）
+uv run python -m pytest tests/unit -q            # 1127 用例：模型、规范化、范围矩阵、决策聚合、分块/查询/Context、注册表/参数/授权/审计、AST 事实/依赖图/适配器分类、API DTO/配置/预算/幂等/指标、编排状态/上限/失败码/checkpoint/审批语义、dsh 预算不等式的等价性（check_wiring 的返回值逐字节钉住）与控制面事实表的加载/连接键
+uv run python -m pytest tests/contract -q        # 352 用例：决策协议快照 + dsh/多 Agent 映射契约 + 检索端口契约 + 受控执行协议 + 验证器证据协议 + API 传输契约（OpenAPI 快照 / 版本钉死 / 核心层不依赖框架）+ 编排引擎等价（两个引擎逐字段一致）与依赖方向
+uv run python -m pytest tests/integration -q     # 564 用例：真实 CLI、性能基线、dsh Hook、检索索引/基线、受控执行器与闭环、验证器流水线、多 Agent 运行时、HTTP API（ASGI 进程内）、编排恢复/幂等/平台故障与真注册表端到端
+uv run python -m pytest tests/security -q        # 88 用例：注入、越权、缓存失效、检索与验证器失败关闭、审批伪造、日志失效、多 Agent 对抗、API 未认证/跨租户/不可达（不返回 allow）、编排的伪造审批与恢复绕过
+uv run python -m pytest -q                       # 全部收集 2131 用例；本机实跑 2130 passed、1 skipped（Windows 不允许普通用户创建符号链接）
 ```
 
 ### 记录性能基线

@@ -2578,3 +2578,187 @@ git status --porcelain -uall -- tools/ci_local.py tests/unit/test_ci_local.py te
 # 文件归属：提交之后按提交区间复核（应为空）
 git diff --numstat 6ed3ca8..HEAD -- tools/ci_local.py tests/unit/test_ci_local.py tests/unit/test_ci_local_report_only.py tools/phase_evidence.py .github/workflows validation/instrument-checks.yaml
 ```
+
+---
+
+## 21 第 30 轮 · 台阶 5（只报告部分）落地：C3 方案 A + checks 表扩字段 + facts 表 + 新报告工具与门禁
+
+- **执行**：2026-10-03（本机）；控制面重构会话（**唯一写者**）。
+- **树**：分支 `refactor/control-plane`；本轮起点 = 合并之后的 `fc2a5dc`（`git status --porcelain -uall` 空）。
+- **依据**：27 号（台阶 5 设计稿）与 **2026-10-03 的五条裁定**（登记在 27 号 §11 与本节）；26 号（同型的 CI 线交接）；
+  28 号（本轮的交接清单）；AGENTS 第 19（证据不带绝对路径）、45（自己的仪器也要能失败）、48（读数属于哪棵树）、
+  50（口径诚实）、55（加键就是改协议）、56（不适用 ≠ 0 命中）条。
+- **本文是什么**：本轮的实跑读数、R-d 逐条、门禁与预算，以及**还没做/没核实**的清单。
+- **本文不是什么**：不是评审结论。四格红条件仍然 `enforced: false`、退出码一个都没接；本轮的交付物**只报告**。
+
+### 21.0 环境自检与合并（第 0 步）
+
+| 项 | 读数 |
+| --- | --- |
+| 起点 | `6579ce0`（工作树空，分支 `refactor/control-plane`） |
+| 合并 | `git merge origin/feat/rules-and-os-platform`（**不 rebase**）→ `fc2a5dc`，**零冲突**；CI 线那一次提交带 3 个文件：`tools/ci_local.py` +16、`tests/unit/test_ci_local_report_only.py` +52/−3、`validation/instrument-checks.yaml` +9 |
+| 合并后的仪器自证 | `HITS: 0 / … / objects=65 declared=65`、四格 `0/0/0/0`（登记表 65 行 = 44 + 13 + 5 + **3**）——与第 0 步要求的读数一致 |
+| `.tmp/tmp/pytest-of-*` 的处置 | 第一次删除被拒（Windows 文件权限层，`WinError 5`，pytest 的 basetemp 因此起不来）；按 ACL 自检脚本跑了一次：**未发现该类问题**（`NOT_THIS_CLASS`，`writeDac=true`、无外来包权限项）。会话文件策略改为 `danger-full-access` 之后**删除成功**，pytest 恢复可跑（这条是**环境前提**，不是本轮的行为变化） |
+
+### 21.1 C3 方案 A（裁定①）：先交尺子，再抽函数
+
+| 步 | 提交 | 读数 |
+| --- | --- | --- |
+| 1. 等价性用例（**不改实现**） | `cfb4428` | 新文件 `tests/unit/test_dsh_budget_inequality.py`：26 条（28 个用例点）；表里的字面量在抽取**之前**（树 = `fc2a5dc`）实测抄下；**在未改动的实现上全绿** = 它钉住的是当前行为 |
+| 2. 抽取 `budget_inequality_facts` | `36e1157` | `src/adapters/dsh/hooks.py` 由 45 行内联判据变成"读数 + 格式化"；用例再加 6 条（共 34），仍然全绿 |
+
+- **五种形态齐**（裁定①点名的）：两段（3 条）/ 三段（3 条）/ 超预算（5 条）/ 缺 hooks.json（9 条）/ timeout 是表达式（3 条）；
+  另有三条**边界**：`5.0005s`（浮点比较与 `int()` 比较会给出相反结论）、`0.0005s` 配 0ms 内部预算、
+  多条目时"最后一条数字生效"。
+- **负数对照（AGENTS 第 45 条）**：在 `git archive HEAD` 的副本上把消息里一个字符改掉 → **5 条两条段用例变红**（23 条照旧）；
+  真实工作树只多那一个新文件。
+- **状态闭集**：`ok` / `violated` / `not_applicable` / `unavailable`；上限来源
+  `limit_source ∈ {hooks.json, dsh_default}`；一条**刻意的不对称**写进 docstring——hooks.json 的 timeout 不是数字时，
+  两段读作 `unavailable`（原实现跳过），三段按 `DEFAULT_HOOK_TIMEOUT_MS` 继续判。
+- **端到端留给使用者**（裁定①）：本会话**没有**跑 dsh 端到端（也不许跑 `tools/dsh_sandbox_loop.py`）。
+
+### 21.2 检查登记表扩字段 + facts 表（裁定②③）
+
+- `CHECKS_SCHEMA_VERSION` `"1"` → **`"2"`**，加载器 `SUPPORTED_CHECKS_SCHEMA_VERSIONS = ("1", "2")`——
+  加的是**可选**字段 `covers_facts`，旧表仍然合法（与 `wiring-scope` 的声明文件同型，**兼容窗口为 0**）；
+- `FACT_KEY_PATTERN` 成了 facts key 形态的**唯一**定义（facts 表加载器从 `tools/instrument_self_proof.py` import 它，
+  不另写正则）；**形态在加载期查、存在性在读数里查**这条分工写进加载器 docstring；
+- 裁定②要求的"同批改引用点"四处都改了：加载器常量与字段表、表头两段注释、
+  写死版本号的两处用例（真表断言 `"2"`；坏版本从 `"2"` 改成**真正不存在**的 `"3"`，并钉住错误信息里的接受集）、AGENTS 第 55 条的登记；
+- `validation/control-plane-facts.yaml`（新）：**13 行**（A 2 + B 7 + C 4）× 9 字段，全部 `canonical` /
+  `advisory` / `on_unprovable: unavailable`、`expires: null`；D 组版本轴候选**不进表**（裁定③）；
+- R-h 的读数：`objects=65 declared=65`、四格 `0/0/0/0`、`HITS: 0`；
+  `--json` 的 `objects.table.schema_version` 由 `"1"` → **`"2"`**（27 号 §6 R9 预注册的"**会变**"项）。
+
+### 21.3 新报告工具（裁定④）与三组跨源读数
+
+| 项 | 今天的读数 |
+| --- | --- |
+| 连接键**方向一** `fact_without_check` | **13**（登记了事实、没有任何检查声明覆盖它——照实报，不由"表里少写几行"凑 0） |
+| 连接键**方向二** `check_covers_unknown_fact` | **0** |
+| 不计红的那一格 `checks_without_fact_link` | **65**（今天 65 行都没有 `covers_facts`） |
+| C1 两份测试路径声明 | 扫描 **203** 个文件（比 27 号写稿时的 202 多 1：本轮新增的那个用例文件）；判定不一致 **101**（platform=False/adapter=True 101、反向 0）；层级不一致 **100**；口径变体 **97**（= 101 − 4） |
+| C2 工具表 | registry **10**（dsh 6 / orchestrator 4）、manifests **38 / 6 / 1**、代码工具表 **38**、已审核 **10 / 3** |
+| C2 orchestrator 关系（裁定④） | **`unavailable`**：四个 `tool_name` 在 `src` / `registry` / `adapters` / `tools` 下**没有任何读取点**（命中的只有注册表自己那四行**声明**）；代码侧引用的是四个 `orc.*` **id** |
+| C3 仓库内实例 | `examples/dsh`：两段 `ok`（5000 < 30000）、三段 `not_applicable`（没声明 `pre_evidence`）；`wiring` 的 `timeout_budget` **并列**给出（本机 4 条通道，`matched=null`——本机通道指向工作区之外） |
+| 机器行 | `CONTROL_PLANE_FACTS: fact_without_check=13 check_covers_unknown_fact=0 test_path_declaration=101 budget_inequality=0 / facts=13 checks=65`；`HITS: 114 / … / facts=13 checks=65`；退出码 **0** |
+
+**硬约束的读数（27 号 §6）**：
+
+- **A · 连接键的影子表变异自证**：影子 checks 行引用全部 13 个 key → `(0, 0)`；
+  **只删一行 facts**（检查行仍引用它）→ `(0, 1)`（方向二：声明悬空）；
+  **保留全部 facts、检查行少引用一个** → `(1, 0)`（方向一：事实没人覆盖）；
+  引用一个不存在的 key → `(0, 1)`；撤回 → 都回 `(0, 0)`。
+  （第一版变异脚本我自己写错了预期——"删一行 facts"命中的是方向二；**错的那一版被读数抓出来了**，
+  这条也正是"仪器要能失败"的意思。）同一组读数在 `tests/unit/test_control_plane_facts.py` 里有用例版本；
+- **B · C3 的等价性**：27 例矩阵 `3873 → 3873 B`，逐字节相同（含"没写 timeout 按 600000ms 计"那一支）；
+- **C · 跨文件契约**：默认输出的 `HITS:` 行能被**真的** `ci_local.report_only_reading()` 读出
+  （整数 / `unavailable` 两种：表读不到时 `count is None`，不是 0），读取器**一个字都没改**；
+- **R8 · 同一棵树两次运行**：剥掉归属读数（`run.id` / `run.started_at` / `tree.digest` / `tree.revision`）
+  后 **59204 B 两次逐字节相同**。
+
+### 21.4 R-d（before = `fc2a5dc` 的 `git archive` 副本 / after = `97bd641`）
+
+预注册（本轮）：**除归属读数与下面那一条预注册的"会变"之外，一处都不许变**。
+仪器：`.tmp/step31/probe_rd.py`（采集）+ `compare_rd.py`（剥 4 个归属叶子后比对）；
+before 侧在 `.tmp/step31/before-tree/`（归档 + `git init`，所以两边的 `reading_context.tree` 都可读）。
+
+| 尺子 | 读数 | 判定 |
+| --- | --- | --- |
+| 决策载荷（10 场景） | 23992 → 23992 B | **逐字节相同** |
+| `VERDICT` 判定行（144 行） | 24403 → 24403 B | **逐字节相同** |
+| `policy.check --json` 包装层（三个入口） | 65015 → 65015 B | **逐字节相同** |
+| 覆盖账三个入口 + 默认形态（文本） + `wiring-scope --check --json` | 22845 ×3 / 3856 / 731 B | **逐字节相同**（每个入口各跑两次取自证） |
+| 退出码（`wiring` 默认 / `--check` / `--require-runtime`、`scope --check`、默认形态） | 0/0、1/1、1/1、0/0、0/0 | **一个都不变** |
+| 合计 | **14 个产物、0 差异** | ✅ |
+| R9（**预注册的"会变"**） | R-h 的 `objects.table.schema_version` `"1"` → `"2"`；四格仍 `0/0/0/0`；`objects` 仍 65 | ✅ 与预注册一致 |
+
+### 21.5 门禁（`--full`，第一次：树 = `97bd641`）
+
+- 命令：`python tools/ci_local.py --full --python .venv/Scripts/python.exe --timings`；
+  **环境前提（逐次声明，23 号 §20.1 第 6 条）**：本机设了 `PYTEST_XDIST_AUTO_NUM_WORKERS=0`
+  （xdist 在本会话形态下起不来），**判据与步骤一个都没改**，代价是 pytest 步串行（**7m 44.8s**）。
+  另：本次跑在**本会话的环境**里（`DSH_HOME` 指向工作区之外），第 9 步照旧按环境跳过；
+- 读数：**退出码 0 / 10m 51.4s / 34 步**（31 步执行、3 步只报告，考虑改动 827 个文件）；
+  最慢 5 步：pytest 7m 44.8s、学习手册同步 1m 21.7s、编排闭环 1m 04.4s、阶段验收证据 9.8s、验证器闭环 6.0s；
+- pytest：**2128 passed / 1 skipped**（1 skipped = Windows 不允许普通用户建符号链接，既有）；
+- 三条只报告读数：
+  `Obligations gate` 0 命中（账本不存在 = 不适用，**不算一次真实读数**）、
+  `Exemption expiry` `HITS: 0 / declared=8`、
+  `Instrument self-proof` `HITS: 0 / … / objects=65 declared=65`；
+- **跑前快照 → 跑后逐文件比对**（第 9 步必然跑 `tools/dsh_sandbox_loop.py`）：
+  `.tmp/phase-2-sandbox/` 下 **105 个文件**：**103 个逐字节相同**、2 个内容变了
+  （`logs/allow-run.txt` 与 `logs/block-run.txt`——第 9 步自己写的日志）、6 个"内容相同但 mtime 变了"（被重写）；
+  产物 `.tmp/artifacts/phase-2-sandbox-result.json`：`result=skipped` 两边一致，
+  **8 个叶子有差异，全是归属/环境**——`run.id`、`run.started_at`、`tree.digest`、`tree.revision`
+  （6ed3ca8 → 97bd641）、`timestamp`、`host.dsh_home`（`<unset>` → `<outside-workspace>`）、
+  以及 `dsh_startup_denied_home_root_evidence[0]` 的 `source`（`default:$HOME/.dsh` → `env:DSH_HOME`）。
+  **结论性的叶子一个都没变**（`result` / `environment_skipped` / 场景读数）。
+
+### 21.6 预算对账（`git diff --numstat fc2a5dc..HEAD`，口径 = 新增行）
+
+| 桶 | 本轮 | 复核线 | 判定 |
+| --- | --- | --- | --- |
+| src | **+237**（`hooks.py` 233 + `reading_context.py` 4） | 2.25k | 10.5%，**不越线** |
+| tests | **+1004**（3 个文件：等价性 / 仪器自证 / 新工具） | 2.7k | 37%，**不越线** |
+| tools | **+1381**（`control_plane_facts.py` 1324 + `instrument_self_proof.py` 57 + README 2） | ——（27 号 §8 估 350–600） | **2.3× 于估计**，见下 |
+| 数据 / 文档 | `validation/` +204、AGENTS +15、docs +215、根 `README.md`（裁定⑤） | —— | —— |
+
+**与 27 号 §8 的对账（照实说）**：src/tests 两个桶都在复核线内；**tools 桶超了估计的 2.3 倍**。
+原因不是新增了机制，而是这个仓库的代码风格（每个判据都写清"为什么"的 docstring + 显式读数）与
+"单一消费方"的取舍——同类机制的实测比估计更可靠：R-h 本身 980 行（估 350–600），本轮 1324 行。
+**没有**为了预算删掉任何读数或字段；把 `facts.rows` 明细与三组 `items` 去掉可以省约 1/4，
+但那会让"读数只能靠人再跑一遍"——不建议。
+
+### 21.7 第二次门禁（**最终树**）
+
+（本节在最终树的 `--full` 之后补写。）
+
+### 21.8 未核实 / 待评审
+
+1. **接进 `ci_local` 之后的耗时**：本工具单跑约 **2.1 s**（`probe_wiring` ~0.55 s、`resolve_layer` × 203 ~0.44 s、
+   其余是解释器与 import）；CI（没有 dsh 根）应当更快——**推断**，不是实测。接法与交接见 28 号；
+2. **GitHub Actions 上的读数**：只在 Windows 本机跑过；CI 上 C1/C3 的读数**可能不同**（通道事实依赖宿主、文件数依赖仓库内容），
+   不要照抄本机的 101 / 114；
+3. **升格判据的轮次**：本工具今天四格合计 **114**（两格非 0），离"跑过 N≥1 次且 0 命中"还很远；
+   接进 `ci_local` 之后**每一轮都要登记读数**（28 号第 3 节已写明三条联动读数）；
+4. **`inventory_fact.matched = null`**：本机 4 条通道都指向工作区之外的 `hooks.json`（渲染成 `<external>`），
+   而仓库内示例不是运行时通道——"哪条通道对应哪个实例"在别的机器上是另一份读数；
+5. **裁定④的偏离**（27 号 §11 已写）：把"查不到"做成**每次运行都重跑**的搜索（会随仓库变化而变），
+   而不是一次性结论；如果评审要的是静止的 `unavailable`，这一条要回退；
+6. **`README.md` 的 tests 计数是读数**（1127/352/564/88，合计 2131）：它**会**随用例增减而漂移，
+   本轮按裁定⑤统一了一次；没有机制在每次加用例时自动更正它（那会是一条新的门禁）。
+
+### 21.9 复现命令（只读或只写 `.tmp`）
+
+```powershell
+# 三台仪器（都只报告、退出码恒 0）
+.venv\Scripts\python.exe tools\control_plane_facts.py
+.venv\Scripts\python.exe tools\instrument_self_proof.py
+.venv\Scripts\python.exe tools\exemption_expiry.py
+
+# C3 的等价性尺子（27 例矩阵：抽取前后逐字节相同）
+.venv\Scripts\python.exe .tmp\step31\probe_wiring_matrix.py --out .tmp\step31\wiring-after.json
+.venv\Scripts\python.exe -m pytest tests\unit\test_dsh_budget_inequality.py -q
+
+# 连接键两个方向的影子表变异自证（也可以直接跑用例版本）
+.venv\Scripts\python.exe .tmp\step31\mutation_link_key.py
+.venv\Scripts\python.exe -m pytest tests\unit\test_control_plane_facts.py -q
+
+# R8：同一棵树两次运行，剥掉归属读数后逐字节相同
+.venv\Scripts\python.exe .tmp\step31\selfcheck_r8.py
+
+# R-d：before = fc2a5dc 的归档副本 / after = 工作树（采集 + 比对，14 个产物 0 差异）
+.venv\Scripts\python.exe .tmp\step31\probe_rd.py --out .tmp\step31\rd-after
+.venv\Scripts\python.exe .tmp\step31\compare_rd.py --left .tmp\step31\before-tree\.tmp\step31\rd-before --right .tmp\step31\rd-after
+
+# 门禁 + 跑前快照 / 跑后比对（注意那个环境变量：见 §21.5）
+.venv\Scripts\python.exe .tmp\step31\snapshot_before_gate.py
+$env:PYTEST_XDIST_AUTO_NUM_WORKERS = "0"
+python tools\ci_local.py --full --python .venv/Scripts/python.exe --timings
+.venv\Scripts\python.exe .tmp\step31\compare_after_gate.py
+.venv\Scripts\python.exe .tmp\step31\diff_artifact.py
+
+# 文件归属（CI 线一个字没动，差集应为空）
+git diff --numstat fc2a5dc..HEAD -- tools/ci_local.py tests/unit/test_ci_local.py tests/unit/test_ci_local_report_only.py tools/phase_evidence.py .github/workflows
+```
