@@ -61,14 +61,17 @@ def _load():
 
 def _rows() -> list:
     document = yaml.safe_load(CHECKS_PATH.read_text(encoding="utf-8"))
-    assert document["schema_version"] == "1"
+    # 台阶 5：covers_facts（可选）把登记表带到 "2"，加载器同时接受 "1"（27 号 §3.2）。
+    assert document["schema_version"] == "2"
     return document["checks"]
 
 
-def _shadow(tmp_root: Path, rows: list) -> Path:
+def _shadow(tmp_root: Path, rows: list, *, version: str = "2") -> Path:
     path = tmp_root / "instrument-checks.yaml"
     path.write_text(
-        yaml.safe_dump({"schema_version": "1", "checks": rows}, allow_unicode=True, sort_keys=False),
+        yaml.safe_dump(
+            {"schema_version": version, "checks": rows}, allow_unicode=True, sort_keys=False
+        ),
         encoding="utf-8",
         newline="\n",
     )
@@ -265,16 +268,72 @@ def test_the_registry_is_pointer_only_and_strict(tmp_root):
     duplicated[1]["check_id"] = duplicated[0]["check_id"]
     rejected(duplicated, "重复")
 
+    # 坏版本必须是**真正不存在**的版本号：台阶 5 之后 "2" 是合法的，
+    # 继续拿它当坏版本会让这条用例静默失效（2026-10-03 裁定②）。
     bad_version = copy.deepcopy(rows)
-    path = tmp_root / "instrument-checks.yaml"
-    path.write_text(
-        yaml.safe_dump({"schema_version": "2", "checks": bad_version}, allow_unicode=True),
-        encoding="utf-8",
-        newline="\n",
-    )
+    path = _shadow(tmp_root, bad_version, version="3")
     with pytest.raises(module.InstrumentChecksError) as info:
         module.load_checks(path)
     assert "schema_version" in str(info.value)
+    assert "'1' / '2'" in str(info.value), str(info.value)
+
+
+def test_the_loader_accepts_the_older_table_version(tmp_root):
+    """加的是**可选**字段，所以旧表仍然合法：兼容窗口为 0（27 号 §3.2）。"""
+
+    module = _load()
+
+    table = module.load_checks(_shadow(tmp_root, _rows(), version="1"))
+
+    assert table.schema_version == "1"
+    assert all(row.covers_facts == () for row in table.rows)
+
+
+def test_the_link_field_is_optional_and_read_as_a_tuple(tmp_root):
+    """covers_facts 省略 = 没有这条声明；写了就逐字读出来（含顺序）。"""
+
+    module = _load()
+    rows = copy.deepcopy(_rows())
+    rows[0]["covers_facts"] = ["test_paths.platform_patterns", "budget.dsh_side_limit"]
+
+    table = module.load_checks(_shadow(tmp_root, rows))
+
+    assert table.rows[0].covers_facts == (
+        "test_paths.platform_patterns",
+        "budget.dsh_side_limit",
+    )
+    assert table.rows[1].covers_facts == ()
+
+
+def test_a_malformed_link_key_is_a_load_error(tmp_root):
+    """**形态**在加载期查（畸形即报错）；**存在性**不在这里查（27 号 §3.2 的分工）。"""
+
+    module = _load()
+
+    def rejected(value: object, needle: str) -> None:
+        rows = copy.deepcopy(_rows())
+        rows[0]["covers_facts"] = value
+        with pytest.raises(module.InstrumentChecksError) as info:
+            module.load_checks(_shadow(tmp_root, rows))
+        assert needle in str(info.value), str(info.value)
+
+    rejected("test_paths.platform_patterns", "必须是字符串列表")
+    rejected(["Test_Paths.platform"], "key 形态")
+    rejected(["nodots"], "key 形态")
+    rejected([""], "key 形态")
+    rejected([None], "key 形态")
+
+
+def test_an_unknown_but_well_formed_link_key_still_loads(tmp_root):
+    """写错一个字母是"连接悬空"，不是"这张表坏了"——它由读数那一格报出来。"""
+
+    module = _load()
+    rows = copy.deepcopy(_rows())
+    rows[0]["covers_facts"] = ["test_paths.does_not_exist"]
+
+    table = module.load_checks(_shadow(tmp_root, rows))
+
+    assert table.rows[0].covers_facts == ("test_paths.does_not_exist",)
 
 # --- 跨文件契约：默认输出的 HITS: 行（ci_local 的只报告读数按它取命中数） ------------------
 

@@ -482,7 +482,14 @@
       **1.0 = 首次建轴**：R-h 方案 A 的对象表 + 三态判据 + 只报告载荷，四格红条件
       `no_check_id` / `no_mutation_and_no_gap_note` / `patch_not_applicable` /
       `check_id_without_object`；它**只报告、退出码恒 0，没有接进本机门禁**，接法与交接见
-      `docs/project/engineering-policy-platform/reviews/governance-capability/15-control-plane-design/26-ci-line-handoff-instrument-self-proof.md`）。
+      `docs/project/engineering-policy-platform/reviews/governance-capability/15-control-plane-design/26-ci-line-handoff-instrument-self-proof.md`）；
+      `tools.instrument_self_proof.CHECKS_SCHEMA_VERSION`（**数据文件**
+      `validation/instrument-checks.yaml` 自己的轴，与上面那个**载荷**轴各走各的：
+      R-h 落地时是 "1"；台阶 5 只加了**可选**字段 `covers_facts`（连接键：这一行声明覆盖
+      `validation/control-plane-facts.yaml` 的哪些 key），因此 "1" → **"2"**，
+      加载器**同时接受 "1" 与 "2"**——加可选字段不制造兼容窗口，与
+      `provenance.wiring_scope.SCHEMA_VERSION` 的 "1"/"2" 同型，本表写 "2"。
+      这一条同时是一次**补登记**：它在这张表里此前没有位置，虽然从 R-h 落地起就存在）。
     **已登记、但还没有版本轴的载荷**（第一次改键时必须引入 1.1——不许"只加一个键"了事）：
     **台阶 4 第二件之后这一档是空的**——原先登记在这里的 `tools/exemption_expiry.py --json`
     已按本条首次建轴（`EXEMPTION_REPORT_SCHEMA_VERSION = "1.1"`，见上）。

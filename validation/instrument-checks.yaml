@@ -6,15 +6,20 @@
 #
 # 只放指针（方案 §3.2 原文）：本表**不许**出现 last_run / status / passed / observed_* ——
 # 出现即加载期报错（那是运行结果，不是声明）。加载器同时拒绝未知字段、未知枚举、重复 check_id。
+# 台阶 5 多了一个**可选**字段 covers_facts（连接键）：它是声明，不是运行结果，可以写。
 #
-# 四族与实数（2026-10-03 的实跑读数，复现命令见 23 号 §19）：
+# 四族与实数（2026-10-03 的实跑读数，复现命令见 23 号 §19 与 27 号 §10）：
 #   gate_step          44  .github/workflows/*.yml 里带非空 run 块的步骤（本机执行 31 / bash-only 11 / 登记豁免 2）
 #   gap_probe_check    13  tools/governance_gap_probe.py 的 CHECKS（G01–G13，手工仪器，未接进本机门禁）
 #   seal_scenario       5  tools/provenance_loop.py 的 SCENARIOS（手工仪器，未接进本机门禁）
-#   report_only_step    2  tools/ci_local.py 的 REPORT_ONLY_STEPS（本机门禁的只报告步骤，带到期日）
-#   合计               64
+#   report_only_step    3  tools/ci_local.py 的 REPORT_ONLY_STEPS（本机门禁的只报告步骤，带到期日）
+#   合计               65
 #   25 号 §1 记的是 63 = 44 + 13 + 5 + **1**：第 4 族当时只登记了义务门禁一条，
-#   漏了同表里的豁免到期检查。差 1 的原因写在这里，读数以本轮的实跑为准。
+#   漏了同表里的豁免到期检查。差 1 的原因写在这里，读数以当轮的实跑为准；
+#   65 = 44 + 13 + 5 + 3 是并入 CI 线 e5e7c9e（R-h 接成只报告步骤）之后的读数，
+#   与 tools/instrument_self_proof.py 打印的 objects=65 declared=65 一致。
+#   CI 线把台阶 5 的只报告步骤接进门禁时，会在**同一提交**里给本表再加一行
+#   （23 号 §20.1 第 4 条的授权；那一行的 covers_facts 清单见 27 号 §3.3 与 26 号），届时合计 66。
 #
 # gap_note 的统一措辞（方案 A：mutation_id 全空、不做任何变异执行）：**存量检查，未做变异自证**。
 # 这条缺口是**显式记账**，不是静默：R-h 的三态判据会把「既没有 mutation_id 又没有 gap_note」
@@ -26,6 +31,11 @@
 #                   control-plane  = 文件属控制面重构会话（tools/ 下其余脚本）
 #   evidence_level  exit_code（退出码 + 日志）/ report（机读读数载荷）/ seal（判据级封条读数）
 #   severity        blocking（在 CI 或本机门禁上红了就是失败）/ advisory（手工仪器或只报告步骤）
+#   covers_facts    可选：这一行声明覆盖的 facts 表 key（validation/control-plane-facts.yaml）。
+#                   省略 = 这一行不声明覆盖任何 fact（不是"覆盖了 0 个"的另一种说法）。
+#                   **形态**在加载期查（点分两段以上的 key，畸形即报错）；**存在性**在读数里查
+#                   （连接那一格的 check_covers_unknown_fact）——写错一个字母是"连接悬空"，
+#                   不是"这张表坏了"（27 号 §3.2 的分工）。
 #
 # command 是给评审读的**指针**，逐字取自该对象自己的出处：
 #   gate 行 = workflow run 块的**第一行**（多行脚本的第一行可能是 set +e 这类控制行，那仍是真值；
@@ -38,7 +48,11 @@
 #   gate 44 行与 report-only 2 行是短句（步骤名/ 步骤说明的浓缩，供人读）。
 # 版本轴：只有这一个（与 adapters/wiring-scope.yaml 同形）。形状变了就递增它，
 # 加载器只接受它认识的版本号，读到别的版本一律报错（未知一律拒绝，不静默忽略）。
-schema_version: "1"
+# "2"（台阶 5）只多了一个**可选**字段 covers_facts：旧表仍然合法，所以加载器
+# **同时接受 "1" 与 "2"**——加可选字段不制造兼容窗口，与 wiring-scope 的声明文件同型；
+# 本表写成 "2"。按 AGENTS 第 55 条，这次递增与上面几段注释、加载器常量、
+# 写死版本号的用例、AGENTS 第 55 条那张表的登记在**同一个提交**里。
+schema_version: "2"
 checks:
 
   - check_id: "gate-step:Repository consistency gate"

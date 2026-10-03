@@ -72,7 +72,10 @@ r"""仪器自证（**只报告**）：每条仪器检查都要能证明自己会
 
 `INSTRUMENT_SELF_PROOF_SCHEMA_VERSION = "1.0"`——本载荷**第一次出现就带轴**，
 已登记进 AGENTS.md 第 55 条那张表。数据文件（`validation/instrument-checks.yaml`）
-与变异记录各有自己的 `schema_version`（都从 "1" 起）。**既有载荷一个键都不加**：
+与变异记录各有自己的 `schema_version`：登记表在台阶 5 加了一个**可选**字段
+`covers_facts`（facts 表的连接键），因此从 "1" 递增到 **"2"**；加载器**同时接受
+"1" 与 "2"**（加的是可选字段，旧表仍然合法——与 `adapters/wiring-scope.yaml` 的
+声明文件同型），变异记录仍从 "1" 起。**既有载荷一个键都不加**：
 覆盖账是"发现 × 声明"的账、`policy.check --json` 是判定包装，把仪器自证塞进任何一个
 都是量纲混用（第 50 条），也会逼着那些载荷跟着升版。
 
@@ -114,8 +117,11 @@ from provenance import reading_context as reading  # noqa: E402
 # 本载荷的版本轴（AGENTS 第 55 条；**首次出现就带轴**）。
 INSTRUMENT_SELF_PROOF_SCHEMA_VERSION = "1.0"
 
-# 两张数据文件各自的版本轴。
-CHECKS_SCHEMA_VERSION = "1"
+# 两张数据文件各自的版本轴（AGENTS 第 55 条）。登记表 "1" → "2"（台阶 5 只多了
+# **可选**字段 covers_facts）：旧表仍然合法，所以两个版本都接受——加可选字段不制造
+# 兼容窗口，与 provenance/wiring-scope.yaml 的声明文件同型。变异记录仍是 "1"。
+CHECKS_SCHEMA_VERSION = "2"
+SUPPORTED_CHECKS_SCHEMA_VERSIONS = ("1", "2")
 MUTATION_SCHEMA_VERSION = "1"
 
 DEFAULT_CHECKS = REPO / "validation" / "instrument-checks.yaml"
@@ -150,7 +156,7 @@ RED_KEYS = (
     RED_CHECK_ID_WITHOUT_OBJECT,
 )
 
-# 登记表的形状（方案 §3.2 的 checks 段，8 字段）。
+# 登记表的形状（方案 §3.2 的 checks 段，8 个必填字段）。
 ROW_FIELDS = (
     "check_id",
     "owner",
@@ -161,9 +167,18 @@ ROW_FIELDS = (
     "gap_note",
     "severity",
 )
+# 台阶 5（27 号 §3.2）：连接键 covers_facts——每项是一个 facts 表的 key。**可选**：
+# 省略 = 空列表 = 这一行不声明覆盖任何 fact（不是"覆盖了 0 个"的另一种说法，
+# 它就是"没有这条声明"）。
+OPTIONAL_ROW_FIELDS = ("covers_facts",)
 OWNERS = ("ci-line", "control-plane")
 EVIDENCE_LEVELS = ("exit_code", "report", "seal")
 SEVERITIES = ("blocking", "advisory")
+
+# facts 表的 key 形态（27 号 §3.1）：点分两段以上。**连接键的两个方向共用这一份**：
+# facts 表的加载器（tools/control_plane_facts.py）从这里取，不另写一个正则——
+# 两份形态定义迟早会漂移，漂移的后果是同一个 key 在一侧合法、在另一侧非法。
+FACT_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$")
 
 # 「只放指针」：出现这些键就是加载期错误（方案 §3.2 原文点名的一组）。
 POINTER_ONLY_KEYS = ("last_run", "status", "passed")
@@ -186,7 +201,7 @@ class InstrumentChecksError(Exception):
 
 
 class CheckRow(NamedTuple):
-    """登记表的一行（8 字段）；`gap_note` 的空白串按**缺失**处理（AGENTS 第 50 条口径）。"""
+    """登记表的一行（8 个必填字段 + 可选的 covers_facts）；空白 `gap_note` 按**缺失**处理。"""
 
     check_id: str
     owner: str
@@ -196,6 +211,8 @@ class CheckRow(NamedTuple):
     mutation_id: Optional[str]
     gap_note: Optional[str]
     severity: str
+    # 连接键（台阶 5）：这一行声明覆盖哪些 facts。缺省 = 没有这条声明。
+    covers_facts: tuple = ()
 
     @property
     def gap_note_present(self) -> bool:
@@ -249,8 +266,38 @@ def _enum(value: Any, allowed: Sequence[str], where: str) -> str:
     return str(value)
 
 
+def _fact_keys(value: Any, where: str) -> tuple:
+    """连接键的**形态**（27 号 §3.2）：每项必须匹配 facts 表的 key 形态，畸形即报错。
+
+    重复项**不报错**：连接键按集合比对，多写一条不改变任何读数（它不是畸形）。
+    空列表与省略等价（都是"没有这条声明"），null 也按省略处理——旧表（schema "1"）
+    里根本没有这个键。
+    """
+
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise InstrumentChecksError(where + " 必须是字符串列表或省略，读到 " + repr(value))
+    keys: list = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not FACT_KEY_PATTERN.match(item):
+            raise InstrumentChecksError(
+                where
+                + "["
+                + str(index)
+                + "] 不是 facts 表的 key 形态（^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$），读到 "
+                + repr(item)
+            )
+        keys.append(item)
+    return tuple(keys)
+
+
 def load_checks(path: Path, *, display: Optional[str] = None) -> ChecksTable:
     """读登记表：未知字段 / 未知枚举 / 重复 id / 指针-only 键，一律加载期报错。
+
+    连接键 `covers_facts` 的**形态**在这里查（每项必须匹配 `FACT_KEY_PATTERN`）；
+    **存在性不在这里查**——"这个 key 在 facts 表里吗"是读数里连接那一格的事
+    （`check_covers_unknown_fact`），不是"这张表坏了"。分工是刻意的（27 号 §3.2）。
 
     `display` 是**读数里**的路径写法（仓库相对）：错误信息会进载荷，而载荷不放绝对路径
     （AGENTS 第 19/34 条的脱敏纪律）——读不到时那正是最需要被读到的一句话。
@@ -271,9 +318,10 @@ def load_checks(path: Path, *, display: Optional[str] = None) -> ChecksTable:
     if unknown:
         raise InstrumentChecksError("登记表顶层有未知字段：" + " / ".join(unknown))
     version = document.get("schema_version")
-    if version != CHECKS_SCHEMA_VERSION:
+    if version not in SUPPORTED_CHECKS_SCHEMA_VERSIONS:
+        accepted = " / ".join(repr(item) for item in SUPPORTED_CHECKS_SCHEMA_VERSIONS)
         raise InstrumentChecksError(
-            "登记表的 schema_version 只接受 " + repr(CHECKS_SCHEMA_VERSION) + "，读到 " + repr(version)
+            "登记表的 schema_version 只接受 " + accepted + "，读到 " + repr(version)
         )
     rows_raw = document.get("checks")
     if not isinstance(rows_raw, list) or not rows_raw:
@@ -291,7 +339,7 @@ def load_checks(path: Path, *, display: Optional[str] = None) -> ChecksTable:
                     where + " 出现 " + repr(key) + "：登记表只放指针（方案 §3.2）——"
                     "运行结果（last_run / status / passed / observed_*）不许写进这张表"
                 )
-        unknown_fields = sorted(set(item) - set(ROW_FIELDS))
+        unknown_fields = sorted(set(item) - set(ROW_FIELDS) - set(OPTIONAL_ROW_FIELDS))
         if unknown_fields:
             raise InstrumentChecksError(where + " 有未知字段：" + " / ".join(unknown_fields))
         missing = [field for field in ROW_FIELDS if field not in item]
@@ -306,6 +354,7 @@ def load_checks(path: Path, *, display: Optional[str] = None) -> ChecksTable:
             mutation_id=_optional_text(item["mutation_id"], where + ".mutation_id"),
             gap_note=_optional_text(item["gap_note"], where + ".gap_note"),
             severity=_enum(item["severity"], SEVERITIES, where + ".severity"),
+            covers_facts=_fact_keys(item.get("covers_facts"), where + ".covers_facts"),
         )
         if row.check_id in by_id:
             raise InstrumentChecksError("check_id 重复：" + row.check_id)

@@ -1,0 +1,185 @@
+# 控制面事实表（台阶 5，**只报告**）：平台对自己的声明说了什么，以及"谁在判定它"。
+#
+# 它是什么
+# ========
+#
+# 每一行是一个**声明的事实**（指针），不是一条读数、不是一条判据。三件事分开写：
+#
+#   authority      canonical = 有唯一权威声明；observed = 某次读数观到的（必须写清谁观测）
+#   canonical_ref  事实的出处（"<仓库相对路径>#<锚点>"；锚点是**给人看的指针**，加载器不解析）
+#   predicate      "这个事实成不成立"由**哪一处**判定——表里**不许**再写一个判据式，
+#                  那就成了第二套实现（AGENTS 第 50 条：同名两义一律改名）
+#
+# 它不是什么
+# ==========
+#
+# **不放值**：last_run / status / passed / observed_* 一律是禁键（与 validation/instrument-checks.yaml
+# 同一条纪律）。severity / on_unprovable / expires / authority 是**声明**，可以写，而且必须写。
+#
+# **不判罚**：本表不进 policy.engine.evaluate 的任何输入，不改任何 allow / block，也不接退出码；
+# 谁都不许把它当判定输入（设计见 27 号 §3，只报告期的表达见 §4）。
+#
+# 三态与"不适用"
+# ==============
+#
+# on_unprovable 是闭集 {unavailable, not_applicable}，**不许**写 ignore / pass：
+# 读不到既不是通过，也不是 0 命中（AGENTS 第 56 条）。expires 今天全是 null——
+# 到期只报告（与 tools/exemption_expiry.py 同族），本轮不接退出码。
+#
+# 连接键（两张表怎么咬住）
+# ======================
+#
+# validation/instrument-checks.yaml 的行用**可选**字段 covers_facts 引用本表的 key
+# （双向必查：本表的 key 没人引用 = fact_without_check；引用了本表没有的 key =
+# check_covers_unknown_fact）。两个方向都由 tools/control_plane_facts.py 只报告地算出来。
+#
+# 行清单的口径（2026-10-03 裁定③）
+# ================================
+#
+# **最小集 = 13 行**（A 测试路径 2 + B 工具表 7 + C 预算 4）。方案 §3.1 里那一组
+# "D 版本轴候选"（axes.*）**不进本表**：版本轴清单的权威是 AGENTS.md 第 55 条，
+# 在这里再立一份真源就是同名两义。
+#
+# 版本轴：只有这一个（新文件第一次出现就带轴）。形状变了就递增它，加载器只接受它认识的
+# 版本号；读到未知版本 / 未知字段 / 未知枚举 / 重复 key / 空 consumers / observed 却没写清
+# 谁观测，一律在**只报告工具内部**降级为 unavailable + reason，**不抛给任何判定路径**
+# （27 号 §5 第 2 条：不新增任何加载期 FATAL）。
+schema_version: "1"
+
+facts:
+
+  # ------------------------------------------------------------------ A 测试路径（2 行）
+
+  - key: "test_paths.platform_patterns"
+    authority: canonical
+    canonical_ref: "validation/test-layout.yaml#/test_patterns"
+    consumers: ["policy.check.resolve_layer", "validators.selection.list_test_files"]
+    predicate: "validators.globs.glob_match"
+    severity: advisory
+    remedy: "改这两条 pattern 之后必须同批跑 tests/contract/test_dsh_layer_declaration.py 与 tests/contract/test_validator_protocol.py；两份测试路径声明不许各说各话"
+    on_unprovable: unavailable
+    expires: null
+
+  - key: "test_paths.adapter_example"
+    authority: canonical
+    canonical_ref: "examples/dsh/dsh-adapter.yaml#/test_paths+/test_layer"
+    consumers: ["adapters.dsh.adapter.AdapterConfig.layer_resolution", "tests.contract.test_dsh_layer_declaration"]
+    predicate: "adapters.dsh.adapter.AdapterConfig.layer_test_conflicts"
+    severity: advisory
+    remedy: "把测试层规则放到 layers 顶部（tests/**/*.py -> test），或收窄那条先命中的规则；改完跑 tests/contract/test_dsh_layer_declaration.py"
+    on_unprovable: unavailable
+    expires: null
+
+  # ------------------------------------------------------------------ B 工具表（7 行）
+
+  - key: "tool_tables.registry"
+    authority: canonical
+    canonical_ref: "registry/tool-registry.yaml#/tools"
+    consumers: ["enforcement.registry.load_registry", "enforcement.registry.approve_registry"]
+    predicate: "enforcement.registry.load_registry"
+    severity: advisory
+    remedy: "改注册表后必须重新审核：python -m enforcement.cli registry --approve --reviewer <name>；未重新审核的工具不可使用"
+    on_unprovable: unavailable
+    expires: null
+
+  - key: "tool_tables.manifest.dsh"
+    authority: canonical
+    canonical_ref: "adapters/dsh/manifest.yaml#/tools"
+    consumers: ["adapters.base.AdapterManifest", "adapters.cli.matrix"]
+    predicate: "adapters.base.AdapterManifest"
+    severity: advisory
+    remedy: "改 manifest 后先 approve 重新审核，再在装着真实宿主的机器上重录 host-version 观测（AGENTS 第 54 条）"
+    on_unprovable: unavailable
+    expires: null
+
+  - key: "tool_tables.manifest.generic_json"
+    authority: canonical
+    canonical_ref: "adapters/generic-json/manifest.yaml#/tools"
+    consumers: ["adapters.base.AdapterManifest", "adapters.cli.matrix"]
+    predicate: "adapters.base.AdapterManifest"
+    severity: advisory
+    remedy: "改 manifest 后重新审核（python -m adapters.cli approve --reviewer <name>）；合成协议消费者同样要过哈希比对"
+    on_unprovable: unavailable
+    expires: null
+
+  - key: "tool_tables.manifest.legacy_post_only"
+    authority: canonical
+    canonical_ref: "adapters/legacy-post-only/manifest.yaml#/tools"
+    consumers: ["adapters.base.AdapterManifest", "adapters.cli.matrix"]
+    predicate: "adapters.base.AdapterManifest"
+    severity: advisory
+    remedy: "改 manifest 后重新审核；只有事后钩子的协议消费者上限是 read_only，改声明不许把它标成完整 enforcement"
+    on_unprovable: unavailable
+    expires: null
+
+  - key: "tool_tables.code.dsh"
+    authority: canonical
+    canonical_ref: "src/adapters/dsh/adapter.py#TOOL_TABLE"
+    consumers: ["adapters.dsh.adapter.TOOL_TABLE", "tests.contract.test_dsh_adapter"]
+    predicate: "adapters.dsh.adapter.TOOL_TABLE"
+    severity: advisory
+    remedy: "manifest 与代码工具表必须逐项相等（名字、操作、路径字段、变更文本字段）；改一处必须改另一处"
+    on_unprovable: unavailable
+    expires: null
+
+  - key: "tool_tables.approved.registry"
+    authority: canonical
+    canonical_ref: "registry/tool-registry.approved.json"
+    consumers: ["enforcement.registry.load_approved_document"]
+    predicate: "enforcement.registry.load_approved_document"
+    severity: advisory
+    remedy: "运行时描述与已审核哈希不一致的工具不可使用；重新审核会一起写回这份清单"
+    on_unprovable: unavailable
+    expires: null
+
+  - key: "tool_tables.approved.adapters"
+    authority: canonical
+    canonical_ref: "adapters/approved.json"
+    consumers: ["adapters.base.AdapterRegistry.check_approved", "adapters.cli.list_adapters"]
+    predicate: "adapters.base.AdapterRegistry.check_approved"
+    severity: advisory
+    remedy: "未审核或哈希漂移一律拒绝接入；改声明后重新审核（python -m adapters.cli approve --reviewer <name>）"
+    on_unprovable: unavailable
+    expires: null
+
+  # ------------------------------------------------------------------ C 预算不等式（4 行）
+
+  - key: "budget.hooks_timeout.example"
+    authority: canonical
+    canonical_ref: "examples/dsh/hooks.json#/hooks/PreToolUse"
+    consumers: ["adapters.dsh.hooks.check_wiring", "tools.control_plane_facts"]
+    predicate: "adapters.dsh.hooks.budget_inequality_facts"
+    severity: advisory
+    remedy: "让内部预算（声明了 pre_evidence 时是两段之和）严格小于这个 timeout；dsh 先杀掉 Hook 等于放行"
+    on_unprovable: unavailable
+    expires: null
+
+  - key: "budget.internal_budget.example"
+    authority: canonical
+    canonical_ref: "examples/dsh/dsh-adapter.yaml#/timeout_ms"
+    consumers: ["adapters.dsh.adapter.load_config", "adapters.dsh.hooks.budget_inequality_facts"]
+    predicate: "adapters.dsh.hooks.budget_inequality_facts"
+    severity: advisory
+    remedy: "调小 timeout_ms，或把 hooks.json 的 timeout 调大；只报告期这两条都不改任何 allow / block"
+    on_unprovable: unavailable
+    expires: null
+
+  - key: "budget.pre_evidence.example"
+    authority: canonical
+    canonical_ref: "examples/dsh/dsh-adapter.yaml#/pre_evidence"
+    consumers: ["adapters.dsh.adapter.load_config", "adapters.dsh.hooks.budget_inequality_facts"]
+    predicate: "adapters.dsh.hooks.budget_inequality_facts"
+    severity: advisory
+    remedy: "仓库内的示例**没有**声明 pre_evidence：三段不等式因此读作不适用（这是读数，不是缺陷）；要在示例上启用，就与 hooks.json 的 timeout 一起改到满足三段不等式"
+    on_unprovable: unavailable
+    expires: null
+
+  - key: "budget.dsh_side_limit"
+    authority: canonical
+    canonical_ref: "src/adapters/dsh/hooks.py#check_wiring + src/adapters/wiring.py#timeout_budget"
+    consumers: ["adapters.dsh.hooks.check_wiring", "adapters.wiring._probe_channel", "tools.control_plane_facts"]
+    predicate: "adapters.dsh.hooks.budget_inequality_facts + adapters.wiring._probe_channel"
+    severity: advisory
+    remedy: "两处口径必须**并列**读：wiring 的 timeout_budget 看不到 pre_evidence，它的 ok=true 不许当三段结论用；要合成一份就得动 wiring.py 的通道事实（另开一轮）"
+    on_unprovable: unavailable
+    expires: null
