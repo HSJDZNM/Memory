@@ -489,7 +489,14 @@
       `validation/control-plane-facts.yaml` 的哪些 key），因此 "1" → **"2"**，
       加载器**同时接受 "1" 与 "2"**——加可选字段不制造兼容窗口，与
       `provenance.wiring_scope.SCHEMA_VERSION` 的 "1"/"2" 同型，本表写 "2"。
-      这一条同时是一次**补登记**：它在这张表里此前没有位置，虽然从 R-h 落地起就存在）。
+      这一条同时是一次**补登记**：它在这张表里此前没有位置，虽然从 R-h 落地起就存在）；
+      `tools.control_plane_facts.CONTROL_PLANE_FACTS_SCHEMA_VERSION`（控制面事实表 × 跨源互证
+      的只报告载荷——**1.0 = 首次建轴**：facts 表 + 连接键双向必查 + C1/C2/C3 三组读数，
+      四格红条件 `fact_without_check` / `check_covers_unknown_fact` / `test_path_declaration` /
+      `budget_inequality` 与 `wiring` / R-h **同形**；它**只报告、退出码恒 0，没有接进本机门禁**，
+      接法与交接见同目录 28 号）与 `tools.control_plane_facts.FACTS_TABLE_SCHEMA_VERSION`
+      （**数据文件** `validation/control-plane-facts.yaml` 自己的轴，从 "1" 起——13 行最小集，
+      只放指针，读不出来只在只报告工具内部降级）。
     **已登记、但还没有版本轴的载荷**（第一次改键时必须引入 1.1——不许"只加一个键"了事）：
     **台阶 4 第二件之后这一档是空的**——原先登记在这里的 `tools/exemption_expiry.py --json`
     已按本条首次建轴（`EXEMPTION_REPORT_SCHEMA_VERSION = "1.1"`，见上）。

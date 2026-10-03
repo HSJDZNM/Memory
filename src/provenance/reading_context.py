@@ -82,6 +82,7 @@ from .worktree import ProvenanceError, workspace_tree_digest
 
 __all__ = [
     "DECLARATIONS",
+    "DECLARATION_CONTROL_PLANE_FACTS",
     "DECLARATION_INSTRUMENT_CHECKS",
     "OUTSIDE_WORKSPACE",
     "SANDBOX_RESTRICTED",
@@ -161,8 +162,11 @@ DECLARATION_OBLIGATIONS_LEDGER = "obligations_ledger"
 DECLARATION_REPORT_ONLY_STEPS = "report_only_steps"
 # 仪器自证（R-h）读的那张检查登记表：validation/instrument-checks.yaml。
 DECLARATION_INSTRUMENT_CHECKS = "instrument_checks"
+# 台阶 5 的控制面事实表：validation/control-plane-facts.yaml（只报告读数的那一套声明）。
+DECLARATION_CONTROL_PLANE_FACTS = "control_plane_facts"
 DECLARATIONS = (
     DECLARATION_ADAPTER_CONFIG,
+    DECLARATION_CONTROL_PLANE_FACTS,
     DECLARATION_INSTRUMENT_CHECKS,
     DECLARATION_OBLIGATIONS_LEDGER,
     DECLARATION_REGISTRY,
