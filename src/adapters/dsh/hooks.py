@@ -84,6 +84,7 @@ __all__ = [
     "EXIT_ALLOW",
     "EXIT_BLOCK",
     "AUDIT_SCHEMA_VERSION",
+    "BUDGET_STATUSES",
     "ORIGIN_PREFIX",
     "PRE_EVIDENCE_STATUSES",
     "VERDICT_PREFIX",
@@ -97,6 +98,7 @@ __all__ = [
     "NullExecutor",
     "PolicyTimeout",
     "build_parser",
+    "budget_inequality_facts",
     "enforcement_feedback",
     "feedback_text",
     "main",
@@ -2041,6 +2043,251 @@ def record_ledger_derivation(
     return True
 
 
+# --------------------------------------------------------------------------- 预算不等式
+
+
+# 预算不等式的状态闭集（27 号 §3.6 的方案 A）。四个值互不代替：
+#   ok              = 不等式成立，且**本次真的读过**（不是"没查"）；
+#   violated        = 读了，且不等式不成立（check_wiring 据此给出接线错误）；
+#   not_applicable  = 这条路径上没有这个不等式（没声明 pre_evidence——不是 0，也不是通过）；
+#   unavailable     = 读不到（hooks.json 缺 / 不可解析 / timeout 是表达式 / 配置读不出来）。
+BUDGET_OK = "ok"
+BUDGET_VIOLATED = "violated"
+BUDGET_NOT_APPLICABLE = "not_applicable"
+BUDGET_UNAVAILABLE = "unavailable"
+BUDGET_STATUSES = (BUDGET_OK, BUDGET_VIOLATED, BUDGET_NOT_APPLICABLE, BUDGET_UNAVAILABLE)
+
+# 接线本身读到了没有：这一格是**二态**（复用 reading_context 的 available / unavailable）。
+# 它回答"hooks.json 读到了没有"，不是"不等式成不成立"——两个问题两套词汇，不许混用。
+WIRING_AVAILABLE = reading.STATUS_AVAILABLE
+WIRING_UNAVAILABLE = reading.STATUS_UNAVAILABLE
+WIRING_STATUSES = (WIRING_AVAILABLE, WIRING_UNAVAILABLE)
+
+# dsh 侧上限的两个来源：hooks.json 自己写的、以及"没写 timeout"时的 dsh 默认值
+# （README §2.5 的 defaultTimeoutMs）。来源必须能分辨：把"按默认值算成立"读成
+# "声明里证明过"就是一次口径混同（AGENTS 第 50 条）。
+BUDGET_LIMIT_HOOKS_JSON = "hooks.json"
+BUDGET_LIMIT_DSH_DEFAULT = "dsh_default"
+BUDGET_LIMIT_SOURCES = (BUDGET_LIMIT_HOOKS_JSON, BUDGET_LIMIT_DSH_DEFAULT)
+
+
+def _ms_reading(value: float) -> float | int:
+    """毫秒读数：整数值写成 int（JSON 里好读），非整数**保持原值**。
+
+    不许四舍五入：舍入会造出一个声明里不存在的上限。
+    """
+
+    return int(value) if float(value).is_integer() else value
+
+
+def _budget_term(
+    status: str,
+    *,
+    sum_ms: Optional[int] = None,
+    limit_ms: Optional[float | int] = None,
+    limit_source: Optional[str] = None,
+    reason: str = "",
+) -> dict:
+    """一段预算不等式的结构化读数（键名稳定：27 号 §3.6 的报告载荷用它）。"""
+
+    return {
+        "status": status,
+        "sum_ms": sum_ms,
+        "limit_ms": limit_ms,
+        "limit_source": limit_source,
+        "reason": reason,
+    }
+
+
+def _two_term_reading(config: AdapterConfig, timeout_sec: Optional[float]) -> dict:
+    """两段不等式（内部预算 < dsh 超时）的读数。"""
+
+    if timeout_sec is None:
+        return _budget_term(
+            BUDGET_UNAVAILABLE,
+            sum_ms=config.timeout_ms,
+            reason=(
+                "hooks.json 里没有可比的 timeout（没写，或写成了表达式）：两段不等式没有上限可比，"
+                "check_wiring 因此跳过这一条——不是 0，也不是通过"
+            ),
+        )
+    limit_exact = timeout_sec * 1000
+    # 比较用**原样的浮点值**（timeout_sec * 1000 <= config.timeout_ms）：先 int() 再比
+    # 会把 5.0005s 这种边界判反；边界用例见 tests/unit/test_dsh_budget_inequality.py。
+    if limit_exact <= config.timeout_ms:
+        return _budget_term(
+            BUDGET_VIOLATED,
+            sum_ms=config.timeout_ms,
+            limit_ms=_ms_reading(limit_exact),
+            limit_source=BUDGET_LIMIT_HOOKS_JSON,
+            reason=(
+                f"hooks.json 的 timeout={timeout_sec:g}s 不大于内部预算 {config.timeout_ms}ms："
+                "dsh 会先杀掉 Hook，而被杀在 dsh 协议里等同于放行，必须让内部预算先触发"
+            ),
+        )
+    return _budget_term(
+        BUDGET_OK,
+        sum_ms=config.timeout_ms,
+        limit_ms=_ms_reading(limit_exact),
+        limit_source=BUDGET_LIMIT_HOOKS_JSON,
+    )
+
+
+def _three_term_reading(config: AdapterConfig, timeout_sec: Optional[float]) -> dict:
+    """三段不等式（取证预算 + 判定预算 < dsh 超时）的读数。"""
+
+    pre = config.pre_evidence
+    if pre is None or not pre.enabled:
+        return _budget_term(
+            BUDGET_NOT_APPLICABLE,
+            reason=(
+                "没有声明 pre_evidence（或声明了 enabled: false）：三段不等式不适用"
+                "——不是 0，也不是通过"
+            ),
+        )
+    budget_ms = pre.timeout_ms + config.timeout_ms
+    # hooks.json 没写 timeout 时 dsh 用桥的 defaultTimeoutMs（README §2.5）：
+    # "没写"不等于"没有上限"，所以这里用显式常量而不是跳过检查。
+    if timeout_sec is None:
+        limit_ms: float | int = DEFAULT_HOOK_TIMEOUT_MS
+        limit_source = BUDGET_LIMIT_DSH_DEFAULT
+    else:
+        limit_ms = int(timeout_sec * 1000)
+        limit_source = BUDGET_LIMIT_HOOKS_JSON
+    if budget_ms >= limit_ms:
+        default_note = (
+            "（hooks.json 没写 timeout，按 dsh 默认 600000ms 计）" if timeout_sec is None else ""
+        )
+        return _budget_term(
+            BUDGET_VIOLATED,
+            sum_ms=budget_ms,
+            limit_ms=limit_ms,
+            limit_source=limit_source,
+            reason=(
+                f"pre_evidence 的预算之和 {budget_ms}ms"
+                f"（pre_evidence.timeout_ms={pre.timeout_ms} + timeout_ms={config.timeout_ms}）"
+                f"不小于 dsh 侧的 {limit_ms}ms"
+                + default_note
+                + "：dsh 会先杀掉 Hook，而被杀在 dsh 协议里等同于放行；"
+                "必须让取证与判定两段预算都在 dsh 超时之前触发"
+            ),
+        )
+    return _budget_term(BUDGET_OK, sum_ms=budget_ms, limit_ms=limit_ms, limit_source=limit_source)
+
+
+def _budget_unavailable(config: AdapterConfig, wiring_reason: str) -> dict:
+    """接线读不到：两段与三段**同时** unavailable，且各带一句为什么（不是 0，也不是通过）。"""
+
+    return {
+        "wiring": {"status": WIRING_UNAVAILABLE, "reason": wiring_reason},
+        "two_term": _budget_term(
+            BUDGET_UNAVAILABLE, sum_ms=config.timeout_ms, reason=wiring_reason
+        ),
+        "three_term": _budget_term(BUDGET_UNAVAILABLE, reason=wiring_reason),
+    }
+
+
+def budget_inequality_facts(
+    config: AdapterConfig, *, hooks_config_path: Optional[Path | str] = None
+) -> dict:
+    """预算不等式的**结构化读数**：两段 / 三段各自的 status / sum / limit / source / reason。
+
+    为什么要用它（27 号 §3.6 的方案 A）：同一个问题今天有两份实现——check_wiring 的
+    两段 + 三段判据，与 adapters.wiring 的通道事实 timeout_budget（后者只读 adapter 配置、
+    **看不到 pre_evidence**）。本函数把 check_wiring 那一份变成可直接读的结构，于是
+    "运行期自检"与"报告工具"成为同一个实现的两个调用点，而不是第三份判据式。
+
+    三态语义（写死，与 AGENTS 第 56 条同一条口径）：
+
+    - ok：不等式成立，且本次真的读过；
+    - violated：不等式不成立（reason 就是 check_wiring 会返回的那一句话）；
+    - not_applicable：这条路径上没有这个不等式（没有声明 pre_evidence）；
+    - unavailable：读不到（hooks.json 缺 / 不可解析 / 没有指向本 Hook 的命令 /
+      timeout 是表达式）——它既不是 0，也不是通过。
+
+    它**只读**：不改配置、不判 allow / block、不写任何文件；check_wiring 的返回值由它
+    格式化（见 _budget_failure_message），两者在抽取前后逐字节相同。
+
+    一处**刻意的不对称**（照实写，免得被读成不一致）：hooks.json 的 timeout 不是数字时，
+    两段读作 unavailable（原实现跳过这一条），三段则按 DEFAULT_HOOK_TIMEOUT_MS 继续判
+    （"没写 timeout"不等于"没有上限"），limit_source 会写成 dsh_default。
+    """
+
+    if hooks_config_path is None:
+        return _budget_unavailable(
+            config,
+            "接线自检缺席：没有提供 hooks.json 路径，无法证明 dsh 会注册本 Hook"
+            "（dsh 在 hooks 配置读不到时不注册任何 hook，也不报错，等于没有治理）。"
+            "确需在没有接线证据的情况下运行，必须显式声明 --allow-unverified-wiring",
+        )
+    path = Path(hooks_config_path)
+    if not path.is_file():
+        return _budget_unavailable(
+            config, f"hooks.json 不存在：{path.name}；dsh 会因此不注册任何 hook（等于没有治理）"
+        )
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        return _budget_unavailable(
+            config, f"hooks.json 不可解析（{type(error).__name__}）；dsh 会因此不注册任何 hook"
+        )
+
+    hooks_section = document.get("hooks") if isinstance(document, Mapping) else None
+    commands: list[str] = []
+    if isinstance(hooks_section, Mapping):
+        for groups in hooks_section.values():
+            if not isinstance(groups, list):
+                continue
+            for group in groups:
+                if not isinstance(group, Mapping):
+                    continue
+                for entry in group.get("hooks", []):
+                    if isinstance(entry, Mapping) and isinstance(entry.get("command"), str):
+                        commands.append(entry["command"])
+    if not any("adapters.dsh.hooks" in command for command in commands):
+        return _budget_unavailable(
+            config, "hooks.json 里没有指向 adapters.dsh.hooks 的命令；当前组合没有接入策略 Hook"
+        )
+
+    # 到了这里 hooks_section 一定是非空映射（否则上面已经返回）。取**最后一个**数字
+    # timeout：遍历顺序与原实现一致（多条目时最后一个生效）。
+    timeout_sec: Optional[float] = None
+    for groups in hooks_section.values():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, Mapping):
+                continue
+            for entry in group.get("hooks", []):
+                if isinstance(entry, Mapping) and isinstance(entry.get("command"), str):
+                    if "adapters.dsh.hooks" in entry["command"] and isinstance(
+                        entry.get("timeout"), (int, float)
+                    ):
+                        timeout_sec = float(entry["timeout"])
+
+    return {
+        "wiring": {"status": WIRING_AVAILABLE, "reason": ""},
+        "two_term": _two_term_reading(config, timeout_sec),
+        "three_term": _three_term_reading(config, timeout_sec),
+    }
+
+
+def _budget_failure_message(facts: Mapping[str, Any]) -> str:
+    """把读数变成 check_wiring 的那一句话：早退顺序与抽取之前**逐字相同**。
+
+    顺序本身就是契约：接线读不到 → 两段不成立 → 三段不成立 → 空串。两段先判，所以
+    "两段与三段同时不成立"时报的是两段那一句（既有行为，由等价性用例钉住）。
+    """
+
+    wiring = facts["wiring"]
+    if wiring["status"] == WIRING_UNAVAILABLE:
+        return str(wiring["reason"])
+    for key in ("two_term", "three_term"):
+        if facts[key]["status"] == BUDGET_VIOLATED:
+            return str(facts[key]["reason"])
+    return ""
+
+
 def check_wiring(
     config: AdapterConfig,
     *,
@@ -2056,77 +2303,18 @@ def check_wiring(
     而"证明不了就当通过"正是这个缺口本身。所以这里返回错误而不是空串；只有显式命名的
     开关（CLI 的 --allow-unverified-wiring / 本函数的 allow_unverified_wiring=True）
     才能跳过，默认一律拒绝。
+
+    判据只有一份实现（27 号 §3.6 的方案 A）：不等式在 budget_inequality_facts 里，
+    本函数只把读数格式化成上面那几句话。返回值在抽取前后**逐字节相同**（含早退顺序），
+    由 tests/unit/test_dsh_budget_inequality.py 钉住。
     """
 
-    if hooks_config_path is None:
-        if allow_unverified_wiring:
-            return ""
-        return (
-            "接线自检缺席：没有提供 hooks.json 路径，无法证明 dsh 会注册本 Hook"
-            "（dsh 在 hooks 配置读不到时不注册任何 hook，也不报错，等于没有治理）。"
-            "确需在没有接线证据的情况下运行，必须显式声明 --allow-unverified-wiring"
-        )
-    path = Path(hooks_config_path)
-    if not path.is_file():
-        return f"hooks.json 不存在：{path.name}；dsh 会因此不注册任何 hook（等于没有治理）"
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        return f"hooks.json 不可解析（{type(error).__name__}）；dsh 会因此不注册任何 hook"
-
-    commands: list[str] = []
-    hooks_section = document.get("hooks") if isinstance(document, Mapping) else None
-    if isinstance(hooks_section, Mapping):
-        for groups in hooks_section.values():
-            if not isinstance(groups, list):
-                continue
-            for group in groups:
-                if not isinstance(group, Mapping):
-                    continue
-                for entry in group.get("hooks", []):
-                    if isinstance(entry, Mapping) and isinstance(entry.get("command"), str):
-                        commands.append(entry["command"])
-    if not any("adapters.dsh.hooks" in command for command in commands):
-        return "hooks.json 里没有指向 adapters.dsh.hooks 的命令；当前组合没有接入策略 Hook"
-
-    timeout_sec = None
-    for groups in (hooks_section or {}).values() if isinstance(hooks_section, Mapping) else []:
-        if not isinstance(groups, list):
-            continue
-        for group in groups:
-            if not isinstance(group, Mapping):
-                continue
-            for entry in group.get("hooks", []):
-                if isinstance(entry, Mapping) and isinstance(entry.get("command"), str):
-                    if "adapters.dsh.hooks" in entry["command"] and isinstance(
-                        entry.get("timeout"), (int, float)
-                    ):
-                        timeout_sec = float(entry["timeout"])
-    if timeout_sec is not None and timeout_sec * 1000 <= config.timeout_ms:
-        return (
-            f"hooks.json 的 timeout={timeout_sec:g}s 不大于内部预算 {config.timeout_ms}ms："
-            "dsh 会先杀掉 Hook，而被杀在 dsh 协议里等同于放行，必须让内部预算先触发"
-        )
-
-    # G3/M2：声明了 pre_evidence 之后，Hook 一次调用里**串行**跑两段带预算的工作
-    # （取证 → 判定），因此要证明的是"两段之和"小于 dsh 的超时。只证明其中一段，
-    # 等价于把"被杀 = 放行"这条路径留在接线里。
-    pre = config.pre_evidence
-    if pre is not None and pre.enabled:
-        budget_ms = pre.timeout_ms + config.timeout_ms
-        # hooks.json 没写 timeout 时 dsh 用桥的 defaultTimeoutMs（README §2.5）：
-        # "没写"不等于"没有上限"，所以这里用显式常量而不是跳过检查。
-        limit_ms = DEFAULT_HOOK_TIMEOUT_MS if timeout_sec is None else int(timeout_sec * 1000)
-        if budget_ms >= limit_ms:
-            return (
-                f"pre_evidence 的预算之和 {budget_ms}ms"
-                f"（pre_evidence.timeout_ms={pre.timeout_ms} + timeout_ms={config.timeout_ms}）"
-                f"不小于 dsh 侧的 {limit_ms}ms"
-                + ("（hooks.json 没写 timeout，按 dsh 默认 600000ms 计）" if timeout_sec is None else "")
-                + "：dsh 会先杀掉 Hook，而被杀在 dsh 协议里等同于放行；"
-                "必须让取证与判定两段预算都在 dsh 超时之前触发"
-            )
-    return ""
+    if hooks_config_path is None and allow_unverified_wiring:
+        # 显式跳过：这不是一条读数，是调用方显式承担的一次责任转移。
+        return ""
+    return _budget_failure_message(
+        budget_inequality_facts(config, hooks_config_path=hooks_config_path)
+    )
 
 
 def origin_line(origin: Origin, *, project_root: Optional[Path] = None) -> str:

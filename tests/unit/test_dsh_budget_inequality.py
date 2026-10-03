@@ -21,12 +21,17 @@
 | 三段不等式 | three_term_pass / three_term_default_limit_pass / three_term_disabled_pass |
 | 超预算 | two_term_over_budget / three_term_over_budget / three_term_default_limit_over_budget |
 | 缺 hooks.json | missing_hooks_file / unparseable_hooks_file / no_path |
-| timeout 是表达式 | two_term_timeout_expression / two_term_timeout_absent / three_term_expression_over_budget |
+| timeout 是表达式 | two_term_timeout_expression / two_term_timeout_absent |
+| timeout 是表达式（三段按默认值判） | three_term_expression_over_budget |
 
 三条**边界**用例是抽取时最容易改坏的地方，所以一起钉住：两段用的是 timeout_sec * 1000
 的**浮点**比较（不是 int() 之后的比较，two_term_float_above_boundary 会区分这两者）、
 two_term_float_below_boundary 区分"0.5ms > 0ms"与"int(0.5) == 0"、
 two_term_last_numeric_wins 钉住多条目时最后一个数字生效。
+
+抽取之后本文件多了一半：结构化读数（budget_inequality_facts）的四面——状态闭集可自证、
+violated 的 reason 与 check_wiring 的返回值逐字节相等（一份实现、两个调用点）、
+unavailable 与 not_applicable 分得开（不是 0、也不是通过）、非整毫秒的读数不被舍入。
 """
 
 from __future__ import annotations
@@ -38,7 +43,7 @@ from typing import NamedTuple
 import pytest
 
 from adapters.dsh.adapter import AdapterConfig, PreEvidenceConfig
-from adapters.dsh.hooks import check_wiring
+from adapters.dsh.hooks import BUDGET_STATUSES, budget_inequality_facts, check_wiring
 
 COMMAND = "python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml"
 
@@ -91,7 +96,11 @@ CASES = (
     # --- 超预算 ---
     Case("two_term_over_budget", "超预算", _TWO_TERM.format(timeout=3)),
     Case("two_term_timeout_zero", "超预算", _TWO_TERM.format(timeout=0)),
-    Case("three_term_over_budget", "超预算", _THREE_TERM.format(total=65000, evidence=60000, limit=60000)),
+    Case(
+        "three_term_over_budget",
+        "超预算",
+        _THREE_TERM.format(total=65000, evidence=60000, limit=60000),
+    ),
     Case(
         "three_term_default_limit_over_budget",
         "超预算",
@@ -134,18 +143,23 @@ REQUIRED_FORMS = ("两段", "三段", "超预算", "缺 hooks.json", "timeout �
 
 def _write(tmp_path: Path, name: str, document: object) -> Path:
     path = tmp_path / name
-    path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8", newline="")
+    text = json.dumps(document, ensure_ascii=False, indent=2)
+    path.write_text(text, encoding="utf-8", newline="")
     return path
 
 
-def _hooks_document(timeout: object = None, *, command: str = COMMAND, present: bool = True) -> dict:
+def _hooks_document(
+    timeout: object = None, *, command: str = COMMAND, present: bool = True
+) -> dict:
     entry: dict = {"type": "command", "command": command}
     if present:
         entry["timeout"] = timeout
     return {"hooks": {"PreToolUse": [{"matcher": "", "hooks": [entry]}]}}
 
 
-def _config(tmp_path: Path, *, timeout_ms: int = 5000, pre_evidence: object = None) -> AdapterConfig:
+def _config(
+    tmp_path: Path, *, timeout_ms: int = 5000, pre_evidence: object = None
+) -> AdapterConfig:
     return AdapterConfig(
         project_root=tmp_path,
         rule_dirs=(),
@@ -154,7 +168,9 @@ def _config(tmp_path: Path, *, timeout_ms: int = 5000, pre_evidence: object = No
     )
 
 
-def _evidence(tmp_path: Path, *, timeout_ms: int = 60000, enabled: bool = True) -> PreEvidenceConfig:
+def _evidence(
+    tmp_path: Path, *, timeout_ms: int = 60000, enabled: bool = True
+) -> PreEvidenceConfig:
     return PreEvidenceConfig(
         enabled=enabled,
         registry_root=tmp_path,
@@ -203,7 +219,9 @@ def _two_term_last_numeric_wins(tmp_path: Path) -> str:
     document["hooks"]["PreToolUse"][0]["hooks"].insert(
         0, {"type": "command", "command": COMMAND, "timeout": 3}
     )
-    return check_wiring(_config(tmp_path), hooks_config_path=_write(tmp_path, "twice.json", document))
+    return check_wiring(
+        _config(tmp_path), hooks_config_path=_write(tmp_path, "twice.json", document)
+    )
 
 
 def _two_term_wins_over_three_term(tmp_path: Path) -> str:
@@ -385,3 +403,111 @@ def test_check_wiring_returns_the_frozen_string(case: Case, tmp_path: Path) -> N
     """抽取前后都必须逐字节等于表里的字面量（27 号 §6 硬约束 B）。"""
 
     assert INVOKE[case.case_id](tmp_path) == case.expected
+
+
+# --------------------------------------------------------------------------- 结构化读数
+
+
+TERM_KEYS = {"status", "sum_ms", "limit_ms", "limit_source", "reason"}
+
+
+def test_two_term_reading_without_a_declaration(tmp_path: Path) -> None:
+    """没有 pre_evidence 时：两段成立、三段**不适用**（不是 0、也不是通过）。"""
+
+    facts = budget_inequality_facts(
+        _config(tmp_path), hooks_config_path=_hooks(tmp_path, "ok.json", 30)
+    )
+
+    assert set(facts) == {"wiring", "two_term", "three_term"}
+    assert set(facts["two_term"]) == TERM_KEYS
+    assert facts["wiring"]["status"] == "available"
+    assert facts["two_term"] == {
+        "status": "ok",
+        "sum_ms": 5000,
+        "limit_ms": 30000,
+        "limit_source": "hooks.json",
+        "reason": "",
+    }
+    assert facts["three_term"]["status"] == "not_applicable"
+    assert facts["three_term"]["sum_ms"] is None
+    assert facts["three_term"]["limit_ms"] is None
+    assert facts["three_term"]["limit_source"] is None
+    assert facts["three_term"]["reason"]
+
+
+def test_the_violated_reason_is_exactly_what_check_wiring_returns(tmp_path: Path) -> None:
+    """一份实现、两个调用点：报告里的 reason 就是接线自检返回的那句话。"""
+
+    path = _hooks(tmp_path, "tight.json", 3)
+    facts = budget_inequality_facts(_config(tmp_path), hooks_config_path=path)
+
+    assert facts["two_term"]["status"] == "violated"
+    assert facts["two_term"]["sum_ms"] == 5000
+    assert facts["two_term"]["limit_ms"] == 3000
+    assert facts["two_term"]["limit_source"] == "hooks.json"
+    assert facts["two_term"]["reason"] == check_wiring(_config(tmp_path), hooks_config_path=path)
+
+
+def test_the_three_term_reading_names_the_default_limit_source(tmp_path: Path) -> None:
+    """timeout 不是数字时：两段读作 unavailable，三段按 dsh 默认值继续判（不对称是刻意的）。"""
+
+    config = _config(tmp_path, pre_evidence=_evidence(tmp_path, timeout_ms=600000))
+    path = _hooks(tmp_path, "no-timeout.json", present=False)
+    facts = budget_inequality_facts(config, hooks_config_path=path)
+
+    assert facts["two_term"]["status"] == "unavailable"
+    assert facts["two_term"]["reason"]
+    assert facts["three_term"]["status"] == "violated"
+    assert facts["three_term"]["sum_ms"] == 605000
+    assert facts["three_term"]["limit_ms"] == 600000
+    assert facts["three_term"]["limit_source"] == "dsh_default"
+    assert facts["three_term"]["reason"] == check_wiring(config, hooks_config_path=path)
+    assert "按 dsh 默认 600000ms 计" in facts["three_term"]["reason"]
+
+
+def test_unreadable_wiring_makes_both_terms_unavailable(tmp_path: Path) -> None:
+    """接线读不到：两格同时 unavailable，reason 就是接线自检那句话。"""
+
+    missing = tmp_path / MISSING_NAME
+    facts = budget_inequality_facts(_config(tmp_path), hooks_config_path=missing)
+
+    assert facts["wiring"]["status"] == "unavailable"
+    assert facts["two_term"]["status"] == "unavailable"
+    assert facts["three_term"]["status"] == "unavailable"
+    assert facts["wiring"]["reason"] == check_wiring(_config(tmp_path), hooks_config_path=missing)
+
+
+def test_a_non_integral_limit_is_not_rounded(tmp_path: Path) -> None:
+    """非整毫秒的读数不许被舍入：5000.5ms 就是 5000.5（舍入会造出不存在的上限）。"""
+
+    facts = budget_inequality_facts(
+        _config(tmp_path), hooks_config_path=_hooks(tmp_path, "float.json", 5.0005)
+    )
+
+    assert facts["two_term"]["status"] == "ok"
+    assert facts["two_term"]["limit_ms"] == 5000.5
+
+
+def test_the_status_closed_set_is_reachable(tmp_path: Path) -> None:
+    """闭集要能自证：四个状态都得有一条真实读数——闭集里不许有走不到的值。"""
+
+    readings = [
+        budget_inequality_facts(
+            _config(tmp_path), hooks_config_path=_hooks(tmp_path, "c1.json", 30)
+        ),
+        budget_inequality_facts(
+            _config(tmp_path, pre_evidence=_evidence(tmp_path)),
+            hooks_config_path=_hooks(tmp_path, "c2.json", 120),
+        ),
+        budget_inequality_facts(
+            _config(tmp_path), hooks_config_path=_hooks(tmp_path, "c3.json", 3)
+        ),
+        budget_inequality_facts(
+            _config(tmp_path), hooks_config_path=_hooks(tmp_path, "c4.json", "30s")
+        ),
+        budget_inequality_facts(_config(tmp_path), hooks_config_path=tmp_path / MISSING_NAME),
+    ]
+
+    seen = {reading[key]["status"] for reading in readings for key in ("two_term", "three_term")}
+    assert seen == set(BUDGET_STATUSES)
+    assert {reading["wiring"]["status"] for reading in readings} == {"available", "unavailable"}
