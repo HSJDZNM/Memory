@@ -4,6 +4,9 @@
 - **树**：分支 `refactor/control-plane`；本文写就时的 HEAD = `cc282df`（`git status --porcelain` 空）。
 - **依据**：25 号 §6（交接清单）与 §7（方案 A）、23 号 §19（落地读数）；AGENTS 第 45（仪器要能失败）、
   48（读数属于哪棵树）、50（口径诚实）、55（加键就是改协议）、56（账本不存在 = 不适用）条。
+- **更正（2026-10-03，依据 23 号 §20.1 第 4 条）**：第 1 节的**第 2 件事**与第 2 节表格的第 1 行改为
+  ——**授权 CI 会话在同一提交里加** `validation/instrument-checks.yaml` 那一行（不再「定好 name/args 交给控制面会话加」）；
+  `ReportOnlyStep` 模板、期望读数与其余各条**逐字不变**。
 - **本文件是什么**：写给 CI 线的一段**可直接粘贴**的说明（第 1 节），加上 25 号 §6 六项的逐条现状（第 2 节）、
   验收办法（第 3 节）、归属声明（第 4 节）与未核实（第 5 节）。
 - **本文件不是什么**：不是开工单。`tools/ci_local.py`、`tests/unit/test_ci_local*.py`、
@@ -56,8 +59,9 @@ R-h（`tools/instrument_self_proof.py`）已落地，**只报告、退出码恒 
    任一格未评（登记表读不到 / git 影子树建不出来）时那行写 unavailable：读取器对
    「有 HITS: 行但读不出整数」照原文给出读数、不猜命中数（count 是 None，不是 0）。
 
-2) 同步 validation/instrument-checks.yaml 一行（**这一行属控制面会话的文件**；若不想跨文件改，
-   就把这一步的 name 与 args 定下来交给控制面会话加）：
+2) 同步 validation/instrument-checks.yaml 一行（**这一行原本属控制面会话的文件**；按 2026-10-03 评审
+   裁定——23 号 §20.1 第 4 条——**已授权 CI 会话在同一提交里加它**，不必拆成两次改动、也不必把它
+   交回控制面会话）：
 
     - check_id: "report-only:Instrument self-proof (report only)"
       owner: ci-line
@@ -106,7 +110,7 @@ PYTEST_XDIST_AUTO_NUM_WORKERS=0（让 -n auto 解析成 0 个 worker，进程内
 
 | # | 25 号 §6 的要求 | 现状与处置 |
 | --- | --- | --- |
-| 1 | `REPORT_ONLY_STEPS` 加一条只报告步骤 | **要 CI 线做**；模板与期望读数见第 1 节。前置条件（`HITS:` 行）已由控制面会话在 `6caa330` 补上，`tools/README.md` 与工具 docstring 都写明它是**跨文件契约** |
+| 1 | `REPORT_ONLY_STEPS` 加一条只报告步骤 | **要 CI 线做**；模板与期望读数见第 1 节。前置条件（`HITS:` 行）已由控制面会话在 `6caa330` 补上，`tools/README.md` 与工具 docstring 都写明它是**跨文件契约**。第 1 节第 2 件事的登记表那一行：**授权 CI 会话在同一提交里加**（23 号 §20.1 第 4 条，2026-10-03） |
 | 2 | 新步骤登记进某个分组 | **不适用**：`unregistered_steps()` 只查 workflow 里的步骤；只报告步骤不在 workflow 里，`--list` 已经把它单独打成一类（四类中的"本机只报告"） |
 | 3 | 门禁接封条（R-e：判据级封条 + 退出码 3） | **不是这一件**（25 号 §8 第 6 条把两者分开）；本交接不涉及，它仍是缺口，待单独一轮 |
 | 4 | `.github/workflows/phase-8.yml` 加同名 run 块（要不要在 CI 上也跑） | **可选，本轮不要求**。本工具不需要宿主（dsh / profiles）：在 CI 上它会读出同一份清单与同一张表（`HITS: 0`）。若 CI 线要加，按第 1 节的模板 + **同一提交**里同步登记表那一行 |
