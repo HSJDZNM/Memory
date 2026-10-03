@@ -183,6 +183,22 @@ REPORT_ONLY_STEPS: tuple[ReportOnlyStep, ...] = (
         adopted="2026-10-03",
         reads="默认输出里的 HITS: 行（不带 --json；退出码恒为 0，命中数只能从这一行读）",
     ),
+    # 控制面事实表 × 跨源互证（台阶 5，控制面重构线交接，见 28 号文档第 1 节）。
+    # name 同样是跨文件身份（仪器自证第 4 族 + 登记表 "report-only:<name>" 一行），
+    # 改名要同一个提交同步登记表。
+    # HITS 今天非 0（C1 存量不一致），只报告、不计入门禁失败。
+    ReportOnlyStep(
+        name="Control plane facts (report only)",
+        # 不带 --json：它的载荷没有 hits 键（不是账本），读数走默认输出里的 HITS: 行。
+        args=("tools/control_plane_facts.py",),
+        reason=(
+            "控制面事实表 × 跨源互证（台阶 5）：facts 表与检查登记表的连接键双向必查、"
+            "C1/C2/C3 三组跨源读数；只报告，非零退出不计入门禁失败（27 号 §3 / §7）"
+        ),
+        expires_at="2026-12-31",
+        adopted="2026-10-03",
+        reads="默认输出里的 HITS: 行（不带 --json；退出码恒为 0，命中数只能从这一行读）",
+    ),
 )
 
 # 按改动范围分组的步骤名（前缀匹配）。名字取自 workflow 里的 name:，改 workflow 时要同步。
