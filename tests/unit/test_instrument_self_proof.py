@@ -282,8 +282,12 @@ def test_the_loader_accepts_the_older_table_version(tmp_root):
     """加的是**可选**字段，所以旧表仍然合法：兼容窗口为 0（27 号 §3.2）。"""
 
     module = _load()
+    # v1 表没有 covers_facts 这个字段：从真表取行做夹具时先去掉它，影子表才是一份合法的 v1 表。
+    rows = [
+        {key: value for key, value in row.items() if key != "covers_facts"} for row in _rows()
+    ]
 
-    table = module.load_checks(_shadow(tmp_root, _rows(), version="1"))
+    table = module.load_checks(_shadow(tmp_root, rows, version="1"))
 
     assert table.schema_version == "1"
     assert all(row.covers_facts == () for row in table.rows)

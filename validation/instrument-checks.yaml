@@ -639,3 +639,26 @@ checks:
     mutation_id: null
     gap_note: "存量检查，未做变异自证"
     severity: advisory
+
+  - check_id: "report-only:Control plane facts (report only)"
+    owner: control-plane
+    command: "python tools/control_plane_facts.py"
+    covers: "控制面事实表 × 跨源互证（连接键双向必查 + C1/C2/C3 读数；只报告）"
+    covers_facts:
+      - "test_paths.platform_patterns"
+      - "test_paths.adapter_example"
+      - "tool_tables.registry"
+      - "tool_tables.manifest.dsh"
+      - "tool_tables.manifest.generic_json"
+      - "tool_tables.manifest.legacy_post_only"
+      - "tool_tables.code.dsh"
+      - "tool_tables.approved.registry"
+      - "tool_tables.approved.adapters"
+      - "budget.hooks_timeout.example"
+      - "budget.internal_budget.example"
+      - "budget.pre_evidence.example"
+      - "budget.dsh_side_limit"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory

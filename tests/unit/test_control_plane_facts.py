@@ -250,21 +250,31 @@ def test_the_link_key_is_checked_in_both_directions(tmp_root, capsys):
     assert back["links"]["check_covers_unknown_fact"]["count"] == 0
 
 
-def test_a_real_checks_table_has_rows_without_the_link_today(default_payload):
-    """真表今天的读数：**没有**任何行声明 covers_facts（那是 CI 线那次提交才带来的）。
+CONTROL_PLANE_FACTS_CHECK_ID = "report-only:Control plane facts (report only)"
 
-    这一格的 13 / 65 是读数，不是缺陷——写成断言是为了让"接进 ci_local 之后它该变成 0"
-    这件事有一个可复核的起点。
+
+def test_the_link_counts_agree_with_the_real_checks_table(default_payload):
+    """真表上的连接计数是不变式，不是快照：载荷里的三个数必须与真表逐行数出来的一致。
+
+    不写死"有几行带 covers_facts"：那是登记表的内容，随登记变化；这里钉的是
+    "载荷如实反映登记表"这件事本身。另外钉住一条：本工具自己作为只报告步骤登记的那一行
+    （CI 线接线时同提交加的）必须存在、并且声明了 covers_facts——它是 facts 表那 13 个 key
+    今天唯一的覆盖来源，丢了它 fact_without_check 会悄悄回到 13。
     """
 
-    checks = _load(REPO_ROOT / "tools" / "instrument_self_proof.py", "isp_for_today")
+    checks = _load(REPO_ROOT / "tools" / "instrument_self_proof.py", "isp_for_real_table")
     table = checks.load_checks(CHECKS_PATH)
-    assert all(row.covers_facts == () for row in table.rows)
+    linked = sum(1 for row in table.rows if row.covers_facts)
+    unlinked = len(table.rows) - linked
 
     payload = default_payload
-    assert payload["checks_table"]["counts"]["with_covers_facts"] == 0
-    assert payload["checks_table"]["counts"]["without_covers_facts"] == len(table.rows)
-    assert payload["links"]["checks_without_fact_link"] == len(table.rows)
+    assert payload["checks_table"]["counts"]["with_covers_facts"] == linked
+    assert payload["checks_table"]["counts"]["without_covers_facts"] == unlinked
+    assert payload["links"]["checks_without_fact_link"] == unlinked
+
+    own = [row for row in table.rows if row.check_id == CONTROL_PLANE_FACTS_CHECK_ID]
+    assert len(own) == 1, "登记表里没有（或重复登记了）本工具的只报告步骤那一行"
+    assert own[0].covers_facts, "本工具的登记行没有声明 covers_facts"
 
 
 # --------------------------------------------------------------------------- facts 表加载

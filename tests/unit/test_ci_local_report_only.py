@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -241,6 +242,57 @@ def test_real_instrument_self_proof_output_reads_zero_hits():
     assert reading.startswith("HITS: 0 / "), reading
     assert "no_check_id=0" in reading, reading
     assert ci_local.report_only_verdict(completed.returncode, count) == "0 命中（退出码 0）"
+
+
+CONTROL_PLANE_FACTS_STEP = "Control plane facts (report only)"
+
+
+def test_control_plane_facts_is_registered_as_a_report_only_step():
+    """登记：控制面事实表（台阶 5）是一条只报告步骤，六个字段齐全，且**不带 --json**。
+
+    形状与期望读数见 28 号交接第 1 节。
+    """
+
+    ci_local = _load_ci_local()
+    matches = [
+        step for step in ci_local.REPORT_ONLY_STEPS if step.name == CONTROL_PLANE_FACTS_STEP
+    ]
+    assert len(matches) == 1, [step.name for step in ci_local.REPORT_ONLY_STEPS]
+    step = matches[0]
+    assert step.args == ("tools/control_plane_facts.py",)
+    assert "--json" not in step.args
+    for field in ("reason", "expires_at", "adopted", "reads"):
+        assert getattr(step, field).strip(), field
+    _datetime.date.fromisoformat(step.expires_at)
+    _datetime.date.fromisoformat(step.adopted)
+
+
+def test_real_control_plane_facts_output_yields_an_integer_hit_count():
+    """真实默认输出喂给真实读取器：读出**整数**命中数，结论里的数字就是这个整数。
+
+    刻意**不**断言命中数是多少：这一步处在只报告期，今天的 101 是 C1 的存量不一致；
+    pytest 是阻断步骤，在这里钉死命中数等于把只报告的读数偷偷升格成门禁。
+    只钉读数契约：HITS: 行在、能读出整数、尾部的 checks= 与登记表行数一致。
+    """
+
+    ci_local = _load_ci_local()
+    step = next(
+        item for item in ci_local.REPORT_ONLY_STEPS if item.name == CONTROL_PLANE_FACTS_STEP
+    )
+
+    completed = _run_report_only_step(step)  # 按登记的 args 起子进程，仓库根为 cwd
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    count, reading = ci_local.report_only_reading(step, completed.stdout + completed.stderr)
+    assert isinstance(count, int) and not isinstance(count, bool), reading
+    assert reading.startswith("HITS: %d / " % count), reading
+    assert ci_local.report_only_verdict(completed.returncode, count) == (
+        "%d 命中（退出码 0）" % count
+    )
+
+    table = yaml.safe_load(
+        (REPO_ROOT / "validation" / "instrument-checks.yaml").read_text(encoding="utf-8")
+    )
+    assert reading.endswith("checks=%d" % len(table["checks"])), reading
 
 
 def test_report_only_steps_are_listed_with_their_expiry(monkeypatch, capsys, tmp_root):
