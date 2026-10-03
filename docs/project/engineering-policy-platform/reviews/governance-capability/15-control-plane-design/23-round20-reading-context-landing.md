@@ -2129,6 +2129,7 @@ $env:STEP28_SHIFT_DAYS = "18"
 
 # 文件归属（CI 线一个字没动，差集应为空）
 git diff --numstat 3be25c9..HEAD -- tools/ci_local.py tests/unit/test_ci_local.py tests/unit/test_ci_local_report_only.py tools/phase_evidence.py .github/workflows
+```
 
 ## 19 第 29 轮 · 2026-10-03 裁定（§18.9）落地、R-h（仪器自证）方案 A 与门禁
 
@@ -2488,4 +2489,92 @@ python tools\ci_local.py --full --python .venv/Scripts/python.exe
 # 文件归属（CI 线一个字没动，差集应为空）
 git diff --numstat 8738d72..HEAD -- tools/ci_local.py tests/unit/test_ci_local.py tests/unit/test_ci_local_report_only.py tools/phase_evidence.py .github/workflows
 ```
+
+---
+
+## 20 第 29 轮 · 2026-10-03 评审裁定（五条）与落地归属
+
+- **执行**：2026-10-03（本机）；控制面重构会话（**唯一写者**）。
+- **依据**：2026-10-03 评审对 §19 与 26 号的裁定（五条 + 一条纪律，要点逐条落在 §20.1）；
+  AGENTS 第 45（仪器要能失败）/ 50（口径诚实）/ 55（加键就是改协议）条。
+- **树**：本节写就时的起点 = `6ed3ca8`（`git status --porcelain -uall` 当时为空）。
+- **本节的边界**：**只写文档**——不改任何代码、数据、测试。本轮对 `tools/ci_local.py`、
+  `tests/unit/test_ci_local*.py`、`tools/phase_evidence.py`、`.github/workflows/*`、
+  `validation/instrument-checks.yaml` 的差集是 **0 行**（读数与命令见 §20.6）。
+
+### 20.1 裁定逐条（五条 + 一条纪律）
+
+| # | 事项（出处） | 裁定 | 落地 / 归属 |
+| --- | --- | --- | --- |
+| 1 | R-h 的对象清单 **64**（门禁步骤 44 + 探针检查 13 + 封条场景 5 + 只报告步骤 2），与 25 号 §1 的 **63** 差 1（§19.0、§19.3） | **接受**：64 是实跑读数；25 号 §1 漏登的是同一张 `REPORT_ONLY_STEPS` 里的**豁免到期**那一条（§19.3 已逐字写明差的这 1 条是怎么来的） | 表与读数**不变**；25 号 §1 **不回改**——它是当时的登记，差异留在 §19.3（"历史先例只登记、不回改"，与 AGENTS 第 55 条同一条纪律） |
+| 2 | 指令之外的**两条用例**：用例 6（加载器拒绝 `last_run` / `status` / `passed` / `observed_*`、未知字段、未知枚举、重复 id、错的 `schema_version`）与用例 7（默认输出的 `HITS:` 行被**真的** `ci_local.report_only_reading()` 读出）（§19.3） | **接受** | 用例保留（`tests/unit/test_instrument_self_proof.py` 仍 7 条不减）；26 号 §1 第 3 件事的覆盖里已把它们算在控制面会话一侧，CI 线**不必重复造** |
+| 3 | `test_exemption_expiry` 钉死 `--today`（`4a681f4`，§19.2） | **接受**：钉死 + `payload["today"] == PINNED_TODAY` 的断言一起保留；**不加** `expired == 0` | 不变（`tests/unit/test_exemption_expiry.py` 本轮**未动**） |
+| 4 | 26 号 §1 交接清单的**第 2 件事**：同步 `validation/instrument-checks.yaml` 里那一行（原文写「这一行属控制面会话的文件；若不想跨文件改，就把 name 与 args 定下来交给控制面会话加」） | **改为**：**授权 CI 会话在同一个提交里加那一行**（跨文件改一次、不拆两次；R-h 的 `no_check_id` 因此在接上去的那次读数里仍为 0） | 26 号 §1 第 2 件事与 §2 表格第 1 行**同批更正**（本提交；只改措辞，`ReportOnlyStep` 模板与期望读数**逐字不变**） |
+| 5 | 门禁接封条（**R-e 完整版**：判据级封条 `referenced_inputs_digest` 的 pre/post 比对 + 退出码 3；方案 §4 台阶 0 的缺口 / 25 号 §6 第 3 条 / 26 号 §2 第 3 行） | **本轮不做**；**登记为剩余缺口**。**以后若做，只能先以只报告形式由 CI 线加**：先只打印 pre/post 与 `{added, modified, removed}`、**不接退出码 3**，`enforced: false` + `would_exit_code: 3` 只是预注册 | 缺口登记与形态约束见 **§20.3**；26 号 §2 第 3 行「不是这一件」的结论**不变** |
+| 6 | 串行跑 pytest 的绕法 `PYTEST_XDIST_AUTO_NUM_WORKERS=0`（让 `-n auto` 解析成 0 个 worker；§19.0、§19.7、§19.9 第 1/7 条） | **接受**（判据、步骤、退出码语义**一个都没改**）；**必须每次声明**——每一次用它的门禁读数都要在同一处写明：用了这个变量、为什么（xdist 在本会话的 `workspace-write` 下必然 INTERNALERROR）、代价（pytest 步 6m 29 对并行约 2 分钟） | 写成**纪律**：本轮之后（含 CI 线接手后）的门禁读数若用了它，必须逐次声明；**没有声明**的读数按"环境前提不明"处理，不当成标准形态 |
+
+**这五条一条都不改任何 allow / block、不新增阻断步骤、不改任何退出码。**
+
+### 20.2 落地归属（本轮实际动了什么）
+
+| 项 | 动到的文件 | 说明 |
+| --- | --- | --- |
+| §20 本身 | 本文件 | 只**追加**一节（+ 两处围栏更正，见 §20.4） |
+| §20.1 第 4 条的授权 | `26-ci-line-handoff-instrument-self-proof.md` | 头部加一条更正说明 + 第 1 节第 2 件事 + §2 表格第 1 行；模板与期望读数逐字不变 |
+| 文档更正 | 本文件（两处围栏）；`README.md` 的本行更正与 27 号的索引行在**本轮的第三个提交**（与 27 号同批，避免让索引指向尚不存在的文件） | 见 §20.4 |
+| **代码 / 数据 / 测试** | **无** | 差集 **0 行**（§20.6 的两条命令） |
+| 同轮的另一份交付物 | `27-step5-control-plane-facts-design.md`（新） | 台阶 5（只报告部分）的设计稿，**只写文档**；见本目录索引 |
+
+### 20.3 剩余缺口登记：门禁接封条（R-e 完整版）
+
+| 项 | 内容 |
+| --- | --- |
+| 缺口 | `python tools/ci_local.py --full` 的执行步骤里**没有任何一步**被要求交出判据级封条（`referenced_inputs_digest` 的 pre/post 比对）。方案 §4 台阶 0 的 R-e 因此仍是**部分绿**：机制只在 `tools/provenance_loop.py` 的 5 个场景里，门禁没接 |
+| 出处 | 方案 §4 台阶 0 的「状态（改为）：**部分绿**」；25 号 §6 第 3 条；26 号 §2 第 3 行 |
+| 本轮处置 | **不做**（裁定原文）；登记在案，**不排期** |
+| 以后若做的**形态约束**（写死在这里，免得下一轮自由发挥） | ① **只能先以只报告形式**加，且**由 CI 线加**（`tools/ci_local.py` 属 CI 线）；② 第一版**不接退出码 3**：pre/post 与 `{added, modified, removed}` 先只打印，`enforced: false`、`would_exit_code: 3` 只是**预注册**；③ 升格必须先跑满一个轮次的 `warn + 非零退出`（与 L5 同型）；④ 判据级封条要用**声明输入**而不是"实际读过"（方案 §3.1 已裁定），否则会造出第二件需要自证的仪器 |
+| 谁能宣布它变绿 | 只有「门禁的执行路径里**真的**做了 pre/post 比对、且读数能在归档里读到」这一条；本轮**没有**做出任何一条这样的读数 |
+
+### 20.4 同批的两处文档更正（都没有改任何读数）
+
+1. **本文件 §18.10 的代码围栏没有闭合**：`2106` 行的 ````powershell 之后直到 `2455` 行才出现下一个围栏，
+   于是 §19 的正文（含标题与表格）在渲染时会被吞进代码块；文件末尾还多出一个孤立的围栏。
+   本次**只加一个闭合围栏、只删末尾那一个多余围栏**，正文一个字都没改。
+   照实报 `git diff --numstat` 的读法：本文件**只有新增行、没有删除行**——加的那 1 行围栏与删掉的那 1 行
+   **内容相同**，diff 把它们对齐了；删掉的那一行是真的从文件里消失了：改完之后全文围栏 **16 行 = 8 对**，
+   全部配对（本节所在的提交读数见 `git show --numstat`）。
+2. **`README.md` 第 23 行那句「tests 2470」**：23 号 §19.6 的最终 `numstat` 读数是 **2526**（`2174 + 352`，修正提交 `d2687c2`）。
+   两个数**没有**对上，但台阶 4 的**起算提交**我**没有**钉死，因此**不重算**——只在这里登记成
+   "疑似陈旧的口径差"，请评审或下一轮复核（另见 §20.5 第 3 条）。
+   **本提交不动 README**（本文件所在提交只改本文件）；README 那一行的 §20 说明与 27 号的索引行在**本轮的第三个提交**里一起落。
+
+### 20.5 未核实（逐条）
+
+1. **裁定原文我没有第二份书面原件**：五条按本轮指令里的表述逐条落地（本文件与 26 号各一处），无法再与原件逐字比对；
+2. **§20.3 的缺口读数没有重采**：它照抄方案 / 25 号 / 26 号的既有结论，本轮**没有**重新数一遍门禁步骤的封条覆盖面（那是 R-e 那一轮的事）；
+3. **`README` 的 `2470` 与 `2526` 哪个对**：未核实（§20.4 第 2 条）。我**没有**重算台阶 4 的累计——那要先钉死起算提交；
+4. **`declared=7` 与"CI 线加完这一步之后是 8"** 的关系**没有实测**：R-h 的只报告步骤今天**还没接进 `ci_local`**（§1.4 的读数就是证据）；
+5. 本节**没有**跑门禁：本轮只改文档，按指令只跑文本规范 / 仓库一致性 / 密钥扫描三项（§20.6），
+   因此**没有**本轮的 `--full` 耗时读数。
+
+### 20.6 本轮的三项读数与复现命令
+
+| 检查 | 读数（本轮全部文档改动完成之后；本节最后两处措辞微调后重跑，读数不变） |
+| --- | --- |
+| 文本规范 `tools/check_text_conventions.py` | **662** 个文本文件、问题 **0** 处（跳过第三方镜像 300）；退出码 **0** |
+| 仓库一致性 `tools/check_repo_consistency.py` | 依赖锁 / 文档与配置 / 手册形态 / 工具清单 **四项都"一致"**；退出码 **0** |
+| 密钥扫描 `tools/secret_scan.py` | 扫描 **661** 个文件（镜像跳过）；**没有发现疑似凭据**；退出码 **0** |
+| 文件归属（提交前的工作树形态） | 对 `tools/ci_local.py` / `tests/unit/test_ci_local*.py` / `tools/phase_evidence.py` / `.github/workflows` / `validation/instrument-checks.yaml` 的 `git status --porcelain -uall` 输出为**空** |
+
+```powershell
+# 三项（本轮指令要求的三项；没有跑 --full）
+.venv\Scripts\python.exe tools\check_text_conventions.py
+.venv\Scripts\python.exe tools\check_repo_consistency.py
+.venv\Scripts\python.exe tools\secret_scan.py
+
+# 文件归属：提交前的工作树形态（应为空）
+git status --porcelain -uall -- tools/ci_local.py tests/unit/test_ci_local.py tests/unit/test_ci_local_report_only.py tools/phase_evidence.py .github/workflows validation/instrument-checks.yaml
+
+# 文件归属：提交之后按提交区间复核（应为空）
+git diff --numstat 6ed3ca8..HEAD -- tools/ci_local.py tests/unit/test_ci_local.py tests/unit/test_ci_local_report_only.py tools/phase_evidence.py .github/workflows validation/instrument-checks.yaml
 ```
