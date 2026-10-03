@@ -148,8 +148,10 @@ REPORT_ONLY_STEPS: tuple[ReportOnlyStep, ...] = (
         reason=(
             "台阶 3c 的义务账门禁：判罚与读数在这一步，L5 试用期内非零退出只报告"
             "（方案 §3.3 / AGENTS 第 56 条）；账本在 .tmp 下，CI 上没有可读的账本"
+            "（2026-10-04 续期至 12-31：试用期内仓库门禁里账本一直不存在、读数为不适用，"
+            "L5 判据未满足；随 12-31 统一复审，届时决定找真实实例还是撤销）"
         ),
-        expires_at="2026-10-31",
+        expires_at="2026-12-31",
         adopted="2026-09-30",
         reads="--json 的 hits / ledger_count / not_applicable_ledgers 与每个账本的 obligations_open",
     ),
