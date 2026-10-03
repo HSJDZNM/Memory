@@ -335,6 +335,38 @@ def test_c1_uses_the_two_existing_implementations(default_payload):
     assert entry["platform"] == "controller", "平台侧按文件名猜成入口层——正是 M1 那条缺陷"
 
 
+def test_c2_marks_the_orchestrator_relation_unavailable(default_payload):
+    """裁定④：orchestrator 的 tool_name 本轮**查实**——查不到就写 unavailable，不给判据。"""
+
+    resolution = default_payload["cross_source"]["tool_tables"]["orchestrator_resolution"]
+
+    assert resolution["status"] == "unavailable"
+    assert "查不到" in resolution["reason"]
+    assert set(resolution["readers"]) == set(resolution["searched_literals"])
+    assert all(paths == [] for paths in resolution["readers"].values())
+    # 四行注册表条目本身读得到——unavailable 说的是"对应关系证不出来"，不是"条目不存在"
+    assert [item["id"] for item in resolution["registry_entries"]] == [
+        "orc.fs.edit",
+        "orc.fs.write",
+        "orc.policy.write",
+        "orc.policy.edit",
+    ]
+
+
+def test_the_c2_search_excludes_declarations_and_its_own_source():
+    """搜索器不能自证循环：声明处与自己的源码不算读取点，真读取点要搜得到。"""
+
+    module = _load_tool()
+
+    hits = module._readers_of(  # noqa: SLF001 - 这条用例要证明的就是搜索器本身的行为
+        REPO_ROOT, ["orc.fs.edit"]
+    )["orc.fs.edit"]
+
+    assert "registry/tool-registry.yaml" not in hits, "声明不是读取点"
+    assert "tools/control_plane_facts.py" not in hits, "搜索词来自本工具，不算有人读它"
+    assert any(path.endswith("src/orchestration/nodes.py") for path in hits), hits
+
+
 def test_c3_reuses_the_single_budget_implementation(default_payload):
     """C3 一份实现、两个调用点：载荷里的两段 / 三段就是 budget_inequality_facts 的读数。"""
 

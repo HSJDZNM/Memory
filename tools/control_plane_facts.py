@@ -129,6 +129,15 @@ RED_KEYS = (
     RED_BUDGET_INEQUALITY,
 )
 
+# 裁定④（2026-10-03）：orchestrator 段的 tool_name 要**查实**——查不到写 unavailable。
+# 搜索范围是代码与数据根（不扫 docs/mirrors：300 个镜像文件与"谁在读它"无关）。
+ORCHESTRATOR_TOOL_NAMES = ("edit_file", "write_file", "edit_policy", "write_policy")
+ORCHESTRATOR_SEARCH_ROOTS = ("src", "registry", "adapters", "tools")
+ORCHESTRATOR_SEARCH_SUFFIXES = (".py", ".yaml", ".yml", ".json")
+# 这两个文件**不算读取点**：注册表里那四行是**声明**；本工具的源码是**搜索词**的来源。
+# 不排除它们就是自证循环——仪器把"我自己写了这几个词"读成"有人在读它们"。
+ORCHESTRATOR_NON_READERS = ("registry/tool-registry.yaml", "tools/control_plane_facts.py")
+
 _PROMOTE_WHEN = (
     "跑过 N≥1 次且**四格**合计 0 命中，且 0 命中来自至少一次真实读数"
     "——与 L5 上线闸 / R-h 同型；升格前必须先有一轮 warn + 非零退出"
@@ -494,6 +503,33 @@ def _relation(
     }
 
 
+def _readers_of(root: Path, literals: Sequence[str]) -> dict:
+    """谁在读这几个字面量：在代码与数据根下逐文件找，返回 {literal: [仓库相对路径]}。
+
+    声明处与**本工具自己的源码**不算读取点（见 ORCHESTRATOR_NON_READERS 的注释）。
+    读不到的文件跳过（它不是一个"读过"的证据，也不该让整条读数失败）。
+    """
+
+    hits: dict = {literal: [] for literal in literals}
+    for base in ORCHESTRATOR_SEARCH_ROOTS:
+        directory = root / base
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.rglob("*")):
+            if not path.is_file() or path.suffix not in ORCHESTRATOR_SEARCH_SUFFIXES:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for literal in literals:
+                if literal in text:
+                    hits[literal].append(_display(path, root=root))
+    for literal in hits:
+        hits[literal] = [item for item in hits[literal] if item not in ORCHESTRATOR_NON_READERS]
+    return hits
+
+
 def cross_source_tool_tables(root: Path) -> dict:
     """C2：工具表三处声明（注册表 / manifest / 代码工具表）与已审核清单的覆盖关系。
 
@@ -570,19 +606,52 @@ def cross_source_tool_tables(root: Path) -> dict:
         "manifest(dsh) 里有、注册表里没有的工具 " + str(len(dsh_only)) + " 个：**这是设计**"
         "（只有受治理的那几个进注册表），不是缺口"
     )
-    notes.append(
-        "orchestrator 段的注册表条目（"
-        + " / ".join(
-            f"{item['id']}={item.get('tool_name')}"
-            for item in registry_tools
-            if item.get("agent") == "orchestrator"
+    orchestrator = [item for item in registry_tools if item.get("agent") == "orchestrator"]
+    readers = _readers_of(root, ORCHESTRATOR_TOOL_NAMES)
+    reader_paths = sorted({path for paths in readers.values() for path in paths})
+    resolution: dict = {
+        "searched_in": list(ORCHESTRATOR_SEARCH_ROOTS),
+        "searched_literals": list(ORCHESTRATOR_TOOL_NAMES),
+        "non_readers": list(ORCHESTRATOR_NON_READERS),
+        "readers": readers,
+        "registry_entries": [
+            {
+                "id": str(item.get("id")),
+                "tool_name": str(item.get("tool_name")),
+                "risk": str(item.get("risk")),
+                "approval": str(item.get("approval")),
+            }
+            for item in orchestrator
+        ],
+    }
+    if reader_paths:
+        resolution["status"] = STATUS_AVAILABLE
+        resolution["reason"] = (
+            "这些字面量在 " + " / ".join(reader_paths) + " 里被读到——对应关系可评"
         )
-        + "）在 src/orchestration/tools.py 里 grep 不到；代码侧能读到的是 "
-        "src/orchestration/nodes.py 的四个常量——**未核实**它在哪里解析"
-        "（27 号 §9 第 1 条），因此这一组**不给判据**"
+    else:
+        resolution["status"] = STATUS_UNAVAILABLE
+        resolution["reason"] = (
+            "查不到："
+            + " / ".join(ORCHESTRATOR_TOOL_NAMES)
+            + " 这四个 tool_name 在 "
+            + " / ".join(ORCHESTRATOR_SEARCH_ROOTS)
+            + " 下没有任何读取点（命中的只有注册表自己那四行**声明**）；代码侧引用的是四个 "
+            "orc.* **id**（src/orchestration/nodes.py 的 EDIT_TOOL / WRITE_TOOL / "
+            "PROTECTED_EDIT_TOOL / PROTECTED_WRITE_TOOL）。按 2026-10-03 裁定④：查不到就写 "
+            "unavailable，**不给判据**，也不猜一个对应关系（27 号 §3.5 / §9 第 1 条）"
+        )
+    resolution["note"] = (
+        "只报告：unavailable 说的是「这组对应关系证不出来」，**不是**「注册表写错了」"
+        "（那四行条目本身读得到，见 registry_entries）"
+    )
+    notes.append(
+        "orchestrator 段的 tool_name ↔ 代码名关系读作 " + resolution["status"] + "（见 "
+        "orchestrator_resolution）；C2 因此**不给判据**"
     )
     return {
         "status": STATUS_AVAILABLE,
+        "orchestrator_resolution": resolution,
         "sources": {
             "registry": {
                 "path": "registry/tool-registry.yaml",
@@ -1202,6 +1271,11 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             )
             + "、代码工具表 "
             + str(tool_tables["sources"]["code_tool_table"]["count"])
+        )
+        print(
+            "  C2 orchestrator 关系: "
+            + str(tool_tables["orchestrator_resolution"]["status"])
+            + "（查实：四个 tool_name 在 src / registry / adapters / tools 下没有读取点）"
         )
     else:
         print("  C2 工具表: unavailable（" + str(tool_tables.get("reason", "")) + "）")
