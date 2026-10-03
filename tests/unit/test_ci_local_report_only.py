@@ -149,7 +149,7 @@ def test_exit_code_zero_with_hits_is_not_reported_as_zero_hits(
     assert "—— 0 命中" not in lines[0]
 
 
-def _run_expiry_step(step, *extra: str) -> "subprocess.CompletedProcess[str]":
+def _run_report_only_step(step, *extra: str) -> "subprocess.CompletedProcess[str]":
     """按 REPORT_ONLY_STEPS 里**那一条真实步骤**的 args 起子进程（与门禁同一条命令）。"""
 
     environment = dict(os.environ)
@@ -184,17 +184,63 @@ def test_real_exemption_expiry_output_yields_an_integer_hit_count():
     assert "--json" not in step.args  # 这一步读的是默认文本输出
     today = _datetime.date.today().isoformat()  # 两次运行钉同一天，避免跨午夜读数不一致
 
-    text = _run_expiry_step(step, "--today", today)
+    text = _run_report_only_step(step, "--today", today)
     assert text.returncode == 0, text.stdout + text.stderr
     count, reading = ci_local.report_only_reading(step, text.stdout + text.stderr)
     assert isinstance(count, int) and not isinstance(count, bool), reading
     assert reading.startswith("HITS: %d " % count), reading
 
-    payload = _run_expiry_step(step, "--today", today, "--json")
+    payload = _run_report_only_step(step, "--today", today, "--json")
     assert payload.returncode == 0, payload.stdout + payload.stderr
     expired = json.loads(payload.stdout)["counts"]["expired"]
     assert count == expired, (count, expired, reading)
     assert ci_local.report_only_verdict(text.returncode, count) == "%d 命中（退出码 0）" % count
+
+
+INSTRUMENT_SELF_PROOF_STEP = "Instrument self-proof (report only)"
+
+
+def test_instrument_self_proof_is_registered_as_a_report_only_step():
+    """登记：仪器自证（R-h）是一条只报告步骤，六个字段齐全，且**不带 --json**。
+
+    不带 --json 是读数契约的一部分：它的载荷没有 hits 键（不是账本），带了 --json
+    读取器就只认载荷、永远读不到 HITS: 行（26 号交接第 1 节）。
+    """
+
+    ci_local = _load_ci_local()
+    matches = [
+        step for step in ci_local.REPORT_ONLY_STEPS if step.name == INSTRUMENT_SELF_PROOF_STEP
+    ]
+    assert len(matches) == 1, [step.name for step in ci_local.REPORT_ONLY_STEPS]
+    step = matches[0]
+    assert step.args == ("tools/instrument_self_proof.py",)
+    assert "--json" not in step.args
+    for field in ("reason", "expires_at", "adopted", "reads"):
+        assert getattr(step, field).strip(), field
+    _datetime.date.fromisoformat(step.expires_at)
+    _datetime.date.fromisoformat(step.adopted)
+
+
+def test_real_instrument_self_proof_output_reads_zero_hits():
+    """真实默认输出喂给真实读取器：读出整数 0 命中，结论是「0 命中（退出码 0）」。
+
+    0 命中同时说明登记表与对象清单对得上：这一步自己就是对象清单第 4 族的一员，
+    加了步骤却没在 validation/instrument-checks.yaml 补 "report-only:<name>" 那一行，
+    仪器自证会报 no_check_id=1 —— 这条用例就红在这里，而不是等门禁读数里悄悄多出一个命中。
+    """
+
+    ci_local = _load_ci_local()
+    step = next(
+        item for item in ci_local.REPORT_ONLY_STEPS if item.name == INSTRUMENT_SELF_PROOF_STEP
+    )
+
+    completed = _run_report_only_step(step)  # 按登记的 args 起子进程，仓库根为 cwd
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    count, reading = ci_local.report_only_reading(step, completed.stdout + completed.stderr)
+    assert count == 0, reading
+    assert reading.startswith("HITS: 0 / "), reading
+    assert "no_check_id=0" in reading, reading
+    assert ci_local.report_only_verdict(completed.returncode, count) == "0 命中（退出码 0）"
 
 
 def test_report_only_steps_are_listed_with_their_expiry(monkeypatch, capsys, tmp_root):

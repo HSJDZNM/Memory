@@ -616,3 +616,12 @@ checks:
     mutation_id: null
     gap_note: "存量检查，未做变异自证"
     severity: advisory
+
+  - check_id: "report-only:Instrument self-proof (report only)"
+    owner: ci-line
+    command: "python tools/instrument_self_proof.py"
+    covers: "仪器自证读数（对象清单 × 登记表：三态 + 双向比对；只报告）"
+    evidence_level: report
+    mutation_id: null
+    gap_note: "存量检查，未做变异自证"
+    severity: advisory
