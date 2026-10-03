@@ -167,6 +167,22 @@ REPORT_ONLY_STEPS: tuple[ReportOnlyStep, ...] = (
             "输出里没有这一行时读数为「读不出命中数」）"
         ),
     ),
+    # 仪器自证（R-h，控制面重构线交接，见 26 号文档第 1 节）。name 是跨文件身份：
+    # tools/instrument_self_proof.py 按 AST 读这里的 name= 字面量，作为对象清单第 4 族，
+    # 并与 validation/instrument-checks.yaml 的 "report-only:<name>" 一行双向比对——
+    # 改名要同一个提交同步登记表，否则仪器自证报 no_check_id（只报告、不阻断）。
+    ReportOnlyStep(
+        name="Instrument self-proof (report only)",
+        # 不带 --json：它的载荷没有 hits 键（不是账本），读数走默认输出里的 HITS: 行。
+        args=("tools/instrument_self_proof.py",),
+        reason=(
+            "仪器自证（R-h）：每条仪器检查都要能证明自己会红；只报告，"
+            "非零退出不计入门禁失败（方案 §4 台阶 4 / 25 号 §7 方案 A）"
+        ),
+        expires_at="2026-12-31",
+        adopted="2026-10-03",
+        reads="默认输出里的 HITS: 行（不带 --json；退出码恒为 0，命中数只能从这一行读）",
+    ),
 )
 
 # 按改动范围分组的步骤名（前缀匹配）。名字取自 workflow 里的 name:，改 workflow 时要同步。
