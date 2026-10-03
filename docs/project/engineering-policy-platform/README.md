@@ -22,6 +22,11 @@
 > 验证 ⇄ 修复 → 测试 → 收尾"的可恢复工作流，**只当消费者**——判定仍只有平台一条路径，
 > 每个受治理的写入仍然走 Phase 4 的受控执行链；循环、checkpoint 兼容性、人工审批与平台故障
 > 全部有自动化测试与闭环证据。该层是仓库里**唯一**导入工作流框架的地方，删掉它不影响平台独立运行。
+> Phase 9（控制面重构）是 Phase 8 之后的**横向轨道**：台阶 −2 → 5 已落地到**只报告**为止
+> （平台自己的事实、失败、状态与覆盖进数据；封条与针脚 / 归因闭集 / 状态代数与义务账 / 覆盖账与 `reading_context` /
+> 仪器自证 R-h / 控制面事实表 × 跨源互证），**升格（把只报告读数接成阻断）一项都没做**——
+> 2026-10-03 裁定统一到 2026-12-31 复审。交付边界、端到端证据与**剩余缺口 7 条**见
+> [phase-9-control-plane.md](phases/phase-9-control-plane.md)。
 > 实施记录见对应阶段文档末尾的“实施记录”小节，实际命令以根 `README.md` 为准。
 
 ## 阅读顺序
@@ -30,7 +35,7 @@
 2. [总体架构与核心契约](01-architecture-and-contracts.md)
 3. [仓库数据源与规范转化方法](02-repository-data-sources.md)
 4. [技术选型与目标目录](03-technology-and-layout.md)
-5. 按顺序完成 `phases/` 中 Phase 0 至 Phase 8
+5. 按顺序完成 `phases/` 中 Phase 0 至 Phase 8；Phase 9（控制面重构）是随后的横向轨道，其交付边界与剩余缺口见 [phase-9-control-plane.md](phases/phase-9-control-plane.md)
 6. 全程使用 [测试策略](testing/test-strategy.md)，并用 [阶段验收矩阵](testing/acceptance-matrix.md) 决定是否进入下一阶段
 7. 已交付部分的独立复核与加固记录见 [reviews/](reviews/post-phase-4-hardening.md)（Post-Phase-4 复核）、
    [reviews/post-phase-5-review.md](reviews/post-phase-5-review.md)（Post-Phase-5 复核）、
@@ -82,8 +87,10 @@
 | [Phase 6](phases/phase-6-multi-agent-adapters.md) | 多 Agent Adapter | 仓库实现完成：规范事件、能力声明、写链门禁与一致性套件；第二真实 Agent 产品验证待完成 |
 | [Phase 7](phases/phase-7-policy-api.md) | Policy API | **已完成**：版本化 DTO 与 OpenAPI 快照、Bearer 认证、租户/项目隔离、预算与幂等、观测与锚定；核心库仍可独立运行 |
 | [Phase 8](phases/phase-8-langgraph-orchestration.md) | LangGraph | **已完成**：可恢复的上层编排消费者（最小状态、循环上限、checkpoint 与恢复、人工审批、平台故障失败关闭）；框架可替换且平台仍独立运行 |
+| [Phase 9](phases/phase-9-control-plane.md) | 控制面重构 | **已实现（部分）**：台阶 −2 → 5 的**只报告**部分（封条与针脚 = 部分绿 / 归因闭集 / 状态代数与义务账 / 覆盖账与 `reading_context` / 仪器自证 R-h / 控制面事实表 × 跨源互证）；**升格一项未做**，剩余缺口 7 条 |
 
-原文把路线称为“八个阶段”，但实际编号为 Phase 0 至 Phase 8。本次统一为**九个阶段**，不再混用口径。
+原文把路线称为“八个阶段”，但实际编号为 Phase 0 至 Phase 8。本次统一为**九个阶段**（Phase 0–8），不再混用口径；
+表中另加一行 **Phase 9（控制面重构）**——它沿用编号续接，但**不是**第九个产品阶段：它自己的编号体系是方案的「台阶 −2 → 5」，两者不得互相代入。
 
 ## 文档约定
 

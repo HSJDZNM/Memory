@@ -2778,3 +2778,249 @@ python tools\ci_local.py --full --python .venv/Scripts/python.exe --timings
 # 文件归属（CI 线一个字没动，差集应为空）
 git diff --numstat fc2a5dc..HEAD -- tools/ci_local.py tests/unit/test_ci_local.py tests/unit/test_ci_local_report_only.py tools/phase_evidence.py .github/workflows
 ```
+
+---
+
+## 22 第 31 轮 · 收尾：升格评审（本轮一律不升格）、端到端证据归档、剩余缺口与阶段文档
+
+- **执行**：2026-10-03（本机）；控制面重构会话（**唯一写者**）。
+- **树**：分支 `refactor/control-plane`；本轮起点 = `5b925e4`（`git status --porcelain -uall` 当时为空）。
+- **依据**：使用者 2026-10-03 的本轮指令（第 0 环境自检与合并 / 第 1 升格评审 / 第 2 阶段文档 /
+  第 3 端到端归档 / 第 4 剩余缺口 / 第 5 预算终算）；AGENTS 第 45（仪器要能失败）、48（读数属于哪棵树）、
+  50（口径诚实）、55（加键就是改协议）、56（不适用 ≠ 0 命中）条。
+- **本文是什么**：本轮的实跑读数、升格评审逐条依据、端到端原件归档、剩余缺口清单与三项检查读数。
+- **本文不是什么**：不是评审结论本身——裁定由使用者 2026-10-03 授权评审方给出（§22.1.7 逐条登记）。
+  本轮**只报告的现实一个都没变**：四格红条件仍 `enforced: false`、三条只报告步骤的退出码一个都没接。
+
+### 22.0 环境自检与合并（第 0 步）
+
+| 项 | 读数 |
+| --- | --- |
+| 起点 | `5b925e4`（`refactor/control-plane`；`git status --porcelain -uall` 为空） |
+| `git merge origin/feat/rules-and-os-platform --no-edit` | **`Already up to date.`**（退出码 0：零冲突、无 rebase）；CI 线 tip `e5e7c9e` **已是本分支 HEAD 的祖先**（`git merge-base HEAD origin/feat/rules-and-os-platform` 就是 `e5e7c9e` 本身） |
+| CI 线接了什么 | CI 线的 tip 只把 **R-h（`tools/instrument_self_proof.py`）** 接成只报告步骤（`tools/ci_local.py` 的 `REPORT_ONLY_STEPS` 第 3 条）；**`control_plane_facts` 没有接**（`git grep -n "control_plane_facts" -- .github tools/ci_local.py` 只命中注释）→ 指令里"CI 线如果已接 `control_plane_facts` 就合进来"的**前置条件不成立**，本轮也**不需要**新的合并 |
+| 合并后仪器 1：控制面事实 × 跨源互证 | `HITS: 114 / fact_without_check=13 check_covers_unknown_fact=0 test_path_declaration=101 budget_inequality=0 / facts=13 checks=65`；C1 扫描 **204** 个文件、判定不一致 **101**（platform=False/adapter=True 101、反向 0）、层级不一致 **100**；C2 orchestrator 关系 **`unavailable`**；C3 实例 1 / 1 读得出来；**退出码 0** |
+| 合并后仪器 2：仪器自证（R-h） | `HITS: 0 / no_check_id=0 no_mutation_and_no_gap_note=0 patch_not_applicable=0 check_id_without_object=0 / objects=65 declared=65`（四族 = 门禁步骤 44 + 探针检查 13 + 封条场景 5 + 只报告步骤 3）；**退出码 0** |
+| 本会话形态（**不是真机读数**） | 文件策略 `workspace-write`；`.tmp/artifacts/phase-2-sandbox-result.json` = `result=skipped`、`host.sandbox=restricted`、`tree.revision=5b925e4…`、`schema_version="1.2"` |
+
+### 22.1 升格评审：只报告步骤与只报告读数逐条
+
+**口径（先说不算什么）**：本节的六条都是**只报告**——它们的非零退出**不计入门禁失败**，
+也没有任何一条是判定输入（Hook / Policy Engine / API 什么都不读它们）。
+每条给四个数：**跑了几轮**（接入以来的运行次数与出处）、**真实读数**（能读出结论的读数；
+"不适用 / 读不出"**不算**）、**当前命中数**（2026-10-03 在树 `5b925e4` 上）、**升格判据**（它自己的
+`promote_when` 原文口径）。
+
+**先说清楚"跑了几轮"的分母**：三条只报告步骤是 `ci_local` 的 `REPORT_ONLY_STEPS`，只在
+`python tools/ci_local.py --full` 里执行。**已归档**的 `--full` 运行共 **20 次**：
+19 号 §5 一次、20 号 §4 一次、22 号 §4b 一次、23 号 **17 次**（§4.3 / §9.4 / §11.5 / §12.5 /
+§12.7×2 / §14.7×2 / §16.4×2 / §17.6 / §18.7×2 / §19.7×2 / §21.5 / §21.7）。
+**`--hook` 形态与未归档的运行数不出来**（见 §22.7 第 2 条）——所以下面凡写"20 次"都是**已归档**口径。
+
+#### 22.1.1 义务门禁（`Obligations gate (report only)`，只报告步骤 1）
+
+| 项 | 读数 |
+| --- | --- |
+| 接入 | `6ad7376`（2026-09-30，第 16 轮）；登记进 `ci_local.REPORT_ONLY_STEPS`，**豁免到期 2026-10-31**（最近的一个到期日） |
+| 跑了几轮 | 已归档的 `--full` **20 次**（第 17–30 轮，出处见上）；另有**接入前/接入当轮**的读数：台阶 3c 的 L5「一轮」= **2 个账本 / 3 次门禁运行 / 命中 1 次**（16 号 §5）；接进 `ci_local` 当轮 `HITS: 1 / 1`、退出码 1（18 号 §5——那一版的"账本不存在"按命中算） |
+| 真实读数 | 第 17–30 轮的 20 次里：**0 次**。账本路径 `.tmp/obligations/repo.jsonl` **不存在** → `applicable: false` = **不适用**，按工具自己的口径与 AGENTS 第 56 条，**既不是 0 命中、也不算一次真实读数**（它凑不了升格判据）。**唯一**的真实读数来自 16 号 §5 的 L5 一轮（3 次运行、A2/B 两次 0 命中都来自真实 pytest 运行） |
+| 当前命中数 | `HITS: 0 / 1 个账本（0 命中）；不适用 1 个（没有账本可读，不计入命中）`——**0 不来自真实读数** |
+| 升格判据 | 「跑过 N≥1 次且 0 命中，且 **0 命中必须来自至少一次真实读数**」→ **不满足**（缺后半句）。升格前还要先跑满一轮 `warn + 非零退出`（已在跑） |
+| 本轮裁定 | **不升格**（§22.1.7）；到期日 2026-10-31 是它自己的复核点 |
+
+#### 22.1.2 豁免到期（`Exemption expiry report (report only)`，只报告步骤 2）
+
+| 项 | 读数 |
+| --- | --- |
+| 接入 | `6ad7376`（2026-09-30）同批接入；`HITS:` 机器行由 `35a4ddd`（第 18 轮）补上；**豁免到期 2026-12-31** |
+| 跑了几轮 | 已归档的 `--full` **20 次**；其中第 17 轮那一次**读不出命中数**（args 没有 `--json`、默认输出还没有 `HITS:` 行，19 号 §6 第 2 条把这条登记成待修，由 `35a4ddd` 闭合） |
+| 真实读数 | **19 次**（第 18–30 轮，每次都有 `declared` 整数与 `due/expired/unprovable`；`declared` 随声明增减在 7 → 9 → 8 之间变，是同一份实现的读数）。本轮另直跑 1 次 |
+| 当前命中数 | `HITS: 0 / declared=8 due=0 expired=0 unprovable=0`（8 条 = `wiring-scope.yaml` 5 条 + 三条只报告步骤） |
+| 升格判据 | 与 L5 同型；**字面已满足**（N≥19、0 命中、全部来自真实读数）。**但要先看一个内含的定时器**：`hits` **只数已过期**（`due` 是提前 14 天提醒、`unprovable` 是读不到，两者都不计入命中），而 8 条里 `Obligations gate` 的到期日是 **2026-10-31** → **2026-11-01 起 `expired=1`、`HITS=1`**。今天把它升成阻断步，门禁会在**没有人复核过**的情况下于 11-01 变红 |
+| 本轮裁定 | **不升格**；统一到 2026-12-31 复审（§22.1.7） |
+
+#### 22.1.3 仪器自证 R-h（`Instrument self-proof (report only)`，只报告步骤 3）
+
+| 项 | 读数 |
+| --- | --- |
+| 接入 | 落地 `a8ca287` + `6caa330`（2026-10-03）；接进 `ci_local` = `e5e7c9e`（CI 线，2026-10-03）；**豁免到期 2026-12-31** |
+| 跑了几轮 | **接入后**已归档的 `--full` **2 次**（`97bd641` §21.5、`0273f2c` §21.7）；落地当轮另有多次**直跑**（§19.3 的态③原型、§21.0 合并后、§21.2）；本轮直跑 1 次 |
+| 真实读数 | 3 次（2 次门禁 + 1 次本轮），每次都读出 `objects=65 declared=65` 与四格计数；**没有一次是"读不到"** |
+| 当前命中数 | `HITS: 0`（四格 `0/0/0/0`） |
+| 升格判据 | 「跑过 N≥1 次且三态合计 0 命中，且 0 命中来自至少一次真实读数」（25 号 §3）→ **字面已满足**；**但覆盖是空的**：`validation/instrument-checks.yaml` **65 行的 `mutation_id` 全为 `null`**（方案 A 的存量写法只写 `gap_note`、不做变异），三态里"补丁打不上"没有真实对象 → **升格前必须先补变异自证**（剩余缺口第 2 条） |
+| 本轮裁定 | **不升格**（§22.1.7） |
+
+#### 22.1.4 控制面事实 × 跨源互证（`tools/control_plane_facts.py`，**只报告工具**）
+
+| 项 | 读数 |
+| --- | --- |
+| 接入 | 落地 `f2ab7a9` / `36e1157` / `97bd641` / `7fdd86d`（2026-10-03）；**门禁里没有它**（不在 `ci_local` 也不在 workflow；28 号是给 CI 线的交接清单） |
+| 跑了几轮 | 门禁 **0 次**；登记在案的**直跑 ≥2 次**（23 号 §21.3 一轮 + 本轮 §22.0 一轮） |
+| 真实读数 | 2 次（两次都读出 `facts=13 checks=65` 且 `status: available`；**不是**"读不到"） |
+| 当前命中数 | `HITS: 114` = `fact_without_check 13` + `test_path_declaration 101`；另两格 `check_covers_unknown_fact 0`、`budget_inequality 0` |
+| 升格判据 | 与 L5 同型（跑过 N≥1 次且四格合计 0 命中，且 0 命中来自真实读数）→ **离判据很远**；本轮裁定追加了一条**前提**（见下） |
+| 本轮裁定 | **不升格**；**101 条命中是 C1 存量**（两份测试路径声明的不一致，合并谓词未做），**升格前提是先把这 101 条降到 0** |
+
+#### 22.1.5 覆盖账的红条件（`adapters.cli wiring` 的 `red_conditions`，**只报告读数**）
+
+| 项 | 读数 |
+| --- | --- |
+| 接入 | `in_scope_not_wired` 自 `WIRING_SCHEMA_VERSION` **1.3**（`76a7847`，2026-10-01）起进载荷；第六格 `expected_absent_present` 在 **1.4**（`9074053`，2026-10-03）补上。门禁里跑它的是第 24 步 `Agent channel wiring inventory`（**报告模式、恒退 0**） |
+| 跑了几轮 | 自 1.3 起已归档的 `--full` **11 次**（23 号 §14.7×2 / §16.4×2 / §17.6 / §18.7×2 / §19.7×2 / §21.5 / §21.7）；本轮直跑 1 次 |
+| 真实读数 | 12 次（每次都读出 `status: available` 的整数 `count`） |
+| 当前命中数 | `in_scope_not_wired.count = 3`（`dsh:governed` / `dsh:governed-grade` / `dsh:governed-grade-approval` 三条通道**留痕 stale**）；`expected_absent_present.count = 0`；另 `declared_not_discovered = 1`（**不是**红条件） |
+| 升格判据 | 每格自带的 `promote_when`："跑过 N≥1 次且 0 命中（0 命中必须来自至少一次真实读数）"→ **不满足（3 命中）**。升格路径写死在 24 号 §2.3 第④层：`enforced: false → true` 是一次**显式提交**（`--check` 判据变更 + `WIRING_SCHEMA_VERSION` 同批再动一格 + 门禁步骤表 / CI 的显式改动） |
+| 本轮裁定 | **不升格**（§22.1.7） |
+
+#### 22.1.6 端到端结果里的 `host.sandbox`（`reading_context.host.sandbox`，**只报告读数**）
+
+| 项 | 读数 |
+| --- | --- |
+| 接入 | `SANDBOX_RESULT_SCHEMA_VERSION` **1.2**（`d742775`，2026-09-30）。三态 `restricted` / `unrestricted` / `unknown`；`unknown` 是"读不到"，**不是**"没有沙箱"（AGENTS 第 55 条） |
+| 跑了几轮 | 每次门禁第 9 步（沙箱闭环）写一条 + 每次真机端到端写一条；**真机 pass 原件 8 份**（§22.3），门禁侧的 `skipped` 读数逐轮登记在 23 号 §4.5 / §11.6 / §12.6 / §16.5 / §17.7 / §18.8 / §19.8 / §21.5 / §21.7 |
+| 真实读数 | 真机 **6 份**带 `reading_context`（全部 `unrestricted`）；**2 份转录件**属于 1.1 载荷（**没有** `reading_context`，sandbox **未记录**——不许补写）；门禁侧本会话产物 = `restricted`（`result=skipped`） |
+| 当前命中数 | **没有命中概念**：它不是红条件、不改任何退出码，也没有任何 `promote_when` |
+| 升格判据 | **无**。要升格得先有一条**承载它的判据**（例如"真机 pass 必须 `unrestricted`"），再走 L5 同型的一轮；本轮**不造**这条判据——没有依据的判定不许造（AGENTS 第 50 条） |
+| 本轮裁定 | **不升格**（也无从升格）：保持只报告读数，统一到 2026-12-31 复审 |
+
+#### 22.1.7 同族但不单列的只报告读数（"等"的那一部分）
+
+| 读数 | 为什么同族 | 处置 |
+| --- | --- | --- |
+| `wiring.tools`（工具漂移：声明源 `TOOL_TABLE` 38 项 vs `$DSH_HOME/sessions` 观察） | 载荷里显式写着 `report_only: true`，无红条件、不改退出码 | 只报告；"表里有但本轮没观察到"的 36 项**不是**缺口（未观察 ≠ 不存在） |
+| `wiring.channels[].timeout_budget`（C3 的通道预算并列读数） | 与 `hooks.check_wiring` 是两份实现、两套结论；`inventory_fact.matched` 本机为 `null`（通道指向工作区之外） | 只报告；合并成一份实现属另开一轮 |
+| `ci_local` 的 `REPORT-ONLY:` 控制台行 | 三条只报告步骤的人读出口，**没有版本轴**（是控制台文本契约，由 `tests/unit/test_ci_local_report_only.py` 钉住） | 归 CI 线；升格时才需要动 |
+| `tools/governance_gap_probe.py`（G01–G13） | 有退出码、是**手工仪器**（不在门禁里），它的"覆盖不到什么"由 R-h 的 `gap_note` 管 | 不是"只报告步骤"；登记为 R-h 的对象族之一 |
+
+#### 22.1.8 裁定（2026-10-03，使用者授权评审方）
+
+> **本轮一律不升格**；**统一到 2026-12-31 复审**；`control_plane_facts` 的 **101 条命中是 C1 存量**，
+> **升格前提是先把这 101 条降到 0**。
+
+- 三条只报告步骤 + 两个只报告工具（`control_plane_facts`、覆盖账红条件）+ `host.sandbox` **维持只报告**：
+  退出码一个都不接、判据一条都不改；
+- **最近的到期日是 `Obligations gate (report only)` 的 2026-10-31**（§22.1.2 的定时器）——它到期时
+  `expired=1`、`HITS=1`，**必须先复核**（续期 / 改形态 / 撤下），不能靠升格把它变成一条自己会红的门禁；
+- 六条的升格判据**原文保留在各条**，12-31 复审时按原文逐条读，不临时改口径。
+
+### 22.2 只报告读数总表（2026-10-03，树 `5b925e4`）
+
+| # | 项 | 机器行 / 读数 | 形态 |
+| --- | --- | --- | --- |
+| 1 | 义务门禁 | `HITS: 0 / 1 个账本（0 命中）；不适用 1 个（没有账本可读，不计入命中）` | 只报告**步骤**（门禁里执行、不计失败） |
+| 2 | 豁免到期 | `HITS: 0 / declared=8 due=0 expired=0 unprovable=0` | 只报告**步骤** |
+| 3 | 仪器自证 R-h | `HITS: 0 / no_check_id=0 no_mutation_and_no_gap_note=0 patch_not_applicable=0 check_id_without_object=0 / objects=65 declared=65` | 只报告**步骤** |
+| 4 | 控制面事实 × 跨源互证 | `HITS: 114 / fact_without_check=13 check_covers_unknown_fact=0 test_path_declaration=101 budget_inequality=0 / facts=13 checks=65` | 只报告**工具**（门禁外） |
+| 5 | 覆盖账 | `IN_SCOPE_NOT_WIRED: 3 / discovered=7 declared=6 measured=4`（`red_conditions` 两格 `enforced: false`） | 门禁**步骤里的只报告读数**（第 24 步恒退 0） |
+| 6 | 端到端 `host.sandbox` | 真机 6 份 `unrestricted`；本会话门禁产物 `restricted`（`result=skipped`） | 只报告**读数**（没有承载它的判据） |
+
+**这六项都不是判定输入**：Hook、Policy Engine、Policy API 与 `policy.check` **什么都不读它们**；
+把它们升级成阻断需要走 §22.1 各自的判据 + 一次显式提交（§22.1.8 已裁定本轮不做）。
+
+### 22.3 端到端证据归档（使用者本机历次真机 pass）
+
+**口径**：`.tmp/e2e/` 下的**原件字节**（sha256 由本机 `Get-FileHash` 重算）；
+`.tmp/` 是构建产物目录，**会被 `tools/cleanup.py` 删除**，本节登记的是
+「这些字节序列在这次会话里存在过、且被本机复核过」，**不是**可长期复核的仓库产物。
+第 1、2 份是**从终端输出转录**的手抄件（1.1 载荷，没有 `reading_context`，**不复原**原件）；
+第 3–8 份是使用者用 `Copy-Item` 从 `.tmp/artifacts/phase-2-sandbox-result.json` 复制的**原字节**。
+第 4、5 份已在 §13.1 登记，第 3 份在 §10.1 登记，第 1、2 份在 §2 登记；
+**第 6、7、8 份是本节首次登记**（其中第 7、8 份落在本轮起点树 `5b925e4` 上）。
+
+| # | 原件（相对仓库根） | 字节 | sha256 | `timestamp`（UTC） | `mtime`（UTC） | `tree.revision` | `host.sandbox` | block / allow |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `.tmp/e2e/phase-2-sandbox-result.pass-20260930T010751Z.json` | 2653 | `df2646db896cf726d03cbdff0372783d96f2cffb01b3873034a583167859ed30` | 2026-09-30T01:07:51.436314Z | 2026-09-30T08:31:14Z | 未记录（载荷无 `reading_context`） | 未记录 | 两个场景都 `passed = true`（block：文件未变 `53b53a25…`、`exit_code=2`；allow：`53b53a25… → 2972725e…`、`exit_code=0`） |
+| 2 | `.tmp/e2e/phase-2-sandbox-result.pass-20260930T113532Z.json` | 2780 | `dbcf31765bbcedebcf6b73a8ff5eb29cbec525f42800212e3ccabe91247a8946` | 2026-09-30T11:35:32.027532Z | 2026-09-30T12:18:12Z | 未记录（`schema_version="1.1"`；§2 按轮次记为 `cd40f74`） | 未记录 | 同上（**转录件**） |
+| 3 | `.tmp/e2e/pass-20260930T214825.json` | 3603 | `da1279af9f86e0c082d3fb782aa3b2e0c3c44eeac994eccc48051bd5f459e15a` | 2026-09-30T13:48:23.294459Z | 2026-09-30T13:48:25Z | `7864dd247cb8c98dedf2c26b55ebcd02a0092671` | `unrestricted` | block `exit_code=2`/`executed=false`/`reason_code=policy_block`；allow `exit_code=0`/`executed=true` |
+| 4 | `.tmp/e2e/pass-20260930T231438.json` | 3662 | `5708f3c68890a8c972aa1b91f309b54e60f8c1d5fb7ac2a60c79f6fa2b7c1311` | 2026-09-30T15:14:37.400188Z | 2026-09-30T15:14:38Z | `92a6dd141543a6ab2c3a64d8f32af412569a4197` | `unrestricted` | 同第 3 行 |
+| 5 | `.tmp/e2e/pass-20261001T030051.json` | 3606 | `b090f7c80a17dd76c120b17fd9dc6c9cf56308c81c2d207d459dd59eb8895b55` | 2026-09-30T19:00:49.115572Z | 2026-09-30T19:00:50Z | `1e9df8cec7968f7530b1b3aac556e6a152ec0281` | `unrestricted` | 同第 3 行 |
+| 6 | `.tmp/e2e/pass-20261001T132947.json` | 3612 | `bb068017ff86e584b9fd8a7e4e9a5c0c45204ae59bcdff18a0a80b9839237ba9` | 2026-10-01T05:29:46.732763Z | 2026-10-01T05:29:47Z | `088349ab547aa280044e2220ebe5da44c7be27b5` | `unrestricted` | 同第 3 行 |
+| 7 | `.tmp/e2e/pass-20261003T173744.json` | 3621 | `00978b996d5324a3a809b1333e612891601534fd0c97fcfda45116d3f87c07e3` | 2026-10-03T09:37:43.448758Z | 2026-10-03T09:37:44Z | `5b925e4837c26c50569fb8f7d7893789cb31b614` | `unrestricted` | 同第 3 行 |
+| 8 | `.tmp/e2e/pass-20261003T203632.json` | 3653 | `56a152af546acc526b99b218f00aad7227fbadee692f99a47cc89e9bf4f36ed5` | 2026-10-03T12:36:30.946531Z | 2026-10-03T12:36:31Z | `5b925e4837c26c50569fb8f7d7893789cb31b614` | `unrestricted` | 同第 3 行 |
+
+**八条共同的读数**：`result = pass`、`environment_skipped = false`、`agent = dsh`、
+`agent_version = 0.1.5-rc.1`、`matched_rules = ["ARCH-001@1"]`、
+`rule_set_hash = sha256:50202675b6ca4013…`；第 3–8 份另有 `isolated_home = true`、
+`dsh_home = .tmp/phase-2-sandbox/dsh-home`。
+
+**与门禁第 9 步的对照（同一闭环、两种环境）**：本会话受限上下文里是 `result = skipped`、
+`host.sandbox = restricted`、`dsh_startup_denied_kind = profile_write_denied`
+（被拒路径 `C:\Users\ZNM\.dsh\profiles\headless\cordis.yml`）。
+**跳过不是通过**（AGENTS 第 45 条）：两份读数都要留，差别只来自环境。
+
+**这次归档不主张什么**：① "这八次真的是端到端跑出来的"是**使用者提供的事实**，
+我复核的是**字节与字段**（原件与一次完整闭环的载荷同形）；② 原件在 `.tmp/` 下，
+cleanup 之后只能靠本节的 sha256 复核；③ 远端状态**未核实**（本会话不 `fetch`）。
+
+### 22.4 剩余缺口清单（**未实现**，不许读成已交付）
+
+规范落点是 [phase-9-control-plane.md 的「剩余缺口」](../phases/phase-9-control-plane.md)；
+本节与它**逐条一致**，另附本轮的出处。
+
+| # | 缺口 | 现状（可复核读数 / 出处） | 处置 |
+| --- | --- | --- | --- |
+| 1 | **门禁接封条（R-e 完整版）** | `--full` 的执行路径里**没有任何一步**被要求交出判据级封条（`referenced_inputs_digest` 的 pre/post 比对 + 退出码 3）；机制只在 `tools/provenance_loop.py` 的 5 个场景 → 台阶 0 = **部分绿**（方案 §4；§20.3） | **不排期**；若做，形态约束写死在 §20.3 |
+| 2 | **R-h 变异自证覆盖为 0** | `validation/instrument-checks.yaml` **65 行的 `mutation_id` 全为 `null`**（方案 A 只写 `gap_note`） | 升格前先补（25 号 §7 方案 B/C） |
+| 3 | **C1 的 101 条不一致（合并谓词未做）** | 扫描 204 个文件、判定不一致 **101**、层级不一致 **100**；平台 `validation/test-layout.yaml` vs `examples/dsh/dsh-adapter.yaml` 仍各写各的 | 合并会**改变判定** → 另开一轮 + 字段级差集（R-d） |
+| 4 | **orchestrator 的 `tool_name` 为 `unavailable`** | 4 条 orchestrator `tool_name` 在 `src` / `registry` / `adapters` / `tools` 下**没有任何读取点**（代码引用的是四个 `orc.*` id） | 保持 `unavailable`，不猜 |
+| 5 | **DSH 会话里 xdist 起不来** | 本会话 `workspace-write` 下 `pytest -n auto` 必然 `INTERNALERROR`；门禁读数靠 `PYTEST_XDIST_AUTO_NUM_WORKERS=0` 串行（pytest 步 6–7 分钟 vs 并行约 2 分钟）；**根因未核实** | 逐次声明（§20.1 第 6 条）；根因另查 |
+| 6 | **`~/.dsh` 与 `%TEMP%` 在 dsh 进程里不可写的原因未核实** | 门禁第 9 步 `dsh_startup_denied_kind=profile_write_denied`、被拒路径 `C:\Users\ZNM\.dsh\profiles\headless\cordis.yml`；`--isolated-home` 的真机形态 `result=pass` | **只登记现象**，不写成"沙箱就是这样" |
+| 7 | **只报告读数的 2026-12-31 复审** | 三条只报告步骤（最近到期日 `Obligations gate` **2026-10-31**）+ `control_plane_facts` + 覆盖账红条件 + `host.sandbox` | 统一到 2026-12-31（§22.1.8） |
+
+### 22.5 本轮的改动归属（**只写文档**）
+
+| 文件 | 动作 |
+| --- | --- |
+| [`phases/phase-9-control-plane.md`](../phases/phase-9-control-plane.md) | **新增**：台阶 −2 → 5 的只报告部分（实现位置 / 版本轴 / 门禁步骤 / 证据文件）+ 端到端归档 + 剩余缺口 + 退出条件 |
+| 本文件（23 号） | **追加**本节（§22）；既有 §0–§21 **一个字都没改** |
+| [`designs/控制面重构方案.md`](../designs/控制面重构方案.md) | 抬头状态改为"已实现（部分），见 phase-9"；**新增 §7.2**（台阶 0–5 的 numstat 终算 vs §7 原估算） |
+| [`designs/README.md`](../designs/README.md) | "治理控制面重构"那一行的状态同步 |
+| [平台 README](../README.md) | "九个阶段"表新增 Phase 9 一行 + 实施进度补一句 |
+
+**对代码 / 数据 / 测试的差集 = 0 行**（提交后按区间复核）：
+
+```powershell
+git diff --numstat 5b925e4..HEAD -- src tests tools validation adapters registry api knowledge policies examples .github
+```
+
+### 22.6 本轮的三项检查与复现命令
+
+| 检查 | 读数（本轮全部文档改动完成之后） |
+| --- | --- |
+| 文本规范 `tools/check_text_conventions.py` | **668** 个文本文件、问题 **0** 处（跳过第三方镜像 300）；退出码 **0** |
+| 仓库一致性 `tools/check_repo_consistency.py` | 依赖锁 / 文档与配置 / 手册形态 / 工具清单 **四项都"一致"**；退出码 **0** |
+| 密钥扫描 `tools/secret_scan.py` | 扫描 **667** 个文件（镜像跳过）；**没有发现疑似凭据**；退出码 **0** |
+
+```powershell
+# 三项（本轮指令要求的三项；没有跑 --full）
+.venv\Scripts\python.exe tools\check_text_conventions.py
+.venv\Scripts\python.exe tools\check_repo_consistency.py
+.venv\Scripts\python.exe tools\secret_scan.py
+
+# 第 0 步的两台仪器（只报告、退出码恒 0）
+.venv\Scripts\python.exe tools\control_plane_facts.py
+.venv\Scripts\python.exe tools\instrument_self_proof.py
+
+# 第 0 步的合并（应为 Already up to date）
+git merge origin/feat/rules-and-os-platform --no-edit
+
+# 端到端原件的 sha256 与字段（只读）
+Get-ChildItem .tmp/e2e -File | Where-Object { $_.Name -like "pass-*.json" -or $_.Name -like "phase-2-sandbox-result.pass-*.json" } |
+  Sort-Object Name | ForEach-Object { "$($_.Name) $((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())" }
+
+# 文件归属：只改这 5 个文档
+git status --porcelain -uall
+```
+
+### 22.7 未核实（逐条）
+
+1. **§22.1 的"跑了几轮"是已归档口径**：`--hook` 形态与未归档的 `--full` 运行数不出来（工具不落运行台账）；
+2. **并发对照没有重跑**：`.tmp/ci-local.lock` 的"抢不到即退 1"只有代码与纪律，本轮没有造第二次并发运行；
+3. **GitHub Actions 上的读数**：C1/C3 依赖宿主与仓库内容（本机 101 / 114），**不要照抄**；
+4. **`mutation_id` 全空是"当前值"**：65 行全部 `null` 是本轮直读 `validation/instrument-checks.yaml` 的结果，
+   不代表将来（补变异自证会改它）；
+5. **第 6、7、8 份端到端原件是"首次登记"**：它们此前不在任何 tracked 文档里；
+   "它们落在 `5b925e4` 这棵树上"由载荷里的 `tree.revision` 支持，**不是我亲眼看到那次运行**；
+6. **本轮的文本规范读数写进 §22.6 时是"提交前"的读数**：本节之后的措辞微调若发生，
+   以**最后一次**跑出来的为准（与 §18.7 / §19.7 / §21.7 同一条覆盖边界）；
+7. **12-31 复审的口径**：本文件只登记"到 2026-12-31 统一复审"这条裁定，**没有**预写复审的判据细则。
