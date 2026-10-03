@@ -2798,9 +2798,9 @@ git diff --numstat fc2a5dc..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 | --- | --- |
 | 起点 | `5b925e4`（`refactor/control-plane`；`git status --porcelain -uall` 为空） |
 | `git merge origin/feat/rules-and-os-platform --no-edit` | **`Already up to date.`**（退出码 0：零冲突、无 rebase）；CI 线 tip `e5e7c9e` **已是本分支 HEAD 的祖先**（`git merge-base HEAD origin/feat/rules-and-os-platform` 就是 `e5e7c9e` 本身） |
-| CI 线接了什么 | CI 线的 tip 只把 **R-h（`tools/instrument_self_proof.py`）** 接成只报告步骤（`tools/ci_local.py` 的 `REPORT_ONLY_STEPS` 第 3 条）；**`control_plane_facts` 没有接**（`git grep -n "control_plane_facts" -- .github tools/ci_local.py` 只命中注释）→ 指令里"CI 线如果已接 `control_plane_facts` 就合进来"的**前置条件不成立**，本轮也**不需要**新的合并 |
-| 合并后仪器 1：控制面事实 × 跨源互证 | `HITS: 114 / fact_without_check=13 check_covers_unknown_fact=0 test_path_declaration=101 budget_inequality=0 / facts=13 checks=65`；C1 扫描 **204** 个文件、判定不一致 **101**（platform=False/adapter=True 101、反向 0）、层级不一致 **100**；C2 orchestrator 关系 **`unavailable`**；C3 实例 1 / 1 读得出来；**退出码 0** |
-| 合并后仪器 2：仪器自证（R-h） | `HITS: 0 / no_check_id=0 no_mutation_and_no_gap_note=0 patch_not_applicable=0 check_id_without_object=0 / objects=65 declared=65`（四族 = 门禁步骤 44 + 探针检查 13 + 封条场景 5 + 只报告步骤 3）；**退出码 0** |
+| CI 线接了什么 | CI 线的 tip 只把 **R-h（`tools/instrument_self_proof.py`）** 接成只报告步骤（`tools/ci_local.py` 的 `REPORT_ONLY_STEPS` 第 3 条）；**`control_plane_facts` 没有接**（`git grep -n "control_plane_facts" -- .github tools/ci_local.py` 只命中注释）→ 指令里"CI 线如果已接 `control_plane_facts` 就合进来"的**前置条件不成立**，本轮也**不需要**新的合并。**更正（2026-10-04）**：使用者 fetch 之后 CI 线 tip 已是 `be7ef8a`，其中 **`7869299` 已把 `control_plane_facts` 接成第 4 条只报告步骤**（`REPORT_ONLY_STEPS` 第 4 条，豁免到期 2026-12-31；`be7ef8a` 另改性能测试基线用例）→ 本行结论在 `be7ef8a` 上**不成立**；第 32 轮已合并并重跑（§22.8） |
+| 合并后仪器 1：控制面事实 × 跨源互证 | `HITS: 114 / fact_without_check=13 check_covers_unknown_fact=0 test_path_declaration=101 budget_inequality=0 / facts=13 checks=65`；C1 扫描 **204** 个文件、判定不一致 **101**（platform=False/adapter=True 101、反向 0）、层级不一致 **100**；C2 orchestrator 关系 **`unavailable`**；C3 实例 1 / 1 读得出来；**退出码 0**。**已被 `7869299` 取代（2026-10-04 实跑）**：`HITS: 101 / fact_without_check=0 check_covers_unknown_fact=0 test_path_declaration=101 budget_inequality=0 / facts=13 checks=66`（见 §22.8.1 / §22.8.2） |
+| 合并后仪器 2：仪器自证（R-h） | `HITS: 0 / no_check_id=0 no_mutation_and_no_gap_note=0 patch_not_applicable=0 check_id_without_object=0 / objects=65 declared=65`（四族 = 门禁步骤 44 + 探针检查 13 + 封条场景 5 + 只报告步骤 3）；**退出码 0**。**已被 `7869299` 取代（2026-10-04 实跑）**：`objects=66 declared=66`（四族 = 44 + 13 + 5 + **4**），四格仍 `0/0/0/0`（见 §22.8.1 / §22.8.2） |
 | 本会话形态（**不是真机读数**） | 文件策略 `workspace-write`；`.tmp/artifacts/phase-2-sandbox-result.json` = `result=skipped`、`host.sandbox=restricted`、`tree.revision=5b925e4…`、`schema_version="1.2"` |
 
 ### 22.1 升格评审：只报告步骤与只报告读数逐条
@@ -2808,14 +2808,16 @@ git diff --numstat fc2a5dc..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 **口径（先说不算什么）**：本节的六条都是**只报告**——它们的非零退出**不计入门禁失败**，
 也没有任何一条是判定输入（Hook / Policy Engine / API 什么都不读它们）。
 每条给四个数：**跑了几轮**（接入以来的运行次数与出处）、**真实读数**（能读出结论的读数；
-"不适用 / 读不出"**不算**）、**当前命中数**（2026-10-03 在树 `5b925e4` 上）、**升格判据**（它自己的
+"不适用 / 读不出"**不算**）、**当前命中数**（第 31 轮口径 = 2026-10-03 在树 `5b925e4` 上；
+2026-10-04 更正后的值标在相关各行的「更正」处）、**升格判据**（它自己的
 `promote_when` 原文口径）。
 
-**先说清楚"跑了几轮"的分母**：三条只报告步骤是 `ci_local` 的 `REPORT_ONLY_STEPS`，只在
+**先说清楚"跑了几轮"的分母**：**四条**只报告步骤是 `ci_local` 的 `REPORT_ONLY_STEPS`（第 4 条 `Control plane facts (report only)` 自 `7869299` 起才在），只在
 `python tools/ci_local.py --full` 里执行。**已归档**的 `--full` 运行共 **20 次**：
 19 号 §5 一次、20 号 §4 一次、22 号 §4b 一次、23 号 **17 次**（§4.3 / §9.4 / §11.5 / §12.5 /
 §12.7×2 / §14.7×2 / §16.4×2 / §17.6 / §18.7×2 / §19.7×2 / §21.5 / §21.7）。
 **`--hook` 形态与未归档的运行数不出来**（见 §22.7 第 2 条）——所以下面凡写"20 次"都是**已归档**口径。
+第 4 条（控制面事实表）的分母更短：它自 2026-10-03（`7869299`）起才在，**已归档的 `--full` 里一次都没有跑过它**（§22.8.2）。
 
 #### 22.1.1 义务门禁（`Obligations gate (report only)`，只报告步骤 1）
 
@@ -2827,6 +2829,7 @@ git diff --numstat fc2a5dc..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 | 当前命中数 | `HITS: 0 / 1 个账本（0 命中）；不适用 1 个（没有账本可读，不计入命中）`——**0 不来自真实读数** |
 | 升格判据 | 「跑过 N≥1 次且 0 命中，且 **0 命中必须来自至少一次真实读数**」→ **不满足**（缺后半句）。升格前还要先跑满一轮 `warn + 非零退出`（已在跑） |
 | 本轮裁定 | **不升格**（§22.1.7）；到期日 2026-10-31 是它自己的复核点 |
+| 2026-10-04 裁定 | ① 豁免**由 CI 线在 2026-10-17 前续期到 2026-12-31**（**未落地**：本文件写作时 `ci_local.REPORT_ONLY_STEPS` 里它仍是 2026-10-31，直跑 `exemption_expiry` 读到「还有 28 天」）；② 登记**结构问题**：仓库门禁里永远读不到账本 → 已归档的 20 次 `--full` **没有一次真实读数**，L5 试用期的升格判据**在现有配置下跑不满**；2026-12-31 复审时决定**找真实实例还是撤销**（§22.8.5 ④；phase-9 的「剩余缺口」第 8 条） |
 
 #### 22.1.2 豁免到期（`Exemption expiry report (report only)`，只报告步骤 2）
 
@@ -2835,8 +2838,8 @@ git diff --numstat fc2a5dc..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 | 接入 | `6ad7376`（2026-09-30）同批接入；`HITS:` 机器行由 `35a4ddd`（第 18 轮）补上；**豁免到期 2026-12-31** |
 | 跑了几轮 | 已归档的 `--full` **20 次**；其中第 17 轮那一次**读不出命中数**（args 没有 `--json`、默认输出还没有 `HITS:` 行，19 号 §6 第 2 条把这条登记成待修，由 `35a4ddd` 闭合） |
 | 真实读数 | **19 次**（第 18–30 轮，每次都有 `declared` 整数与 `due/expired/unprovable`；`declared` 随声明增减在 7 → 9 → 8 之间变，是同一份实现的读数）。本轮另直跑 1 次 |
-| 当前命中数 | `HITS: 0 / declared=8 due=0 expired=0 unprovable=0`（8 条 = `wiring-scope.yaml` 5 条 + 三条只报告步骤） |
-| 升格判据 | 与 L5 同型；**字面已满足**（N≥19、0 命中、全部来自真实读数）。**但要先看一个内含的定时器**：`hits` **只数已过期**（`due` 是提前 14 天提醒、`unprovable` 是读不到，两者都不计入命中），而 8 条里 `Obligations gate` 的到期日是 **2026-10-31** → **2026-11-01 起 `expired=1`、`HITS=1`**。今天把它升成阻断步，门禁会在**没有人复核过**的情况下于 11-01 变红 |
+| 当前命中数 | `HITS: 0 / declared=9 due=0 expired=0 unprovable=0`（**2026-10-04 更正**：9 条 = `wiring-scope.yaml` 5 条 + **四条**只报告步骤；第 31 轮读数是 `declared=8`） |
+| 升格判据 | 与 L5 同型；**字面已满足**（N≥19、0 命中、全部来自真实读数）。**但要先看一个内含的定时器**：`hits` **只数已过期**（`due` 是提前 14 天提醒、`unprovable` 是读不到，两者都不计入命中），而 9 条里 `Obligations gate` 的到期日是 **2026-10-31** → **2026-11-01 起 `expired=1`、`HITS=1`**。今天把它升成阻断步，门禁会在**没有人复核过**的情况下于 11-01 变红。**2026-10-04 裁定**：CI 线在 **2026-10-17 前**把它续期到 **2026-12-31**——续期落地后这个定时器就不响；**续期未落地前 `expires_at` 仍是 2026-10-31**（§22.8.5 ③） |
 | 本轮裁定 | **不升格**；统一到 2026-12-31 复审（§22.1.7） |
 
 #### 22.1.3 仪器自证 R-h（`Instrument self-proof (report only)`，只报告步骤 3）
@@ -2845,21 +2848,21 @@ git diff --numstat fc2a5dc..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 | --- | --- |
 | 接入 | 落地 `a8ca287` + `6caa330`（2026-10-03）；接进 `ci_local` = `e5e7c9e`（CI 线，2026-10-03）；**豁免到期 2026-12-31** |
 | 跑了几轮 | **接入后**已归档的 `--full` **2 次**（`97bd641` §21.5、`0273f2c` §21.7）；落地当轮另有多次**直跑**（§19.3 的态③原型、§21.0 合并后、§21.2）；本轮直跑 1 次 |
-| 真实读数 | 3 次（2 次门禁 + 1 次本轮），每次都读出 `objects=65 declared=65` 与四格计数；**没有一次是"读不到"** |
+| 真实读数 | 3 次（2 次门禁 + 1 次本轮），每次都读出 `objects=65 declared=65` 与四格计数；**没有一次是"读不到"**。**2026-10-04 追加 1 次直跑：`objects=66 declared=66`、四格 `0/0/0/0`**（第 4 族随 `7869299` 扩到 4 条） |
 | 当前命中数 | `HITS: 0`（四格 `0/0/0/0`） |
-| 升格判据 | 「跑过 N≥1 次且三态合计 0 命中，且 0 命中来自至少一次真实读数」（25 号 §3）→ **字面已满足**；**但覆盖是空的**：`validation/instrument-checks.yaml` **65 行的 `mutation_id` 全为 `null`**（方案 A 的存量写法只写 `gap_note`、不做变异），三态里"补丁打不上"没有真实对象 → **升格前必须先补变异自证**（剩余缺口第 2 条） |
+| 升格判据 | 「跑过 N≥1 次且三态合计 0 命中，且 0 命中来自至少一次真实读数」（25 号 §3）→ **字面已满足**；**但覆盖是空的**：`validation/instrument-checks.yaml` **66 行的 `mutation_id` 全为 `null`**（方案 A 的存量写法只写 `gap_note`、不做变异；2026-10-04 更正，第 31 轮读 65 行），三态里"补丁打不上"没有真实对象 → **升格前必须先补变异自证**（剩余缺口第 2 条） |
 | 本轮裁定 | **不升格**（§22.1.7） |
 
 #### 22.1.4 控制面事实 × 跨源互证（`tools/control_plane_facts.py`，**只报告工具**）
 
 | 项 | 读数 |
 | --- | --- |
-| 接入 | 落地 `f2ab7a9` / `36e1157` / `97bd641` / `7fdd86d`（2026-10-03）；**门禁里没有它**（不在 `ci_local` 也不在 workflow；28 号是给 CI 线的交接清单） |
-| 跑了几轮 | 门禁 **0 次**；登记在案的**直跑 ≥2 次**（23 号 §21.3 一轮 + 本轮 §22.0 一轮） |
-| 真实读数 | 2 次（两次都读出 `facts=13 checks=65` 且 `status: available`；**不是**"读不到"） |
-| 当前命中数 | `HITS: 114` = `fact_without_check 13` + `test_path_declaration 101`；另两格 `check_covers_unknown_fact 0`、`budget_inequality 0` |
-| 升格判据 | 与 L5 同型（跑过 N≥1 次且四格合计 0 命中，且 0 命中来自真实读数）→ **离判据很远**；本轮裁定追加了一条**前提**（见下） |
-| 本轮裁定 | **不升格**；**101 条命中是 C1 存量**（两份测试路径声明的不一致，合并谓词未做），**升格前提是先把这 101 条降到 0** |
+| 接入 | 落地 `f2ab7a9` / `36e1157` / `97bd641` / `7fdd86d`（2026-10-03）；**2026-10-04 更正：已由 CI 线 `7869299` 接成只报告步骤 4**（`ReportOnlyStep(name="Control plane facts (report only)")`、args 不带 `--json`、读默认输出的 `HITS:` 行、豁免到期 **2026-12-31**）；**workflow 里仍未接**（28 号是给 CI 线的交接清单） |
+| 跑了几轮 | 门禁 **0 次**（第 31 轮口径）；`7869299` 之后它已是门禁里的只报告步骤，但**已归档的 `--full` 里还没有跑过它**（第 32 轮只直跑了一次）；登记在案的**直跑 3 次**（§21.3 一轮 + 第 31 轮 §22.0 一轮 + 第 32 轮 §22.8 一轮） |
+| 真实读数 | 3 次（前两次读出 `facts=13 checks=65`；第 32 轮读出 `facts=13 checks=66` 且 `status: available`；**没有一次是"读不到"**） |
+| 当前命中数 | **`HITS: 101`**（2026-10-04 更正）= `fact_without_check **0**` + `test_path_declaration 101`；另两格 `check_covers_unknown_fact 0`、`budget_inequality 0`。第 31 轮读数是 `HITS: 114`（`fact_without_check 13`） |
+| 升格判据 | 与 L5 同型（跑过 N≥1 次且四格合计 0 命中，且 0 命中来自真实读数）→ **离判据很远**；`7869299` 之后四格里**只剩一格非 0**（C1 的 101）；本轮裁定追加了一条**前提**（见下） |
+| 本轮裁定 | **不升格**；**101 条命中是 C1 存量**（两份测试路径声明的不一致，合并谓词未做），**升格前提是先把这 101 条降到 0**。**2026-10-04 追加**：C1 的 101 条**单列为后续项目**（需要合并谓词、会改判定），**不属于本次控制面重构**，**不许用写声明的方式消掉**（§22.8.5 ②） |
 
 #### 22.1.5 覆盖账的红条件（`adapters.cli wiring` 的 `red_conditions`，**只报告读数**）
 
@@ -2889,7 +2892,7 @@ git diff --numstat fc2a5dc..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 | --- | --- | --- |
 | `wiring.tools`（工具漂移：声明源 `TOOL_TABLE` 38 项 vs `$DSH_HOME/sessions` 观察） | 载荷里显式写着 `report_only: true`，无红条件、不改退出码 | 只报告；"表里有但本轮没观察到"的 36 项**不是**缺口（未观察 ≠ 不存在） |
 | `wiring.channels[].timeout_budget`（C3 的通道预算并列读数） | 与 `hooks.check_wiring` 是两份实现、两套结论；`inventory_fact.matched` 本机为 `null`（通道指向工作区之外） | 只报告；合并成一份实现属另开一轮 |
-| `ci_local` 的 `REPORT-ONLY:` 控制台行 | 三条只报告步骤的人读出口，**没有版本轴**（是控制台文本契约，由 `tests/unit/test_ci_local_report_only.py` 钉住） | 归 CI 线；升格时才需要动 |
+| `ci_local` 的 `REPORT-ONLY:` 控制台行 | **四条**只报告步骤（`7869299` 之后）的人读出口，**没有版本轴**（是控制台文本契约，由 `tests/unit/test_ci_local_report_only.py` 钉住） | 归 CI 线；升格时才需要动 |
 | `tools/governance_gap_probe.py`（G01–G13） | 有退出码、是**手工仪器**（不在门禁里），它的"覆盖不到什么"由 R-h 的 `gap_note` 管 | 不是"只报告步骤"；登记为 R-h 的对象族之一 |
 
 #### 22.1.8 裁定（2026-10-03，使用者授权评审方）
@@ -2897,20 +2900,26 @@ git diff --numstat fc2a5dc..HEAD -- tools/ci_local.py tests/unit/test_ci_local.p
 > **本轮一律不升格**；**统一到 2026-12-31 复审**；`control_plane_facts` 的 **101 条命中是 C1 存量**，
 > **升格前提是先把这 101 条降到 0**。
 
-- 三条只报告步骤 + 两个只报告工具（`control_plane_facts`、覆盖账红条件）+ `host.sandbox` **维持只报告**：
+- **四条**只报告步骤 + 覆盖账红条件 + `host.sandbox` **维持只报告**：
   退出码一个都不接、判据一条都不改；
 - **最近的到期日是 `Obligations gate (report only)` 的 2026-10-31**（§22.1.2 的定时器）——它到期时
   `expired=1`、`HITS=1`，**必须先复核**（续期 / 改形态 / 撤下），不能靠升格把它变成一条自己会红的门禁；
 - 六条的升格判据**原文保留在各条**，12-31 复审时按原文逐条读，不临时改口径。
 
-### 22.2 只报告读数总表（2026-10-03，树 `5b925e4`）
+**2026-10-04 再次登记同一条裁定**（一律不升格、统一到 2026-12-31 复审），并追加两条可执行口径：
+① C1 的 101 条**单列为后续项目**——不属于本次控制面重构，**不许用写声明的方式消掉**；
+② 义务门禁的豁免**由 CI 线在 2026-10-17 前续期到 2026-12-31**，它的**结构问题**
+（仓库门禁里永远没有账本 → L5 试用期跑不满）在 12-31 复审时决定**找真实实例还是撤销**。
+逐条依据与未落地声明见 §22.8.5。
+
+### 22.2 只报告读数总表（2026-10-03，树 `5b925e4`；**2026-10-04 按合并 CI 线之后的实跑读数更正**，见 §22.8.4）
 
 | # | 项 | 机器行 / 读数 | 形态 |
 | --- | --- | --- | --- |
 | 1 | 义务门禁 | `HITS: 0 / 1 个账本（0 命中）；不适用 1 个（没有账本可读，不计入命中）` | 只报告**步骤**（门禁里执行、不计失败） |
-| 2 | 豁免到期 | `HITS: 0 / declared=8 due=0 expired=0 unprovable=0` | 只报告**步骤** |
-| 3 | 仪器自证 R-h | `HITS: 0 / no_check_id=0 no_mutation_and_no_gap_note=0 patch_not_applicable=0 check_id_without_object=0 / objects=65 declared=65` | 只报告**步骤** |
-| 4 | 控制面事实 × 跨源互证 | `HITS: 114 / fact_without_check=13 check_covers_unknown_fact=0 test_path_declaration=101 budget_inequality=0 / facts=13 checks=65` | 只报告**工具**（门禁外） |
+| 2 | 豁免到期 | `HITS: 0 / declared=**9** due=0 expired=0 unprovable=0`（第 31 轮：`declared=8`） | 只报告**步骤** |
+| 3 | 仪器自证 R-h | `HITS: 0 / no_check_id=0 no_mutation_and_no_gap_note=0 patch_not_applicable=0 check_id_without_object=0 / objects=**66** declared=**66**`（第 31 轮：65 / 65；四族 = 44 + 13 + 5 + **4**） | 只报告**步骤** |
+| 4 | 控制面事实 × 跨源互证 | `HITS: **101** / fact_without_check=**0** check_covers_unknown_fact=0 test_path_declaration=101 budget_inequality=0 / facts=13 checks=**66**`（第 31 轮：`HITS: 114 … checks=65`） | 只报告**步骤 4**（门禁里执行、不计失败） |
 | 5 | 覆盖账 | `IN_SCOPE_NOT_WIRED: 3 / discovered=7 declared=6 measured=4`（`red_conditions` 两格 `enforced: false`） | 门禁**步骤里的只报告读数**（第 24 步恒退 0） |
 | 6 | 端到端 `host.sandbox` | 真机 6 份 `unrestricted`；本会话门禁产物 `restricted`（`result=skipped`） | 只报告**读数**（没有承载它的判据） |
 
@@ -2960,12 +2969,13 @@ cleanup 之后只能靠本节的 sha256 复核；③ 远端状态**未核实**�
 | # | 缺口 | 现状（可复核读数 / 出处） | 处置 |
 | --- | --- | --- | --- |
 | 1 | **门禁接封条（R-e 完整版）** | `--full` 的执行路径里**没有任何一步**被要求交出判据级封条（`referenced_inputs_digest` 的 pre/post 比对 + 退出码 3）；机制只在 `tools/provenance_loop.py` 的 5 个场景 → 台阶 0 = **部分绿**（方案 §4；§20.3） | **不排期**；若做，形态约束写死在 §20.3 |
-| 2 | **R-h 变异自证覆盖为 0** | `validation/instrument-checks.yaml` **65 行的 `mutation_id` 全为 `null`**（方案 A 只写 `gap_note`） | 升格前先补（25 号 §7 方案 B/C） |
-| 3 | **C1 的 101 条不一致（合并谓词未做）** | 扫描 204 个文件、判定不一致 **101**、层级不一致 **100**；平台 `validation/test-layout.yaml` vs `examples/dsh/dsh-adapter.yaml` 仍各写各的 | 合并会**改变判定** → 另开一轮 + 字段级差集（R-d） |
+| 2 | **R-h 变异自证覆盖为 0** | `validation/instrument-checks.yaml` **66 行的 `mutation_id` 全为 `null`**（方案 A 只写 `gap_note`；2026-10-04 更正，原读 65 行） | 升格前先补（25 号 §7 方案 B/C） |
+| 3 | **C1 的 101 条不一致（合并谓词未做）** | 扫描 204 个文件、判定不一致 **101**、层级不一致 **100**；平台 `validation/test-layout.yaml` vs `examples/dsh/dsh-adapter.yaml` 仍各写各的 | 合并会**改变判定** → 另开一轮 + 字段级差集（R-d）；**2026-10-04 裁定：单列为后续项目**——不属于本次重构，**不许用写声明的方式消掉**（§22.8.5 ②） |
 | 4 | **orchestrator 的 `tool_name` 为 `unavailable`** | 4 条 orchestrator `tool_name` 在 `src` / `registry` / `adapters` / `tools` 下**没有任何读取点**（代码引用的是四个 `orc.*` id） | 保持 `unavailable`，不猜 |
 | 5 | **DSH 会话里 xdist 起不来** | 本会话 `workspace-write` 下 `pytest -n auto` 必然 `INTERNALERROR`；门禁读数靠 `PYTEST_XDIST_AUTO_NUM_WORKERS=0` 串行（pytest 步 6–7 分钟 vs 并行约 2 分钟）；**根因未核实** | 逐次声明（§20.1 第 6 条）；根因另查 |
 | 6 | **`~/.dsh` 与 `%TEMP%` 在 dsh 进程里不可写的原因未核实** | 门禁第 9 步 `dsh_startup_denied_kind=profile_write_denied`、被拒路径 `C:\Users\ZNM\.dsh\profiles\headless\cordis.yml`；`--isolated-home` 的真机形态 `result=pass` | **只登记现象**，不写成"沙箱就是这样" |
-| 7 | **只报告读数的 2026-12-31 复审** | 三条只报告步骤（最近到期日 `Obligations gate` **2026-10-31**）+ `control_plane_facts` + 覆盖账红条件 + `host.sandbox` | 统一到 2026-12-31（§22.1.8） |
+| 7 | **只报告读数的 2026-12-31 复审** | **四条**只报告步骤（最近到期日 `Obligations gate` **2026-10-31**，2026-10-04 裁定由 CI 线在 **2026-10-17 前**续期到 2026-12-31）+ 覆盖账红条件 + `host.sandbox`（`control_plane_facts` 已自 `7869299` 起成为只报告步骤 4） | 统一到 2026-12-31（§22.1.8 / §22.8.5） |
+| 8 | **义务门禁在仓库门禁里读不到账本（结构问题）** | `Obligations gate (report only)` 读 `.tmp/obligations/repo.jsonl`，而**仓库门禁里永远没有账本**（`applicable: false` = **不适用**：既不是 0 命中、也不算一次真实读数，AGENTS 第 56 条）→ 已归档的 20 次 `--full` **没有一次真实读数**；L5 试用期的升格判据「跑过 N≥1 次且 0 命中，且 0 命中来自至少一次真实读数」**在现有配置下跑不满** | **2026-10-04 裁定**：2026-12-31 复审时决定——**找真实实例**（让门禁真的读到一次账本与一次真实 pytest 运行）**还是撤销**这一条步骤（§22.8.5 ④） |
 
 ### 22.5 本轮的改动归属（**只写文档**）
 
@@ -2982,6 +2992,11 @@ cleanup 之后只能靠本节的 sha256 复核；③ 远端状态**未核实**�
 ```powershell
 git diff --numstat 5b925e4..HEAD -- src tests tools validation adapters registry api knowledge policies examples .github
 ```
+
+**更正（2026-10-04）**：区间 `5b925e4..HEAD` 现在**包含合并进来的 CI 线两个提交**
+（`7869299` 改 `tests/` 与 `tools/ci_local.py`、`validation/instrument-checks.yaml`；
+`be7ef8a` 改 `tests/integration/test_performance_baseline.py`），因此这条命令**不再**等于 0 行。
+第 31 轮自己的差集仍是 0 行（`e574016` 只动 6 个文档）；本轮（第 32 轮）的差集见 §22.8.6。
 
 ### 22.6 本轮的三项检查与复现命令
 
@@ -3012,15 +3027,169 @@ Get-ChildItem .tmp/e2e -File | Where-Object { $_.Name -like "pass-*.json" -or $_
 git status --porcelain -uall
 ```
 
+**读数归属（2026-10-04 补记）**：上表是**第 31 轮**的读数；第 32 轮在同一台机器上重跑了同样三项，
+读数见 §22.8.6（**文件数因合并进来的新用例而变**，问题数仍为 0）。
+
 ### 22.7 未核实（逐条）
 
 1. **§22.1 的"跑了几轮"是已归档口径**：`--hook` 形态与未归档的 `--full` 运行数不出来（工具不落运行台账）；
 2. **并发对照没有重跑**：`.tmp/ci-local.lock` 的"抢不到即退 1"只有代码与纪律，本轮没有造第二次并发运行；
-3. **GitHub Actions 上的读数**：C1/C3 依赖宿主与仓库内容（本机 101 / 114），**不要照抄**；
-4. **`mutation_id` 全空是"当前值"**：65 行全部 `null` 是本轮直读 `validation/instrument-checks.yaml` 的结果，
-   不代表将来（补变异自证会改它）；
+3. **GitHub Actions 上的读数**：C1/C3 依赖宿主与仓库内容（本机 C1 判定不一致 **101** / 事实工具 `HITS` **101**；合并 `7869299` 之前是 101 / 114），**不要照抄**；
+4. **`mutation_id` 全空是"当前值"**：**66 行**全部 `null`（2026-10-04 更正：第 31 轮读 65 行，
+   `7869299` 追加了 `report-only:Control plane facts (report only)` 一行）是本轮直读
+   `validation/instrument-checks.yaml` 的结果，不代表将来（补变异自证会改它）；
 5. **第 6、7、8 份端到端原件是"首次登记"**：它们此前不在任何 tracked 文档里；
    "它们落在 `5b925e4` 这棵树上"由载荷里的 `tree.revision` 支持，**不是我亲眼看到那次运行**；
 6. **本轮的文本规范读数写进 §22.6 时是"提交前"的读数**：本节之后的措辞微调若发生，
    以**最后一次**跑出来的为准（与 §18.7 / §19.7 / §21.7 同一条覆盖边界）；
 7. **12-31 复审的口径**：本文件只登记"到 2026-12-31 统一复审"这条裁定，**没有**预写复审的判据细则。
+
+---
+
+## 22.8 第 32 轮（2026-10-04）：合并 CI 线 `7869299`、三处读数更正与裁定登记
+
+- **执行**：2026-10-04（本机）；控制面重构会话（**唯一写者**）。
+- **树**：分支 `refactor/control-plane`；本轮起点 = `e574016`（第 31 轮收尾文档；`git status --porcelain -uall` 为空）。
+- **依据**：使用者 2026-10-04 的本轮指令（第 0 环境自检与合并 / 第 1 读数更正 / 第 2 裁定登记）；
+  AGENTS 第 45（仪器要能失败）、48（读数属于哪棵树）、50（口径诚实）、55（加键就是改协议）、
+  56（不适用 ≠ 0 命中）条。
+- **本文是什么**：合并 CI 线之后的**实跑读数**、三处读数的更正、更正后的只报告读数总表与
+  2026-10-04 裁定登记。
+- **本文不是什么**：不是升格。本轮**只写文档**——代码 / 数据 / 测试的差集全部来自**合并**
+  （§22.8.6 逐文件列出），四条只报告步骤的退出码一个都没接。
+
+### 22.8.1 环境自检与合并（第 0 步）
+
+| 项 | 读数 |
+| --- | --- |
+| 起点 | `e574016`（`refactor/control-plane`；`git status --porcelain -uall` 为空） |
+| 本机跟踪引用（**本会话不 `fetch`**） | `origin/main` = `origin/feat/rules-and-os-platform` = `origin/refactor/control-plane` = **`be7ef8a`**；标签 **`control-plane/v1`** 是**附注标签**（标签对象 `3111beb` → 提交 `be7ef8a`；`git rev-list -n 1 control-plane/v1` = `be7ef8a`，打标时间 2026-10-03 22:02:53 +08:00） |
+| `git merge --no-edit origin/feat/rules-and-os-platform` | **合并提交 `e850544`**；零冲突、无 rebase（合并基 = `5b925e4`；两边文件集不相交：本分支 6 个 `docs/` 文件 vs CI 线 `tests/` / `tools/ci_local.py` / `validation/instrument-checks.yaml`）；合并进来的内容 = `7869299` + `be7ef8a` 两个提交 |
+| 收尾文档与标签的关系（**已核实**） | 标签 `control-plane/v1` → 提交 `be7ef8a`，而第 31 轮的收尾文档提交 `e574016` **不是** `be7ef8a` 的祖先（`git merge-base --is-ancestor e574016 be7ef8a` 退出 **1**）→ **phase-9 与 23 号 §22 在标签之后才进入 `main`**：本轮提交推送后由使用者把 `feat` 与 `main` 快进到它，**标签 v1 不移动** |
+| 本会话形态（**不是真机读数**） | 文件策略 `workspace-write`；本轮**没有跑 `--full` 门禁**（指令只要求三项检查，见 §22.8.7 第 3 条） |
+
+### 22.8.2 两台仪器 + 豁免读数的实跑结果（合并后，本机）
+
+| 仪器 | 机器行（逐字） | 退出码 |
+| --- | --- | --- |
+| `tools/control_plane_facts.py` | `HITS: 101 / fact_without_check=0 check_covers_unknown_fact=0 test_path_declaration=101 budget_inequality=0 / facts=13 checks=66`；另：C1 扫描 **204** 个文件、判定不一致 **101**（platform=False/adapter=True 101、反向 0）、层级不一致 **100**；C2 orchestrator 关系 `unavailable`；C3 实例 1 / 1 读得出来；`checks_without_fact_link=65` | **0** |
+| `tools/instrument_self_proof.py` | `HITS: 0 / no_check_id=0 no_mutation_and_no_gap_note=0 patch_not_applicable=0 check_id_without_object=0 / objects=66 declared=66`（对象四族 = `gap_probe_checks` 13 / `gate_steps` 44 / `report_only_steps` **4** / `seal_scenarios` 5；登记表 **66** 行） | **0** |
+| `tools/exemption_expiry.py`（核对 `declared`） | `HITS: 0 / declared=9 due=0 expired=0 unprovable=0`；四条只报告步骤逐条列出（`Obligations gate` 到期 2026-10-31「还有 28 天」，其余三条 2026-12-31） | **0** |
+
+### 22.8.3 三处读数更正（都来自 `7869299` 的同一提交）
+
+| 读数 | 第 31 轮（树 `5b925e4`） | 更正后（树 `be7ef8a`，§22.8.2 实跑） | 更正来源 |
+| --- | --- | --- | --- |
+| `control_plane_facts` 机器行 | `HITS: 114 / fact_without_check=13 … / facts=13 checks=65` | `HITS: 101 / fact_without_check=0 … / facts=13 checks=66` | `7869299`：`REPORT_ONLY_STEPS` +1（第 4 条）+ `validation/instrument-checks.yaml` 追加 `report-only:Control plane facts (report only)` 一行（13 个 `covers_facts`）→ 连接键两个方向都归 0（`fact_without_check 13 → 0`）、登记表 65 → 66 行 |
+| 仪器自证（R-h） | `objects=65 declared=65`（四族 = 44 + 13 + 5 + **3**） | `objects=66 declared=66`（四族 = 44 + 13 + 5 + **4**） | 同一提交：只报告步骤由 3 条变 4 条，R-h 的第 4 族按"只报告步骤条数"取对象 |
+| 豁免到期 | `HITS: 0 / declared=8 …`（8 = `wiring-scope.yaml` 5 + 3 条步骤） | `HITS: 0 / declared=9 …`（9 = 5 + **4** 条步骤） | 同一提交：新步骤带自己的豁免（到期 2026-12-31） |
+| （形态）`control_plane_facts` | 只报告**工具**（门禁外） | 只报告**步骤 4**（门禁里执行、非零退出不计失败） | 同上 |
+
+**这不是"读数被改写"**：§22.0–§22.7 保留第 31 轮的原值（那是树 `5b925e4` 上的真读数），
+本节的更正标在原文旁边并写明取值树。**同一份载荷在两棵树上得到两个读数不是缺陷，没写清是哪棵树才是**
+（AGENTS 第 48 条）。
+
+### 22.8.4 只报告读数总表（2026-10-04 更正后，树 `be7ef8a`）
+
+| # | 项 | 机器行 / 读数 | 形态 |
+| --- | --- | --- | --- |
+| 1 | 义务门禁 | `HITS: 0 / 1 个账本（0 命中）；不适用 1 个（没有账本可读，不计入命中）` | 只报告**步骤 1** |
+| 2 | 豁免到期 | `HITS: 0 / declared=9 due=0 expired=0 unprovable=0` | 只报告**步骤 2** |
+| 3 | 仪器自证 R-h | `HITS: 0 / no_check_id=0 no_mutation_and_no_gap_note=0 patch_not_applicable=0 check_id_without_object=0 / objects=66 declared=66` | 只报告**步骤 3** |
+| 4 | 控制面事实 × 跨源互证 | `HITS: 101 / fact_without_check=0 check_covers_unknown_fact=0 test_path_declaration=101 budget_inequality=0 / facts=13 checks=66` | 只报告**步骤 4** |
+| 5 | 覆盖账 | `IN_SCOPE_NOT_WIRED: 3 / discovered=7 declared=6 measured=4`（`red_conditions` 两格 `enforced: false`） | 门禁**步骤里的只报告读数**（第 24 步恒退 0） |
+| 6 | 端到端 `host.sandbox` | 真机 6 份 `unrestricted`；本会话门禁产物 `restricted`（`result=skipped`） | 只报告**读数**（没有承载它的判据） |
+
+**这六项都不是判定输入**：Hook、Policy Engine、Policy API 与 `policy.check` **什么都不读它们**；
+把它们升级成阻断需要走 §22.1 各自的判据 + 一次显式提交。
+
+### 22.8.5 裁定登记（2026-10-04）
+
+> **一律不升格，统一到 2026-12-31 复审**；**C1 的 101 条单列为后续项目**；
+> **义务门禁的豁免由 CI 线在 2026-10-17 前续期到 2026-12-31**。
+
+**① 一律不升格**：§22.1 的六条（四条只报告步骤 + 覆盖账红条件 + `host.sandbox`）维持只报告——
+退出码一个都不接、判据一条都不改；12-31 复审按各条**原文**的 `promote_when` 逐条读，不临时改口径。
+
+**② C1 的 101 条 = 后续项目**（`control_plane_facts` 的 `test_path_declaration` 那一格）：
+两份测试路径声明（`validation/test-layout.yaml` 的 `test_patterns` vs
+`examples/dsh/dsh-adapter.yaml` 的 `test_paths`）的不一致**是真的**——扫描 204 个文件、
+判定不一致 101、层级不一致 100。要消掉它必须**合并谓词**，而合并**会改判定**（layer 是判据输入）
+→ 属 R-d 范畴，必须另开一轮并交出字段级差集。因此：**它不属于本次控制面重构**，
+也**不许用写声明的方式消掉**——既不许把两份声明改成"看起来一致"来让这一格读 0，
+也不许给它加豁免 / 降级 / 换口径。同族的 `fact_without_check 13 → 0` 是**连接键真的建起来了**
+（登记表里多了那一行），与 C1 的 101 条是**两件事**，不得互相顶替。
+
+**③ 义务门禁的豁免续期**：由 CI 线在 **2026-10-17 前**把 `Obligations gate (report only)` 的
+`expires_at` 从 2026-10-31 续到 **2026-12-31**（§22.1.2 那个"11-01 变红"的定时器因此不响）。
+**未落地声明**：本文件写作时 `ci_local.REPORT_ONLY_STEPS` 里它**仍是 2026-10-31**
+（§22.8.2 的直跑读数「还有 28 天」），续期提交**未核实**。
+
+**④ 结构问题登记**：`Obligations gate` 读的是 `.tmp/obligations/repo.jsonl`，而
+**仓库门禁里永远没有账本**（`applicable: false` = **不适用**：既不是 0 命中、也不算一次真实读数，
+AGENTS 第 56 条）→ 已归档的 20 次 `--full` **没有一次真实读数** → L5 试用期的升格判据
+「跑过 N≥1 次且 0 命中，且 0 命中来自至少一次真实读数」**在现有配置下跑不满**。
+**2026-12-31 复审时决定：找真实实例**（让门禁真的读到一次账本与一次真实 pytest 运行）
+**还是撤销**这一条步骤（phase-9 的「剩余缺口」第 8 条）。
+
+**⑤ 本轮没动的东西**：②③④ 三条登记**没有改动任何代码、数据、版本轴或退出码**——本轮只写文档。
+两条只读复核命令（**退出码都是 0，不改任何文件**）：
+
+```powershell
+# 两台仪器（只报告、退出码恒 0）
+.venv\Scripts\python.exe tools\control_plane_facts.py
+.venv\Scripts\python.exe tools\instrument_self_proof.py
+
+# 豁免读数（declared 9；四条只报告步骤逐条到期日）
+.venv\Scripts\python.exe tools\exemption_expiry.py
+```
+
+### 22.8.6 本轮的改动归属（**只写文档**）与三项检查
+
+| 文件 | 动作 |
+| --- | --- |
+| 本文件（23 号） | **新增本节 §22.8**；§22.0 / §22.1 / §22.2 / §22.4 / §22.5 / §22.6 / §22.7 里**被 `7869299` 改动的读数就地更正**（第 31 轮原值保留，形如「已被 `7869299` 取代」） |
+| [phases/phase-9-control-plane.md](../phases/phase-9-control-plane.md) | 同步更正：文首状态块与版本关系、边界「不合并谓词」、台阶 3c/4/5 三行、升格评审摘要、剩余缺口 **+1 条**（第 8 条）、未核实 2 条并补 2 条、命令清单（四条只报告步骤） |
+| [designs/README.md](../designs/README.md)、[平台 README](../README.md)、[本目录 README](README.md) | 索引同步（剩余缺口 7 → 8 条、裁定日期、§22.8 补记） |
+
+**代码 / 数据 / 测试的差集来自合并，不是本轮写的**（`git diff --numstat e574016..HEAD`）：
+
+```text
+23	1	tests/integration/test_performance_baseline.py
+52	0	tests/unit/test_ci_local_report_only.py
+19	9	tests/unit/test_control_plane_facts.py
+5	1	tests/unit/test_instrument_self_proof.py
+16	0	tools/ci_local.py
+23	0	validation/instrument-checks.yaml
+```
+
+→ 这 6 个文件全部来自 `7869299`（后 5 个）与 `be7ef8a`（第 1 个），是**合并**进来的；
+本轮新增 / 修改的文件只有上表里的文档。
+
+**三项检查**（本轮全部文档改动完成之后跑，命令逐字如下）：
+
+| 检查 | 读数 |
+| --- | --- |
+| 文本规范 `tools/check_text_conventions.py` | **668** 个文本文件、问题 **0** 处（跳过第三方镜像 300）；退出码 **0** |
+| 仓库一致性 `tools/check_repo_consistency.py` | 依赖锁 / 文档与配置 / 手册形态 / 工具清单 **四项都"一致"**；退出码 **0** |
+| 密钥扫描 `tools/secret_scan.py` | 扫描 **667** 个文件（镜像跳过）；**没有发现疑似凭据**；退出码 **0** |
+
+```powershell
+# 三项（本轮指令要求的三项；没有跑 --full）
+.venv\Scripts\python.exe tools\check_text_conventions.py
+.venv\Scripts\python.exe tools\check_repo_consistency.py
+.venv\Scripts\python.exe tools\secret_scan.py
+```
+
+### 22.8.7 未核实（第 32 轮）
+
+1. **远端此刻的状态**：本会话不 `fetch`——本机跟踪引用如 §22.8.1，但**远端此刻**是否仍是
+   `be7ef8a`、`feat`/`main` 何时快进到本轮提交，**都未核实**（推送由使用者执行）；
+2. **豁免续期未发生**：见 §22.8.5 ③——续期是否在 2026-10-17 前落地、以什么形态落地，**未核实**；
+3. **`--full` 门禁本轮没有跑**：指令只要求三项检查，所以「只报告步骤 4 在门禁里的实际输出行」
+   **没有实测读数**（它的形态由 `tests/unit/test_ci_local_report_only.py` 的用例支撑，
+   不是由本轮的运行支撑）；`7869299` / `be7ef8a` 里的用例在本会话**没有重跑**；
+4. **GitHub Actions 上的读数**：C1/C3 依赖宿主与仓库内容（本机 C1 判定不一致 **101** /
+   事实工具 `HITS` **101**），**不要照抄**；
+5. **§22.8.6 的三项检查读数是"提交前"的读数**：本节之后的措辞微调若发生，以**最后一次**
+   跑出来的为准（与 §18.7 / §19.7 / §21.7 / §22.7 第 6 条同一条覆盖边界）。
