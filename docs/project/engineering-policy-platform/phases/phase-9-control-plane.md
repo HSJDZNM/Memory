@@ -6,10 +6,16 @@
 > **2026-10-04 再次登记同一条裁定**，并追加两条口径（C1 单列后续项目；义务门禁豁免续期与结构问题），
 > 逐条见 [23 号 §22.1](../reviews/governance-capability/15-control-plane-design/23-round20-reading-context-landing.md)
 > 与更正后的同文件 §22.8。
+> **CI 线的豁免续期已落地（2026-10-04 23:47，`6822c81`）**：
+> `Obligations gate (report only)` 的 `expires_at` 由 2026-10-31 改为 **2026-12-31**（理由里写明
+> 「试用期内仓库门禁里账本一直不存在、读数为不适用」）；本机直跑 `tools/exemption_expiry.py` 的读数
+> `HITS: 0 / declared=9 due=0 expired=0 unprovable=0`（该条「还有 88 天」）——**§22.1.2 那个「11-01 变红」的定时器不再响**。
+> **但结构问题照旧**（仓库门禁里永远读不到账本 → L5 试用期升格判据在现有配置下跑不满），见「剩余缺口」第 **8** 条，留给 12-31 复审。
 > **读数已按合并 CI 线之后的值更正（2026-10-04）**：`control_plane_facts` 已由 `7869299` 接成
 > **只报告步骤 4**，机器行 `HITS: 114 → **101**`、检查登记表 `65 → **66**` 行、豁免 `declared: 8 → **9**`；
 > 两台仪器的实跑读数与更正表见 23 号 §22.8.1 / §22.8.2。
-> **版本关系（已核实）**：本机跟踪引用里 `origin/main` = `origin/feat/rules-and-os-platform` = `be7ef8a`；
+> **版本关系（已核实）**：本机跟踪引用里 `origin/main` = `origin/feat/rules-and-os-platform` =
+> `origin/refactor/control-plane` = **`6822c81`**（使用者本机 fetch 的结果；第 32 轮登记时是 `be7ef8a`）；
 > 标签 `control-plane/v1` 是**附注标签**（标签对象 `3111beb` → 提交 `be7ef8a`，打标时间
 > 2026-10-03 22:02:53 +08:00）。**收尾文档在标签之后才进入 `main`**：本文件由第 31 轮的 `e574016` 新增，
 > 而 `e574016` **不是** `be7ef8a` 的祖先（`git merge-base --is-ancestor e574016 be7ef8a` 退出 1），
@@ -56,7 +62,7 @@ YAML / hooks.json / 脚本常量 / 两门语言里，各有一套解析。Phase 
 | 2 归因闭集 | `origin` 五族闭集 + 每族必备字段 + 「写不出 `fix` 的 origin 不许存在」+ 核验前置（证伪自己人落 `unknown_origin`）；配置族（Python）与 spawn 输入族（JS）两端；真插件产出 → 真分类器的跨语言契约用例 | `src/provenance/origin.py`(297)、`src/provenance/origin_runtime.py`(202)、`src/adapters/dsh/hooks.py`(+119/−4)、`src/adapters/dsh/policy-hook.plugin.mjs`(+225/−7)、`tests/contract/test_policy_hook_chain.py`、`tests/unit/test_dsh_origin_attribution.py`、`tests/unit/test_provenance_origin.py` | origin 一族键是**加键未升版的历史先例**（AGENTS 第 55 条明写「不是可以再犯的先例」）；`VERDICT_SCHEMA_VERSION = "1.0"`（字段级差集 0 条 → **不升**） | `dsh hook wiring self-check` + pytest 里的跨语言契约用例 | [11-step2-origin-closure.md](../reviews/governance-capability/15-control-plane-design/11-step2-origin-closure.md)、[15-small-fixes.md](../reviews/governance-capability/15-control-plane-design/15-small-fixes.md) |
 | 3a 受控 reason 与脱敏 | H1/H10：受控 `decision_reason` + 归因路径脱敏（Python ↔ JS 同一口径） | `src/adapters/dsh/hooks.py`、`src/adapters/dsh/policy-hook.plugin.mjs` 及其契约用例 | `AUDIT_SCHEMA_VERSION` 1.0 → **1.1** | `dsh hook wiring self-check` + pytest | [12-step3a-reason-and-redaction.md](../reviews/governance-capability/15-control-plane-design/12-step3a-reason-and-redaction.md) |
 | 3b pending 独立通道 | 「待实现」移出 `violations`、改独立通道 `pending_findings`（severity 在构造期强制 warning）；四种 decision 与改动前**逐个相等** | `src/policy/evidence.py`（`pending_findings`）、`src/validators/pipeline.py`、`src/policy/engine.py`、`src/policy/check.py`、`src/orchestration/nodes.py`（消费方 `repair()`） | 决策 `SCHEMA_VERSION` 1.0 → **1.1** 与 `POLICY_VERSION = "decision-1.1"`（同进同退）；`EVIDENCE_SCHEMA_VERSION` 1.1 → **1.2**；`PIPELINE_SCHEMA_VERSION` 1.1 → **1.2**；`AUDIT_SCHEMA_VERSION` 1.1 → **1.2** | `Unit, contract, integration and security tests` + `dsh hook wiring self-check` | [13-step3b-d1-field-diff.md](../reviews/governance-capability/15-control-plane-design/13-step3b-d1-field-diff.md)、[14-step3b-landing.md](../reviews/governance-capability/15-control-plane-design/14-step3b-landing.md) |
-| 3c 义务账 | 只记账不判罚；键 `(rule_id, target, missing_target)` **不含 `session_id`**（跨会话）；解除只由**一次真实 pytest 运行**判定；判罚与读数只在门禁工具 | `src/policy/obligations.py`(540)、`tools/obligations_gate.py`(137)、`dsh-adapter.yaml` 的 `obligations_ledger`（可选；写不了只打一行不阻断）、`policy.check --obligations` | `policy.obligations.LEDGER_SCHEMA_VERSION = "1.0"`；`obligations_gate.REPORT_SCHEMA_VERSION` 1.0 → 1.1 → **1.2** | **只报告步骤 1** `Obligations gate (report only)`（登记于 2026-09-30；豁免到期 **2026-10-31**，2026-10-04 裁定**由 CI 线在 2026-10-17 前续期到 2026-12-31**——**续期未落地：本文件写作时 `expires_at` 仍是 2026-10-31**） | [16-step3c-obligation-ledger.md](../reviews/governance-capability/15-control-plane-design/16-step3c-obligation-ledger.md)、[18 号 §5](../reviews/governance-capability/15-control-plane-design/18-round16-rulings-execution.md) |
+| 3c 义务账 | 只记账不判罚；键 `(rule_id, target, missing_target)` **不含 `session_id`**（跨会话）；解除只由**一次真实 pytest 运行**判定；判罚与读数只在门禁工具 | `src/policy/obligations.py`(540)、`tools/obligations_gate.py`(137)、`dsh-adapter.yaml` 的 `obligations_ledger`（可选；写不了只打一行不阻断）、`policy.check --obligations` | `policy.obligations.LEDGER_SCHEMA_VERSION = "1.0"`；`obligations_gate.REPORT_SCHEMA_VERSION` 1.0 → 1.1 → **1.2** | **只报告步骤 1** `Obligations gate (report only)`（登记于 2026-09-30；豁免到期 **2026-10-31 → 2026-12-31**——2026-10-04 裁定由 CI 线在 2026-10-17 前续期，**已落地：`6822c81`（2026-10-03 23:47）**，直跑读数「还有 88 天」） | [16-step3c-obligation-ledger.md](../reviews/governance-capability/15-control-plane-design/16-step3c-obligation-ledger.md)、[18 号 §5](../reviews/governance-capability/15-control-plane-design/18-round16-rulings-execution.md) |
 | 4 覆盖账（`governs` 轴 + 三数 + 六格差集） | `wiring` 报告的 `account`（discovered/declared/measured，**整数、禁比例**）、`differences`（六格）、`headline`（含机器行 `IN_SCOPE_NOT_WIRED: n / …`）、`red_conditions`（`enforced: false`）；声明文件按 `kind` 分档 + `covers` 显式覆盖 + `governs_tree` 声明位 | `src/adapters/wiring.py`、`src/provenance/wiring_scope.py`、`adapters/wiring-scope.yaml` | `WIRING_SCHEMA_VERSION` 1.1 → 1.2 → 1.3 → **1.4**；`wiring_scope.SCHEMA_VERSION` "1" → **"2"**（兼容窗口 0） | 门禁 **`Agent channel wiring inventory`**（第 24 步，报告模式、**恒退 0**） | [24 号](../reviews/governance-capability/15-control-plane-design/24-step4-governs-axis-design.md)；23 号 §14/§16.2/§17/§18；[17-step4-5-scope-assessment.md](../reviews/governance-capability/15-control-plane-design/17-step4-5-scope-assessment.md) |
 | 4 `reading_context` | 六类读数带「属于哪棵树 / 哪个环境 / 哪一套声明」的统一形状（**一份实现**，三态 `available` / `unavailable` / `not_applicable`；`host.sandbox ∈ {restricted, unrestricted, unknown}`，`unknown` 是「读不到」不是「没有沙箱」） | `src/provenance/reading_context.py`；消费方：端到端结果、Hook 审计、`policy.check --json` 外层包装、两条只报告读数、覆盖账、阶段证据 | `SANDBOX_RESULT_SCHEMA_VERSION` 1.1 → **1.2**；`AUDIT_SCHEMA_VERSION` 1.2 → **1.3**；`OUTPUT_SCHEMA_VERSION` 1.1 → **1.2**；`obligations_gate.REPORT_SCHEMA_VERSION` **1.2**；`exemption_expiry.EXEMPTION_REPORT_SCHEMA_VERSION` **1.1**（首建） | 门禁第 9 步 `Real dsh sandbox loop`（沙箱闭环）+ 两条只报告读数 + pytest 契约用例 | [21 号](../reviews/governance-capability/15-control-plane-design/21-step4-reading-context-design.md)；23 号 §4/§9/§11/§12 |
 | 4 五条写声明 | ① 门禁退出码语义表（0/1/2/3，3 属于封条命令）；② 会话窗口（由 −2 的「每会话一棵树 + 排他锁」承接）；③ 写权租约（同上，不另建机制）；④ 三条通道 `out_of_scope`（`dsh-web` / `dsh-headless` / `dsh-verify-dead`）；⑤ CI 注释里的边界裁定提升为 `gate_check` 声明 | `tools/README.md`「门禁退出码」节、`tools/ci_local.py` 的 docstring、`adapters/wiring-scope.yaml` | 声明文件 `schema_version: "2"`（与 `wiring_scope.SCHEMA_VERSION` 同轴） | 门禁第 24 步（声明被 `wiring` 读到；声明本身不改退出码） | [18 号 §5](../reviews/governance-capability/15-control-plane-design/18-round16-rulings-execution.md)；23 号 §14.4 |
@@ -104,8 +110,9 @@ YAML / hooks.json / 脚本常量 / 两门语言里，各有一套解析。Phase 
   `7869299` 的**连接键登记**降到 0，剩下的 101 条**全部来自 C1**）；**C1 单列为后续项目**——
   它需要合并两份测试路径谓词、而合并**会改判定**（layer 是判据输入），因此**不属于本次控制面重构**，
   也**不许用写声明的方式把它消掉**；
-- 义务门禁的豁免**由 CI 线在 2026-10-17 前续期到 2026-12-31**；它另有一条**结构问题**
-  （仓库门禁里永远没有账本 → L5 试用期在现有配置下跑不满）登记在「剩余缺口」第 8 条。
+- 义务门禁的豁免**由 CI 线在 2026-10-17 前续期到 2026-12-31**——**已落地：`6822c81`（2026-10-03 23:47）**，
+  `expires_at` 现为 2026-12-31，直跑读数 `HITS: 0 / declared=9 due=0 expired=0 unprovable=0`（该条「还有 88 天」）；
+  它另有一条**结构问题**（仓库门禁里永远没有账本 → L5 试用期在现有配置下跑不满）登记在「剩余缺口」第 **8** 条，**留给 12-31 复审**。
 
 逐条的轮次 / 真实读数 / 当前命中 / 升格判据见
 [23 号 §22.1](../reviews/governance-capability/15-control-plane-design/23-round20-reading-context-landing.md)
@@ -124,7 +131,7 @@ YAML / hooks.json / 脚本常量 / 两门语言里，各有一套解析。Phase 
 | 4 | **orchestrator 的 `tool_name` 为 `unavailable`** | C2 关系读数：registry 的 4 条 orchestrator `tool_name` 在 `src` / `registry` / `adapters` / `tools` 下**没有任何读取点**（代码侧引用的是四个 `orc.*` **id**）→ 报告写 `unavailable`，不猜 | 保持 `unavailable`；要变 `available` 得先有一条可评审的判据 |
 | 5 | **DSH 会话里 xdist 起不来** | 本会话 `workspace-write` 下 `pytest -n auto` 必然 `INTERNALERROR`；门禁读数靠 `PYTEST_XDIST_AUTO_NUM_WORKERS=0` **串行**跑，代价是 pytest 步 **6–7 分钟**（并行约 2 分钟）；**根因未核实** | 每次用它跑出的门禁读数**必须逐次声明**（23 号 §20.1 第 6 条）；根因另查 |
 | 6 | **`~/.dsh` 与 `%TEMP%` 在 dsh 进程里不可写的原因未核实** | 门禁第 9 步：`result=skipped`、`host.sandbox=restricted`、`dsh_startup_denied_kind=profile_write_denied`、被拒路径 `C:\Users\ZNM\.dsh\profiles\headless\cordis.yml`；而 `--isolated-home` 的真机形态 `result=pass` | 只登记现象与归因路径，**没有根因**；不把它写成「沙箱就是这样」 |
-| 7 | **只报告读数的 2026-12-31 复审** | **四条**只报告步骤（最近到期日：`Obligations gate` **2026-10-31**，2026-10-04 裁定由 CI 线在 **2026-10-17 前**续期到 2026-12-31）+ 覆盖账红条件 + `host.sandbox`（`control_plane_facts` 已自 `7869299` 起成为只报告步骤 4） | 统一到 **2026-12-31** 复审（23 号 §22.1 / §22.8）；到期前 14 天由 `exemption_expiry` 报 `DUE`，过期报 `RED` |
+| 7 | **只报告读数的 2026-12-31 复审** | **四条**只报告步骤（最近到期日：`Obligations gate` **2026-12-31**——2026-10-04 裁定由 CI 线在 **2026-10-17 前**续期，**已落地：`6822c81`（2026-10-03 23:47）**，本机直跑 `HITS: 0 / declared=9 due=0 expired=0 unprovable=0`）+ 覆盖账红条件 + `host.sandbox`（`control_plane_facts` 已自 `7869299` 起成为只报告步骤 4） | 统一到 **2026-12-31** 复审（23 号 §22.1 / §22.8 / §22.9）；到期前 14 天由 `exemption_expiry` 报 `DUE`，过期报 `RED` |
 | 8 | **义务门禁在仓库门禁里读不到账本（结构问题）** | `Obligations gate (report only)` 读的是 `.tmp/obligations/repo.jsonl`，而**仓库门禁里永远没有账本**（`applicable: false` = **不适用**，既不是 0 命中、也不算一次真实读数，AGENTS 第 56 条）→ 已归档的 20 次 `--full` 里**没有一次真实读数**；因此 L5 试用期的升格判据「跑过 N≥1 次且 0 命中，且 0 命中来自至少一次真实读数」**在现有配置下跑不满** | **2026-10-04 裁定**：2026-12-31 复审时决定——**找真实实例**（让门禁真的读到一次账本与一次真实 pytest 运行）**还是撤销**这一条步骤 |
 
 **同批登记、不排期的两条**：① 覆盖账的 `declared_not_discovered = 1`（`ci-agent-runtime` 声明本机没有
@@ -179,8 +186,11 @@ python tools\ci_local.py --full --python .venv/Scripts/python.exe --timings
 2. **门禁运行的完整次数**：登记在案的是**已归档**的运行（第 17–30 轮），
    `--hook` 形态与未归档的运行无法从归档里数全；
 3. **GitHub Actions 上的读数**：C1/C3 的读数依赖宿主与仓库内容（本机 C1 判定不一致 **101** / 事实工具 `HITS` **101**；合并 CI 线 `7869299` 之前是 101 / 114），**不要照抄**；
-4. **远端状态**：本会话不 `fetch`；本机跟踪引用里 `origin/main` = `origin/feat/rules-and-os-platform` = `be7ef8a`、标签 `control-plane/v1` → 提交 `be7ef8a`，但这些**远端跟踪引用**与**远端此刻**是否一致**未核实**；
-5. **CI 线的豁免续期未核实**：2026-10-04 裁定的「义务门禁豁免在 2026-10-17 前续期到 2026-12-31」**未落地**——本文件写作时 `tools/ci_local.py` 里它仍是 2026-10-31；续期是否发生、何时发生**未核实**（见「剩余缺口」第 8 条）；
+4. **远端状态**：本会话不 `fetch`；本机跟踪引用里 `origin/main` = `origin/feat/rules-and-os-platform` = `origin/refactor/control-plane` = **`6822c81`**（使用者本机 fetch 的结果）、标签 `control-plane/v1` → 提交 `be7ef8a`，但这些**远端跟踪引用**与**远端此刻**是否一致**未核实**；
+5. **CI 线的豁免续期（2026-10-04 已落地，原为未核实）**：2026-10-04 裁定的「义务门禁豁免在 2026-10-17 前续期到 2026-12-31」**已落地**——
+   **`6822c81`（2026-10-03 23:47:32 +08:00）** 把 `tools/ci_local.py` 的 `REPORT_ONLY_STEPS` 第 1 条 `expires_at` 由 2026-10-31 改为 **2026-12-31**（理由里写明续期依据）；
+   同轮本机直跑 `tools/exemption_expiry.py`：`HITS: 0 / declared=9 due=0 expired=0 unprovable=0`（该条「还有 88 天」），**§22.1.2 那个「11-01 变红」的定时器不再响**；
+   **结构问题仍不在本条内**（仓库门禁里永远没有账本）——它照旧留在「剩余缺口」第 **8** 条，12-31 复审时决定找真实实例还是撤销；
 6. **`--full` 门禁本轮没有跑**：本轮只按要求跑三项检查，因此「只报告步骤 4 在门禁里的实际输出行」**没有实测读数**，它目前只有 `tests/unit/test_ci_local_report_only.py` 的用例支撑；
 7. **`.tmp/e2e/` 的原件不是长期证据**：登记的是「存在过且被复核过」，cleanup 之后只能靠本节的 sha256 复核。
 
@@ -195,3 +205,9 @@ python tools\ci_local.py --full --python .venv/Scripts/python.exe --timings
 `adapters/` / `.github/` 的差集是 **0 行**——差集里出现的 `7869299`（`tests/`、
 `tools/ci_local.py`、`validation/instrument-checks.yaml`）与 `be7ef8a`（性能基线用例）
 是**合并**进来的，不是本轮写的。
+
+**2026-10-04（第 33 轮）**：把 CI 线的**豁免续期**（`6822c81`）合进本分支并对齐三处说法——文首状态块、
+台阶 3c 行、升格评审摘要、剩余缺口第 7 条、未核实第 5 条（**由「未核实」改为「已核实」**），
+逐条见 [23 号 §22.9](../reviews/governance-capability/15-control-plane-design/23-round20-reading-context-landing.md)。
+本轮同样**只写文档**：对 `src/` / `tests/` / `validation/` / `adapters/` / `.github/` 的差集是 **0 行**；
+`tools/ci_local.py` 的那 4 行改动（到期日与理由）**来自合并**，不是本轮写的。
