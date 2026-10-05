@@ -767,6 +767,24 @@ def _command_executable(command: str) -> Optional[str]:
     return text.split(None, 1)[0]
 
 
+_WINDOWS_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+
+
+def _names_a_specific_file(executable: str) -> bool:
+    """命令的第一个词是否在**指名道姓地指一个文件**（而不是交给 PATH 去查的名字）。
+
+    `Path.is_absolute()` 只认**当前平台**的写法：Windows 形态的 `C:/…` 在 POSIX 上被判成
+    相对路径，于是一条在那台机器上根本起不来的命令会**一条警告都不给**——N20 那条附带观测
+    因此在 Linux CI 上静默通过（夹具是 Windows 形态的，而检查只在 Windows 上生效）。
+    形态属于**命令字符串**，与运行它的机器无关：两种写法都算。
+
+    仍然只回答"这个程序在不在"，不做 shell 语义解析；POSIX 形态在 Windows 上不在此列
+    ——那是"可能漏、不误报"的那一侧（会与 Git-Bash 风格的路径混同）。
+    """
+
+    return Path(executable).is_absolute() or bool(_WINDOWS_PATH_RE.match(executable))
+
+
 def _command_digest(command: str) -> str:
     return hashlib.sha256(command.encode("utf-8")).hexdigest()[:16]
 
@@ -1650,7 +1668,11 @@ def _probe_channel(
     # 但能把这条事实说出来。它只做警告、不改判定：判定只回答"声明在不在 + 有没有留痕"，
     # 真正的"拦得住"要运行期证据（hooks.check_wiring + 真实会话）。
     executable = _command_executable(policy_command)
-    if executable is not None and Path(executable).is_absolute() and not Path(executable).exists():
+    if (
+        executable is not None
+        and _names_a_specific_file(executable)
+        and not Path(executable).exists()
+    ):
         notes.append(
             "桥的命令以绝对路径开头，但那个可执行文件不存在："
             + str(renderer.render(executable))

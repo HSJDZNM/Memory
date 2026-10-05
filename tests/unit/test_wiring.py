@@ -26,6 +26,7 @@ from adapters.wiring import (
     ToolObservationStatus,
     WiringError,
     WiringStatus,
+    _names_a_specific_file,
     build_reading_context,
     combine_status,
     declared_tool_table,
@@ -1276,6 +1277,9 @@ def test_a_command_that_cannot_start_is_warned_about_but_does_not_change_the_ver
     """
 
     home = make_home(tmp_root)
+    # 命令故意写成 **Windows 形态**：被检查的是"命令字符串有没有指名道姓地指一个文件"，
+    # 与运行它的机器无关（POSIX 上 `C:/…` 不是绝对路径，但它照样不是 PATH 里的名字）。
+    # 修前这里在 Linux CI 上一条警告都不给——下面那条用例把这条口径钉死。
     command = (
         "C:/nowhere/does-not-exist-python.exe -m adapters.dsh.hooks "
         "--config .policy/dsh-adapter.yaml --hooks-config .policy/hooks.json "
@@ -1295,6 +1299,23 @@ def test_a_command_that_cannot_start_is_warned_about_but_does_not_change_the_ver
     assert any("可执行文件不存在" in warning for warning in channel.warnings), channel.warnings
     # 报告里不出现绝对路径（AGENTS.md 第 19 条）：警告里也只给相对探测根的写法。
     assert "<external>/does-not-exist-python.exe" in " ".join(channel.warnings)
+
+
+def test_the_command_shape_check_does_not_depend_on_the_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """命令的形态属于**命令字符串**，不属于跑它的那台机器。
+
+    CI 上这条曾经是"假绿"：夹具是 Windows 形态，而 `Path.is_absolute()` 在 POSIX 上判 False，
+    于是"这条命令起不来"一条警告都不给。这里把 `is_absolute` 钉成 False 复现 POSIX 宿主，
+    用例因此在任何平台上红/绿一致——修前它没有任何一条分支能命中。
+    """
+
+    monkeypatch.setattr(Path, "is_absolute", lambda self: False)
+    assert _names_a_specific_file("C:/nowhere/does-not-exist-python.exe") is True
+    assert _names_a_specific_file("C:\\nowhere\\does-not-exist-python.exe") is True
+    assert _names_a_specific_file("python") is False
+    assert _names_a_specific_file("./scripts/run.sh") is False
 
 
 def test_an_impossible_axis_combination_is_rejected() -> None:
