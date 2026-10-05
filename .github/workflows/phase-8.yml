@@ -313,7 +313,9 @@ jobs:
           }
           ok = client.post("/v1/policy/evaluate", json=body, headers=heads)
           assert ok.status_code == 200, ok.text
-          assert ok.json()["decision"]["schema_version"] == "1.0", ok.text
+          # decision 载荷的协议世代（policy.models.SCHEMA_VERSION = 1.1；台阶 3b 起 1.0 的载荷
+          # 一律拒收）。与请求体里的 api_version（传输协议，仍是 1.0）是两条轴，别混。
+          assert ok.json()["decision"]["schema_version"] == "1.1", ok.text
           unknown = client.post(
               "/v1/policy/evaluate", json={**body, "surprise": 1}, headers=heads
           )
