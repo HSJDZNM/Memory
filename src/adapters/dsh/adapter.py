@@ -1123,6 +1123,23 @@ def _resolve_file(raw_path: Any, *, cwd: Optional[str], config: AdapterConfig) -
     return repo_relative_path(str(candidate), repo_root=config.project_root)
 
 
+def _outside_target_label(target: Path) -> str:
+    """越界目标的渲染口径：`<external>/<末段名字>`，不回显绝对路径、也不写宿主目录。
+
+    与 `adapters.wiring._PathRenderer.render` 同一口径（AGENTS.md 第 19 条：证据与理由里
+    不得出现绝对路径）。**末段名字**回答的是"你刚才指的是哪个东西"；绝对路径回答的是
+    "这台机器把它放在哪"——后者是拒绝理由不需要、也不该带的信息。
+
+    这里曾经写成 `{raw_path if raw_path else cwd!r}`：f-string 的 `!r` 作用于**整个条件
+    表达式**，于是 POSIX 上那串路径原样进了理由；而 Windows 的 `repr` 会把反斜杠翻倍，
+    裸串不再是子串，断言**静默通过**——一个只在 Linux CI 上才红的"假绿"
+    （tests/contract/test_dsh_adapter.py::test_an_out_of_scope_read_is_refused_with_a_usable_alternative）。
+    """
+
+    name = target.name
+    return "<external>/" + name if name else "<external>"
+
+
 def _resolve_read_scope(
     raw_path: Any, *, cwd: Optional[str], config: AdapterConfig, tool: str
 ) -> str:
@@ -1161,7 +1178,7 @@ def _resolve_read_scope(
         # 这里给出**可用的替代**：受控项目根本身是合法目标（记为 "."），项目内的路径要写成
         # 仓库相对路径。不写绝对路径、也不写项目外的目录名，避免泄露本机布局。
         raise DshEventError(
-            f"{tool} 的目标 {raw_path if raw_path else cwd!r} 不在受控项目 {anchor.name} 内："
+            f"{tool} 的目标 {_outside_target_label(target)} 不在受控项目 {anchor.name} 内："
             "只读动作同样受 path_scope=workspace 约束，越界一律拒绝。"
             "可用的替代：把目标改成受控项目以内的**仓库相对路径**"
             f"（例如 src/shop/order_service.py；受控项目根 {anchor.name} 本身记为 `.`），"

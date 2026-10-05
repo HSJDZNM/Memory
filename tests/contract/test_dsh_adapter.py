@@ -26,6 +26,7 @@ from adapters.dsh.adapter import (
     DshEventError,
     LayerResolution,
     ToolKind,
+    _outside_target_label,
     config_from_mapping,
     glob_match,
     load_config,
@@ -731,6 +732,27 @@ def test_an_out_of_scope_read_is_refused_with_a_usable_alternative(dsh_config_pa
     assert "`.`" in message
     # 可用替代不能靠泄露本机布局来"讲清楚"：受控项目只出现名字
     assert str(dsh_project.parent) not in message
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "/home/runner/work/Memory/Memory/.tmp/tests/d4fcb02edda5464faa1022851d27efc0",
+        "C:/nowhere/does-not-exist/reports",
+    ],
+)
+def test_the_out_of_scope_reason_never_echoes_the_absolute_path(shape: str) -> None:
+    """越界理由的渲染口径**不随宿主平台漂**（AGENTS.md 第 19 条：证据里不得出现绝对路径）。
+
+    这条用例存在的理由是"本机与 CI 的判据必须一样"：原来的写法把 `!r` 放在**整个条件表达式**
+    上，POSIX 上那串路径原样进理由（CI 红），Windows 上 `repr` 把反斜杠翻倍、裸串不再是子串
+    （本机绿）——一个只在 Linux 上才响的断言。这里直接钉渲染结果：两种形态在任何平台都必须
+    得到同一个形状，绝不回显绝对路径。
+    """
+
+    label = _outside_target_label(Path(shape))
+    assert label == "<external>/" + Path(shape).name
+    assert shape not in label
 
 
 def test_read_image_outside_the_project_is_refused(dsh_config_path, dsh_project):
