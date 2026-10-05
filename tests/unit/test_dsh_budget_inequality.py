@@ -32,6 +32,10 @@ two_term_last_numeric_wins 钉住多条目时最后一个数字生效。
 抽取之后本文件多了一半：结构化读数（budget_inequality_facts）的四面——状态闭集可自证、
 violated 的 reason 与 check_wiring 的返回值逐字节相等（一份实现、两个调用点）、
 unavailable 与 not_applicable 分得开（不是 0、也不是通过）、非整毫秒的读数不被舍入。
+
+临时目录用仓库自己的 `tmp_root` 夹具（不是 pytest 的 `tmp_path`）：受限沙箱里 `tmp_path`
+会退化成 PermissionError，让 32 条用例红在与被测行为无关的地方（tests/conftest.py 的说明；
+本文件此前是全仓唯一没遵守这条约定的）。
 """
 
 from __future__ import annotations
@@ -141,8 +145,8 @@ REQUIRED_FORMS = ("两段", "三段", "超预算", "缺 hooks.json", "timeout �
 # --------------------------------------------------------------------------- 夹具
 
 
-def _write(tmp_path: Path, name: str, document: object) -> Path:
-    path = tmp_path / name
+def _write(tmp_root: Path, name: str, document: object) -> Path:
+    path = tmp_root / name
     text = json.dumps(document, ensure_ascii=False, indent=2)
     path.write_text(text, encoding="utf-8", newline="")
     return path
@@ -158,10 +162,10 @@ def _hooks_document(
 
 
 def _config(
-    tmp_path: Path, *, timeout_ms: int = 5000, pre_evidence: object = None
+    tmp_root: Path, *, timeout_ms: int = 5000, pre_evidence: object = None
 ) -> AdapterConfig:
     return AdapterConfig(
-        project_root=tmp_path,
+        project_root=tmp_root,
         rule_dirs=(),
         timeout_ms=timeout_ms,
         pre_evidence=pre_evidence,  # type: ignore[arg-type]
@@ -169,186 +173,186 @@ def _config(
 
 
 def _evidence(
-    tmp_path: Path, *, timeout_ms: int = 60000, enabled: bool = True
+    tmp_root: Path, *, timeout_ms: int = 60000, enabled: bool = True
 ) -> PreEvidenceConfig:
     return PreEvidenceConfig(
         enabled=enabled,
-        registry_root=tmp_path,
-        workspace=tmp_path,
-        shadow_root=tmp_path / "shadow",
+        registry_root=tmp_root,
+        workspace=tmp_root,
+        shadow_root=tmp_root / "shadow",
         timeout_ms=timeout_ms,
     )
 
 
 def _hooks(
-    tmp_path: Path,
+    tmp_root: Path,
     name: str,
     timeout: object = None,
     *,
     present: bool = True,
     command: str = COMMAND,
 ) -> Path:
-    return _write(tmp_path, name, _hooks_document(timeout, present=present, command=command))
+    return _write(tmp_root, name, _hooks_document(timeout, present=present, command=command))
 
 
 # --------------------------------------------------------------------------- 调用点
 
 
-def _two_term_pass(tmp_path: Path) -> str:
-    return check_wiring(_config(tmp_path), hooks_config_path=_hooks(tmp_path, "ok.json", 30))
+def _two_term_pass(tmp_root: Path) -> str:
+    return check_wiring(_config(tmp_root), hooks_config_path=_hooks(tmp_root, "ok.json", 30))
 
 
-def _two_term_boundary_equal(tmp_path: Path) -> str:
-    return check_wiring(_config(tmp_path), hooks_config_path=_hooks(tmp_path, "equal.json", 5))
+def _two_term_boundary_equal(tmp_root: Path) -> str:
+    return check_wiring(_config(tmp_root), hooks_config_path=_hooks(tmp_root, "equal.json", 5))
 
 
-def _two_term_float_above_boundary(tmp_path: Path) -> str:
+def _two_term_float_above_boundary(tmp_root: Path) -> str:
     # 5.0005s = 5000.5ms > 5000ms：浮点比较判"没超"，int() 之后的比较会判"超了"。
-    return check_wiring(_config(tmp_path), hooks_config_path=_hooks(tmp_path, "float.json", 5.0005))
+    return check_wiring(_config(tmp_root), hooks_config_path=_hooks(tmp_root, "float.json", 5.0005))
 
 
-def _two_term_float_below_boundary(tmp_path: Path) -> str:
+def _two_term_float_below_boundary(tmp_root: Path) -> str:
     # 0.0005s = 0.5ms，内部预算 0ms：0.5 <= 0 不成立所以放行；int(0.5) == 0 会判成违反。
     return check_wiring(
-        _config(tmp_path, timeout_ms=0), hooks_config_path=_hooks(tmp_path, "float0.json", 0.0005)
+        _config(tmp_root, timeout_ms=0), hooks_config_path=_hooks(tmp_root, "float0.json", 0.0005)
     )
 
 
-def _two_term_last_numeric_wins(tmp_path: Path) -> str:
+def _two_term_last_numeric_wins(tmp_root: Path) -> str:
     document = _hooks_document(100)
     document["hooks"]["PreToolUse"][0]["hooks"].insert(
         0, {"type": "command", "command": COMMAND, "timeout": 3}
     )
     return check_wiring(
-        _config(tmp_path), hooks_config_path=_write(tmp_path, "twice.json", document)
+        _config(tmp_root), hooks_config_path=_write(tmp_root, "twice.json", document)
     )
 
 
-def _two_term_wins_over_three_term(tmp_path: Path) -> str:
+def _two_term_wins_over_three_term(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path, pre_evidence=_evidence(tmp_path)),
-        hooks_config_path=_hooks(tmp_path, "precedence.json", 3),
+        _config(tmp_root, pre_evidence=_evidence(tmp_root)),
+        hooks_config_path=_hooks(tmp_root, "precedence.json", 3),
     )
 
 
-def _three_term_pass(tmp_path: Path) -> str:
+def _three_term_pass(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path, pre_evidence=_evidence(tmp_path)),
-        hooks_config_path=_hooks(tmp_path, "three.json", 120),
+        _config(tmp_root, pre_evidence=_evidence(tmp_root)),
+        hooks_config_path=_hooks(tmp_root, "three.json", 120),
     )
 
 
-def _three_term_default_limit_pass(tmp_path: Path) -> str:
+def _three_term_default_limit_pass(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path, pre_evidence=_evidence(tmp_path)),
-        hooks_config_path=_hooks(tmp_path, "three-default.json", present=False),
+        _config(tmp_root, pre_evidence=_evidence(tmp_root)),
+        hooks_config_path=_hooks(tmp_root, "three-default.json", present=False),
     )
 
 
-def _three_term_disabled_pass(tmp_path: Path) -> str:
+def _three_term_disabled_pass(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path, pre_evidence=_evidence(tmp_path, enabled=False)),
-        hooks_config_path=_hooks(tmp_path, "disabled.json", 30),
+        _config(tmp_root, pre_evidence=_evidence(tmp_root, enabled=False)),
+        hooks_config_path=_hooks(tmp_root, "disabled.json", 30),
     )
 
 
-def _two_term_over_budget(tmp_path: Path) -> str:
-    return check_wiring(_config(tmp_path), hooks_config_path=_hooks(tmp_path, "tight.json", 3))
+def _two_term_over_budget(tmp_root: Path) -> str:
+    return check_wiring(_config(tmp_root), hooks_config_path=_hooks(tmp_root, "tight.json", 3))
 
 
-def _two_term_timeout_zero(tmp_path: Path) -> str:
-    return check_wiring(_config(tmp_path), hooks_config_path=_hooks(tmp_path, "zero.json", 0))
+def _two_term_timeout_zero(tmp_root: Path) -> str:
+    return check_wiring(_config(tmp_root), hooks_config_path=_hooks(tmp_root, "zero.json", 0))
 
 
-def _three_term_over_budget(tmp_path: Path) -> str:
+def _three_term_over_budget(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path, pre_evidence=_evidence(tmp_path)),
-        hooks_config_path=_hooks(tmp_path, "three-tight.json", 60),
+        _config(tmp_root, pre_evidence=_evidence(tmp_root)),
+        hooks_config_path=_hooks(tmp_root, "three-tight.json", 60),
     )
 
 
-def _three_term_default_limit_over_budget(tmp_path: Path) -> str:
+def _three_term_default_limit_over_budget(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path, pre_evidence=_evidence(tmp_path, timeout_ms=600000)),
-        hooks_config_path=_hooks(tmp_path, "three-default-tight.json", present=False),
+        _config(tmp_root, pre_evidence=_evidence(tmp_root, timeout_ms=600000)),
+        hooks_config_path=_hooks(tmp_root, "three-default-tight.json", present=False),
     )
 
 
-def _three_term_disabled_over_budget(tmp_path: Path) -> str:
+def _three_term_disabled_over_budget(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path, pre_evidence=_evidence(tmp_path, enabled=False)),
-        hooks_config_path=_hooks(tmp_path, "disabled-tight.json", 3),
+        _config(tmp_root, pre_evidence=_evidence(tmp_root, enabled=False)),
+        hooks_config_path=_hooks(tmp_root, "disabled-tight.json", 3),
     )
 
 
-def _two_term_timeout_expression(tmp_path: Path) -> str:
+def _two_term_timeout_expression(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path), hooks_config_path=_hooks(tmp_path, "expression.json", "30s")
+        _config(tmp_root), hooks_config_path=_hooks(tmp_root, "expression.json", "30s")
     )
 
 
-def _two_term_timeout_absent(tmp_path: Path) -> str:
+def _two_term_timeout_absent(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path), hooks_config_path=_hooks(tmp_path, "absent.json", present=False)
+        _config(tmp_root), hooks_config_path=_hooks(tmp_root, "absent.json", present=False)
     )
 
 
-def _three_term_expression_over_budget(tmp_path: Path) -> str:
+def _three_term_expression_over_budget(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path, pre_evidence=_evidence(tmp_path, timeout_ms=600000)),
-        hooks_config_path=_hooks(tmp_path, "expression-tight.json", "30s"),
+        _config(tmp_root, pre_evidence=_evidence(tmp_root, timeout_ms=600000)),
+        hooks_config_path=_hooks(tmp_root, "expression-tight.json", "30s"),
     )
 
 
-def _missing_hooks_file(tmp_path: Path) -> str:
-    return check_wiring(_config(tmp_path), hooks_config_path=tmp_path / MISSING_NAME)
+def _missing_hooks_file(tmp_root: Path) -> str:
+    return check_wiring(_config(tmp_root), hooks_config_path=tmp_root / MISSING_NAME)
 
 
-def _unparseable_hooks_file(tmp_path: Path) -> str:
-    path = tmp_path / "broken.json"
+def _unparseable_hooks_file(tmp_root: Path) -> str:
+    path = tmp_root / "broken.json"
     path.write_text("{not json", encoding="utf-8", newline="")
-    return check_wiring(_config(tmp_path), hooks_config_path=path)
+    return check_wiring(_config(tmp_root), hooks_config_path=path)
 
 
-def _unrelated_command(tmp_path: Path) -> str:
+def _unrelated_command(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path),
-        hooks_config_path=_hooks(tmp_path, "other.json", 30, command="python -m other"),
+        _config(tmp_root),
+        hooks_config_path=_hooks(tmp_root, "other.json", 30, command="python -m other"),
     )
 
 
-def _no_commands(tmp_path: Path) -> str:
-    return check_wiring(_config(tmp_path), hooks_config_path=_write(tmp_path, "none.json", {}))
+def _no_commands(tmp_root: Path) -> str:
+    return check_wiring(_config(tmp_root), hooks_config_path=_write(tmp_root, "none.json", {}))
 
 
-def _hooks_section_not_mapping(tmp_path: Path) -> str:
+def _hooks_section_not_mapping(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path), hooks_config_path=_write(tmp_path, "hooks-list.json", {"hooks": []})
+        _config(tmp_root), hooks_config_path=_write(tmp_root, "hooks-list.json", {"hooks": []})
     )
 
 
-def _groups_not_list(tmp_path: Path) -> str:
+def _groups_not_list(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path),
-        hooks_config_path=_write(tmp_path, "groups-str.json", {"hooks": {"PreToolUse": "x"}}),
+        _config(tmp_root),
+        hooks_config_path=_write(tmp_root, "groups-str.json", {"hooks": {"PreToolUse": "x"}}),
     )
 
 
-def _entries_not_mapping(tmp_path: Path) -> str:
+def _entries_not_mapping(tmp_root: Path) -> str:
     return check_wiring(
-        _config(tmp_path),
+        _config(tmp_root),
         hooks_config_path=_write(
-            tmp_path, "entries-int.json", {"hooks": {"PreToolUse": [{"hooks": [1, None, "x"]}]}}
+            tmp_root, "entries-int.json", {"hooks": {"PreToolUse": [{"hooks": [1, None, "x"]}]}}
         ),
     )
 
 
-def _no_path(tmp_path: Path) -> str:
-    return check_wiring(_config(tmp_path))
+def _no_path(tmp_root: Path) -> str:
+    return check_wiring(_config(tmp_root))
 
 
-def _no_path_allowed(tmp_path: Path) -> str:
-    return check_wiring(_config(tmp_path), allow_unverified_wiring=True)
+def _no_path_allowed(tmp_root: Path) -> str:
+    return check_wiring(_config(tmp_root), allow_unverified_wiring=True)
 
 
 INVOKE = {
@@ -399,10 +403,10 @@ def test_the_table_covers_the_five_required_forms() -> None:
 
 
 @pytest.mark.parametrize("case", CASES, ids=[case.case_id for case in CASES])
-def test_check_wiring_returns_the_frozen_string(case: Case, tmp_path: Path) -> None:
+def test_check_wiring_returns_the_frozen_string(case: Case, tmp_root: Path) -> None:
     """抽取前后都必须逐字节等于表里的字面量（27 号 §6 硬约束 B）。"""
 
-    assert INVOKE[case.case_id](tmp_path) == case.expected
+    assert INVOKE[case.case_id](tmp_root) == case.expected
 
 
 # --------------------------------------------------------------------------- 结构化读数
@@ -411,11 +415,11 @@ def test_check_wiring_returns_the_frozen_string(case: Case, tmp_path: Path) -> N
 TERM_KEYS = {"status", "sum_ms", "limit_ms", "limit_source", "reason"}
 
 
-def test_two_term_reading_without_a_declaration(tmp_path: Path) -> None:
+def test_two_term_reading_without_a_declaration(tmp_root: Path) -> None:
     """没有 pre_evidence 时：两段成立、三段**不适用**（不是 0、也不是通过）。"""
 
     facts = budget_inequality_facts(
-        _config(tmp_path), hooks_config_path=_hooks(tmp_path, "ok.json", 30)
+        _config(tmp_root), hooks_config_path=_hooks(tmp_root, "ok.json", 30)
     )
 
     assert set(facts) == {"wiring", "two_term", "three_term"}
@@ -435,24 +439,24 @@ def test_two_term_reading_without_a_declaration(tmp_path: Path) -> None:
     assert facts["three_term"]["reason"]
 
 
-def test_the_violated_reason_is_exactly_what_check_wiring_returns(tmp_path: Path) -> None:
+def test_the_violated_reason_is_exactly_what_check_wiring_returns(tmp_root: Path) -> None:
     """一份实现、两个调用点：报告里的 reason 就是接线自检返回的那句话。"""
 
-    path = _hooks(tmp_path, "tight.json", 3)
-    facts = budget_inequality_facts(_config(tmp_path), hooks_config_path=path)
+    path = _hooks(tmp_root, "tight.json", 3)
+    facts = budget_inequality_facts(_config(tmp_root), hooks_config_path=path)
 
     assert facts["two_term"]["status"] == "violated"
     assert facts["two_term"]["sum_ms"] == 5000
     assert facts["two_term"]["limit_ms"] == 3000
     assert facts["two_term"]["limit_source"] == "hooks.json"
-    assert facts["two_term"]["reason"] == check_wiring(_config(tmp_path), hooks_config_path=path)
+    assert facts["two_term"]["reason"] == check_wiring(_config(tmp_root), hooks_config_path=path)
 
 
-def test_the_three_term_reading_names_the_default_limit_source(tmp_path: Path) -> None:
+def test_the_three_term_reading_names_the_default_limit_source(tmp_root: Path) -> None:
     """timeout 不是数字时：两段读作 unavailable，三段按 dsh 默认值继续判（不对称是刻意的）。"""
 
-    config = _config(tmp_path, pre_evidence=_evidence(tmp_path, timeout_ms=600000))
-    path = _hooks(tmp_path, "no-timeout.json", present=False)
+    config = _config(tmp_root, pre_evidence=_evidence(tmp_root, timeout_ms=600000))
+    path = _hooks(tmp_root, "no-timeout.json", present=False)
     facts = budget_inequality_facts(config, hooks_config_path=path)
 
     assert facts["two_term"]["status"] == "unavailable"
@@ -465,47 +469,47 @@ def test_the_three_term_reading_names_the_default_limit_source(tmp_path: Path) -
     assert "按 dsh 默认 600000ms 计" in facts["three_term"]["reason"]
 
 
-def test_unreadable_wiring_makes_both_terms_unavailable(tmp_path: Path) -> None:
+def test_unreadable_wiring_makes_both_terms_unavailable(tmp_root: Path) -> None:
     """接线读不到：两格同时 unavailable，reason 就是接线自检那句话。"""
 
-    missing = tmp_path / MISSING_NAME
-    facts = budget_inequality_facts(_config(tmp_path), hooks_config_path=missing)
+    missing = tmp_root / MISSING_NAME
+    facts = budget_inequality_facts(_config(tmp_root), hooks_config_path=missing)
 
     assert facts["wiring"]["status"] == "unavailable"
     assert facts["two_term"]["status"] == "unavailable"
     assert facts["three_term"]["status"] == "unavailable"
-    assert facts["wiring"]["reason"] == check_wiring(_config(tmp_path), hooks_config_path=missing)
+    assert facts["wiring"]["reason"] == check_wiring(_config(tmp_root), hooks_config_path=missing)
 
 
-def test_a_non_integral_limit_is_not_rounded(tmp_path: Path) -> None:
+def test_a_non_integral_limit_is_not_rounded(tmp_root: Path) -> None:
     """非整毫秒的读数不许被舍入：5000.5ms 就是 5000.5（舍入会造出不存在的上限）。"""
 
     facts = budget_inequality_facts(
-        _config(tmp_path), hooks_config_path=_hooks(tmp_path, "float.json", 5.0005)
+        _config(tmp_root), hooks_config_path=_hooks(tmp_root, "float.json", 5.0005)
     )
 
     assert facts["two_term"]["status"] == "ok"
     assert facts["two_term"]["limit_ms"] == 5000.5
 
 
-def test_the_status_closed_set_is_reachable(tmp_path: Path) -> None:
+def test_the_status_closed_set_is_reachable(tmp_root: Path) -> None:
     """闭集要能自证：四个状态都得有一条真实读数——闭集里不许有走不到的值。"""
 
     readings = [
         budget_inequality_facts(
-            _config(tmp_path), hooks_config_path=_hooks(tmp_path, "c1.json", 30)
+            _config(tmp_root), hooks_config_path=_hooks(tmp_root, "c1.json", 30)
         ),
         budget_inequality_facts(
-            _config(tmp_path, pre_evidence=_evidence(tmp_path)),
-            hooks_config_path=_hooks(tmp_path, "c2.json", 120),
+            _config(tmp_root, pre_evidence=_evidence(tmp_root)),
+            hooks_config_path=_hooks(tmp_root, "c2.json", 120),
         ),
         budget_inequality_facts(
-            _config(tmp_path), hooks_config_path=_hooks(tmp_path, "c3.json", 3)
+            _config(tmp_root), hooks_config_path=_hooks(tmp_root, "c3.json", 3)
         ),
         budget_inequality_facts(
-            _config(tmp_path), hooks_config_path=_hooks(tmp_path, "c4.json", "30s")
+            _config(tmp_root), hooks_config_path=_hooks(tmp_root, "c4.json", "30s")
         ),
-        budget_inequality_facts(_config(tmp_path), hooks_config_path=tmp_path / MISSING_NAME),
+        budget_inequality_facts(_config(tmp_root), hooks_config_path=tmp_root / MISSING_NAME),
     ]
 
     seen = {reading[key]["status"] for reading in readings for key in ("two_term", "three_term")}
