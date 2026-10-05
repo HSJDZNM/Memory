@@ -520,7 +520,27 @@ def check_g01(env: Env) -> Check:
         after={"wiring_entrypoint_available": True, "channels_listed": True,
                "unwired_channel_explicit": True},
     )
-    run, command, _shape = _wiring_command(env, check=False)
+    # 驱动的是**夹具配置根**（有 profile、没挂策略桥），不是宿主真实的 ~/.dsh：
+    # 这条检查要回答的是"清点入口能不能把未接线说成显式状态"，而"这台机器装没装 dsh"
+    # 是环境事实、不是能力缺口。修前它清点宿主——Linux CI 上 runner 没有 dsh 通道，
+    # 于是 facts 里 channel_entries=0，一条能力缺口被记成了"这台机器没有通道"
+    # （G13 早就改用了夹具，G01 漏了；见 AGENTS.md 第 45 条）。
+    # 不覆盖：宿主真实配置根有几条通道、各自什么状态——那个读数只写进 evidence 作参考，
+    # **不参与**修前/修后判定（facts 必须跨运行逐字一致，见 _fingerprint）。
+    fixture_home = env.work / "dsh-home-unwired"
+    profile_dir = fixture_home / "profiles" / "desktop"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / "cordis.patch.yml").write_text(
+        "# 夹具 profile patch：只有通道、没有挂策略桥——清点入口必须把它列出来并标成未接线。\n",
+        encoding="utf-8", newline="\n",
+    )
+
+    # T2 的 CLI 名不是冻结接口：--dsh-home 读不到就退回 DSH_HOME（与 G13 同做法）。
+    help_run = env.run([sys.executable, "-m", "adapters.cli", "wiring", "--help"], cwd=env.work)
+    supports_flag = "--dsh-home" in (help_run.stdout + help_run.stderr)
+    run, command, _shape = _wiring_command(
+        env, check=False, dsh_home=fixture_home, use_flag=supports_flag
+    )
     if run is None:
         check.evidence.append(
             "没有可用的接线清点入口（候选：adapters.cli wiring / adapters.wiring）"
@@ -529,17 +549,27 @@ def check_g01(env: Env) -> Check:
                             "unwired_channel_explicit": False, "entrypoint": ""})
         return check
 
-    check.evidence.append(command)
+    shown = command.replace(str(env.work), "<work>")
+    check.evidence.append(shown)
     entries, unwired, states = _wiring_summary(run.json())
     check.facts.update({
         "wiring_entrypoint_available": True,
-        "entrypoint": command,
+        "entrypoint": shown,
+        "fixture_dsh_home": "<work>/dsh-home-unwired",
         "channels_listed": entries > 0,
         "channel_entries": entries,
         "unwired_channel_explicit": unwired > 0,
         "unwired_entries": unwired,
         "states_seen": sorted(set(states)),
     })
+    host_run, host_command, _host_shape = _wiring_command(env, check=False)
+    if host_run is not None:
+        host_entries, host_unwired, _host_states = _wiring_summary(host_run.json())
+        check.evidence.append(
+            "（参考，不参与判定）宿主真实配置根 "
+            + host_command.replace(str(env.work), "<work>")
+            + f" -> 通道 {host_entries} 条，其中显式未接线 {host_unwired} 条"
+        )
     return check
 
 
