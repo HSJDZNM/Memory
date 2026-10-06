@@ -24,7 +24,8 @@
 | 到期前 14 天（自动） | `tools/exemption_expiry.py` 报 `DUE`；过期报 `RED`；**退出码恒 0** | 读数本身不阻断；到 `DUE` 就要安排复审 |
 | 未指定 | Phase 6 第二真实 Agent 产品验证、Phase 8 真实 `ChangeAuthor` 模型实现 | 需要仓库外的产品/模型环境，见 §9 |
 
-四条只报告步骤当前读数（2026-10-06 本机直跑）：`HITS: 0 / declared=9 due=0 expired=0 unprovable=0`，
+**豁免到期**读数（2026-10-06 本机直跑 `tools/exemption_expiry.py`）：`HITS: 0 / declared=9 due=0 expired=0 unprovable=0`——
+这是四条只报告步骤里**第一条**的读数（四条各自的读数见 §1.1，互不相加）；
 九条豁免的到期日**全部**是 `2026-12-31`（还有 86 天）。
 
 ## 1 Phase 9 控制面：只报告已落地，**升格一项未做**
@@ -35,13 +36,13 @@
 | --- | --- | --- | --- |
 | −2 会话隔离 | 每会话一棵工作树 + 仓库内排他锁（`.tmp/ci-local.lock`）；抢不到锁**直接退 1** 并报出持锁者 pid，不等待、无绕过开关；`tools/cleanup.py` 认同一把锁并跳过锁文件 | 门禁自身的**前置**（不是一步；`--list` 不取锁） | `python tools/ci_local.py --list` |
 | −1 基线冻结 | 30 臂矩阵 248 检查 0 偏差、11 fixture 逐字段全等，在有修订号的树上重采 | **未接**（只读仪器在 `.tmp/`，未入库） | 见 §8「仪器与环境的读法」 |
-| 0 封条与针脚 | 四个名字一份实现（`evidence_tree_digest` / `referenced_inputs_digest` / `workspace_tree_digest` / `platform_revision`）、严格模式（读不到 = `unprovable`）；`provenance_loop.py` 5 个场景闭环 | **未接**：门禁 31 步里没有任何一步被要求交出判据级封条 | `.venv\Scripts\python.exe tools\provenance_loop.py` |
+| 0 封条与针脚 | 四个名字一份实现（`evidence_tree_digest` / `referenced_inputs_digest` / `workspace_tree_digest` / `platform_revision`）、严格模式（读不到 = `unprovable`）；`provenance_loop.py` 5 个场景闭环 | **未接**：本机 `--full` 计划的 29 步里没有任何一步被要求交出判据级封条 | `.venv\Scripts\python.exe tools\provenance_loop.py` |
 | 1 H4/H5 | pytest 退出码 **5**（没有收集到用例）不再记成"测试跑过了" | `Unit, contract, integration and security tests` | `python -m pytest tests\integration\test_validator_pipeline.py -q` |
 | 2 归因闭集 | `origin` 五族闭集 + 核验前置；Python 与 JS 两端；真插件产出 → 真分类器的跨语言契约用例 | `dsh hook wiring self-check` + pytest 契约用例 | `python -m pytest tests\contract\test_policy_hook_chain.py -q` |
 | 3a 受控 reason 与脱敏 | 受控 `decision_reason` + 归因路径脱敏（两语言同一口径） | `dsh hook wiring self-check` | `python -m adapters.dsh.hooks --self-check` |
 | 3b pending 独立通道 | 「待实现」移出 `violations`，改 `pending_findings`（构造期强制 warning）；四种 decision 与改动前逐个相等 | 上述两个步骤 | `python -m pytest tests\unit -q -k pending` |
 | 3c 义务账 | 只记账不判罚；键 `(rule_id, target, missing_target)` 不含 `session_id`；解除只由一次真实 pytest 运行判定 | **只报告步骤 1** `Obligations gate (report only)` | `.venv\Scripts\python.exe tools\obligations_gate.py --ledger .tmp/obligations/repo.jsonl` |
-| 4 覆盖账 + `reading_context` | 三数分离（discovered/declared/measured，**整数、禁比例**）、六格差集、红条件；六类读数统一"属于哪棵树 / 哪个环境"的形状；豁免到期读数 | 门禁第 24 步 `Agent channel wiring inventory`（报告模式、恒退 0）+ **只报告步骤 2** | `.venv\Scripts\python.exe tools\exemption_expiry.py` |
+| 4 覆盖账 + `reading_context` | 三数分离（discovered/declared/measured，**整数、禁比例**）、六格差集、红条件；六类读数统一"属于哪棵树 / 哪个环境"的形状；豁免到期读数 | 本机门禁计划第 22 步 `Agent channel wiring inventory`（报告模式、恒退 0）+ **只报告步骤 2** | `.venv\Scripts\python.exe tools\exemption_expiry.py` |
 | 4 仪器自证（R-h） | 对象表四族（门禁步骤 / 探针检查 / 封条场景 / 只报告步骤）+ 三态判据 + 反退化检查；**方案 A**：存量写 `gap_note`、不做变异 | **只报告步骤 3** `Instrument self-proof (report only)` | `.venv\Scripts\python.exe tools\instrument_self_proof.py` |
 | 5 控制面事实表 × 跨源互证 | facts 表 13 行 + 连接键双向必查 + C1/C2/C3 三组读数 + 四格红条件 | **只报告步骤 4** `Control plane facts (report only)`；**workflow 里仍未接** | `.venv\Scripts\python.exe tools\control_plane_facts.py` |
 
@@ -173,7 +174,7 @@ test_path_declaration=101 budget_inequality=0 / facts=13 checks=64` → `HITS: 1
 | R-h 的**复核线分子/分母口径**、**变异体放哪** | 三态判据没有实跑过；`git apply --check` 在 Windows 换行下未实测；变异体是否落 `validation/mutations/` 未裁定 | 做缺口 2 时一并裁定并补实测 | 未指定 |
 | `--hook`（pre-push）形态下这几步也跑 | 它们不是 `FULL_ONLY_STEPS`，`--hook` 与 `--full` 下都会执行；**没有实测跑过 `--hook` 形态** | 跑一次 `--hook` 并留读数 | 未指定 |
 | 只报告工具在门禁里连跑会不会与别的步骤抢 `.tmp` | 事实表工具只读、不写台账；R-h 会建**自己的**影子索引 | 门禁首次真跑时观察 | 未指定 |
-| 两条只报告步骤在任何 CI workflow 里都不存在 | `REPORT_ONLY_STEPS` 只在本机门禁执行；`.github/workflows/*.yml` 里没有它们的 run 块 | 若要在 CI 上覆盖，按 §3.1 加并同步登记行 | 未指定 |
+| **四条**只报告步骤在任何 CI workflow 里都不存在 | `REPORT_ONLY_STEPS` 只在本机门禁执行；`.github/workflows/*.yml` 里没有它们的 run 块（实测四条名字全部无命中） | 若要在 CI 上覆盖，按 §3.1 加并同步登记行 | 未指定 |
 
 ## 4 治理覆盖缺口 13 项（级别 + 复现命令）
 
@@ -221,7 +222,7 @@ test_path_declaration=101 budget_inequality=0 / facts=13 checks=64` → `HITS: 1
 | # | 事项 | 现状 | 证据 | 下一步 | 复审/到期 |
 | --- | --- | --- | --- | --- | --- |
 | 5.1 | **`tools/governance_gap_probe.py` 硬编码本机绝对路径** | `DSH_IMPL_ASAR` 写死 `C:/Users/ZNM/.../app.asar`；换机器即失效（有显式降级：文件不存在时返回空事实并记 `dsh_impl_asar_exists=false`，但**该事实只落在 facts 里、报告里容易被读成检查通过**） | `Select-String -Path tools/governance_gap_probe.py -Pattern 'C:/Users'` → 769 行 | 改成环境变量或从 `shutil.which("dsh")` 反推；把"实现包不存在"提升为**报告可见**状态 | 未指定 |
-| 5.2 | **R-g（`origin` 归因）没有接进 `ci_local.py` 任何一步** | 台阶 2 明确声明"R-g 目前只由用例守住"；门禁 31 步里没有"origin 里不许有绝对路径"这类检查 | `Select-String -Path tools/ci_local.py -Pattern 'origin'` → 只有 git 的 `origin/main` | 接成门禁步骤（只报告起步），否则同类缺陷只在测试被改坏时暴露 | 未指定 |
+| 5.2 | **R-g（`origin` 归因）没有接进 `ci_local.py` 任何一步** | 台阶 2 明确声明"R-g 目前只由用例守住"；本机 `--full` 计划的 29 步里没有"origin 里不许有绝对路径"这类检查 | `Select-String -Path tools/ci_local.py -Pattern 'origin'` → 只有 git 的 `origin/main` | 接成门禁步骤（只报告起步），否则同类缺陷只在测试被改坏时暴露 | 未指定 |
 | 5.3 | **空选择分支把 `failing_tests` 记成"服务过"** | pytest 选择结果为空时提前返回、不写 `served=`（默认空元组）→ 流水线回退到 `spec.checkers`，于是**没有任何测试执行**也把 `failing_tests` 记进 `served_checkers`（违反"没查成的不能记成查过了"） | `src/validators/adapters/pytest_runner.py:177-183`、`src/validators/pipeline.py:536`（`checkers = output.served or spec.checkers`） | 收窄为显式状态（`not_evaluated` / `no_subject`），或显式写 `served=()` 并加用例 | 未指定 |
 | 5.4 | **`probe_matrix.py` 的 `exit 1` 二义 + 一处崩溃未修** | 正常路径 1 = "有检查不一致"，**未捕获异常也让 Python 退 1**，且证据 JSON 只在全部臂跑完之后才写（变异 A：exit 1、零证据）；`Decision.ALLOW` 那次崩溃的根因已定位（`worst` 为 `None` 时仍在拼文案）但**没有修** | `probe_matrix.py:1646`（`.tmp/` 下，未入库） | 区分"仪器崩了"与"偏差非 0"，并让证据在崩溃时也落盘；修 `None` 处理 | 未指定 |
 | 5.5 | **矩阵里一条检查的观察值永不稳定** | `block-composite-command` 的 stderr 里带 `approval-<12hex>`（`uuid4()`）；`op=contains` 让它照样绿，但"248 条逐字节全等"这类更强说法**不成立** | `src/enforcement/cli.py:637` | 引用时只写"除 run-scoped 文本外逐条一致"，或把该字段从观察值里剔除 | 未指定 |
@@ -271,6 +272,9 @@ test_path_declaration=101 budget_inequality=0 / facts=13 checks=64` → `HITS: 1
 | 5.49 | **N19 判定仪器对"允许"的情形报 `unproven`，待裁定** | 它按 `hook_event == PreToolUse` 取候选，而 Phase 4 放行时不带 `decision` 字段（`reason_code=enforcement_allow` / `allow_delegated`）；方向保守，但"这次动作被允许了吗"这根轴答错 | `python -m enforcement.cli verdict --audit <audit.jsonl> --tool pwsh --json` | 若要让这根轴也回答"允许"，需把 Phase 4 的允许语义纳入判据；同时写明它的**问题域不含事后阻断** | 未指定 |
 | 5.50 | **已知且被钉住的路径不等价：预执行路径判不了"顶层包存在但模块不存在"** | 预执行只看变更片段、不读磁盘，没有模块索引；该形态只有 AST 路径能判。已写成 `KNOWN_DIVERGENCES` 断言（已知差异而非静默差异），且写后 Phase 5 仍失败关闭 | `python -m pytest tests/integration/test_dependency_path_consistency.py -q` | 保持断言：**这条差异变红 = 差距形态变了**，要重新评审；不要在改之前把预执行路径当成与 AST 等价 | 未指定 |
 
+
+| 5.52 | **`tools/check_notebook.py` 不在 `HANDBOOK_PREFIXES`** | 它是 tech-detail 门禁步骤复用的结构校验器，但改它只命中 `CODE_PREFIXES`，而 `CODE_STEPS` 不含 `Tech-detail notebooks are in sync` → 改坏校验器时那一步不会跑 | `Select-String -Path tools/ci_local.py -Pattern 'HANDBOOK_PREFIXES' -Context 0,5` | 把 `tools/check_notebook.py` 加进 `HANDBOOK_PREFIXES`（一行），或写明"复用者改动不影响产物同步"的理由 | 未指定 |
+| 5.53 | **`/v1/validation/evaluate` 的超时路径没有专门用例** | 该路由的超时只由**默认预算**兼职覆盖；2026-10-06 把测试部署的 `validate_ms` 提到 30s 之后，"验证太慢"这个信号在测试里更不会被触发 | `git grep validate_timeout -- tests` → 空；`tests/api_support.py` 的 `budgets.validate_ms` | 补一条用**极小预算**驱动的用例（断言 504 + 错误码 `validate_timeout`），别让默认预算兼职被测对象 | 未指定 |
 
 ## 6 已知边界（设计取舍，不是缺陷；但产品化 / 部署前必须处理）
 
@@ -379,7 +383,7 @@ test_path_declaration=101 budget_inequality=0 / facts=13 checks=64` → `HITS: 1
 
 | 项 | 现在写什么 | 实测命令 |
 | --- | --- | --- |
-| CI 具名步骤 | **43**（带 `run` 块、`ci_local` 会执行的是 **42**；无名的 `actions/checkout@v7` 不计） | `(Select-String -Path .github/workflows/phase-8.yml -Pattern '^      - name:').Count`；`python -c "import sys;sys.path.insert(0,'tools');import ci_local;print(len(ci_local._steps()))"` |
+| CI 具名步骤 | **43**（带 `run` 块、可被调度的是 **42**；本机 `--full` 计划实际执行 **29**；无名的 `actions/checkout@v7` 不计） | `(Select-String -Path .github/workflows/phase-8.yml -Pattern '^      - name:').Count`；`python -c "import sys;sys.path.insert(0,'tools');import ci_local;print(len(ci_local._steps()))"` |
 | 全量测试 | **收集 2136 = 2135 passed / 0 failed / 1 skipped**（2026-10-06 门禁实跑，305s） | `python -m pytest -q -n auto --dist loadfile` |
 | `tools/` 计数 | 顶层 `.py` **28** / 顶层文件 **29** / `git ls-files tools` **37** | `(Get-ChildItem tools/*.py).Count`、`(Get-ChildItem tools -File).Count`、`(git ls-files tools).Count` |
 | 闭环脚本 | **7** | `(Get-ChildItem tools/*_loop.py).Count` |

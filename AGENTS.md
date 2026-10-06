@@ -481,8 +481,8 @@
       `tools.instrument_self_proof.INSTRUMENT_SELF_PROOF_SCHEMA_VERSION`（仪器自证读数——
       **1.0 = 首次建轴**：R-h 方案 A 的对象表 + 三态判据 + 只报告载荷，四格红条件
       `no_check_id` / `no_mutation_and_no_gap_note` / `patch_not_applicable` /
-      `check_id_without_object`；它**只报告、退出码恒 0，没有接进本机门禁**，接法与交接见
-      `docs/project/engineering-policy-platform/04-open-work.md`）；
+      `check_id_without_object`；它**只报告、退出码恒 0**，已接为本机门禁的只报告步骤（非零退出不计入门禁失败）、
+      **升格（接成阻断）未做**；交接见 `docs/project/engineering-policy-platform/04-open-work.md`）；
       `tools.instrument_self_proof.CHECKS_SCHEMA_VERSION`（**数据文件**
       `validation/instrument-checks.yaml` 自己的轴，与上面那个**载荷**轴各走各的：
       R-h 落地时是 "1"；台阶 5 只加了**可选**字段 `covers_facts`（连接键：这一行声明覆盖
@@ -493,8 +493,9 @@
       `tools.control_plane_facts.CONTROL_PLANE_FACTS_SCHEMA_VERSION`（控制面事实表 × 跨源互证
       的只报告载荷——**1.0 = 首次建轴**：facts 表 + 连接键双向必查 + C1/C2/C3 三组读数，
       四格红条件 `fact_without_check` / `check_covers_unknown_fact` / `test_path_declaration` /
-      `budget_inequality` 与 `wiring` / R-h **同形**；它**只报告、退出码恒 0，没有接进本机门禁**，
-      接法与交接见 `docs/project/engineering-policy-platform/04-open-work.md`）与 `tools.control_plane_facts.FACTS_TABLE_SCHEMA_VERSION`
+      `budget_inequality` 与 `wiring` / R-h **同形**；它**只报告、退出码恒 0**，已接为本机门禁的只报告步骤
+      （非零退出不计入门禁失败）、**升格未做**；交接见 `docs/project/engineering-policy-platform/04-open-work.md`）
+      与 `tools.control_plane_facts.FACTS_TABLE_SCHEMA_VERSION`
       （**数据文件** `validation/control-plane-facts.yaml` 自己的轴，从 "1" 起——13 行最小集，
       只放指针，读不出来只在只报告工具内部降级）。
     **已登记、但还没有版本轴的载荷**（第一次改键时必须引入 1.1——不许"只加一个键"了事）：

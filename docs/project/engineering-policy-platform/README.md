@@ -13,7 +13,7 @@
 | [testing/acceptance-matrix.md](testing/acceptance-matrix.md) | 阶段验收矩阵 |
 | [designs/README.md](designs/README.md) | 设计提案状态表（提案 / 状态 / 影响面 / 下一步） |
 
-技术架构图、术语与口径、规则转化覆盖报告在 `docs/project/architecture/`；
+技术架构说明、术语与口径、规则转化两篇在 `docs/project/architecture/`；
 仓库级文档分类与维护命令见 `docs/README.md`。
 
 ## 现在做到哪

@@ -55,7 +55,7 @@ docs/
 ## 生成物
 
 `project/architecture/tech-detail/<编号>-<名称>/*.ipynb` 与同名的 `.py` 是**生成物**——
-那里**一章一个目录**，每章一份图 + 一份同编号的讲解：内容源在同一章的 `cells.py`，由
+那里**一章一个目录**，每章一份可执行讲解（同名的 `.ipynb` 与 `.py`）：内容源在同一章的 `cells.py`，由
 `python docs/project/architecture/tech-detail/build_notebooks.py` 生成并逐单元执行校验
 （`--check` 是 CI 门禁）。手改 notebook 会在下次生成时丢失。
 

@@ -545,8 +545,9 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 │   │   ├── owasp-cheatsheets/         # OWASP 代码安全指南离线归档（124 篇）
 │   │   └── python-pep-code-style/     # PEP 8 / PEP 257 文档镜像（12 篇）
 │   └── project/                       # 本项目自己写、自己维护的文档（与代码一起评审与演进）
-│       ├── architecture/              # 技术架构图（draw.io 两页）+ 说明三件套 + 术语与口径 + 规则转化覆盖报告
+│       ├── architecture/              # 说明三件套 + 术语与口径 + 规则转化两篇 + 十份可执行讲解
 │       ├── engineering-policy-platform/  # 现状与开放工作、架构与契约、数据源、技术选型、测试策略与设计提案
+│       ├── reviews/                   # 与外部同类项目的对比复核（本地产出，非镜像）
 │       └── rule-effects/              # 规则效果演示与多违规案例检测报告（本地产出，非镜像）
 ├── examples/                          # 可重放的 CLI 示例（正例 / 反例）
 ├── examples/dsh/                      # dsh 接线示例：hooks.json / dsh-adapter.yaml / profile-patch.yml
