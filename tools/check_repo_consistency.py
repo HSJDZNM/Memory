@@ -223,16 +223,12 @@ def check_notebook_form() -> list[str]:
     这里只做形态判断、不跑生成器（那个要几分钟），让问题在本地一秒暴露。
     """
 
-    # 两类由生成器产出的 notebook：按阶段的学习手册，与按技术的讲解 notebook。
-    # 新增第三类时加一行即可——但**必须**加：目录改层而检查器没跟着改，会让本检查"命中 0 个、
+    # 由生成器产出的 notebook 目前只有一类：docs/project/architecture/tech-detail 各章的讲解。
+    # （按阶段的学习手册已随文档管理下线，连同它的生成器一起删除——少了一类就删一行，
+    # 别留下一段指向不存在目录的声明：那是"检查器还在、对象没了"的静默失效形态。）
+    # 新增一类时加一行即可——但**必须**加：目录改层而检查器没跟着改，会让本检查"命中 0 个、
     # 判定一致"，静默失效正是本仓库最忌讳的失败形态（所以下面显式报错，不放过空集合）。
     groups = (
-        (
-            "docs/project/learning 下的 */walkthrough.ipynb",
-            "*/walkthrough.ipynb",
-            ROOT / "docs" / "project" / "learning",
-            "python tools/build_learning_notebook.py",
-        ),
         (
             "docs/project/architecture/tech-detail 各章节目录下的 *.ipynb",
             "*/*.ipynb",

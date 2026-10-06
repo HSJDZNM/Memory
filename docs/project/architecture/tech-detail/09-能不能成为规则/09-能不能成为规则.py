@@ -11,7 +11,7 @@
 # ----------------------------------------------------------------------------
 # # 09 能不能成为规则
 #
-# 这份 notebook 配合同名图 `09-能不能成为规则.drawio`。图回答一个问题：
+# 这份 notebook 回答一个问题：
 # **文档里的一段要求，什么情况下能变成一条会被引擎判定的规则，什么情况下不能。**
 #
 # 判据是四条**必要条件**，缺一条就只能停在第二层（Curated Guidance：进语料、供检索），
@@ -56,11 +56,11 @@ TEMP = REPO_ROOT / ".tmp" / "tech-detail" / "09"
 TEMP.mkdir(parents=True, exist_ok=True)
 
 # 三个环境前提钉住：路径是从 REPO_ROOT 拼出来的、临时目录真的建好了、
-# 这份 notebook 与同一章目录里同名的 .drawio 图一一对应（章节目录名 = 产物名）。
+# 这一章的内容源 cells.py 就在它自己的章节目录里（章节目录名 = 产物名）。
 assert TEMP.is_dir() and TEMP.is_relative_to(REPO_ROOT), TEMP
 TECH_DETAIL = REPO_ROOT / "docs" / "project" / "architecture" / "tech-detail"
 CHAPTER = TECH_DETAIL / "09-能不能成为规则"
-assert (CHAPTER / "09-能不能成为规则.drawio").is_file(), "同名图不存在"
+assert (CHAPTER / "cells.py").is_file(), "章节目录里没有内容源 cells.py"
 
 print("仓库根目录:", REPO_ROOT.name, "（本次工作目录:", Path.cwd().name or Path.cwd(), "）")
 print("临时目录:", TEMP.relative_to(REPO_ROOT).as_posix(), "（写操作只落在它下面）")
@@ -149,7 +149,7 @@ print("加载通过：每条规则都有一个确定的 checker 与一个本地�
 #
 # 但 `source.path` 是**另一个分量**：它是可选字段，代码只查形状（必须是仓库相对路径、
 # 不能逃出仓库、不能含命令元字符），**不查这个文件是否真的存在**。这是当前实现与理想之间的已知落差，
-# 图脚注把它画成红色方框。
+# 本 notebook 把它当成一条红色终态来验。
 #
 # 这一格先做两件事：数一遍 `source.path` 的真实情况（本仓库 43 条全都有，而且都指向真实文件），
 # 再现场演示"加载器拦不住一个指向不存在文件的规则"。

@@ -15,8 +15,8 @@ SPEC = NotebookSpec(
             '''
 # 00 技术总览：谁依赖谁
 
-这份 notebook 配合同名图 `00-技术总览.drawio`。图回答一个问题——**这个仓库里谁依赖谁**；
-notebook 把这张图里的每一句话都在代码里验一遍：先扫出真实的 import 边，再断言三条不能破的规矩。
+这份 notebook 回答一个问题——**这个仓库里谁依赖谁**：它把每一句话都在代码里验一遍，
+先扫出真实的 import 边，再断言三条不能破的规矩。
 
 读完应该能回答三件事：
 
@@ -48,8 +48,8 @@ for extra in (REPO_ROOT / "src", REPO_ROOT / "tools"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
 
-# 这个目录一章一个目录：每章里有图（唯一规格源 <章>/diagram.py）与同编号的可执行讲解
-# （唯一规格源 <章>/cells.py）；规格是唯一真相源，四份产物都不手改。
+# 这个目录一章一个目录：每章一份同编号的可执行讲解（唯一规格源 <章>/cells.py）；
+# 规格是唯一真相源，两份产物（.ipynb 与逐字相同的同名 .py）都由生成器算出，不手改。
 TECH_DETAIL = REPO_ROOT / "docs" / "project" / "architecture" / "tech-detail"
 CHAPTERS = sorted(path for path in TECH_DETAIL.iterdir()
                   if path.is_dir() and path.name[:2].isdigit())
@@ -62,7 +62,7 @@ print("Python:", sys.version.split()[0])
             '''
 ## 1. 真实的依赖边：扫出来，不是抄文档
 
-一个方框 = 一个包（`src/<包名>/`），箭头 = "这个包 import 了那个包"。
+扫描的单位是包（`src/<包名>/`），一条边 = "这个包 import 了那个包"。
 
 扫的时候必须区分两种 import：**模块级**（文件一加载就执行）与**函数内延迟导入**（真正调用时才执行）。
 两者分量完全不同：延迟导入常常是"组合根"或"构造引擎"处的豁免，模块级依赖却是改不掉的硬约束。
@@ -142,7 +142,7 @@ for package in PACKAGES:
             '''
 ## 2. 三条不变量
 
-图上的箭头是"方向"，真正要守的是下面三条——它们都能被断言，不是口号：
+上面打印出来的边只说明方向，真正要守的是下面三条——它们都能被断言，不是口号：
 
 1. **判定核心没有模块级出边**：`src/policy` 不 import 其他任何包（不导入 Web 框架 / Agent SDK / 工作流框架）；
 2. **入口层入度为 0**：没有任何包 import `policy_api` 或 `orchestration`——删掉编排层，平台照常独立运行；
@@ -222,7 +222,7 @@ print("三条不变量全部成立：核心业务模块零出边、入口层入�
             '''
 ## 3. 从"包"回到"层"
 
-同一个仓库有两套说法：图上的**六层**（① 消费方 / 入口 … ⑥ 证据与门禁）与代码里的**包**。
+同一个仓库有两套说法：**六层**（① 消费方 / 入口 … ⑥ 证据与门禁）与代码里的**包**。
 层名与编号的唯一口径是 `docs/project/architecture/术语与口径.md` §1——下面这张表照它写，
 并且现场核对每一个位置**真的存在**：文档与目录一旦漂移，这一步就会报错。
 '''
@@ -254,40 +254,40 @@ print("六层与目录逐一核对通过：", len(LAYERS), "层、", sum(len(ite
             '''
 ## 4. 这个目录里还有什么：00–09 索引
 
-`tech-detail/` **一章一个目录**（`00-技术总览/` … `09-能不能成为规则/`）：一章里有同编号的四份
-产物——图（可编辑的 `.drawio` + 渲染图 `.png`）与可执行讲解（`.ipynb` + 同名 `.py`）——以及这一章
-自己的两份规格源（`diagram.py` 是图的规格、`cells.py` 是讲解的内容源）。下面这个索引是从目录
-**现场读出来的**——不是抄来的清单；新增一章，这里就多一行，少一份 notebook 会被明确指出来。
+`tech-detail/` **一章一个目录**（`00-技术总览/` … `09-能不能成为规则/`）：一章里有一份同编号的
+可执行讲解，两份产物（`.ipynb` 与逐字相同的同名 `.py`）与这一章自己的内容源 `cells.py` 都放在一起。
+下面这个索引是从目录**现场读出来的**——不是抄来的清单；新增一章，这里就多一行，
+少一份 notebook 会被明确指出来。
 '''
         ),
         code(
             '''
-# 读目录得到索引：一章一个目录，章内图（.drawio）与 notebook（.ipynb）按编号一一对应。
-diagrams = sorted(path.stem for chapter in CHAPTERS for path in chapter.glob("*.drawio"))
-notebooks = {path.stem for chapter in CHAPTERS for path in chapter.glob("*.ipynb")}
+# 读目录得到索引：一章一个目录，章内 notebook（.ipynb）与同内容的 .py 按编号一一对应。
+notebooks = sorted(path.stem for chapter in CHAPTERS for path in chapter.glob("*.ipynb"))
+scripts = {path.stem for chapter in CHAPTERS for path in chapter.glob("*.py")} - {"cells"}
 
-print(pad("编号图", 34) + "配套 notebook")
+print(pad("编号讲解 notebook", 34) + "同内容的 .py")
 print("-" * 60)
-for stem in diagrams:
-    print(pad(stem, 34) + ("有" if stem in notebooks else "缺（还没生成）"))
+for stem in notebooks:
+    print(pad(stem, 34) + ("有" if stem in scripts else "缺（还没生成）"))
 print()
 
-assert len(diagrams) == 10, f"图的清单变了（{len(diagrams)} 张）：索引与文档要跟着改"
-missing = sorted(set(diagrams) - notebooks)
-extra = sorted(notebooks - set(diagrams))
+assert len(notebooks) == 10, f"讲解的清单变了（{len(notebooks)} 份）：索引与文档要跟着改"
+missing = sorted(set(notebooks) - scripts)
+extra = sorted(scripts - set(notebooks))
 if extra:
-    print("没有同名图的 notebook:", ", ".join(extra))
+    print("没有同名 notebook 的 .py:", ", ".join(extra))
 if missing:
     print(f"尚未生成 {len(missing)} 份：" + ", ".join(missing))
 else:
-    print(f"{len(diagrams)} 张图都有配套 notebook。")
+    print(f"{len(notebooks)} 份讲解都有逐字相同的纯 Python 版。")
 '''
         ),
         markdown(
             '''
 ## 小结
 
-- 依赖方向是**代码事实**，不是文档承诺：`ast` 扫出来的边与图一致，三条不变量靠断言守住；
+- 依赖方向是**代码事实**，不是文档承诺：边由 `ast` 现场扫出来，三条不变量靠断言守住；
 - `I = Ce/(Ca+Ce)` 从上到下单调变小——入口层最"易变"（没有人依赖它），判定核心最"稳定"（所有路径都要找它）；
 - 一个包级统计不够用的实例：`src/policy/check.py` 模块级 import 了 `validators.registry`（CLI 装配需要），
   但判定核心的业务模块（engine / loader / scope / models / context / evidence / checkers）**零出边**。

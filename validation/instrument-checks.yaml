@@ -208,24 +208,6 @@ checks:
     gap_note: "存量检查，未做变异自证"
     severity: blocking
 
-  - check_id: "gate-step:Learning notebook structure"
-    owner: ci-line
-    command: ".venv/bin/python tools/check_notebook.py    docs/project/learning/phase-0/walkthrough.ipynb    docs/project/learning/phase-1/walkthrough.ipynb    docs/project/learning/phase-2/walkthrough.ipynb    docs/project/learning/phase-3/walkthrough.ipynb    docs/project/learning/phase-4/walkthrough.ipynb    docs/project/learning/phase-5/walkthrough.ipynb    docs/project/learning/phase-6/walkthrough.ipynb    docs/project/learning/phase-7/walkthrough.ipynb    docs/project/learning/phase-8/walkthrough.ipynb"
-    covers: "学习手册 notebook 结构"
-    evidence_level: exit_code
-    mutation_id: null
-    gap_note: "存量检查，未做变异自证"
-    severity: blocking
-
-  - check_id: "gate-step:Learning notebooks are in sync"
-    owner: ci-line
-    command: ".venv/bin/python tools/build_learning_notebook.py --check"
-    covers: "学习手册代码单元与实现同步（只在 --full 跑）"
-    evidence_level: exit_code
-    mutation_id: null
-    gap_note: "存量检查，未做变异自证"
-    severity: blocking
-
   - check_id: "gate-step:Tech-detail notebooks are in sync"
     owner: ci-line
     command: ".venv/bin/python docs/project/architecture/tech-detail/build_notebooks.py --check"

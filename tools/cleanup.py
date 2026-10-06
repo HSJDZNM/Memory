@@ -27,7 +27,8 @@
 一个进程边扫边删、另一个边读边写，就会跑出“代码没改却红了”的假红——这正是 `.tmp/ci-local.lock`
 要消灭的东西。所以本脚本在**真的要删**的时候先取同一把锁（`ci_local.try_acquire_lock`，非阻塞）：
 抢不到就报出持锁者 pid / 起始时间 / argv 后退出 1，**一项都不删**。加锁逻辑不复制一份，直接复用
-`ci_local.py` 里已验证的实现（同目录脚本互相导入的先例见 `tools/build_learning_notebook.py`）。
+`ci_local.py` 里已验证的实现（同目录脚本互相导入的先例就是本文件自己的 `import ci_local`；
+跨目录复用同一份实现的例子见 `docs/project/architecture/tech-detail/build_notebooks.py` 复用 `tools/check_notebook.py`）。
 
 两条刻意的例外：
 

@@ -112,7 +112,6 @@ Hook 自己的 `exit 2` 到了插件手里是 `1`。机制已定位（不再标 
 判定行读不到、读不懂、`schema_version` 不认识，一律回到"未知状态"——**两条分支都是拒绝**，
 `exit 0` 仍是唯一的放行信号；真正生效的兜底仍是插件里"除 0 之外一律 deny"（G12），
 所以"非 0 非 2 也拒绝"这条路径必须继续有契约测试钉着。
-细节与复现：[05-emergent-issues.md §2.3](../../../docs/project/engineering-policy-platform/reviews/governance-capability/05-emergent-issues.md)。
 
 ### 2.4 工具名与参数结构
 
@@ -385,8 +384,8 @@ Phase 4 门禁有 `enforcement_detail` 而没有 `detail`），以及
 
 ## 9. 治理覆盖缺口修复（G2 / G3 / G11 / G12）
 
-本轮修复的出发点是实测缺口清单（`docs/project/engineering-policy-platform/reviews/governance-coverage-gaps.md`）
-与根因分析（同目录 `governance-remediation/00-remediation-plan.md` 的 R1）。四条都长在"两层之间有没有接上"
+本轮修复的出发点是实测缺口清单与根因分析 R1（缺口清单与仍未修的条目见
+`docs/project/engineering-policy-platform/04-open-work.md`）。四条都长在"两层之间有没有接上"
 这条接缝上，因此每条都配了**会失败的检查**，而不是只改代码。
 
 ### 9.1 G2 · 事后钩子成对注册（R1）
@@ -724,8 +723,8 @@ shell **照搬** Node 的 spawn 行为，所以修前读到的那一句就是真
     python tools/dsh_sandbox_loop.py
     dsh --profile headless --patch <patch.yml> "用 edit 工具修改 src/shop/order_controller.py"
 
-沙箱闭环的完整步骤、断言与观测结果见 docs/project/engineering-policy-platform/phases/phase-2-dsh-adapter.md
-的"实施记录"一节。
+沙箱闭环的完整步骤与断言在 `tools/dsh_sandbox_loop.py`，本次观测结果写在
+`.tmp/artifacts/phase-2-sandbox-result.json`。
 
 ## 11. 适用范围与已知边界（N23 / N24）
 

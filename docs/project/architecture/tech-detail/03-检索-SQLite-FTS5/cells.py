@@ -15,8 +15,8 @@ SPEC = NotebookSpec(
             '''
 # 03 检索：SQLite FTS5
 
-这份 notebook 配合同名图 `03-检索-SQLite-FTS5.drawio`。图上有九个步骤，从"摄取清单"一路走到"三个显式状态"，
-下面按同样的顺序把每一步**真的跑一遍**：语料用仓库里真实的那份清单，索引库建在本 notebook 自己的临时目录里。
+这份 notebook 把检索这条链路从"摄取清单"一路走到"三个显式状态"：九个步骤按顺序**真的跑一遍**，
+语料用仓库里真实的那份清单，索引库建在本 notebook 自己的临时目录里。
 
 读完应该能回答四件事：
 
@@ -73,7 +73,7 @@ print("Python:", sys.version.split()[0])
         ),
         markdown(
             '''
-## 1. 摄取清单：语料是数据，哈希是门禁（图上的 r1 → r2）
+## 1. 摄取清单：语料是数据，哈希是门禁
 
 `knowledge/corpus.yaml` 是"哪些文档值得告诉 Agent"的**数据**：数据集名、镜像目录、许可、
 层级（tier）、可见性（visibility）、条目清单全写在那里，代码里没有硬编码的路径判断。
@@ -223,7 +223,7 @@ print("结论：镜像内容一改，sha256 立刻对不上，verify 退出 1 �
         ),
         markdown(
             '''
-## 2. 分块与索引库：一个 chunk 一个稳定身份（图上的 r3 → r4）
+## 2. 分块与索引库：一个 chunk 一个稳定身份
 
 **分块**按标题层级走：标题行本身不进正文，只进 `heading_path` / `heading_anchor`（用于溯源），
 正文按预算打包，**原文一个字都不改写**。这一条是可断言的：把各章节正文拼起来，
@@ -342,9 +342,9 @@ print("再摄取一次: 新建", len(again.created), "更新", len(again.updated
         ),
         markdown(
             '''
-## 3. 查询规范化：先变成受控词项，再变成表达式（图上的 r5 → r6）
+## 3. 查询规范化：先变成受控词项，再变成表达式
 
-这是整张图**最安全的一步**。原始查询文本是**数据**：它永远不会出现在 SQL 字符串里，
+这是整条链路**最安全的一步**。原始查询文本是**数据**：它永远不会出现在 SQL 字符串里，
 也不会出现在 FTS5 表达式的语法位置。中间经历三段：
 
 1. **规范化**：Unicode NFKC、剔除控制字符、空白折叠、按字符上限截断（超长显式记 `truncated`）；
@@ -415,7 +415,7 @@ print("词项通过 parameters 传参；SQL 拼接块里没有出现 expression 
         ),
         markdown(
             '''
-## 4. 参数化查询、权限过滤、结果带来源（图上的 r6 → r7 → r8）
+## 4. 参数化查询、权限过滤、结果带来源
 
 SQL 的形状是固定的：`chunks_fts MATCH ?` 加一串**参数化**的过滤条件
 （`d.dataset IN (?,?,…)`、`d.visibility = ?`、`d.tier IN (…)`）。它们是 `?`，不是字符串拼接。
@@ -541,7 +541,7 @@ assert with_restricted.results[0].visibility is Visibility.RESTRICTED
         ),
         markdown(
             '''
-## 5. 三个显式状态，而且不可用时绝不"脑补"（图上的 r9 与红色节点）
+## 5. 三个显式状态，而且不可用时绝不"脑补"
 
 检索只有这几种结局，每一种都有**名字**，不允许糊成一团：
 
@@ -552,7 +552,7 @@ assert with_restricted.results[0].visibility is Visibility.RESTRICTED
 | `empty` + `access_denied` | 一个数据集都没授予 | 去找授权，不要试着绕过 |
 | `unavailable` + `index_missing` / `retrieval_failed` | 索引缺失、损坏、执行失败 | 只输出 `knowledge_unavailable` |
 
-最后一行是这张图的红色节点：**检索不可用时不回退到"模型记忆里的规范"**。
+最后一条是失败关闭的红色终态：**检索不可用时不回退到"模型记忆里的规范"**。
 在组装出来的 Engineering Context 里，这条规矩有看得见的形态——不可用时渲染出的文本
 **根本没有参考区边界标记**（`<<<ENGINEERING-REFERENCE-BEGIN>>>`），只有一句"知识不可用"，
 并明确写着"不得用模型记忆里的规范代替来源，也不得据此作出授权判断"。

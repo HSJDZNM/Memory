@@ -8,9 +8,7 @@
 
 历史上 adapters/dsh/adapter.py 里的匹配器把 "**/" 实现成"至少一层目录"，与本模块不一致
 ——这正是治理覆盖缺口 G8：配置里写 "**/*.md" 看着覆盖所有 Markdown，实际漏掉根目录一整个层级。
-该分歧已消除：两边语义一致（"**/" = 零个或多个目录），由 tests/contract 下的跨模块对照测试钉住；
-dsh 侧 layer/language 映射表因匹配范围放大而产生的逐条影响，
-记录在 docs/project/engineering-policy-platform/reviews/governance-remediation/03-rule-fidelity.md。
+该分歧已消除：两边语义一致（"**/" = 零个或多个目录），由 tests/contract 下的跨模块对照测试钉住。
 """
 
 from __future__ import annotations

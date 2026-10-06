@@ -8,17 +8,17 @@ from notebook_lib import NotebookSpec, code, markdown
 SPEC = NotebookSpec(
     stem="01-判定核心-Policy-Engine",
     title="单技术：Policy Engine 内部流程",
-    summary="把图上的九步逐步跑一遍：规则集与上下文、范围匹配、跳过原因、证据门禁、checker 分派、稳定排序、审批标记与三值判定",
+    summary="把判定的九步逐步跑一遍：规则集与上下文、范围匹配、跳过原因、证据门禁、checker 分派、稳定排序、审批标记与三值判定",
     temp_dir=".tmp/tech-detail/01",
     cells=(
         markdown(
             '''
 # 01 判定核心：Policy Engine 内部流程
 
-这份 notebook 配合同名图 `01-判定核心-Policy-Engine.drawio`。图回答一个问题——**一次判定到底是怎么算出来的**；
-notebook 把图上的九步逐步跑一遍，每一步都留下能核对的输出，关键结论用 `assert` 钉住。
+这份 notebook 回答一个问题——**一次判定到底是怎么算出来的**：它把九步逐步跑一遍，
+每一步都留下能核对的输出，关键结论用 `assert` 钉住。
 
-| 步骤 | 图上节点（第二行锚点） | 本 notebook 里的代码锚点 |
+| 步骤 | 这一步做什么（精确锚点） | 本 notebook 里的代码锚点 |
 | --- | --- | --- |
 | 1 | 规则集就绪 · RuleSet.identity | `policy.loader.load_rule_set` |
 | 2 | 上下文规范化 · 只接受显式字段 | `policy.context.build_context` / `normalize_context` |
@@ -30,7 +30,7 @@ notebook 把图上的九步逐步跑一遍，每一步都留下能核对的输�
 | 8 | 审批标记 · requires_approval | `RequiredAction.APPROVAL` |
 | 9 | 三值判定 · allow / warning / block | `policy.models.expected_decision` |
 
-图外还有两条红色旁路，本 notebook 也会各跑一次：**无证据不判通过**（验证器不可用 / 未覆盖 → critical 阻断）
+还有两条失败关闭旁路，本 notebook 也会各跑一次：**无证据不判通过**（验证器不可用 / 未覆盖 → critical 阻断）
 与**高风险要人批**（`RequiredAction.APPROVAL`）。
 
 **预备知识**：认识 Python 的函数、字典与 `try / except` 就够了。全部代码只调用仓库里已经测试过的模块，
@@ -131,7 +131,7 @@ for fields in ({"layer": None}, {"operation": "deploy"}):
 
 **规则集就绪（第 1 步）**：`RULES.identity` 是规则内容的 sha256 指纹，用来把一份决定绑定到一版规则。
 输出里特意把规则目录**倒序**再加载一次——身份与规则清单完全一样，因为 loader 会按来源路径排序，
-顺序是它自己定的，不是调用方给的。这就是图上"与加载顺序无关"的含义。
+顺序是它自己定的，不是调用方给的。这就是"与加载顺序无关"的含义。
 
 同一段还演示了加载门禁：把 `checker` 写成一个不存在的名字，加载阶段就报错。
 理由很直接——未知执行方式如果被放过，规则会"看起来在管这件事、实际什么都没查"。
@@ -370,7 +370,7 @@ print("唯一没有规则启用的 checker: type_check（mypy 未接入，下一
             '''
 ## 4. 旁路一：无证据不判通过
 
-图右侧那个红框是这张图最重要的一步。**没有证据不等于没有问题**，两种情况都必须失败关闭：
+旁路一是整条链路里最重要的一步。**没有证据不等于没有问题**，两种情况都必须失败关闭：
 
 1. **验证器不可用**：关键验证器没跑成（缺失 / 版本不符 / 超时 / 崩溃 / 配置错误 / 输出非法 / 本次没被选中），
    需要它的规则由 `blocker_for(checker)` 命中，产生 **critical** 违规；

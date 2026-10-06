@@ -4,7 +4,7 @@
 
 每章的 `cells.py`（一章一个目录）定义一份 `SPEC`：一份 notebook 的单元序列与生成期断言。
 改内容改 `cells.py`；产物（同目录的 `<NN>-<名称>.ipynb` 与同名 `.py`）由
-`build_notebooks.py` 重新生成——和同目录 `diagram.py` 生成的图一样：**规格是唯一真相源，产物不手改**。
+`build_notebooks.py` 重新生成：**规格是唯一真相源，产物不手改**。
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class NotebookSpec:
     """一份讲解 notebook 的规格。"""
 
     stem: str
-    #: 产物文件名（不带扩展名），与同名 .drawio 完全一致
+    #: 产物文件名（不带扩展名），与章节目录名逐字相同
     title: str
     #: notebook 一级标题
     summary: str

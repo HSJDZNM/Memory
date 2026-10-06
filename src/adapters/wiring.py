@@ -1,7 +1,6 @@
 """Agent 通道清点：把「没接线」变成可观测、可失败的显式状态。
 
-背景（治理根因 R2 / 缺口 G13、G1，见
-`docs/project/engineering-policy-platform/reviews/governance-remediation/00-remediation-plan.md`）：
+背景（治理根因 R2 / 缺口 G13、G1）：
 
 - `adapters.dsh.hooks.check_wiring()` 在 `hooks_config_path is None` 时直接 `return ""`（= 通过）；
 - 全仓库没有任何模块回答"本机有哪些 Agent 运行时、各自接没接线、最近一次留痕是什么时候"。

@@ -15,13 +15,13 @@ SPEC = NotebookSpec(
             '''
 # 08 单条规则：从文档到判定
 
-这份 notebook 配合同名图 `08-单条规则-从文档到判定.drawio`，图上有十个方框。
+这份 notebook 实走十个环节。
 它不讲"规则系统怎么设计"，只做一件事：**把一条真实的规则从头走一遍**，每一段都在代码里验一遍。
 
 主角是 `DOC-001`（"公开对象必须有 docstring"），它的原文来自 Python 官方的 PEP 257，
-一路走到"某个 `.py` 文件被判成 allow 还是 allow_with_warnings"。链路上每个方框都有一个**能被查的产物**：
+一路走到"某个 `.py` 文件被判成 allow 还是 allow_with_warnings"。链路上每一步都有一个**能被查的产物**：
 
-| 图上的方框 | 这次要查的产物 | 这一段的代码在做什么 |
+| 链路上的环节 | 这次要查的产物 | 这一段的代码在做什么 |
 | --- | --- | --- |
 | PEP 257 原文 | `docs/mirrors/python-pep-code-style/pep-257-docstrings/index.md` | 读出原文与它的首页元数据 |
 | 语料登记 | `knowledge/corpus.yaml` 的一条 `rule_sources` | 确认这段原文"被登记过"，且登记的文件真实存在 |
@@ -63,11 +63,11 @@ TEMP = REPO_ROOT / ".tmp" / "tech-detail" / "08"
 TEMP.mkdir(parents=True, exist_ok=True)
 
 # 三个环境前提钉住：路径是从 REPO_ROOT 拼出来的、临时目录真的建好了、
-# 这份 notebook 与同一章目录里同名的 .drawio 图一一对应（章节目录名 = 产物名）。
+# 这一章的内容源 cells.py 就在它自己的章节目录里（章节目录名 = 产物名）。
 assert TEMP.is_dir() and TEMP.is_relative_to(REPO_ROOT), TEMP
 TECH_DETAIL = REPO_ROOT / "docs" / "project" / "architecture" / "tech-detail"
 CHAPTER = TECH_DETAIL / "08-单条规则-从文档到判定"
-assert (CHAPTER / "08-单条规则-从文档到判定.drawio").is_file(), "同名图不存在"
+assert (CHAPTER / "cells.py").is_file(), "章节目录里没有内容源 cells.py"
 
 print("仓库根目录:", REPO_ROOT.name, "（本次工作目录:", Path.cwd().name or Path.cwd(), "）")
 print("临时目录:", TEMP.relative_to(REPO_ROOT).as_posix(), "（写操作只落在它下面）")
@@ -78,7 +78,7 @@ print("Python:", sys.version.split()[0])
             '''
 ## 第 1 步：规则文件先加载成对象
 
-图上的第 7 个方框是 `policies/coding/DOC-001.yaml`。它是**唯一**能进判定的形态：
+第 7 步是 `policies/coding/DOC-001.yaml`。它是**唯一**能进判定的形态：
 一份 YAML 数据，被 `policy.loader` 读成不可变的 `Rule` 对象。
 
 加载是**原子**的：任何一个字段不合法，整个文件都不加载，绝不会"读进去一半"。
@@ -108,10 +108,10 @@ print(pad("声明范围 scope", 34) + repr(dict(rule.scope.declared_dimensions))
 print(pad("消息（命中时进载荷）", 34) + rule.message)
 print()
 
-# 关键结论钉住：这条规则此刻能加载、且形状与图上写的一致。
+# 关键结论钉住：这条规则此刻能加载、且形状与内容源里写的一致。
 assert rule.id == "DOC-001" and rule.version == 1, rule.canonical_id
 assert rule.canonical_id == "DOC-001@1"
-assert rule.severity.value == "warning", "图上写的是 severity: warning —— 命中只告警"
+assert rule.severity.value == "warning", "规则写的是 severity: warning —— 命中只告警"
 assert rule.enforcement.checker == "missing_docstring"
 assert dict(rule.scope.declared_dimensions) == {"language": "python"}
 assert len(RULES) == 1 and RULES.identity.startswith("sha256:")
@@ -133,7 +133,7 @@ print("规则加载通过；规则集身份（rule_set_hash）:", RULES.identity
 现在没有。
 
 所以我们分两步走：先看模型只拦形状（下一格演示"指到不存在的文件也照样加载"），
-再看这条真实规则的来源**在我们这个仓库里确实存在**。图上脚注把这条落差写成红色方框，
+再看这条真实规则的来源**在我们这个仓库里确实存在**。这条落差在这里被显式写成一条红色终态，
 它不该被藏起来。
 '''
         ),
@@ -161,7 +161,7 @@ except Exception as error:  # 域异常 PolicyContextError 会被 pydantic 包�
     assert "路径逃出仓库根目录" in str(error), error
     print("× path 用 .. 逃出仓库 → 路径逃出仓库根目录，拒绝处理（来自 normalize_repo_path）")
 
-# 而"指向一个不存在的文件"——模型不拦，加载器也不拦，这正是图脚注说的落差。
+# 而"指向一个不存在的文件"——模型不拦，加载器也不拦，这正是上面说的落差。
 ghost = SourceRef(kind="standard", path="docs/mirrors/does-not-exist/index.md")
 assert ghost.path == "docs/mirrors/does-not-exist/index.md"
 assert not (REPO_ROOT / ghost.path).exists(), "这个路径本来就不该存在"
@@ -255,7 +255,7 @@ print("语料侧两件事都对上了：它既会被索引，也有规则认领�
             '''
 ## 第 4 步：分块——"哪一段"要精确到小节
 
-图的第 4 个方框是"分块与索引"。分块器做三件事：
+第 4 步是"分块与索引"。分块器做三件事：
 
 1. 先去掉 front matter（文件开头 `---` 包起来的那段元数据）；
 2. 按 Markdown 标题层级切章节，每个章节带一条 `heading_path`（从一级标题到当前小节的路径）；

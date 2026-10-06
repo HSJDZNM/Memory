@@ -56,7 +56,11 @@ limits:
 budgets:
   evaluate_ms: 2000
   retrieve_ms: 4000
-  validate_ms: 10000
+  # 30000 而不是 10000：验证流水线会真的调外部工具（pytest 选择 / Ruff），在全量并行
+  # （-n auto --dist loadfile）的负载下 10s 会被击穿，于是本机门禁出现「只有负载高时才红」的
+  # 假红（实测 2026-10-06：504 validate_timeout，断言是 504 == 200；隔离复跑 4.72s 通过）。
+  # 这条预算不是被测对象——被测对象是「待实现」要走 pending 通道（pending 正例在 test_api_http.py）。
+  validate_ms: 30000
 rate_limit:
   capacity: 5
   refill_per_second: 0.001

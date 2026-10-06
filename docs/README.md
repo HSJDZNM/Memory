@@ -1,22 +1,23 @@
-# docs/：两类文档，两条规矩
+# docs/：三类文档，三条规矩
 
-这个目录只分两类，**先看类别再找文件**：
+这个目录只分三类，**先看类别再找文件**：
 
 ```text
 docs/
 ├── mirrors/    第三方离线镜像：逐字复制上游原文，只读；既是追溯来源，也是检索语料（Raw Reference）
-└── project/    本项目自己写、自己维护的文档：和代码一起评审、一起演进
+├── project/    本项目自己写、自己维护的文档：和代码一起评审、一起演进
+└── 生成物      由内容源重新生成的产物（架构讲解 notebook 及其 .py 版本）：改内容源，不改产物
 ```
 
 分类的理由不是"谁写的"，而是**能不能改**：
 
-| | `docs/mirrors/**` | `docs/project/**` |
-| --- | --- | --- |
-| 内容来源 | 上游站点原文（`tools/mirror_docs.py` 等流水线抓取） | 本项目作者手写或脚本生成 |
-| 可否手改 | **不可以**。改了会在下次镜像同步时被覆盖，哈希门禁也会漂移 | 可以，且必须与相关代码/配置同步改 |
-| 身份标识 | `dataset`（如 `owasp-cheatsheets`）+ 镜像内相对路径 | 仓库相对路径 |
-| 谁在引用 | `knowledge/corpus.yaml`、`policies/**` 的 `source.path`、镜像流水线 | 生成器、文档内部链接、`README.md` / `AGENTS.md` |
-| 文本约定 | 不按本仓库排版约定改写（行尾空白来自上游） | 必须过 `tools/check_text_conventions.py` |
+| | `docs/mirrors/**` | `docs/project/**` | 生成物 |
+| --- | --- | --- | --- |
+| 内容来源 | 上游站点原文（`tools/mirror_docs.py` 等流水线抓取） | 本项目作者手写 | 由 `cells.py` 内容源生成 |
+| 可否手改 | **不可以**。改了会在下次镜像同步时被覆盖，哈希门禁也会漂移 | 可以，且必须与相关代码/配置同步改 | **不可以**。手改会在下次生成时丢失 |
+| 身份标识 | `dataset`（如 `owasp-cheatsheets`）+ 镜像内相对路径 | 仓库相对路径 | 章节目录 + 同编号的 `cells.py` |
+| 谁在引用 | `knowledge/corpus.yaml`、`policies/**` 的 `source.path`、镜像流水线 | 生成器、文档内部链接、`README.md` / `AGENTS.md` | 生成器与 `--check` 门禁 |
+| 文本约定 | 不按本仓库排版约定改写（行尾空白来自上游） | 必须过 `tools/check_text_conventions.py` | 同 project：产物也要过文本约定门禁 |
 
 ## docs/mirrors/：6 套镜像
 
@@ -37,22 +38,30 @@ docs/
 - `README.md`：来源、抓取时间、许可、收录范围与取舍；
 - `STRUCTURE.md`：层级、归属与交叉引用关系。
 
-## docs/project/：本项目文档
+## docs/project/：本项目现状与提案
 
 | 目录 | 内容 | 入口 |
 | --- | --- | --- |
-| project/architecture/ | 技术架构图（`.drawio` 两页 + tech-detail 十张）与说明三件套 + 术语与口径 + 规则转化覆盖报告 | [README.md](project/architecture/README.md) |
-| project/engineering-policy-platform/ | 分阶段架构、契约、数据源、测试策略、验收矩阵与复核记录；设计提案见 [设计提案索引](project/engineering-policy-platform/designs/README.md) | [README.md](project/engineering-policy-platform/README.md) |
-| project/learning/ | 面向人的学习手册，每阶段四件套（`note.md` / `walkthrough.ipynb` / `walkthrough.py` / `README.md`） | [README.md](project/learning/README.md) |
+| project/architecture/ | 技术架构说明三件套（术语与口径 / 功能清单 / 使用说明）+ 规则文档转化为规则 + 规则转化覆盖报告 + tech-detail 十份可执行讲解 | [README.md](project/architecture/README.md) |
+| project/engineering-policy-platform/ | **平台现状**（00–03 愿景 / 架构 / 数据源 / 技术选型）、**未完成工作与复审清单**（`04-open-work.md`）、测试策略与验收矩阵；设计提案见 [设计提案索引](project/engineering-policy-platform/designs/README.md) | [README.md](project/engineering-policy-platform/README.md) |
 | project/rule-effects/ | 规则效果演示与多违规案例检测报告（本地产出，非镜像） | — |
+| project/reviews/ | 与外部同类项目的对比复核记录（带证据等级与降级清单）。**已纳入版本库跟踪** | [open-code-review-对比报告.md](project/reviews/open-code-review-对比报告.md) |
 
-其中 `project/learning/**/walkthrough.ipynb` 与 `walkthrough.py` 是**生成物**：
-改内容要改 `tools/build_learning_notebook.py`（Phase 6–8 另见 `tools/phase{6,7,8}_cells.py`），
-再运行 `python tools/build_learning_notebook.py`。手改 notebook 会在下次生成时丢失。
+按阶段与按轮次的**过程记录已下线**（Phase 0–9 的实施记录、复核与修复轮记录、学习手册）。
+仍然影响未来开发的结论、缺口与复审时间全部收在
+[project/engineering-policy-platform/04-open-work.md](project/engineering-policy-platform/04-open-work.md)，
+历史编号的含义见它的附录对照表。
 
-`project/architecture/tech-detail/<编号>-<名称>/*.ipynb` 与同名的 `.py` 同样是生成物——那里**一章一个目录**，
-每章一份图 + 一份同编号的讲解：内容源在同一章的 `cells.py`，由
-`python docs/project/architecture/tech-detail/build_notebooks.py` 生成并逐单元执行校验。
+## 生成物
+
+`project/architecture/tech-detail/<编号>-<名称>/*.ipynb` 与同名的 `.py` 是**生成物**——
+那里**一章一个目录**，每章一份图 + 一份同编号的讲解：内容源在同一章的 `cells.py`，由
+`python docs/project/architecture/tech-detail/build_notebooks.py` 生成并逐单元执行校验
+（`--check` 是 CI 门禁）。手改 notebook 会在下次生成时丢失。
+
+按阶段的学习手册与它的生成管线（`docs/project/learning/**`、`tools/build_learning_notebook.py`、
+`tools/phase{6,7,8}_cells.py`、`tools/run_notebook_in_kernel.py`）已于 2026-10-06 一并下线；
+`tools/check_notebook.py` 保留，现在只服务上面这套 tech-detail 讲解 notebook。
 
 ## 改路径时的连带清单（迁移后最容易漏的地方）
 
@@ -71,13 +80,13 @@ docs/
 
 **动一个本项目文档目录**时，必须同步：
 
-1. 该文档内部指向别处的相对 Markdown 链接（跨目录时层级会变）。
-2. 生成器与校验器的路径常量：`tools/build_learning_notebook.py`、`tools/phase{6,7,8}_cells.py`、
-   `docs/project/architecture/tech-detail/build_notebooks.py`、`tools/check_arch_canon.py`（`ARCH`）、
-   `tools/check_arch_style.py`、`tools/check_notebook.py`、
-   `tools/run_notebook_in_kernel.py`、`tools/check_repo_consistency.py`（`check_notebook_form`）、
-   `tools/ci_local.py`（`HANDBOOK_PREFIXES`）。
-3. `.github/workflows/phase-8.yml` 里的手册路径、`README.md` 的目录树、`AGENTS.md` 的约定正文。
+1. 该文档内部指向别处的相对 Markdown 链接（跨目录时层级会变），以及
+   `README.md` / `AGENTS.md` 里指向它的引用；**不要留下指向已删除文件的链接**。
+2. 生成器与校验器的路径常量：`docs/project/architecture/tech-detail/build_notebooks.py`、
+   `tools/check_arch_style.py`、`tools/check_notebook.py`、`tools/check_repo_consistency.py`。
+3. `.github/workflows/phase-8.yml` 里的文档路径、根 `README.md` 的目录树、`AGENTS.md` 的约定正文。
+4. `docs/project/engineering-policy-platform/04-open-work.md` 的附录对照表（历史编号 → 现状文档），
+   以及 `docs/project/architecture/功能清单.md` 里对文档位置的描述。
 
 ## 维护命令
 
@@ -91,14 +100,12 @@ $env:PYTHONPATH = "src"
 # 文档与文本约定
 python tools/check_text_conventions.py    # 排版约定（镜像默认跳过，--all 连镜像一起查）
 python tools/secret_scan.py               # 凭据扫描（镜像默认跳过）
-python tools/check_arch_canon.py          # docs/project/architecture 的图 / 文 / 口径表三处同口径
-# 通配符由 shell 展开：PowerShell 5.1 不替原生程序展开，直接写 * 会得到"不是合法 JSON"的假失败，
-# 因此这里显式列出路径（bash / CI 里可以直接写 docs/project/learning/*/walkthrough.ipynb）
-python tools/check_notebook.py (Get-ChildItem docs/project/learning/*/walkthrough.ipynb).FullName
-python tools/build_learning_notebook.py   # 重生成手册并逐单元执行校验
+python tools/check_arch_style.py          # docs/project/architecture 的文风自检（当前不在门禁步骤表里）
 # tech-detail 的讲解 notebook：生成 + 逐单元执行；--check 是 CI 门禁（比对产物 + 结构校验）
 python docs/project/architecture/tech-detail/build_notebooks.py
 python docs/project/architecture/tech-detail/build_notebooks.py --check
-# tech-detail 的图：重算 .drawio 与 .png（各章 diagram.py 是唯一规格源）
-python docs/project/architecture/tech-detail/build_diagrams.py --png
+python tools/check_notebook.py (Get-ChildItem docs/project/architecture/tech-detail/*/*.ipynb).FullName
 ```
+
+通配符由 shell 展开：PowerShell 5.1 不替原生程序展开，直接写 `*` 会得到"不是合法 JSON"的假失败，
+因此上面显式列出路径（bash / CI 里可以直接写 `docs/project/architecture/tech-detail/*/*.ipynb`）。
