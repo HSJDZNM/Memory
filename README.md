@@ -72,7 +72,6 @@ python -m policy.check examples/bad_controller.py --dependencies repository
 
 上面用 `uv run` 的写法等价于在已装好依赖的环境里 `python -m ...`：本项目不把 `src/` 装进
 site-packages，而是靠 `PYTHONPATH=src`（CI 的 workflow 里就是这条）。
-学习手册不受这条限制：各阶段的 notebook 与 `walkthrough.py` 会自己把 `src/` 与 `tools/` 加进搜索路径。
 
 退出码：`0` 通过（allow）、`1` 发现违规（block / allow_with_warnings，含需要人工审批的 block）、
 `2` 配置或执行错误（规则不可读、规则损坏、上下文不完整、未知 checker）。
@@ -381,8 +380,9 @@ uv run python tools/agent_loop.py                                 # 多 Agent �
 规范事件的外部 `payload` 只允许 `path` / `params` / `text` / `cwd`；依赖、结果存在性、
 请求视图和摘要都由平台内部生成，外部载荷不能覆盖。
 
-新增一个 Adapter 的完整流程（不需要改核心层）见
-[Phase 6 实施记录](docs/project/engineering-policy-platform/phases/phase-6-multi-agent-adapters.md#实施记录)。
+新增一个 Adapter 的完整流程（不需要改核心层）见 `adapters/<agent_id>/`（manifest + adapter 配置 +
+事件样本）与一致性套件 `src/adapters/conformance.py`；仍未接入的产品与后续事项见
+[开放工作](docs/project/engineering-policy-platform/04-open-work.md)。
 
 ### Policy API（Phase 7）
 
@@ -497,21 +497,9 @@ uv run python tools/policy_bench.py --counts 10 100 1000
 
 ### 想搞懂代码在做什么
 
-看学习手册：每个阶段一份，用真实模块逐段演示，每个代码单元后面都写明"这段输出说明了什么"。
-
-| 手册 | 内容 |
-| --- | --- |
-| [Phase 0](docs/project/learning/phase-0/walkthrough.ipynb) | 一条规则从 YAML 到 PASS/FAIL 的完整链路 |
-| [Phase 1](docs/project/learning/phase-1/walkthrough.ipynb) | 上下文规范化、范围匹配、严重级别与可解释决策 |
-| [Phase 2](docs/project/learning/phase-2/walkthrough.ipynb) | dsh 事件映射、Hook 阻断、失败关闭与真实沙箱闭环 |
-| [Phase 3](docs/project/learning/phase-3/walkthrough.ipynb) | 分块、FTS5 检索、来源控制、Context 预算与"知识不可用" |
-| [Phase 4](docs/project/learning/phase-4/walkthrough.ipynb) | 工具注册表、参数绑定的授权、受控执行、事后验证与审计链重放 |
-| [Phase 5](docs/project/learning/phase-5/walkthrough.ipynb) | AST 事实与依赖图、外部工具适配器与失效分类、测试选择、证据 → 判定与失败关闭 |
-| [Phase 6](docs/project/learning/phase-6/walkthrough.ipynb) | 规范事件、能力声明与支持矩阵、一致性套件、跨 Agent 隔离与循环熔断 |
-| [Phase 7](docs/project/learning/phase-7/walkthrough.ipynb) | DTO 与领域模型分离、错误码 → 状态码、租户与令牌边界、预算与超时、幂等台账、本地与经 API 的决策整份相等 |
-| [Phase 8](docs/project/learning/phase-8/walkthrough.ipynb) | 最小图状态、循环上限、两个引擎跑同一份 spec、checkpoint 与恢复、人工审批、失败关闭表 |
-
-不想开 Jupyter 就运行同内容的纯 Python 版本（`walkthrough.py`）。
+看[技术详解](docs/project/architecture/tech-detail/README.md)：按技术切分的可执行讲解 notebook
+（依赖总览、判定核心、dsh Hook、检索、受控执行、验证器、API、编排、文档转规则），
+每个代码单元都真实执行过；改内容源后重新生成，`--check` 是门禁。
 
 ### 生成阶段验收证据
 
@@ -546,7 +534,7 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 
 ```text
 .
-├── .github/workflows/phase-8.yml      # CI：单元 / 契约 / 集成 / 对抗测试、AST 证据重放、验证器闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件与支持矩阵、API 自检 / OpenAPI 快照 / API 闭环、手册与证据
+├── .github/workflows/phase-8.yml      # CI：单元 / 契约 / 集成 / 对抗测试、AST 证据重放、验证器闭环、检索基线、注册表审核、受控执行闭环、多 Agent 一致性套件与支持矩阵、API 自检 / OpenAPI 快照 / API 闭环、讲解 notebook 与阶段证据
 ├── docs/
 │   ├── README.md                      # docs 分层地图：镜像与本项目文档各放哪、路径改动要连带改什么
 │   ├── mirrors/                       # 第三方离线镜像（Raw Reference）：逐字复制上游原文、只读、同时是检索语料
@@ -557,9 +545,9 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 │   │   ├── owasp-cheatsheets/         # OWASP 代码安全指南离线归档（124 篇）
 │   │   └── python-pep-code-style/     # PEP 8 / PEP 257 文档镜像（12 篇）
 │   └── project/                       # 本项目自己写、自己维护的文档（与代码一起评审与演进）
-│       ├── architecture/              # 技术架构图（draw.io 两页）+ 说明三件套 + 术语与口径 + 规则转化覆盖报告
-│       ├── engineering-policy-platform/  # 分阶段架构、契约、数据源、测试策略与复核记录
-│       ├── learning/                  # 面向人的学习手册（按阶段：phase-0 … phase-8）
+│       ├── architecture/              # 说明三件套 + 术语与口径 + 规则转化两篇 + 十份可执行讲解
+│       ├── engineering-policy-platform/  # 现状与开放工作、架构与契约、数据源、技术选型、测试策略与设计提案
+│       ├── reviews/                   # 与外部同类项目的对比复核（本地产出，非镜像）
 │       └── rule-effects/              # 规则效果演示与多违规案例检测报告（本地产出，非镜像）
 ├── examples/                          # 可重放的 CLI 示例（正例 / 反例）
 ├── examples/dsh/                      # dsh 接线示例：hooks.json / dsh-adapter.yaml / profile-patch.yml
@@ -591,7 +579,7 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 │   ├── security/                      # 对抗测试：注入、越权、缓存失效、检索失败关闭、伪造 trace、跨 Agent 越权、API 未认证/跨租户/不可达、编排的伪造审批与平台故障
 │   ├── orchestration_support.py       # Phase 8 测试助手（脚本化客户端、受控工作区、装配与运行）
 │   └── fixtures/                      # 决策快照、dsh 事件、检索语料与固定评测集
-├── tools/                             # 仓库脚本：阶段证据、性能基线、检索评测、dsh 沙箱闭环、多 Agent 闭环、API 闭环、编排闭环、notebook 生成、清理
+├── tools/                             # 仓库脚本：阶段证据、性能基线、检索评测、dsh 沙箱闭环、多 Agent 闭环、API 闭环、编排闭环、讲解 notebook 结构校验、清理
 ├── pyproject.toml                     # 依赖清单、包配置、pytest 配置
 ├── requirements.in / requirements.lock # 直接依赖与锁定版本
 ├── README.md

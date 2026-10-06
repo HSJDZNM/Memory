@@ -1097,8 +1097,7 @@ def expected_decision(
     `pending`（台阶 3b / D-1(b)）只参与**空判定**：`violations` 与 `pending` 都空才是 allow。
     阻断判定**一字不动**、且只读 `violations`——pending 的 severity 在构造期被钉成 WARNING，
     因此把它从 violations 搬到 pending **不可能**造出或消掉一条阻断：
-    改动前后四种 decision 逐个相等（证明与预注册形状见
-    `docs/project/engineering-policy-platform/reviews/governance-capability/15-control-plane-design/13-step3b-d1-field-diff.md` §2/§5.4）。
+    改动前后四种 decision 逐个相等（判据 J1(b)：`violations` 里没有 pending 条目）。
     """
 
     if required_action is RequiredAction.APPROVAL:

@@ -313,58 +313,65 @@ def test_timings_summary_survives_a_red_run(monkeypatch, capsys, tmp_root):
 
 # --------------------------------------------------------------------------- 推迟到 --full
 #
-# 学习手册同步只在 --full 下执行：默认 / --hook 被改动选中时必须**点名跳过并写明原因**，
-# 不能静默消失；--full 下必须真的进执行计划。GitHub CI 不受影响（它不经过 ci_local）。
+# 昂贵、又只守"文档与实现同步"的步骤可以只在本机 --full 下执行：默认 / --hook 被改动选中时
+# 必须**点名跳过并写明原因**，不能静默消失；--full 下必须真的进执行计划；而且推迟表里的名字
+# 必须对得上 workflow（见 test_every_full_only_step_exists_in_the_workflow），否则推迟会悄悄失效。
+# GitHub CI 不受影响（它不经过 ci_local）。
+#
+# 学习手册下线后 FULL_ONLY_STEPS 是**空表**，机制与下面三个用例都保留：空表是当前状态，
+# 不是"没有这个能力"。用合成步骤名 + 合成推迟表把机制本身钉住——**空集合不算覆盖**。
 
-HANDBOOK_SYNC = "Learning notebooks are in sync"
+# 名字必须以某个**已登记分组**里的步骤名为前缀，否则它连"被改动范围选中"这一步都进不了
+# （_plan_steps 先按 wanted 前缀筛，再看推迟表）——那样用例就退化成"测了个没被选中的步骤"。
+DEFERRED_STEP = "Tech-detail notebooks are in sync (synthetic deferral)"
+DEFERRED_REASON = "推迟到 --full：合成步骤（只用于覆盖推迟机制）"
 
 
-def _handbook_plan(monkeypatch, full: bool):
+def _deferred_plan(monkeypatch, full: bool):
     ci_local = _load_ci_local()
     monkeypatch.setattr(
         ci_local,
         "_steps",
-        lambda: [
-            (HANDBOOK_SYNC, ".venv/bin/python tools/build_learning_notebook.py --check"),
-            ("Learning notebook structure", ".venv/bin/python tools/check_notebook.py a.ipynb"),
-        ],
+        lambda: [(DEFERRED_STEP, ".venv/bin/python tools/check_notebook.py a.ipynb")],
     )
+    monkeypatch.setattr(ci_local, "FULL_ONLY_STEPS", {DEFERRED_STEP: DEFERRED_REASON})
     # 模拟"改了 src/"：手册组被改动范围选中
     monkeypatch.setattr(ci_local, "_changed_paths", lambda: ["src/policy/engine.py"])
     return ci_local, ci_local._plan_steps(full)
 
 
-def test_handbook_sync_is_deferred_by_default_and_named_with_a_reason(monkeypatch):
-    ci_local, (plan, skipped, _not_run) = _handbook_plan(monkeypatch, full=False)
+def test_deferred_step_is_skipped_by_default_and_named_with_a_reason(monkeypatch):
+    _ci_local, (plan, skipped, _not_run) = _deferred_plan(monkeypatch, full=False)
 
-    planned = [name for name, _ in plan]
-    assert HANDBOOK_SYNC not in planned
-    assert "Learning notebook structure" in planned  # 只推迟这一步，同组其余照跑
+    assert DEFERRED_STEP not in [name for name, _ in plan]
     reasons = dict(skipped)
-    assert HANDBOOK_SYNC in reasons
-    assert "--full" in reasons[HANDBOOK_SYNC]
+    assert DEFERRED_STEP in reasons
+    assert "--full" in reasons[DEFERRED_STEP]
 
 
-def test_handbook_sync_runs_under_full(monkeypatch):
-    _ci_local, (plan, skipped, _not_run) = _handbook_plan(monkeypatch, full=True)
+def test_deferred_step_runs_under_full(monkeypatch):
+    _ci_local, (plan, skipped, _not_run) = _deferred_plan(monkeypatch, full=True)
 
-    assert HANDBOOK_SYNC in [name for name, _ in plan]
-    assert HANDBOOK_SYNC not in dict(skipped)
+    assert DEFERRED_STEP in [name for name, _ in plan]
+    assert DEFERRED_STEP not in dict(skipped)
 
 
 def test_deferred_step_is_listed_as_not_run(monkeypatch, capsys):
-    ci_local, _ = _handbook_plan(monkeypatch, full=False)
+    ci_local, _ = _deferred_plan(monkeypatch, full=False)
     monkeypatch.setattr(ci_local, "unregistered_steps", lambda: [])
 
     assert ci_local.main(["--list"]) == 0
     out = capsys.readouterr().out
-    assert HANDBOOK_SYNC in out.split("本机跳过")[1]
+    assert DEFERRED_STEP in out.split("本机跳过")[1]
 
 
 def test_every_full_only_step_exists_in_the_workflow():
     """推迟表里的名字必须对得上 workflow。
 
     改了步骤名而这里没跟上，推迟会悄悄失效（反而每次都跑）。
+
+    注意它**守不住什么**：FULL_ONLY_STEPS 为空表时本用例一个名字也检查不到（学习手册下线后
+    就是这种状态）。机制本身由上面三个合成用例覆盖，本用例只负责"填了表就必须对得上"。
     """
 
     ci_local = _load_ci_local()

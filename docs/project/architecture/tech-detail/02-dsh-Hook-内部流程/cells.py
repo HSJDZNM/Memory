@@ -15,10 +15,10 @@ SPEC = NotebookSpec(
             '''
 # 02 dsh Hook 内部流程
 
-这份 notebook 配合同名图 `02-dsh-Hook-内部流程.drawio`。图回答一个问题——**Agent 想在工具执行之前调用一次策略判定，
-这一次判定是怎么走完的**。notebook 把图上的九步逐步跑一遍，并把它最要命的那条前提验证清楚。
+这份 notebook 回答一个问题——**Agent 想在工具执行之前调用一次策略判定，这一次判定是怎么走完的**：
+它把九步逐步跑一遍，并把这条链路最要命的那条前提验证清楚。
 
-| 步骤 | 图上节点（第二行锚点） | 本 notebook 里的代码锚点 |
+| 步骤 | 这一步做什么（精确锚点） | 本 notebook 里的代码锚点 |
 | --- | --- | --- |
 | 1 | dsh 调用 Hook · stdin JSON | `sys.stdin`（本 notebook 用同样的 JSON 喂 CLI） |
 | 2 | 接线自检 · 内部预算 5000ms < hooks.json 超时 30s | `adapters.dsh.hooks.check_wiring` |
@@ -32,7 +32,7 @@ SPEC = NotebookSpec(
 
 **这条链路的前提是一句反直觉的话**：dsh 那边"退出码 1 / 崩溃 / 被超时杀掉 / hooks.json 读不到"
 全都等于**放行**（依据 `src/adapters/dsh/README.md` 第 2.3、2.5 节）。所以失败关闭不可能由 dsh 提供，
-只能由 Hook 自己保证——这是图右侧那个红框，也是本 notebook 反复验证的一条。
+只能由 Hook 自己保证——这是本 notebook 反复验证的一条。
 
 **本机没有装 dsh 也不影响阅读**：Hook 是**外部命令**，与 dsh 之间只有"stdin 上的 JSON + 退出码"两样东西。
 notebook 直接构造那份 JSON、直接调用 CLI，测的就是真实接线后的同一段代码，不会假装跑过一个真实 Agent。
@@ -198,7 +198,7 @@ PreToolUse 拿到的路径是**未解析的原始字符串**，相对路径要�
 | `PolicyEvent` | 规范化后的标准事件 | event_id、operation、file、layer、language、dependencies、payload_digest |
 | `PolicyContext` | 核心引擎的输入 | request_id、project、agent、operation、file、layer、language、principal |
 
-图上把这个位置写成 `AgentEvent`（Phase 6 的规范事件类型名）；dsh 这条链路的实际产物是
+这个位置在 Phase 6 的规范事件里叫 `AgentEvent`；dsh 这条链路的实际产物是
 `PolicyEvent`（Phase 2 的类型），本 notebook 以源码为准。`payload_digest` 只记参数指纹、
 `payload_fields` 只记参数**名字**：审计能关联到同一次调用，又不会把源码内容写进证据文件。
 '''
@@ -360,7 +360,7 @@ assert any(item.get("reason_code") == "allow" for item in allow_records)
         ),
         markdown(
             '''
-## 3. 失败关闭靠自己（图右侧的红框）
+## 3. 失败关闭靠自己
 
 因为 dsh 把"退出码 1 / 崩溃 / 被超时杀掉 / 配置读不到"都当放行，Hook 必须自己保证三件事（第 4 节的做法）：
 

@@ -231,22 +231,9 @@ jobs:
       # 本来就调用同一份实现 policy_bench.run_baseline()（默认 10/100/1000），结果写进证据文件；
       # 单独一步只是把同一件事再算一遍、打印出来，不构成门禁。手动查看：python tools/policy_bench.py
 
-      - name: Learning notebooks are in sync
-        run: .venv/bin/python tools/build_learning_notebook.py --check
-
-      - name: Learning notebook structure
-        run: |
-          .venv/bin/python tools/check_notebook.py \
-            docs/project/learning/phase-0/walkthrough.ipynb \
-            docs/project/learning/phase-1/walkthrough.ipynb \
-            docs/project/learning/phase-2/walkthrough.ipynb \
-            docs/project/learning/phase-3/walkthrough.ipynb \
-            docs/project/learning/phase-4/walkthrough.ipynb \
-            docs/project/learning/phase-5/walkthrough.ipynb \
-            docs/project/learning/phase-6/walkthrough.ipynb \
-            docs/project/learning/phase-7/walkthrough.ipynb \
-            docs/project/learning/phase-8/walkthrough.ipynb
-
+      # 按阶段的学习手册（docs/project/learning/**）与其生成器已随文档管理下线：
+      # 学习材料不再进仓库，"手册同步 / 手册结构"这两步也一并删除（不是被跳过，是不存在了）。
+      #
       # tech-detail 的 10 份讲解 notebook 同样"生成器是唯一真相源"：
       # --check 比对产物与内容源，并复用 tools/check_notebook.py 做结构校验。
       - name: Tech-detail notebooks are in sync

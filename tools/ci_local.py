@@ -4,13 +4,14 @@
 检查链却漏跑"手册同步"，PR 因此变红。这个脚本把 workflow 当作唯一真相读出来，在本地按
 同样顺序执行，并按"这次改了什么"决定跑多少；红了就退出 1，pre-push 钩子据此拦住推送。
 
-例外（FULL_ONLY_STEPS）："学习手册同步"只在 --full 下执行。默认与 --hook 模式被改动选中时
-会**点名列为未执行**并写明原因，GitHub CI 上照跑。这是有意的取舍：上面那次"漏跑手册同步、
-PR 变红"的形态会重新变成可能——代价是推送前少等约 2.5 分钟，改了 src/ 的分支合并前要跑一次 --full。
+例外（FULL_ONLY_STEPS）：昂贵、又只守"文档与实现同步"的步骤可以在本机推迟到 --full：
+默认与 --hook 模式被改动选中时会**点名列为未执行**并写明原因，GitHub CI 上照跑。
+当前这张表是空的（唯一需要推迟的"学习手册同步"已随学习手册下线而删除），但机制保留——
+空表是当前状态，不是没有这个能力。
 
 用法：
 
-    python tools/ci_local.py              # 按改动范围自动选择（默认；学习手册同步推迟到 --full）
+    python tools/ci_local.py              # 按改动范围自动选择（默认；被推迟的步骤会点名列出）
     python tools/ci_local.py --full       # 跑全部能在本机跑的步骤（合并前跑这个）
     python tools/ci_local.py --list       # 只列出会跑哪些步骤，不执行
     python tools/ci_local.py --hook       # pre-push 钩子用：更简短、失败即退出码 1
@@ -250,8 +251,8 @@ CODE_STEPS = (
     "Phase 8 acceptance evidence",
 )
 HANDBOOK_STEPS = (
-    "Learning notebooks are in sync",
-    "Learning notebook structure",
+    # 按阶段的学习手册（docs/project/learning/**）与其生成器已下线：学习材料不再进仓库，
+    # "手册同步 / 手册结构"这两步随之删除。这里只剩按技术的讲解 notebook。
     "Tech-detail notebooks are in sync",
 )
 # 检索语料只在 docs/mirrors/ 下（knowledge/corpus.yaml 的每个 dataset 都指向镜像目录），
@@ -272,14 +273,11 @@ ORCHESTRATION_STEPS = (
 # 只在 --full 下执行的步骤（前缀匹配 -> 原因）。按改动范围自动选择时（默认，以及 pre-push 钩子的
 # --hook）即使被改动选中也**不执行**，而是显式列为"推迟到 --full"——不静默丢掉。
 # GitHub CI 上照跑，这里只改本机的执行时机：推送前不跑，合并前用 --full 跑。
-# 学习手册同步要把 9 个阶段手册的全部代码单元执行一遍（本机约 2.5 分钟，是本机门禁第二重的一步），
-# 守的是"手册与实现同步"，不是产品行为；HANDBOOK_PREFIXES 又含 src/，几乎每次改代码都会选中它。
-FULL_ONLY_STEPS = {
-    "Learning notebooks are in sync": (
-        "推迟到 --full：学习手册同步要执行全部阶段手册代码单元，"
-        "合并前用 --full 跑（GitHub CI 照跑）"
-    ),
-}
+# 空表是**当前状态**，不是能力被删：唯一需要推迟的一步（学习手册同步——要把 9 个阶段手册的
+# 全部代码单元跑一遍，本机约 2.5 分钟，守的是"手册与实现同步"而非产品行为）已随学习手册下线
+# 一起删除。机制与它的用例（tests/unit/test_ci_local.py）都留着：新增"昂贵且只守文档同步"的
+# 步骤时填这一张表，别重新发明一遍。
+FULL_ONLY_STEPS = {}
 
 # 改了这些前缀，就要跑对应的那一组。
 CODE_PREFIXES = (
@@ -295,8 +293,6 @@ CODE_PREFIXES = (
 RETRIEVAL_PREFIXES = ("knowledge/", "src/retrieval/", "docs/mirrors/", "tools/retrieval_eval.py")
 HANDBOOK_PREFIXES = (
     "src/",
-    "tools/build_learning_notebook.py",
-    "docs/project/learning/",
     "docs/project/architecture/tech-detail/",
 )
 ORCHESTRATION_PREFIXES = (

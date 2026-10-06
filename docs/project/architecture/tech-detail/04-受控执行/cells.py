@@ -15,8 +15,8 @@ SPEC = NotebookSpec(
             '''
 # 04 受控执行：授权、执行、验证、审计链
 
-这份 notebook 配合同名图 `04-受控执行.drawio`。图讲的是"一次动作从请求到终态经过哪些闸门"，
-下面把这些闸门**真的关一遍**：注册表用仓库里真实的那份，受控工作区、台账与审计链都落在本 notebook 自己的临时目录里。
+这份 notebook 讲的是"一次动作从请求到终态经过哪些闸门"，并把它们**真的关一遍**：
+注册表用仓库里真实的那份，受控工作区、台账与审计链都落在本 notebook 自己的临时目录里。
 
 读完应该能回答五件事：
 
@@ -72,7 +72,7 @@ print("Python:", sys.version.split()[0])
         ),
         markdown(
             '''
-## 1. 动作请求、注册表审核、授权指纹（图上的 e1 → e2 → e3）
+## 1. 动作请求、注册表审核、授权指纹
 
 **动作请求**不是一句自然语言，而是一份结构化记录：工具 ID、工具 schema 版本、规范化后的参数、
 主体（谁在做）、权限、上下文摘要、工作区、时效。
@@ -210,7 +210,7 @@ assert drift_pre.decision.reason_code.value == "schema_not_approved"
         ),
         markdown(
             '''
-## 2. 执行前检查：顺序固定，而且默认失败关闭（图上的 e4 与左侧红色节点）
+## 2. 执行前检查：顺序固定，而且默认失败关闭
 
 `pre_execute` 把一次动作判成 allow / allow_with_warnings / block，
 检查顺序**写死在它所在模块的 docstring 里**：
@@ -307,7 +307,7 @@ assert "--no-index" in fragment.decision.check("command_fragments").detail
         ),
         markdown(
             '''
-## 3. 高风险审批与短时效授权（图上的 e5 → e6）
+## 3. 高风险审批与短时效授权
 
 风险级别落在 `destructive_write` / `external_side_effect` / `privileged_execution`
 三种之一时，注册表把 `approval` 标成 `required`：**没有绑定的结构化人工审批就一律阻断**。
@@ -410,7 +410,7 @@ assert ledger.grant_used(grant.grant_id)
         ),
         markdown(
             '''
-## 4. 执行一次，且绝不执行第二次（图上的 e7）
+## 4. 执行一次，且绝不执行第二次
 
 执行器拿到的输入只有三样：动作请求、工具描述、**执行前决策**（里面带着 grant）。
 它不解析自然语言，也不接受"模型说可以"。真正执行之前它会再核对一遍：决策是不是允许、
@@ -491,7 +491,7 @@ assert SOURCE_PATH.read_text(encoding="utf-8") == content_after
         ),
         markdown(
             '''
-## 5. 事后验证与审计链（图上的 e8 → e9，以及右侧"证据不足"节点）
+## 5. 事后验证与审计链（含"证据不足"的失败关闭终态）
 
 **事后验证**必须交证据：文件前后哈希、diff 摘要、退出码、超时；工具返回值只当**不可信数据**（只留摘要）。
 证据不足时按 `repair_required` / `inconsistent` 处理；能不能回滚由工具在注册表里声明

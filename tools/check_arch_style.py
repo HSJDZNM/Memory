@@ -5,7 +5,7 @@
 
     python tools/check_arch_style.py
 
-退出码：0 = 平衡；1 = 有失衡项（概括句过长 / 长句比例过高 / 术语墙 / 连续无标点 / 图上标签缺两层写法）。
+退出码：0 = 平衡；1 = 有失衡项（概括句过长 / 长句比例过高 / 术语墙 / 连续无标点）。
 
 与 docs/project/architecture/术语与口径.md §7 一致，但**只检查散文**：
 - 表格行与代码围栏不参与句子/长句/术语墙判定（它们本来就该密）；
@@ -13,32 +13,24 @@
 """
 from __future__ import annotations
 
-import html
 import pathlib
 import re
-import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ARCH = ROOT / "docs/project/architecture"
 BT = chr(96)
 TOKEN = BT + "[^" + BT + "\n]+" + BT
-FENCE_OPEN = "^\\s*(" + BT * 3 + "|~~~)"
+# 「精确锚点」判据：每个 H2 小节至少要有文件:行 / 标识符 / 路径 / 枚举中一种，
+# 否则概括句没有人能顺着查下去（口径表 §7）。与图无关——它读的是散文。
 ANCHOR = re.compile(
     "(" + TOKEN
-    + r"|\b[\w./-]+\.(py|md|yaml|json|drawio):\d+"
+    + r"|\b[\w./-]+\.(py|md|yaml|json):\d+"
     + r"|[\w-]+/[\w./-]+"
     + r"|allow_with_warnings|needs_human|uncovered_checker|action_hash)"
 )
+FENCE_OPEN = "^\\s*(" + BT * 3 + "|~~~)"
 SENTENCE = re.compile(r"[^。；！？\n]+[。；！？]?")
 FENCE = re.compile(FENCE_OPEN)
-
-
-def clean(value: str) -> str:
-    value = urllib.parse.unquote(value or "")
-    value = re.sub(r"<[^>]+>", " ", value)
-    value = value.replace("&#xa;", " ").replace("&nbsp;", " ")
-    value = html.unescape(value)
-    return re.sub(r"\s+", " ", value).strip()
 
 
 def prose_lines(text: str):
@@ -113,30 +105,8 @@ def check_docs() -> list:
     return problems
 
 
-def check_diagrams() -> list:
-    problems = []
-    for name in ("技术架构.drawio", "技术流程.drawio"):
-        text = (ARCH / name).read_text(encoding="utf-8")
-        labels = []
-        for page in re.finditer(r'<diagram[^>]*name="([^"]*)"[^>]*>(.*?)</diagram>', text, re.S):
-            for m in re.finditer(r"<mxCell\s([^>]*?)(?:/>|>)", page.group(2)):
-                attrs = m.group(1)
-                if 'edge="1"' in attrs:
-                    continue
-                hit = re.search(r'value="([^"]*)"', attrs)
-                label = clean(hit.group(1)) if hit else ""
-                if len(label) > 4:
-                    labels.append(label)
-        if not labels:
-            continue
-        two_layer = [item for item in labels if len(item) > 14 and ANCHOR.search(item)]
-        if len(two_layer) / len(labels) < 0.5:
-            problems.append(name + " 节点标签两层写法占比不足：" + str(len(two_layer)) + "/" + str(len(labels)))
-    return problems
-
-
 def main() -> int:
-    problems = check_docs() + check_diagrams()
+    problems = check_docs()
     print("=" * 18, "文风自检（只看散文）")
     if not problems:
         print("  概括性与精确性平衡，未发现失衡项")

@@ -4,7 +4,10 @@
 
 ## 仓库现状
 
-仓库已绑定 Python 技术栈（见下文），完成 Engineering Policy Platform 的 **Phase 0 至 Phase 8**；Phase 6 的第二真实 Agent 产品验证仍待外部环境，Phase 8 的真实模型作者（`ChangeAuthor` 端口的模型实现）同样未接入：
+仓库已绑定 Python 技术栈（见下文），完成 Engineering Policy Platform 的 **Phase 0 至 Phase 8**；Phase 6 的第二真实 Agent 产品验证仍待外部环境，Phase 8 的真实模型作者（`ChangeAuthor` 端口的模型实现）同样未接入。**按阶段的学习手册已下线**：
+`docs/project/learning/**` 与它的生成管线已从仓库删除，`tools/check_notebook.py` 现在只服务
+`docs/project/architecture/tech-detail/` 的讲解 notebook。仍未完成的事项、复审时间与下一步见
+`docs/project/engineering-policy-platform/04-open-work.md`：
 
 - 可运行：根 `README.md` 中的安装、测试、CLI、Hook 自检、沙箱闭环、性能基线、检索索引与评测命令均已实际验证；
 - 有规则目录 `policies/`（**43 条规则**：5 条项目自订 + 38 条由 `docs/mirrors/<mirror>/**` 的镜像原文提炼，
@@ -18,44 +21,40 @@
 - 决策协议为 `SCHEMA_VERSION = "1.1"`（台阶 3b 起；**1.0 的载荷一律拒收**），
   世代名 `POLICY_VERSION = "decision-1.1"`（世代名常量在 `src/policy/models.py`，只与
   `schema_version` 同进同退、不跟随平台阶段），快照在 `tests/fixtures/decisions/`；
-- Phase 2 的 Hook 契约、脱敏事件 fixture 与失败关闭设计分别在 `src/adapters/dsh/README.md`、
-  `tests/fixtures/agent_events/dsh/` 与 `docs/project/engineering-policy-platform/phases/phase-2-dsh-adapter.md` 的实施记录里；
+- Phase 2 的 Hook 契约、脱敏事件 fixture 与失败关闭设计分别在 `src/adapters/dsh/README.md` 与
+  `tests/fixtures/agent_events/dsh/` 里；
   `tools/dsh_sandbox_loop.py` 在 dsh 缺失**或**沙箱禁止管道 stdio（Hook spawn EPERM）时按环境跳过
   （退出码 0 + 写明 reason/reproduce，见 README 第 7.1 节）；它绝不把"跑不了"记成 pass；
 - Phase 3 的摄取清单 `knowledge/corpus.yaml`、检索层 `src/retrieval/`（chunker / corpus / store / indexer /
   query / retriever / vector / context / cli）、固定评测集 `tests/fixtures/retrieval_eval/queries.yaml`、
-  基线脚本 `tools/retrieval_eval.py` 与实施记录见 `docs/project/engineering-policy-platform/phases/phase-3-retrieval.md`；
+  基线脚本 `tools/retrieval_eval.py`；
   索引库是构建产物，落在 `.tmp/retrieval/`，可随时重建；
 - Phase 4 的受控执行层 `src/enforcement/`（models / registry / action / approvals / audit / ledger /
   precheck / executor / drivers / postcheck / trace / cli）、数据化工具注册表
   `registry/tool-registry.yaml` 与已审核哈希 `registry/tool-registry.approved.json`、
   dsh 侧桥接 `src/adapters/dsh/enforcement.py`、受控执行闭环 `tools/enforcement_loop.py`；
-  实施记录见 `docs/project/engineering-policy-platform/phases/phase-4-tool-enforcement.md`；
 - Phase 5 的验证器层 `src/validators/`（python_ast / depgraph / docstrings / selection / adapters /
   pipeline / cli）、证据协议 `src/policy/evidence.py` 与 checker 分派 `src/policy/checkers.py`、
   数据化的验证器注册表与项目档案 `validation/`（validators / project / test-layout / ruff.toml / mypy.ini / pytest.ini）、
   语言专项规则包 `policies/coding/` 与 `policies/testing/`、夹具项目与假工具
   `tests/fixtures/validators/`、验证器闭环 `tools/validator_loop.py`；
-  实施记录见 `docs/project/engineering-policy-platform/phases/phase-5-code-validators.md`；
 - Phase 6 的规范事件 Schema 与能力声明模型 `src/adapters/models.py`、
   适配器协议与支持矩阵 `src/adapters/base.py`、
   多 Agent 运行时 `src/adapters/runtime.py`（命名空间隔离 / trace 来源校验 / 窗口熔断）、
   一致性套件 `src/adapters/conformance.py`、CLI `src/adapters/cli.py`、
   探针夹具 `tests/fixtures/agent_events/workspace/`、多 Agent 闭环 `tools/agent_loop.py`；
   当前只有 dsh 是真实产品接入，`generic-json` / `legacy-post-only` 是合成协议消费者；
-  实施记录见 `docs/project/engineering-policy-platform/phases/phase-6-multi-agent-adapters.md`；
 - Phase 7 的服务化层 `src/policy_api/`（models / errors / config / auth / services / runtime /
   timeout / idempotency / observability / ops / app / contract / cli / testing / probe）、
   部署数据与契约快照 `api/`（policy-api.yaml + openapi.json，说明见 `api/README.md`）、
   API 闭环 `tools/api_loop.py`、测试夹具 `tests/fixtures/api/`；
   **核心层不依赖 Web 框架**，只有 `policy_api` 的 HTTP 应用依赖 fastapi/uvicorn；
-  实施记录见 `docs/project/engineering-policy-platform/phases/phase-7-policy-api.md`；
 - Phase 8 的编排层 `src/orchestration/`（models / errors / limits / checkpoint / approvals / client /
   tools / nodes / graph / engines / langgraph_engine / runtime / cli）、编排闭环
   `tools/orchestration_loop.py`、工具注册表新增的 `orchestrator` 段（含"改规则需人工审批"的
-  `orc.policy.edit`）、学习手册 `docs/project/learning/phase-8/`；
+  `orc.policy.edit`）；
   **它是仓库里唯一导入工作流框架的地方**（只有 `langgraph_engine.py`，且构造引擎时才导入），
-  核心层从不导入它；实施记录见 `docs/project/engineering-policy-platform/phases/phase-8-langgraph-orchestration.md`。
+  核心层从不导入它。
 
 **改动前先读 `README.md` 与实际的 `git ls-files`，不要假设未登记的目录或框架存在。**
 
@@ -89,9 +88,10 @@
    **同一批测试只跑一次**：`pytest` 步骤写 junit 报告，最后的"阶段验收证据"步骤引用它（`--suite-reports`），
    不再把四个套件重跑一遍；报告缺失 / 缺套件 / 早于最新源码改动时证据步骤退回真跑，并写明原因。
    两者的选组必须同属 `CODE_STEPS`：要么都跑、要么都不跑，引用的报告才必然来自本次门禁。
-   **学习手册同步推迟到 `--full`**：默认与 pre-push（`--hook`）下它即使被改动选中也不执行，
-   而是点名列为"未执行"并写明原因（`FULL_ONLY_STEPS`）；GitHub CI 照跑。改了 `src/` 或手册内容的
-   分支，**合并前跑一次 `python tools/ci_local.py --full`**——否则手册漂移要到 CI 上才会红。
+   **昂贵、又只守"文档与实现同步"的步骤可以推迟到 `--full`**（`FULL_ONLY_STEPS`）：默认与
+   pre-push（`--hook`）下它们即使被改动选中也不执行，而是点名列为"未执行"并写明原因，CI 上照跑。
+   这张表**当前是空的**（唯一需要推迟的"学习手册同步"已随学习手册下线删除），机制与它的用例
+   （`tests/unit/test_ci_local.py`）都留着：新增这类步骤时填这张表，别重新发明一遍。
    pytest 步骤按文件并行（`-n auto --dist loadfile`，pytest-xdist 已锁定）：用例之间不得依赖
    `.tmp/` 下共享目录的"前后集合差"或"排序最后一个"，要定位本次运行的产物就记下它自己的 id。
 
@@ -126,7 +126,7 @@
 | CI | GitHub Actions | `.github/workflows/phase-8.yml`（含 Phase 0–4 的重放用例、dsh 接线自检、检索基线、注册表审核、受控执行闭环、AST 证据重放、验证器注册表/探针/闭环、多 Agent 一致性套件/支持矩阵/闭环、Policy API 自检/OpenAPI 快照/ASGI 契约测试/API 闭环、编排自检/编排闭环/阶段证据） |
 | 受控执行 | 标准库 + pydantic；注册表是 YAML 数据，台账与审计链是追加写 JSONL | `src/enforcement/`、`registry/` |
 | 代码验证器 | 标准库 `ast` + 外部工具探针（Ruff / mypy / pytest 不进核心依赖） | `src/validators/`、`validation/` |
-| 脚本 | 锁文件生成、阶段证据、性能基线、检索评测、dsh 沙箱闭环、受控执行闭环、多 Agent 闭环、API 闭环、编排闭环、notebook 生成与校验、临时文件清理 | `tools/*.py`（见 `tools/README.md`） |
+| 脚本 | 锁文件生成、阶段证据、性能基线、检索评测、dsh 沙箱闭环、受控执行闭环、多 Agent 闭环、API 闭环、编排闭环、讲解 notebook 结构校验、临时文件清理 | `tools/*.py`（见 `tools/README.md`） |
 
 安装、测试、运行命令以根 `README.md` 为准，且必须保持可执行。
 
@@ -481,8 +481,8 @@
       `tools.instrument_self_proof.INSTRUMENT_SELF_PROOF_SCHEMA_VERSION`（仪器自证读数——
       **1.0 = 首次建轴**：R-h 方案 A 的对象表 + 三态判据 + 只报告载荷，四格红条件
       `no_check_id` / `no_mutation_and_no_gap_note` / `patch_not_applicable` /
-      `check_id_without_object`；它**只报告、退出码恒 0，没有接进本机门禁**，接法与交接见
-      `docs/project/engineering-policy-platform/reviews/governance-capability/15-control-plane-design/26-ci-line-handoff-instrument-self-proof.md`）；
+      `check_id_without_object`；它**只报告、退出码恒 0**，已接为本机门禁的只报告步骤（非零退出不计入门禁失败）、
+      **升格（接成阻断）未做**；交接见 `docs/project/engineering-policy-platform/04-open-work.md`）；
       `tools.instrument_self_proof.CHECKS_SCHEMA_VERSION`（**数据文件**
       `validation/instrument-checks.yaml` 自己的轴，与上面那个**载荷**轴各走各的：
       R-h 落地时是 "1"；台阶 5 只加了**可选**字段 `covers_facts`（连接键：这一行声明覆盖
@@ -493,8 +493,9 @@
       `tools.control_plane_facts.CONTROL_PLANE_FACTS_SCHEMA_VERSION`（控制面事实表 × 跨源互证
       的只报告载荷——**1.0 = 首次建轴**：facts 表 + 连接键双向必查 + C1/C2/C3 三组读数，
       四格红条件 `fact_without_check` / `check_covers_unknown_fact` / `test_path_declaration` /
-      `budget_inequality` 与 `wiring` / R-h **同形**；它**只报告、退出码恒 0，没有接进本机门禁**，
-      接法与交接见同目录 28 号）与 `tools.control_plane_facts.FACTS_TABLE_SCHEMA_VERSION`
+      `budget_inequality` 与 `wiring` / R-h **同形**；它**只报告、退出码恒 0**，已接为本机门禁的只报告步骤
+      （非零退出不计入门禁失败）、**升格未做**；交接见 `docs/project/engineering-policy-platform/04-open-work.md`）
+      与 `tools.control_plane_facts.FACTS_TABLE_SCHEMA_VERSION`
       （**数据文件** `validation/control-plane-facts.yaml` 自己的轴，从 "1" 起——13 行最小集，
       只放指针，读不出来只在只报告工具内部降级）。
     **已登记、但还没有版本轴的载荷**（第一次改键时必须引入 1.1——不许"只加一个键"了事）：
@@ -543,32 +544,10 @@
 - Phase 5 的验证器闭环在 `.tmp/phase-5-demo/` 下运行（每个场景一个从夹具项目复制的工作区），
   验证器的运行期临时目录在 `.tmp/validators/` 下，二者都不触碰仓库真实文件；
 - Phase 8 的编排闭环在 `.tmp/phase-8-orchestration/` 下运行（受控工作区、checkpoint、审计与台账），
-  学习手册的产物在 `.tmp/learning-phase-8/` 下：它只动这些目录，不得指向仓库真实文件；
+  它只动这个目录，不得指向仓库真实文件；
 - `.tmp/` 用完即删：`python tools/cleanup.py --dry-run` 预览，`python tools/cleanup.py` 执行；
 - 该脚本只删白名单路径：`.tmp/`、`.pytest_cache/`、`.uv-cache/`、`__pycache__/`、`*.pyc`；
 - 不要提交 `.tmp/` 内容；阶段证据可由 `python tools/phase_evidence.py` 随时重建。
-
-## 学习手册（每个阶段一个目录）
-
-每个阶段完成后在 `docs/project/learning/<phase>/` 下补齐四个文件：
-
-```text
-note.md            # 任务内容、对象清单与对象关系（手写）
-walkthrough.ipynb  # 带注解的可执行讲解（由脚本生成，不要手改）
-walkthrough.py     # 同一份内容的纯 Python 版本（由脚本生成）
-README.md          # 怎么用、怎么维护、常见问题（手写）
-```
-
-- 改 notebook 内容 = 改它的**内容源**，然后运行 `python tools/build_learning_notebook.py` 重新生成。
-  内容源分两处，别改错：Phase 0–5 的单元格内联在 `tools/build_learning_notebook.py`（`PHASE_N_CELLS`，
-  并在 `PHASES` 注册）；**Phase 6–8 已拆到 `tools/phase6_cells.py` / `tools/phase7_cells.py` /
-  `tools/phase8_cells.py`**，由生成器在文件头导入——生成器里没有它们的副本；
-- 生成器会从两个工作目录各跑一遍全部代码单元，并断言示例退出码与文档里写过的 JSON 键名，
-  任何不一致都会让生成失败，因此手册里的代码始终可运行、说明始终与输出一致；
-- 新增阶段时同步更新索引 `docs/project/learning/README.md`；
-- **手册里打印表格一律用生成器注入的 `pad()`**（按显示宽度补位）：`f"{文本:<10}"` 数的是字符个数，
-  中文在等宽字体里占 2 列，中英混排的列会被挤歪；自由文本（原因、许可、细节）放最后一列；
-- 提交前运行 `python tools/check_notebook.py docs/project/learning/*/walkthrough.ipynb` 校验结构。
 
 ## 引入新技术栈时需要同步更新
 

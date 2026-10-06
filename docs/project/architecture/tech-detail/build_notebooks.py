@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 """生成 docs/project/architecture/tech-detail/ 下的 10 份讲解 notebook（00–09）。
 
-**一章一个目录**（`00-技术总览/` … `09-能不能成为规则/`）：每一章的图规格（`diagram.py`）、
-内容源（`cells.py`）与四份产物（同名的 `.drawio` / `.png` / `.ipynb` / `.py`）都在同一个目录里。
-每个编号对应同目录同名的一张 `.drawio`：**图讲"内部怎么走"，notebook 把这套流程跑给人看**。
+**一章一个目录**（`00-技术总览/` … `09-能不能成为规则/`）：每一章的内容源（`cells.py`）与两份产物
+（同名的 `.ipynb` 与 `.py`）都在同一个目录里。
+一章一份可执行讲解：**讲解把这套流程跑给人看**，每一步都留下能核对的输出。
 内容源在章节目录的 `cells.py`（一个编号一个文件），产物是同名的 `.ipynb` 与 `.py`。
 
 为什么由脚本生成而不是手写 .ipynb：手工编辑的 notebook 在 git 里是一大坨 JSON diff，
@@ -69,7 +69,6 @@ SHARED_TEMP_PATHS = (
     ".tmp/phase-4-demo",
     ".tmp/phase-5-demo",
     ".tmp/phase-8-orchestration",
-    ".tmp/learning-phase-8",
     ".tmp/retrieval",
     ".tmp/artifacts",
     "ci-local.lock",
@@ -103,7 +102,7 @@ def pad(text, width, align="left"):
 def chapter_dirs() -> dict[str, Path]:
     """磁盘上真实存在的章节目录：名字形如 `00-技术总览`，且里面有 `cells.py`。
 
-    一章一个目录：图的规格（`diagram.py`）、讲解的内容源（`cells.py`）与四份产物都在同一章里，
+    一章一个目录：讲解的内容源（`cells.py`）与两份产物都在同一章里，
     看一章只要打开一个目录。目录名与产物名必须逐字相同（load_spec 会核）。
     """
 
@@ -391,7 +390,7 @@ def build_one(spec, *, check_only: bool, execute: bool) -> list[str]:
                 + "; ".join(sorted(unexpected))
                 + "。这条守卫分不清「单元写的」与「别的进程同时改的」——生成需要独占工作区；"
                 "先看改动是不是本次 notebook 造成的，不是就等无人并发改动时重跑（实测过一次误报："
-                "另一个进程在单元执行期间改了 tech-detail 的 .drawio）。"
+                "另一个进程在单元执行期间改了 tech-detail 的 cells.py）。"
             )
     return failures
 

@@ -381,8 +381,8 @@ def python_imports(source: str) -> tuple[str, ...]:
 def resolve_directory(value: str | None, *, anchor: Path, fallback: Path) -> Path:
     """把目录参数解析成绝对路径：先按当前工作目录，再按仓库根，最后原样返回。
 
-    为什么需要它：CLI 可能从仓库根、也可能从 docs/project/learning/phase-5 这样的子目录启动
-    （学习手册就是从两个工作目录各跑一遍的）。同一个相对参数必须在两处指向同一个目录。
+    为什么需要它：CLI 可能从仓库根、也可能从仓库内的某个子目录启动——tech-detail 的讲解
+    notebook 就是从仓库根与它自己所在目录各跑一遍的。同一个相对参数必须在两处指向同一个目录。
     """
 
     if not value:
