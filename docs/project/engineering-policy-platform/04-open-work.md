@@ -380,7 +380,7 @@ test_path_declaration=101 budget_inequality=0 / facts=13 checks=64` → `HITS: 1
 | 项 | 现在写什么 | 实测命令 |
 | --- | --- | --- |
 | CI 具名步骤 | **43**（带 `run` 块、`ci_local` 会执行的是 **42**；无名的 `actions/checkout@v7` 不计） | `(Select-String -Path .github/workflows/phase-8.yml -Pattern '^      - name:').Count`；`python -c "import sys;sys.path.insert(0,'tools');import ci_local;print(len(ci_local._steps()))"` |
-| 全量测试 | **收集 2136 = 2134 passed / 1 failed / 1 skipped**（330s） | `python -m pytest -q -n auto --dist loadfile` |
+| 全量测试 | **收集 2136 = 2135 passed / 0 failed / 1 skipped**（2026-10-06 门禁实跑，305s） | `python -m pytest -q -n auto --dist loadfile` |
 | `tools/` 计数 | 顶层 `.py` **28** / 顶层文件 **29** / `git ls-files tools` **37** | `(Get-ChildItem tools/*.py).Count`、`(Get-ChildItem tools -File).Count`、`(git ls-files tools).Count` |
 | 闭环脚本 | **7** | `(Get-ChildItem tools/*_loop.py).Count` |
 | `AGENTS.md` 约束条数 | **56** | 见 `功能清单.md` §7 的实测命令 |
