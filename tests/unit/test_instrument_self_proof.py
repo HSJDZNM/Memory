@@ -213,6 +213,32 @@ def test_unavailable_is_not_zero_and_not_red(tmp_root, capsys):
     assert "=0" not in line, "未评的四格都不许在机器行里写成 0"
 
 
+def test_a_broken_inventory_does_not_fabricate_dangling_rows(tmp_root):
+    """清单读不出来时，④ 不能把登记表**每一行**都报成悬空（故障 ≠ N 条红）。
+
+    旧实现只判 `table is None`：表读得到、但某族对象读取器失败（或对象 id 撞车）时
+    discovered_ids 为空，于是每一行都落进 check_id_without_object，status=available、
+    count=len(rows)、is_red=True —— 一次机器故障被写成"64 条悬空"。
+    """
+
+    module = _load()
+    empty_repo = tmp_root / "empty-repo"
+    empty_repo.mkdir()
+
+    payload = module.evaluate(repo=empty_repo, checks_path=CHECKS_PATH)
+
+    assert payload["objects"]["status"] == "unavailable"
+    dangling = payload["red_conditions"]["check_id_without_object"]
+    assert dangling["status"] == "unavailable"
+    assert dangling["count"] is None, "未评不许用行数冒充"
+    assert dangling["items"] == []
+    assert dangling["is_red"] is False
+    assert dangling["reason"], "读不到必须写清为什么"
+    # 反真空：同一次读数里，登记表本身读到了——变 unavailable 的只有依赖清单的那几格
+    assert payload["objects"]["table"]["status"] == "available"
+    assert payload["objects"]["table"]["rows"] is not None
+
+
 # --- 反退化② 对象清单要有第二来源，且双向比对 -------------------------------------------
 
 

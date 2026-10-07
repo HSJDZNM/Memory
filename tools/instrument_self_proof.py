@@ -710,9 +710,13 @@ def evaluate(
         )
 
     # ④ 悬空：登记表里的 check_id 在清单里找不到对象（双向比对的另一半）
-    if table is None:
+    if closure_reason is not None:
+        # 与态① 同一把闸：清单读不出来（某族读取器失败 / 对象 id 撞车）时 discovered_ids
+        # 是空的，于是**每一行**都会被算成"悬空"——那是把机器故障伪造成 N 条红
+        # （status=available、count=行数、is_red=True），既与"未评不是不红"（count=null）
+        # 的口径相反，也会虚增机器行里的命中数。未评就是未评。
         dangling = _unavailable_cell(
-            "登记表里的 check_id 在对象清单里找不到对象", str(table_error)
+            "登记表里的 check_id 在对象清单里找不到对象", closure_reason
         )
     else:
         unknown = [row for row in rows if row.check_id not in discovered_ids]
