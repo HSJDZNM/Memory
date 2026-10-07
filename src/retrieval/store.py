@@ -259,6 +259,7 @@ class ChunkStore:
                 # WAL 不是所有文件系统都支持；退化到默认日志模式不影响正确性。
                 pass
         self._closed = False
+        self._depth = 0
         if initialize:
             self._initialize()
 
@@ -277,16 +278,33 @@ class ChunkStore:
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
-        """显式事务：一个文档的增删改要么全部生效，要么整体回滚。"""
+        """显式事务：一个文档的增删改要么全部生效，要么整体回滚。
 
+        **可重入**：已经在事务里时只记一层嵌套，由最外层决定 COMMIT / ROLLBACK。
+        内层若自己 COMMIT，外层还没写完的改动会跟着被提交——"整体回滚"当场失效。
+        类内的多语句方法（replace_chunks / quarantine / release_quarantine /
+        prune_dataset / _delete_document）都自带这一层，调用方不必记得包事务。
+        """
+
+        if self._depth:
+            self._depth += 1
+            try:
+                yield
+            finally:
+                self._depth -= 1
+            return
         self._raw.execute("BEGIN IMMEDIATE")
+        self._depth = 1
         try:
-            yield
-        except BaseException:
-            self._raw.execute("ROLLBACK")
-            raise
-        else:
-            self._raw.execute("COMMIT")
+            try:
+                yield
+            except BaseException:
+                self._raw.execute("ROLLBACK")
+                raise
+            else:
+                self._raw.execute("COMMIT")
+        finally:
+            self._depth = 0
 
     def _execute(self, sql: str, parameters: Sequence[Any] = ()) -> sqlite3.Cursor:
         try:
@@ -442,20 +460,25 @@ class ChunkStore:
         return tuple((str(item[0]), str(item[1])) for item in payload if len(item) == 2)
 
     def prune_dataset(self, dataset: str, *, keep: Sequence[str]) -> Tuple[str, ...]:
-        """删除数据集里已经不在清单中的文档（源文件被删除时同样走这条路径）。"""
+        """删除数据集里已经不在清单中的文档（源文件被删除时同样走这条路径）。
 
-        keep_set = set(keep)
-        rows = self._execute(
-            "SELECT document_id, source_path FROM documents WHERE dataset = ?", (dataset,)
-        ).fetchall()
-        removed: list[str] = []
-        for row in rows:
-            if row["source_path"] in keep_set:
-                continue
-            document_id = str(row["document_id"])
-            self._delete_document(document_id)
-            removed.append(document_id)
-        return tuple(sorted(removed))
+        整段删除自带事务：不能删掉一半就中断——那会留下"清单里已经没有、库里还查得到"
+        的文档，而且只有等到 assert_integrity() 才看得出来。
+        """
+
+        with self.transaction():
+            keep_set = set(keep)
+            rows = self._execute(
+                "SELECT document_id, source_path FROM documents WHERE dataset = ?", (dataset,)
+            ).fetchall()
+            removed: list[str] = []
+            for row in rows:
+                if row["source_path"] in keep_set:
+                    continue
+                document_id = str(row["document_id"])
+                self._delete_document(document_id)
+                removed.append(document_id)
+            return tuple(sorted(removed))
 
     def delete_document(self, document_id: str) -> int:
         document = self.document(document_id)
@@ -466,10 +489,15 @@ class ChunkStore:
         return count
 
     def _delete_document(self, document_id: str) -> None:
-        self._execute("DELETE FROM chunks_fts WHERE chunk_id IN "
-                      "(SELECT chunk_id FROM chunks WHERE document_id = ?)", (document_id,))
-        self._execute("DELETE FROM quarantined_chunks WHERE document_id = ?", (document_id,))
-        self._execute("DELETE FROM documents WHERE document_id = ?", (document_id,))
+        # 三条语句自带事务：FTS 行、隔离记录、document 行（chunks 由外键级联）必须一起走。
+        with self.transaction():
+            self._execute(
+                "DELETE FROM chunks_fts WHERE chunk_id IN "
+                "(SELECT chunk_id FROM chunks WHERE document_id = ?)",
+                (document_id,),
+            )
+            self._execute("DELETE FROM quarantined_chunks WHERE document_id = ?", (document_id,))
+            self._execute("DELETE FROM documents WHERE document_id = ?", (document_id,))
 
     # ---------------------------------------------------------------- chunks
 
@@ -489,54 +517,58 @@ class ChunkStore:
         两阶段写入：先把该文档现有行的 ordinal 整体挪到负区间，再按新顺序写入。
         否则"在文档中间插入/删除章节"时，新 ordinal 会撞上尚未挪走的旧行，
         触发 UNIQUE(document_id, ordinal) —— 那会让一次增量更新永久失败（只能删库重建）。
+
+        整段写入自带事务（可重入）：中途失败整体回滚，绝不留下负序号或
+        "有 chunk 没有 FTS 行"的半套状态——不能指望每个调用方都记得包 transaction()。
         """
 
-        existing = {item.chunk_id: item for item in self.chunks(document_id)}
-        incoming = {item.chunk_id: item for item in drafts}
-        created: list[str] = []
-        updated: list[str] = []
-        unchanged: list[str] = []
-        removed: list[str] = []
+        with self.transaction():
+            existing = {item.chunk_id: item for item in self.chunks(document_id)}
+            incoming = {item.chunk_id: item for item in drafts}
+            created: list[str] = []
+            updated: list[str] = []
+            unchanged: list[str] = []
+            removed: list[str] = []
 
-        if existing:
-            self._execute(
-                "UPDATE chunks SET ordinal = -(ordinal + 1) WHERE document_id = ?",
-                (document_id,),
+            if existing:
+                self._execute(
+                    "UPDATE chunks SET ordinal = -(ordinal + 1) WHERE document_id = ?",
+                    (document_id,),
+                )
+
+            for chunk_id, draft in incoming.items():
+                previous = existing.get(chunk_id)
+                if previous is None:
+                    self._insert_chunk(draft)
+                    created.append(chunk_id)
+                    continue
+                same_content = (
+                    previous.text_hash == draft.text_hash
+                    and previous.heading_path == draft.heading_path
+                    and previous.heading_anchor == draft.heading_anchor
+                    and previous.part_index == draft.part_index
+                )
+                if same_content and previous.quarantined == self._is_quarantined(
+                    chunk_id, draft.text_hash
+                ):
+                    # 内容没变：无条件写回正确序号（刚才被挪到负区间了），不动 revision。
+                    self._update_ordinal(chunk_id, draft.ordinal)
+                    unchanged.append(chunk_id)
+                    continue
+                self._update_chunk(draft, previous.revision + 1)
+                updated.append(chunk_id)
+
+            for chunk_id in existing:
+                if chunk_id not in incoming:
+                    self._delete_chunk(chunk_id)
+                    removed.append(chunk_id)
+
+            return ChunkChange(
+                created=tuple(sorted(created)),
+                updated=tuple(sorted(updated)),
+                unchanged=tuple(sorted(unchanged)),
+                removed=tuple(sorted(removed)),
             )
-
-        for chunk_id, draft in incoming.items():
-            previous = existing.get(chunk_id)
-            if previous is None:
-                self._insert_chunk(draft)
-                created.append(chunk_id)
-                continue
-            same_content = (
-                previous.text_hash == draft.text_hash
-                and previous.heading_path == draft.heading_path
-                and previous.heading_anchor == draft.heading_anchor
-                and previous.part_index == draft.part_index
-            )
-            if same_content and previous.quarantined == self._is_quarantined(
-                chunk_id, draft.text_hash
-            ):
-                # 内容没变：无条件写回正确序号（刚才被挪到负区间了），不动 revision。
-                self._update_ordinal(chunk_id, draft.ordinal)
-                unchanged.append(chunk_id)
-                continue
-            self._update_chunk(draft, previous.revision + 1)
-            updated.append(chunk_id)
-
-        for chunk_id in existing:
-            if chunk_id not in incoming:
-                self._delete_chunk(chunk_id)
-                removed.append(chunk_id)
-
-        return ChunkChange(
-            created=tuple(sorted(created)),
-            updated=tuple(sorted(updated)),
-            unchanged=tuple(sorted(unchanged)),
-            removed=tuple(sorted(removed)),
-        )
 
     def _update_ordinal(self, chunk_id: str, ordinal: int) -> None:
         self._execute("UPDATE chunks SET ordinal = ? WHERE chunk_id = ?", (ordinal, chunk_id))
@@ -710,22 +742,23 @@ class ChunkStore:
         清单类随清单移除释放，运行期类只能由运维显式解除。来源不明就按运行期处理。
         """
 
-        self._execute(
-            """
-            INSERT INTO quarantined_chunks(
-                chunk_id, document_id, text_hash, reason, quarantined_at, origin
-            ) VALUES (?,?,?,?,?,?)
-            ON CONFLICT(chunk_id) DO UPDATE SET
-                document_id=excluded.document_id, text_hash=excluded.text_hash,
-                reason=excluded.reason, quarantined_at=excluded.quarantined_at,
-                -- 运行期隔离永远优先：清单里的一条声明不得把运维隔离降级成"清单删了就自动释放"。
-                origin=CASE WHEN quarantined_chunks.origin = 'runtime'
-                            THEN 'runtime' ELSE excluded.origin END
-            """,
-            (chunk_id, document_id, text_hash, reason, quarantined_at, origin.value),
-        )
-        self._execute("DELETE FROM chunks_fts WHERE chunk_id = ?", (chunk_id,))
-        self._execute("UPDATE chunks SET quarantined = 1 WHERE chunk_id = ?", (chunk_id,))
+        with self.transaction():
+            self._execute(
+                """
+                INSERT INTO quarantined_chunks(
+                    chunk_id, document_id, text_hash, reason, quarantined_at, origin
+                ) VALUES (?,?,?,?,?,?)
+                ON CONFLICT(chunk_id) DO UPDATE SET
+                    document_id=excluded.document_id, text_hash=excluded.text_hash,
+                    reason=excluded.reason, quarantined_at=excluded.quarantined_at,
+                    -- 运行期隔离永远优先：清单声明不得把运维隔离降级成"清单删了就自动释放"。
+                    origin=CASE WHEN quarantined_chunks.origin = 'runtime'
+                                THEN 'runtime' ELSE excluded.origin END
+                """,
+                (chunk_id, document_id, text_hash, reason, quarantined_at, origin.value),
+            )
+            self._execute("DELETE FROM chunks_fts WHERE chunk_id = ?", (chunk_id,))
+            self._execute("UPDATE chunks SET quarantined = 1 WHERE chunk_id = ?", (chunk_id,))
         return QuarantinedChunk(
             chunk_id=chunk_id,
             document_id=document_id,
@@ -736,17 +769,20 @@ class ChunkStore:
         )
 
     def release_quarantine(self, chunk_id: str) -> bool:
-        row = self._execute(
-            "SELECT * FROM quarantined_chunks WHERE chunk_id = ?", (chunk_id,)
-        ).fetchone()
-        if row is None:
-            return False
-        self._execute("DELETE FROM quarantined_chunks WHERE chunk_id = ?", (chunk_id,))
-        chunk = self.chunk(chunk_id)
-        if chunk is not None:
-            self._execute("UPDATE chunks SET quarantined = 0 WHERE chunk_id = ?", (chunk_id,))
-            self._index_chunk_fts(chunk_id, chunk.text, chunk.heading_path)
-        return True
+        """解除隔离：删记录、清标志、把正文写回 FTS——三条语句必须一起生效或一起不动。"""
+
+        with self.transaction():
+            row = self._execute(
+                "SELECT * FROM quarantined_chunks WHERE chunk_id = ?", (chunk_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            self._execute("DELETE FROM quarantined_chunks WHERE chunk_id = ?", (chunk_id,))
+            chunk = self.chunk(chunk_id)
+            if chunk is not None:
+                self._execute("UPDATE chunks SET quarantined = 0 WHERE chunk_id = ?", (chunk_id,))
+                self._index_chunk_fts(chunk_id, chunk.text, chunk.heading_path)
+            return True
 
     def quarantined(self) -> Tuple[QuarantinedChunk, ...]:
         rows = self._execute(
