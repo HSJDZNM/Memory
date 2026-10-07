@@ -20,7 +20,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
-from enforcement.approvals import ApprovalRecord, load_approval, verify_approval
+from enforcement.approvals import (
+    ApprovalBinding,
+    ApprovalRecord,
+    load_approval,
+    verify_approval,
+)
 
 from .errors import ApprovalError
 from .models import ApprovalUse, FailureCode, GraphState, NodeId
@@ -72,6 +77,11 @@ class ApprovalGate:
         `action_id` 匹配的记录。按 action_id 而不是 action_hash 挑选，是为了让
         "主体不符 / 参数漂移 / 已过期"能给出**具体**的失败码，而不是笼统的"没有审批"。
 
+        没有任何记录的 action_id 匹配时，只允许 `binding=pattern` 的记录当兜底：pattern 档按
+        契约**没有** action_id，它本来就是为"将来的某次调用"签的。action 档绑定的是**某一次**
+        调用，action_id 对不上就是另一件事的条子——把它当兜底返回，会让 `resolve()` 把错的文件
+        交给 Phase 4、也会让"另一条 action 的条子"看起来像是这次的依据。
+
         返回文件路径是必要的：这份审批随后要**原样**交给 Phase 4 的 pre-check
         （判定权在平台，编排层只负责找到它）。
         """
@@ -93,7 +103,8 @@ class ApprovalGate:
                 continue
             if action_id is not None and record.action_id == action_id:
                 return candidate, record
-            if fallback is None:
+            # 只有 pattern 档能兜底（见 locate 的 docstring）：action 档对不上就是另一件事。
+            if fallback is None and record.binding is ApprovalBinding.PATTERN:
                 fallback = (candidate, record)
         return fallback
 

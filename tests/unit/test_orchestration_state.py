@@ -19,12 +19,13 @@ contract / integration / security 三个标记（`--strict-markers` 下用未登
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from enforcement.approvals import ApprovalRecord
+from enforcement.approvals import ApprovalBinding, ApprovalRecord
 
 from orchestration.approvals import ApprovalGate
 from orchestration.checkpoint import (
@@ -642,6 +643,66 @@ def test_approval_gate_accepts_a_valid_record_and_records_the_use(tmp_root) -> N
     with pytest.raises(ApprovalError) as excinfo:
         _use(gate, consumed)
     assert excinfo.value.code is FailureCode.APPROVAL_CONSUMED
+
+
+def _pattern_approval(path: Path, *, approval_id: str = "approval-pattern") -> Path:
+    """一份 binding=pattern 的审批：按契约**没有** action_id，是为"将来的某次调用"签的。"""
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    record = ApprovalRecord(
+        approval_id=approval_id,
+        binding=ApprovalBinding.PATTERN,
+        tool_id="orc.fs.write",
+        subject="local-user",
+        granted_by="alice",
+        granted_by_roles=("reviewer",),
+        granted_at=now - timedelta(seconds=1),
+        expires_at=now + timedelta(seconds=300),
+        max_uses=3,
+        param_patterns={"file_path": ".*", "content": ".*"},
+    )
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(record.model_dump_json(indent=2) + "\n", encoding="utf-8", newline="\n")
+    return Path(path)
+
+
+def test_directory_inbox_picks_the_record_whose_action_id_matches(tmp_root) -> None:
+    """收件箱里有无关条目时，仍然按 action_id 挑中**这一次**的那一份。"""
+
+    inbox = tmp_root / "inbox"
+    # 文件名排序把无关的那份排在前面：挑选必须靠 action_id，不靠顺序
+    approval_file(
+        inbox / "a-unrelated.json", action_hash="sha256:" + "a" * 64, action_id="other:0:xyz"
+    )
+    approval_file(inbox / "b-requested.json", action_hash=ACTION_HASH, action_id=ACTION_HASH)
+
+    gate = ApprovalGate(inbox, approval_roles=("reviewer",))
+
+    assert gate.resolve(ACTION_HASH).name == "b-requested.json"
+
+
+def test_directory_inbox_falls_back_to_a_pattern_approval_only(tmp_root) -> None:
+    """没有 action_id 匹配时：只有 pattern 档能兜底，无关的 action 档必须返回 None。
+
+    action 档绑定的是某一次调用，action_id 对不上就是另一件事的条子——把它当兜底返回，
+    resolve() 会把**错的文件**交给 Phase 4（判定落在错的对象上）。宁可说"没有审批"。
+    """
+
+    only_action = tmp_root / "only-action"
+    approval_file(
+        only_action / "a-unrelated.json", action_hash="sha256:" + "a" * 64, action_id="other:0:xyz"
+    )
+    assert ApprovalGate(only_action, approval_roles=("reviewer",)).resolve(ACTION_HASH) is None
+
+    with_pattern = tmp_root / "with-pattern"
+    approval_file(
+        with_pattern / "a-unrelated.json", action_hash="sha256:" + "a" * 64, action_id="other:0:xyz"
+    )
+    pattern = _pattern_approval(with_pattern / "b-pattern.json")
+
+    gate = ApprovalGate(with_pattern, approval_roles=("reviewer",))
+
+    assert gate.resolve(ACTION_HASH) == pattern
 
 
 def test_approval_use_is_bounded_by_max_approval_uses(tmp_root) -> None:
