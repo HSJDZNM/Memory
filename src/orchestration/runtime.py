@@ -112,9 +112,20 @@ def build_assembly(
     tool_runner: Optional[ToolRunner] = None,
     checkpoint_store: Optional[CheckpointStore] = None,
     clock=None,
+    wall_clock=None,
     router_fns: Optional[Mapping[str, Any]] = None,
 ) -> Assembly:
-    """按配置装配。所有端口都可以注入（测试、闭环与真实部署共用同一条装配路径）。"""
+    """按配置装配。所有端口都可以注入（测试、闭环与真实部署共用同一条装配路径）。
+
+    **两个时钟不是重复**（此前只有一个参数，两种口径混着传）：
+      - `clock` 是**单调秒**：预算与耗时属于*进程的时间*，不受系统时间跳变影响；
+        消费方是 NodeContext / StepExecutor / 引擎。
+      - `wall_clock` 是**墙上时间**（datetime）：审批与授权的签发/过期属于*人的时间*，
+        必须与系统时钟对齐；消费方是 PlatformToolRunner 与 ApprovalGate，
+        不注入就用 enforcement 的 utc_now。
+    把单调秒喂给审批侧不会立刻报错，而是在"比较这张条子有没有过期"那一刻抛 TypeError——
+    那时流程已经走了一半，且报错点离注入点很远。
+    """
 
 
     if client is None:
@@ -134,7 +145,7 @@ def build_assembly(
             ledger_path=config.ledger_path,
             workspace=config.workspace,
             agent_version=config.agent_version,
-            clock=clock,
+            clock=wall_clock,  # 授权/台账的时间戳是墙上时间，不是单调秒
         )
     store = checkpoint_store
     if store is None:
@@ -153,7 +164,7 @@ def build_assembly(
         client=client,
         runner=tool_runner,
         author=author,
-        approvals=ApprovalGate(config.approvals_dir, clock=clock),
+        approvals=ApprovalGate(config.approvals_dir, clock=wall_clock),
         workspace=config.workspace,
         clock=clock or node_context_default_clock(),
     )

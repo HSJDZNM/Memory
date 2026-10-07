@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import socket
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Any, Optional, Tuple
 
@@ -40,6 +41,7 @@ from orchestration.models import (
     StageStatus,
 )
 from orchestration.nodes import ScriptedAuthor
+from orchestration.runtime import build_assembly
 
 from orchestration_support import (
     CHANGED_RULE_SET_HASH,
@@ -56,6 +58,7 @@ from orchestration_support import (
     graph_config,
     platform_runner,
     readiness,
+    scripted_client,
     readiness_response,
     retrieval_ok,
     retrieval_unavailable,
@@ -481,6 +484,32 @@ def test_platform_failures_stop_the_run(
     assert run.report.failure is not None
     assert run.report.failure.code is expected_code
     assert len(runner.calls) == expected_tool_calls
+
+
+def test_the_two_clocks_keep_their_own_contracts(tmp_root) -> None:
+    """预算用单调秒、审批与授权用**墙上时间**：一个参数混两种口径，走到授权检查那一刻才炸。
+
+    旧实现把同一个 clock 同时喂给 StepExecutor（要单调秒）与 ApprovalGate / PlatformToolRunner
+    （要 datetime）：注入单调秒时 _now() 返回 123.0，而审批记录的 expires_at 是 datetime——
+    比较那一刻抛 `TypeError: '<=' not supported between 'datetime.datetime' and 'float'`，
+    而那时流程已经走了一半。
+    """
+
+    pinned = datetime(2026, 10, 8, 7, 0, tzinfo=timezone.utc)
+    config = graph_config(tmp_root, name="clocks")
+
+    assembly = build_assembly(
+        config,
+        task=task_spec("clocks-task"),
+        author=ScriptedAuthor([write_change()]),
+        client=scripted_client(),
+        tool_runner=ExecutingToolRunner(),
+        clock=lambda: 123.0,
+        wall_clock=lambda: pinned,
+    )
+
+    assert assembly.node_context.clock() == 123.0
+    assert assembly.node_context.approvals._now() == pinned
 
 
 def test_validate_without_a_decision_blocks_the_run_over_the_real_client(tmp_root) -> None:
