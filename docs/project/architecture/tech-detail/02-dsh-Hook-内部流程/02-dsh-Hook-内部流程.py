@@ -734,8 +734,6 @@ print()
 print("台账按 event_id 查到上一次判定:", previous is not None, "| 原因码:", None if previous is None else previous["reason_code"])
 post_lines = POST_AUDIT.read_text(encoding="utf-8").splitlines()
 assert previous is not None and previous["reason_code"] == "allow"
-assert sum(1 for line in post_lines if "call-post-valid" in line) >= 2
-assert sum(1 for line in post_lines if "call-post-repair" in line) >= 2
 # G2 的成对契约要按**语义**断言，不能数记录条数：同一次调用在审计里除了 Phase 2 的
 # PreToolUse / PostToolUse 两条，还会落 Phase 4 的 pre_state / post_evidence / final_decision 等阶段，
 # 会话起点另有一条 G11 的上下文留痕（reason_code=context_injection）。数条数会随不相干的
