@@ -168,7 +168,14 @@ def notebook_cells(spec) -> list[tuple[str, str]]:
     cells = list(spec.cells)
     if not any("pad(" in text for _, text in cells):
         return cells
-    first_code = next(index for index, (kind, _) in enumerate(cells) if kind == "code")
+    first_code = next(
+        (index for index, (kind, _) in enumerate(cells) if kind == "code"), None
+    )
+    if first_code is None:
+        # 没有代码单元（只有说明，且说明里恰好提到 `pad(`）：这里不注入表格工具。
+        # 生成器不该用一个未捕获的 StopIteration 抢在 guard_spec 前面把结论变成 traceback
+        # ——"没有任何代码单元"是一条**结构结论**，由守卫按它的口径报出来。
+        return cells
     kind, text = cells[first_code]
     cells[first_code] = (kind, text.rstrip() + TABLE_HELPER)
     return cells

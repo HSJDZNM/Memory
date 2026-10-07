@@ -48,6 +48,23 @@ def test_duplicate_chapter_number_is_rejected(tmp_path: Path, monkeypatch: pytes
     assert info.value.code == 2
 
 
+def test_markdown_only_chapter_does_not_crash_the_table_helper_injection() -> None:
+    """没有代码单元、而说明里恰好出现 `pad(` 时不许抛 StopIteration。
+
+    历史缺陷（medium 台账 MA0，build_notebooks.py:157）：`next(...)` 没有默认值——注入表格
+    工具的判据是"**任何**单元里出现 `pad(`"，而取值却要求存在代码单元。两者不一致时，
+    生成器以一个未捕获的 StopIteration 收场，"结构结论"（没有代码单元）没人报出来。
+    """
+
+    from types import SimpleNamespace
+
+    module = load_tool()
+    cells = (("markdown", "说明里提到 pad( 这个词"),)
+    spec = SimpleNamespace(cells=cells)
+
+    assert module.notebook_cells(spec) == [("markdown", "说明里提到 pad( 这个词")]
+
+
 def test_unique_chapter_numbers_still_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """对照组：编号唯一时照常返回（不是"永远报错"）。"""
 
