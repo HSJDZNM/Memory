@@ -64,6 +64,16 @@ class Router(StrictModel):
     source: str
     targets: Mapping[str, str]
 
+    @field_validator("source")
+    @classmethod
+    def _check_source(cls, value: str) -> str:
+        # 与 Edge 同一条口径。Router.source 以前没有校验：一个写错的节点名（或 END）能构造出来、
+        # 也能通过 problems()，却永远命不中 router_for——条件分支静默退化成静态路径
+        # （例如"验证失败 → 修复"那一支永远不触发），而失败关闭的图定义承诺不该有这种形态。
+        if value not in known_targets() or value == END:
+            raise ValueError(f"未知的源节点：{value!r}")
+        return value
+
     @field_validator("targets")
     @classmethod
     def _check_targets(cls, value: Mapping[str, str]) -> Mapping[str, str]:
@@ -92,7 +102,7 @@ class GraphSpec(StrictModel):
         return None
 
     def problems(self) -> Tuple[str, ...]:
-        """图定义自检：每个节点要么有出边、要么是终点的前一步。"""
+        """图定义自检：每个节点要么有出边、要么是终点的前一步，且分支本身不能自相矛盾。"""
 
         issues: list[str] = []
         nodes = tuple(node.value for node in NodeId)
@@ -108,9 +118,20 @@ class GraphSpec(StrictModel):
         for edge in self.edges:
             if not any(edge.source == item.value for item in NodeId):
                 issues.append(f"边 {edge.source!r} 不是已知节点")
+        seen_router_sources: set[str] = set()
         for router in self.routers:
             if router.name not in ROUTERS:
                 issues.append(f"条件分支 {router.name!r} 没有对应的纯函数实现")
+            # 同一个源节点挂两个分支：router_for 只返回第一个命中的，而 LangGraph 侧会把每个
+            # router 都注册一遍——两个引擎会读出两种图，且是静默的。
+            if router.source in seen_router_sources:
+                issues.append(f"节点 {router.source!r} 上有多个条件分支：只会有一个生效")
+            seen_router_sources.add(router.source)
+            # 静态边与条件分支挂在同一个节点上：route() 优先走分支，静态边被静默忽略。
+            if self.outgoing(router.source):
+                issues.append(
+                    f"节点 {router.source!r} 同时有静态边与条件分支：静态边会被忽略"
+                )
         return tuple(issues)
 
 

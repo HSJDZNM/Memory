@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Tuple
 
 import pytest
+from pydantic import ValidationError
 
 from conftest import REPO_ROOT
 
@@ -31,7 +32,15 @@ from orchestration import models as orchestration_models
 from orchestration.checkpoint import CHECKPOINT_SCHEMA_VERSION
 from orchestration.client import API_SCHEMA_VERSION, EvaluateCall, RetrieveCall, ValidateCall
 from orchestration.errors import NodeContractError
-from orchestration.graph import DEFAULT_SPEC, END, ROUTERS, validation_outcome
+from orchestration.graph import (
+    DEFAULT_SPEC,
+    END,
+    ROUTERS,
+    Edge,
+    GraphSpec,
+    Router,
+    validation_outcome,
+)
 from orchestration.models import (
     STATE_SCHEMA_VERSION,
     SUPPORTED_STATE_SCHEMA_VERSIONS,
@@ -225,6 +234,43 @@ def test_graph_spec_self_check_and_every_node_has_a_way_out() -> None:
     assert END in DEFAULT_SPEC.outgoing(NodeId.REVIEW.value)
     assert set(NODES) == set(NodeId)
     assert set(ROUTERS) == {router.name for router in DEFAULT_SPEC.routers}
+
+
+def test_router_source_must_be_a_known_node() -> None:
+    """Router.source 与 Edge.source 同一条口径：写错的源节点名（或 END）在构造期就拒绝。
+
+    以前没有这条校验，于是一个拼错的源节点能构造出来、能通过 problems()，却永远命不中
+    router_for——条件分支静默退化成静态路径（"验证失败 → 修复"那一支永远不触发）。
+    """
+
+    for bad in ("nonexistent_node", END):
+        with pytest.raises(ValidationError):
+            Router(name="validation_outcome", source=bad, targets={"pass": END})
+
+
+def test_graph_problems_reject_contradictory_routers() -> None:
+    """分支自相矛盾要报出来：同源两个分支、以及静态边与分支同挂一个节点。"""
+
+    node = NodeId.VALIDATION.value
+    duplicated = GraphSpec(
+        entry=NodeId.REQUIREMENT_ANALYSIS.value,
+        edges=(
+            Edge(source=NodeId.REQUIREMENT_ANALYSIS.value, target=node),
+            # 同一个节点上再挂一条静态边：route() 会优先走条件分支，这条边被静默忽略
+            Edge(source=node, target=END),
+        ),
+        routers=(
+            Router(name="validation_outcome", source=node, targets={"pass": END}),
+            Router(name="validation_outcome", source=node, targets={"pass": END}),
+        ),
+    )
+    issues = duplicated.problems()
+    assert any("多个条件分支" in issue for issue in issues)
+    # 静态边与分支同挂一个节点：route() 会走分支，静态边被静默忽略
+    assert any("静态边会被忽略" in issue for issue in issues)
+
+    # 正例一条都不误报：默认图定义没有任何矛盾
+    assert DEFAULT_SPEC.problems() == ()
 
 
 def test_unknown_router_label_is_a_contract_error(tmp_root) -> None:
