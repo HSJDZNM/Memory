@@ -119,6 +119,15 @@ def _changed_files(args: argparse.Namespace, anchor: Path) -> Tuple[str, ...]:
 def _git_changed(ref: str, anchor: Path) -> Tuple[str, ...]:
     import subprocess
 
+    if not ref or ref.startswith("-"):
+        # 选项注入：git 会把 --output=<文件> / --no-index / --ext-diff 这类值当成**选项**读，
+        # 而不是 revision（AGENTS 第 17 条在受控执行层结构性阻断的同一类问题；
+        # --changed-from-git 是 README 里的公开用法）。ref 只能是 revision——拒绝它。
+        raise RegistryError(
+            "变更基准 ref 不能以 '-' 开头（git 会把它当选项读，例如 --output=<文件>）："
+            + repr(ref)
+        )
+
     # -c core.quotepath=false：git 默认会把非 ASCII 路径 C 引号转义成
     # "docs/project/architecture/\344\275\277..."，得到的是**不可用**的路径，
     # 而仓库自己的文档目录就是中文名（policy.models.normalize_repo_path 也允许非 ASCII）。
