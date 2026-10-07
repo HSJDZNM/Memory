@@ -192,6 +192,14 @@ class EventAdapter(Adapter):
             for field in spec.proposed_fields
             if isinstance(tool_input.get(field), str)
         )
+        # 声明了变更文本字段的工具，至少要有一个字段真的带字符串：字段缺失 / 不是字符串
+        # 不等于「没有引入依赖」。空元组下 payload 不带 text，公共层于是读到「没有引入
+        # 依赖」，依赖类 checker 结构性放行——与 Phase 2 的 dsh/adapter.py 同一条判据（L06）。
+        if spec.proposed_fields and not proposed:
+            raise AdapterEventError(
+                f"工具 {spec.name} 的变更文本字段 {list(spec.proposed_fields)} 缺失或不是字符串："
+                "依赖集无法证明，不得按「没有引入依赖」处理"
+            )
         if proposed:
             # payload 只带 text：依赖是核心上下文的维度，由公共层在 language 解析出来
             # 之后统一提取（base.Adapter.to_policy_context），跨 Adapter 的等价事件
