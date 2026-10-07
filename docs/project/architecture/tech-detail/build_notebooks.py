@@ -368,6 +368,26 @@ def git_untracked_snapshot() -> set[str]:
     return {line for line in result.stdout.splitlines() if line.strip()}
 
 
+def unexpected_worktree_changes(
+    before: set[str], after: set[str], *, allowed: set[str]
+) -> set[str]:
+    """本次运行**不该**出现的改动：除 `allowed`（本次生成的两份产物）之外的任何新行。
+
+    为什么不能按后缀放行：`git status --porcelain` 里任何以 `.py` / `.ipynb` 结尾的行都会被
+    当成"本次生成的产物"，于是某个单元把仓库里任意 `.py` 改坏（` M src/policy/models.py`）、
+    新建 `?? src/evil.py`、删掉 ` D src/x.py` 都不会让生成失败——而这条守卫的注释说的是
+    "只允许本目录刚生成的两份产物"。精确比对路径才是那句话的字面意思。
+    """
+
+    unexpected: set[str] = set()
+    for line in after - before:
+        # porcelain v1 的形状：XY<空格>PATH（未跟踪是 `?? PATH`）。
+        path = line[3:].strip().strip('"')
+        if path not in allowed:
+            unexpected.add(line)
+    return unexpected
+
+
 def build_one(spec, *, check_only: bool, execute: bool) -> list[str]:
     failures: list[str] = []
     cells = notebook_cells(spec)
@@ -413,9 +433,14 @@ def build_one(spec, *, check_only: bool, execute: bool) -> list[str]:
         after = git_untracked_snapshot()
         # 新出现的未被忽略的文件只允许是本目录刚生成的两份产物（.ipynb / .py）；
         # 其余一律算"单元执行动了仓库"，必须报错而不是放过。
-        unexpected = {
-            line for line in after - before if not line.endswith((".ipynb", ".py"))
-        }
+        unexpected = unexpected_worktree_changes(
+            before,
+            after,
+            allowed={
+                notebook_path.relative_to(REPO_ROOT).as_posix(),
+                script_path.relative_to(REPO_ROOT).as_posix(),
+            },
+        )
         if unexpected:
             failures.append(
                 f"[{spec.stem}] 单元执行期间工作区出现了未被忽略的改动（只允许写 .tmp/ 与本次生成的产物）："

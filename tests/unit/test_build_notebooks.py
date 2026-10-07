@@ -65,6 +65,37 @@ def test_markdown_only_chapter_does_not_crash_the_table_helper_injection() -> No
     assert module.notebook_cells(spec) == [("markdown", "说明里提到 pad( 这个词")]
 
 
+def test_worktree_guard_only_allows_this_runs_two_artifacts() -> None:
+    """工作区守卫按**精确路径**放行，不按后缀。
+
+    历史缺陷（medium 台账 MA0，build_notebooks.py:384）：过滤器只排除不以 .py / .ipynb 结尾的
+    行，于是任何 .py / .ipynb 改动都被当成"本次生成的产物"——单元把 src/policy/models.py 改坏、
+    新建 src/evil.py、删掉 src/x.py 都不会让生成失败，而注释承诺的正是"只允许两份产物"。
+    """
+
+    module = load_tool()
+    allowed = {
+        "docs/project/architecture/tech-detail/00-技术总览/00-技术总览.ipynb",
+        "docs/project/architecture/tech-detail/00-技术总览/00-技术总览.py",
+    }
+    before = {" M src/policy/models.py"}
+    after = before | {
+        "?? docs/project/architecture/tech-detail/00-技术总览/00-技术总览.ipynb",
+        "?? docs/project/architecture/tech-detail/00-技术总览/00-技术总览.py",
+        "?? src/evil.py",
+        "?? tools/evil.ipynb",
+        " D src/policy/loader.py",
+    }
+
+    unexpected = module.unexpected_worktree_changes(before, after, allowed=allowed)
+
+    assert unexpected == {
+        "?? src/evil.py",
+        "?? tools/evil.ipynb",
+        " D src/policy/loader.py",
+    }
+
+
 def test_git_status_failure_does_not_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
     """`git status` 失败时必须显式失败：拿不到基线就证明不了"没动仓库"。
 
