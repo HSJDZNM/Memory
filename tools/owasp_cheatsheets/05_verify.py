@@ -29,7 +29,14 @@ for root, dirs, files in os.walk(OUT):
             continue
         md_count += 1
         p = os.path.join(root, fn)
-        txt = INLINE.sub("", FENCE.sub("", open(p, encoding="utf-8").read()))
+        try:
+            with open(p, encoding="utf-8") as handle:
+                text = handle.read()
+        except (OSError, UnicodeDecodeError):
+            # 非 UTF-8 / 读不出来的文件正是第 2 节要报的「编码异常」：这里跳过它，
+            # 让第 2 节把它报出来，而不是让整个校验带 UnicodeDecodeError 崩在第 1 节。
+            continue
+        txt = INLINE.sub("", FENCE.sub("", text))
         for m in LINK.finditer(txt):
             t = m.group(2)
             if t.startswith(("http", "#", "mailto:")):
