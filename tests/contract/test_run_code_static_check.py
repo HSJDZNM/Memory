@@ -239,6 +239,11 @@ def test_code_check_param_must_be_a_declared_string_param(tmp_root):
     for item in wrong_type["parameters"]:
         if item["name"] == "description":
             item["type"] = "integer"
+            # 文本约束只适用于 string 参数（models.ParamSpec 的加载期判据）。
+            # 夹具要验证的是「code_check.param 必须指向 string 参数」，所以必须先把
+            # 那条更早的判据满足掉：一个挂着 max_chars 的 integer 参数本身就是坏注册表，
+            # 报错停在文本约束上是对的——不能为了走到下一条判据而放宽任何一条检查。
+            item.pop("max_chars", None)
     with pytest.raises(Exception) as error:
         load_registry_with(tmp_root, wrong_type, name="wrong-type")
     assert "必须是 string 参数" in str(error.value)
