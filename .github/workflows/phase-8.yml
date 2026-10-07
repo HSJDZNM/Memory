@@ -84,6 +84,8 @@ jobs:
 
       - name: Scope skip reason is reported
         run: |
+          # bash -e 不带 pipefail：管道状态取 tee 的 0，policy.check 的退出码会被吞掉。
+          set -o pipefail
           .venv/bin/python -m policy.check examples/good_controller.py --layer service \
             --dependencies repository | tee /tmp/skip.txt
           grep -q "layer service != controller" /tmp/skip.txt
