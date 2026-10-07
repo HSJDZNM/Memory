@@ -218,8 +218,15 @@ class ApprovalGate:
                 now=self._now(),
             )
         except Exception as error:  # noqa: BLE001 - Phase 4 拒绝即拒绝，只翻译分类
+            # 理由必须带上**平台自己那一句**：只写异常类名的话，"审批人没有审批权"与
+            # "签发时间在未来"在状态、报告与审计里长得一模一样（都只剩一个类名），
+            # 而这两件事对人该做什么的指示完全不同。
+            #
+            # 失败码这一侧保持类默认值（APPROVAL_MISSING）：Phase 4 的拒绝意味着"这份条子
+            # 在这件事上不可用"，与"没有可用审批"同级——tests/security 的
+            # approver-without-authority 用例钉的正是这个码，换码等于改一条安全期望。
             raise ApprovalError(
-                f"审批被平台拒绝：{type(error).__name__}", node=node
+                f"审批被平台拒绝：{type(error).__name__}: {error}", node=node
             ) from error
         return ApprovalUse(
             node=node,

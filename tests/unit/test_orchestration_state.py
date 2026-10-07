@@ -898,6 +898,28 @@ def test_a_single_use_approval_stays_single_use_even_when_the_budget_allows_more
     assert excinfo.value.code is FailureCode.APPROVAL_CONSUMED
 
 
+def test_a_platform_side_rejection_keeps_its_reason_in_the_detail(tmp_root) -> None:
+    """平台拒绝时的理由必须带上它自己那一句——只留异常类名等于把原因丢了。
+
+    失败码这一侧保持类默认值（APPROVAL_MISSING）：Phase 4 的拒绝意味着"这份条子在这件事上
+    不可用"，与"没有可用审批"同级，tests/security 的 approver-without-authority 钉的就是它。
+    """
+
+    path = approval_file(
+        tmp_root / "approvals" / "approval.json",
+        action_hash=ACTION_HASH,
+        action_id=ACTION_HASH,
+        roles=("developer",),
+    )
+    gate = ApprovalGate(path, approval_roles=("reviewer",))
+
+    with pytest.raises(ApprovalError) as error:
+        _use(gate, _gate_state())
+
+    assert "审批人没有审批权" in str(error.value)
+    assert error.value.code is FailureCode.APPROVAL_MISSING
+
+
 def test_the_platform_side_recheck_sees_a_consumed_record(tmp_root) -> None:
     """平台那次复核必须收得到"这张条子已经消费过"这件事实（used 的口径是 >= 1，不是预算数）。
 
