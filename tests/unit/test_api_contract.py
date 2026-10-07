@@ -443,6 +443,52 @@ def test_idempotency_ledger_with_zero_ttl_never_expires(tmp_root: Path) -> None:
     assert IdempotencyLedger(path, ttl_seconds=900).lookup(**lookup, digest="d1") is None
 
 
+def test_idempotency_record_refuses_to_replace_a_fresh_entry_with_another_digest(
+    tmp_root: Path,
+) -> None:
+    """两次 lookup 都未命中之后，先写的那份结论不能被后写的覆盖。
+
+    历史缺陷（OCR 全量审查 L10）：`runtime.handle` 的 lookup（runtime.py:319）与
+    record（runtime.py:369）在两个临界区里，并发同 key、不同请求体可以双双未命中并双双
+    写入，后写的那次静默替换先写的——文档承诺的 409（不覆盖、不合并）永远不会发生，
+    第一个调用方的响应变成不可重放。这里把那个交错**按顺序**摆出来（不需要线程：
+    两次 lookup 之间本来就不持锁）。
+    """
+
+    path = tmp_root / "ledger.jsonl"
+    ledger = IdempotencyLedger(path, ttl_seconds=900)
+    lookup = dict(client_id="alpha-client", api_version="1.0", route="evaluate", key="k1")
+    assert ledger.lookup(**lookup, digest="d1") is None
+    assert ledger.lookup(**lookup, digest="d2") is None
+
+    ledger.record(**lookup, digest="d1", status=200, body={"who": "first"})
+    with pytest.raises(ApiError) as info:
+        ledger.record(**lookup, digest="d2", status=200, body={"who": "second"})
+    assert info.value.code is ErrorCode.IDEMPOTENCY_KEY_CONFLICT
+    assert info.value.status == 409
+
+    # 先写的那份仍在：第一个调用方的响应仍然可以逐字节重放。
+    hit = ledger.lookup(**lookup, digest="d1")
+    assert hit is not None and hit.body == {"who": "first"}
+
+    # 同一个摘要重复写（并发的同一个请求）不是冲突：那是幂等重试的正常形态。
+    ledger.record(**lookup, digest="d1", status=200, body={"who": "first"})
+
+    # 过期条目必须能被替换：TTL 到了就该重新判定，不能被"不许覆盖"挡住。
+    rows = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    rows[0]["expires_at"] = "2000-01-01T00:00:00.000000Z"
+    path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows),
+        encoding="utf-8",
+        newline="\n",
+    )
+    ledger.record(**lookup, digest="d2", status=200, body={"who": "second"})
+    replaced = ledger.lookup(**lookup, digest="d2")
+    assert replaced is not None and replaced.body == {"who": "second"}
+
+
 def test_idempotency_expiry_always_carries_microseconds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

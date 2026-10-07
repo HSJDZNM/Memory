@@ -294,6 +294,20 @@ class IdempotencyLedger:
         }
         with self._guard():
             entries = self._read_unlocked()
+            # **在锁内重新读一次**：调用方的 lookup 与 record 是两个临界区
+            # （runtime.handle 先 lookup 再 record），并发同 key、不同请求体时两次 lookup
+            # 可以双双未命中。没有这一步，后写的那次会静默替换先写的结论——文档承诺的
+            # 409（不覆盖、不合并）永远不会发生，而第一个调用方的响应变成不可重放。
+            existing = entries.get(entry_key)
+            if (
+                existing is not None
+                and self._fresh(existing)
+                and str(existing.get("request_digest") or "") != digest
+            ):
+                raise ApiError(
+                    ErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+                    "同一个 idempotency_key 被用于了不同的请求；请换一个 key",
+                )
             entries[entry_key] = record
             self._write_unlocked(entries)
 
