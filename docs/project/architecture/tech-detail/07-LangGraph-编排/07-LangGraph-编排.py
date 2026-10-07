@@ -479,7 +479,14 @@ def judge(name, record, snapshot, *, expect_error=None):
         plan = plan_resume(record, snapshot, fresh_state=fresh)
     except Exception as error:  # noqa: BLE001 - 拒绝恢复也是一种结论
         rows.append((name, f"拒绝（{type(error).__name__}）", "-", "不沿用任何旧结论"))
-        if expect_error is not None and not isinstance(error, expect_error):
+        if expect_error is None:
+            # 这一行**期望正常返回**：异常不是"另一种结论"，而是这一行根本没跑起来。以前它返回
+            # None，调用方紧接着 `.mode.value` 抛 AttributeError——"plan_resume 里炸了"于是被
+            # 伪装成"讲解代码写错了"，真正的类型与消息（真正的原因）被这层 AttributeError 盖掉。
+            raise AssertionError(
+                f"{name}：plan_resume 抛了 {type(error).__name__}，但这一行期望正常返回：{error}"
+            ) from error
+        if not isinstance(error, expect_error):
             raise AssertionError(
                 f"{name}：期望被 {expect_error.__name__} 拒绝，实际是 "
                 f"{type(error).__name__}：{error}"
