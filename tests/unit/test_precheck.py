@@ -21,6 +21,7 @@ from enforcement.models import (
     CheckStatus,
     Decision,
     GrantError,
+    LedgerError,
     ReasonCode,
     RequiredAction,
     utc_now,
@@ -334,6 +335,102 @@ def test_audit_failure_releases_the_claim_so_a_retry_is_possible(enforcement_pat
         sink=FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace),
     )
     assert retried.decision.decision is not Decision.BLOCK, retried.decision.reason_code
+
+
+class RacingApprovalLedger(EnforcementLedger):
+    """把"两个进程同时抢最后一次审批额度"搬进单进程：对手在本进程追加之前先写一行。"""
+
+    def __init__(self, path) -> None:
+        super().__init__(path)
+        self.raced = False
+
+    def record_approval_use(self, approval_id, **kwargs):  # type: ignore[no-untyped-def]
+        if not self.raced:
+            self.raced = True
+            super().record_approval_use(approval_id, action_hash=kwargs["action_hash"])
+        return super().record_approval_use(approval_id, **kwargs)
+
+
+class FailingGrantLedger(EnforcementLedger):
+    """授权登记写不进去的台账：阻断之后认领与已占用的额度都必须还回去。"""
+
+    def record_grant(self, grant) -> None:  # type: ignore[no-untyped-def]
+        raise LedgerError("台账不可写（测试替身）")
+
+
+def test_approval_quota_race_releases_the_action_claim(enforcement_paths):
+    """额度竞态抢输之后动作没执行：重签审批后同一个 action_id 必须能重试。"""
+
+    registry = enforcement_paths.registry_object()
+    request = make_action(
+        registry,
+        enforcement_paths,
+        "exec.process",
+        process_params(),
+        roles=("owner",),
+        action_id="race-1",
+    )
+    approval = approval_for(request)
+
+    blocked = pre_execute(
+        request,
+        registry=registry,
+        ledger=RacingApprovalLedger(enforcement_paths.ledger),
+        sink=FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace),
+        approval=approval,
+    )
+
+    assert blocked.decision.decision is Decision.BLOCK
+    assert reason_of(blocked) is ReasonCode.APPROVAL_INVALID
+    ledger = EnforcementLedger(enforcement_paths.ledger)
+    released = ledger.of_kind("claim_released")
+    assert released, "阻断之后必须释放认领，否则重试会变成 ACTION_REPLAY 死锁"
+    assert released[0]["reason"] == ReasonCode.APPROVAL_INVALID.value
+
+    retried = pre_execute(
+        request,
+        registry=registry,
+        ledger=EnforcementLedger(enforcement_paths.ledger),
+        sink=FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace),
+        approval=approval_for(request, approval_id="approval-fresh"),
+    )
+    assert retried.decision.decision is not Decision.BLOCK, retried.decision.reason_code
+
+
+def test_final_ledger_failure_returns_the_claim_and_the_quota(enforcement_paths):
+    """授权登记写不进去 → 阻断；认领与已占用的审批额度都要还回去。
+
+    这里只钉住"归还"这件事：同一条路径上重试仍可能被审计链里那条 decision=allow 的
+    旧记录挡成 ACTION_REPLAY（delegate 轮 precheck.py:976-982 的结论，不在本次 11 条内），
+    那是另一条要修的账，不在这里假装已经解除。
+    """
+
+    registry = enforcement_paths.registry_object()
+    request = make_action(
+        registry,
+        enforcement_paths,
+        "exec.process",
+        process_params(),
+        roles=("owner",),
+        action_id="grant-fail-1",
+    )
+    approval = approval_for(request)
+
+    blocked = pre_execute(
+        request,
+        registry=registry,
+        ledger=FailingGrantLedger(enforcement_paths.ledger),
+        sink=FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace),
+        approval=approval,
+    )
+
+    assert blocked.decision.decision is Decision.BLOCK
+    assert reason_of(blocked) is ReasonCode.LEDGER_UNAVAILABLE
+    ledger = EnforcementLedger(enforcement_paths.ledger)
+    assert ledger.of_kind("claim_released"), "认领必须还回去"
+    assert ledger.of_kind("approval_use_released"), "已占用的审批额度必须还回去"
+    assert ledger.approval_uses(approval.approval_id) == ()
+    assert ledger.active_claims(action_id=request.action_id, tool_id=request.tool_id) == ()
 
 
 def test_high_risk_without_approval_requires_approval(enforcement_paths):
