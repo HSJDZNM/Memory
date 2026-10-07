@@ -39,6 +39,8 @@
 *.md linguist-documentation
 AGENTS.md linguist-documentation
 
-# 让 lockfile 在 diff 中可见
-package-lock.json -diff
-pnpm-lock.yaml -diff
+# lockfile 一律按文本 diff：全局 `* text=auto eol=lf` 已经保证。
+# 不要写 `-diff`——它把文件当二进制，`git diff` 打 "Binary files ... differ"、
+# GitHub 显示 "Binary file not shown"，与"让 lockfile 在 diff 中可见"正好相反。
+# （原先的两条 `package-lock.json -diff` / `pnpm-lock.yaml -diff` 既是反向的，
+#  也早已失效：本仓库的锁文件是 requirements.lock，这两个文件根本不存在。）
