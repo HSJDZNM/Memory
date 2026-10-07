@@ -50,6 +50,8 @@ _EVIDENCE_FIX = (
     "验证器数据（validation/validators.yaml）必须读得到；补齐后重跑，理由会指名是哪一份输入"
 )
 
+_EVIDENCE_SOURCE = "从失败原文里取回（--config 是 adapter 配置，与取证输入无关，不参与核验）"
+
 
 def _read_text(path: Path) -> tuple[Optional[str], str]:
     """尽力读一份文本：返回 (文本或 None, 观测结果)。读不到不抛异常——观测本身就是结论。"""
@@ -64,6 +66,77 @@ def _read_text(path: Path) -> tuple[Optional[str], str]:
         return None, f"UnicodeDecodeError（不是 UTF-8）：{error}"
     except OSError as error:
         return None, f"OSError：{type(error).__name__}: {error}"
+
+
+def _evidence_input_observation(path: Path) -> tuple[str, str, bool]:
+    """对被点名的**取证输入**做一次真实观测：返回 (method, result, 是否确实不可用)。
+
+    四种结果一种都不合并（与 verification_of_config 同一口径）：不存在 / 是目录 /
+    读不出来 → 这份输入确实不可用；读得到 → 这条"不可用"的指控被证伪。
+    """
+
+    if not path.exists():
+        return "stat", "stat 观测：该路径不存在（ENOENT）", True
+    if path.is_dir():
+        return "stat", "stat 观测：该路径是一个目录，不是一份可读的输入", True
+    text, how = _read_text(path)
+    if text is None:
+        return "read", "读观测：" + how + "（文件在，但这份内容读不出来）", True
+    return "load", "load 观测：读到了 " + str(len(text)) + " 字符，这份输入是可用的", False
+
+
+def _evidence_unavailable_origin(*, detail: str) -> Origin:
+    """取证族（platform.evidence_unavailable）的归因：**先真的去看**被点名的那份输入。
+
+    规则 1 在这一族同样是硬要求：调用方（Hook）总把 adapter 配置交进来，而"取证输入
+    不可用"与那份配置无关——拿它当对象就是 §3.4 禁止的"换一个对象继续指控"。因此对象
+    只认失败原文点名的那一份输入，并且必须真的 stat / read 它：看不到才叫"不可用"，
+    看得到就把这条指控证伪掉（规则 2，落 unknown_origin）。
+    """
+
+    named = config_path_in(detail)
+    if named is None:
+        return build_origin(
+            origin="platform.evidence_unavailable",
+            owner=OWNER,
+            object_kind="path",
+            object_value="<未指名>",
+            object_source="失败原文里没有指名任何取证输入",
+            method="none",
+            result="取证这一段的输入没有被点名，核验前置没有对象可执行",
+            verified=False,
+            fix=_EVIDENCE_FIX,
+            causal_link="unproven",
+        )
+    path = Path(named)
+    display = path.name or str(path)
+    method, result, unavailable = _evidence_input_observation(path)
+    if not unavailable:
+        return unknown_origin(
+            reason=(
+                "核验证伪了自己人：失败原文点名的取证输入 "
+                + display
+                + " 现在读得到（"
+                + result
+                + "），因此「取证输入不可用」这一侧不成立"
+            ),
+            owner=OWNER,
+            object_value=display,
+            object_source=_EVIDENCE_SOURCE,
+            method=method,
+        )
+    return build_origin(
+        origin="platform.evidence_unavailable",
+        owner=OWNER,
+        object_kind="file" if method == "read" else "path",
+        object_value=display,
+        object_source=_EVIDENCE_SOURCE,
+        method=method,
+        result=result,
+        verified=True,
+        fix=_EVIDENCE_FIX,
+        causal_link="proven",
+    )
 
 
 def verification_of_config(config_path: Optional[Path | str], *, source: str) -> Origin:
@@ -176,27 +249,14 @@ def origin_from_failure(
             object_source="reason_code",
         )
 
+    if expected == "platform.evidence_unavailable":
+        # 取证族单独一条：它的对象是**取证输入**，而 config_path 是本次调用的 adapter
+        # 配置——两者不是一回事，详见 _evidence_unavailable_origin。
+        return _evidence_unavailable_origin(detail=detail)
+
     candidate: Any = config_path
     source = config_source
     if candidate is None or str(candidate).strip() == "":
         candidate = config_path_in(detail)
         source = "从失败原文里取回（--config 未提供）"
-    if expected == "platform.evidence_unavailable":
-        # 取证这一段的对象是"输入集合"，不是单个文件：核验的是它能不能被说出来。
-        return build_origin(
-            origin="platform.evidence_unavailable",
-            owner=OWNER,
-            object_kind="path",
-            object_value=str(candidate) if candidate else "<未指名>",
-            object_source=source if candidate else "失败原文里没有指名任何取证输入",
-            method="stat" if candidate else "none",
-            result=(
-                "取证输入在本次理由里被点名（" + str(candidate) + "）"
-                if candidate
-                else "取证这一段的输入没有被点名，核验前置没有对象可执行"
-            ),
-            verified=bool(candidate),
-            fix=_EVIDENCE_FIX,
-            causal_link="proven" if candidate else "unproven",
-        )
     return verification_of_config(candidate, source=source)

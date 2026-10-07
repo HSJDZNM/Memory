@@ -294,17 +294,75 @@ def test_origin_from_failure_uses_the_named_config_and_falls_back_to_the_text(tm
     assert "从失败原文里取回" in recovered.object_source
 
 
-def test_evidence_unavailable_is_only_proven_when_the_input_is_named():
-    named = origin_from_failure(
-        reason_code="evidence_unavailable",
-        detail="validation/validators.yaml 读不到",
+def test_evidence_unavailable_is_proven_only_after_a_real_observation(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """被点名不等于已核验：必须真的去 stat / read 那份输入（复核发现）。
+
+    旧实现只凭"理由里出现了一个路径"就写 method=stat / verified=True / proven，而且
+    调用方传进来的 config_path（adapter 配置）会被当成取证对象——两者都不是观测，
+    于是审计里出现一条与真实 stat 无法区分的"已证明"记录。
+    """
+
+    monkeypatch.chdir(tmp_root)
+    adapter_config = tmp_root / "dsh-adapter.yaml"
+    adapter_config.write_text("agent_version: '1.0'" + chr(10), encoding="utf-8")
+    (tmp_root / "present").mkdir()
+    (tmp_root / "present" / "validators.yaml").write_text(
+        "validators: []" + chr(10), encoding="utf-8"
     )
-    assert named.origin == "platform.evidence_unavailable"
-    assert named.verified is True
+
+    # (1) 原文点名的输入真的不存在：stat 过之后才有资格写 proven。
+    missing = origin_from_failure(
+        reason_code="evidence_unavailable",
+        detail="pre_evidence 的验证器数据读不到（missing/validators.yaml）",
+        config_path=adapter_config,
+        config_source="--config",
+    )
+    assert missing.origin == "platform.evidence_unavailable"
+    assert missing.method == "stat"
+    assert missing.verified is True
+    assert missing.causal_link == "proven"
+    # 对象是失败原文点名的那份输入，不是调用方给的 adapter 配置。
+    assert missing.object_value == "validators.yaml"
+    assert "dsh-adapter" not in missing.object_value
+    assert "不存在" in missing.result
+
+    # (2) 点名的那份输入读得到：这条指控被证伪，落 unknown_origin（规则 2）。
+    readable = origin_from_failure(
+        reason_code="evidence_unavailable",
+        detail="取证失败：present/validators.yaml 读不到",
+        config_path=adapter_config,
+        config_source="--config",
+    )
+    assert readable.origin == "unknown_origin"
+    assert readable.verified is False
+    assert readable.causal_link == "unproven"
+    assert "证伪" in readable.result
+    assert readable.object_value == "validators.yaml"
+    assert "dsh-adapter" not in readable.object_value + readable.result
+
+    # (3) 没有点名任何输入：没有对象就没有核验。
     unnamed = origin_from_failure(reason_code="evidence_unavailable", detail="取证失败")
     assert unnamed.origin == "platform.evidence_unavailable"
+    assert unnamed.method == "none"
     assert unnamed.verified is False
     assert unnamed.causal_link == "unproven"
+    assert unnamed.object_value == "<未指名>"
+
+    # (4) 读不出来的那份输入（不是 UTF-8）同样是"不可用"，理由要说得出是哪一种。
+    broken = tmp_root / "broken" / "validators.yaml"
+    broken.parent.mkdir()
+    broken.write_bytes(b"\xff\xfe not utf-8")
+    unreadable = origin_from_failure(
+        reason_code="evidence_unavailable",
+        detail="取证输入读不出来（broken/validators.yaml）",
+    )
+    assert unreadable.origin == "platform.evidence_unavailable"
+    assert unreadable.method == "read"
+    assert unreadable.verified is True
+    assert unreadable.causal_link == "proven"
+    assert "UnicodeDecodeError" in unreadable.result
 
 
 def test_the_origin_payload_survives_a_jsonl_round_trip():
