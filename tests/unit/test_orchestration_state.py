@@ -55,6 +55,7 @@ from orchestration.models import (
     Counters,
     Decision,
     FailureCode,
+    FailureRef,
     GraphState,
     NodeId,
     NodeRun,
@@ -643,6 +644,58 @@ def test_approval_gate_accepts_a_valid_record_and_records_the_use(tmp_root) -> N
     with pytest.raises(ApprovalError) as excinfo:
         _use(gate, consumed)
     assert excinfo.value.code is FailureCode.APPROVAL_CONSUMED
+
+
+SECRET_LIKE = (
+    "Bearer abcdefgh12345678",
+    "sk-abcdefgh12345678",
+    "glpat-abcdefgh12345678",
+    "-----BEGIN RSA PRIVATE KEY-----",
+)
+
+
+@pytest.mark.parametrize("secret", SECRET_LIKE)
+def test_free_text_in_long_term_state_cannot_carry_credentials(secret: str) -> None:
+    """状态是长期的：凭据形态的自由文本一律拒绝写入（与 requirements / notes 同一条口径）。
+
+    这几处（ArtifactRef.note / PolicyTraceRef.reason / ViolationRef.message /
+    NodeRun.detail / FailureRef.detail）装的是上游或外部文本——凭据一旦落盘就没有回收路径，
+    所以判据钉在构造期，不靠调用方自觉。
+    """
+
+    with pytest.raises(ValidationError):
+        FailureRef(code=FailureCode.LIMIT_NODE_RUNS, detail=secret)
+    with pytest.raises(ValidationError):
+        NodeRun(
+            node=NodeId.REPAIR,
+            status=StageStatus.OK,
+            idempotency_key="task-1:repair:0",
+            outcome_digest="sha256:" + "0" * 64,
+            detail=secret,
+        )
+    with pytest.raises(ValidationError):
+        ViolationRef(rule_id="ARCH-001", rule_version=1, severity="error", message=secret)
+    with pytest.raises(ValidationError):
+        PolicyTraceRef(
+            node=NodeId.VALIDATION, request_id="req-1", decision=Decision.BLOCK, reason=secret
+        )
+    with pytest.raises(ValidationError):
+        ArtifactRef(
+            artifact_id="change-1",
+            kind=ArtifactKind.CHANGE,
+            digest="sha256:" + "0" * 64,
+            note=secret,
+        )
+
+
+def test_ordinary_free_text_still_enters_the_state() -> None:
+    """反向不变量：正常结论照常进状态——探针只认**确定形态**的凭据，不做宽口径猜测。"""
+
+    detail = "节点超出预算：拒绝继续（limit_node_runs）"
+    assert FailureRef(code=FailureCode.LIMIT_NODE_RUNS, detail=detail).detail == detail
+    assert ViolationRef(
+        rule_id="ARCH-001", rule_version=1, severity="error", message="Controller 不得直接访问 Repository。"
+    ).message.startswith("Controller")
 
 
 def test_distinct_task_ids_never_share_a_checkpoint_file(tmp_root) -> None:

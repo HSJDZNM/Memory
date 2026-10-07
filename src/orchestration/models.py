@@ -119,6 +119,18 @@ def _safe_text(value: str, *, limit: int = _MAX_NOTE) -> str:
     return text
 
 
+def _safe_state_text(value: str) -> str:
+    """进长期状态的自由文本统一过一遍：短、无控制字符、无**凭据形态**的取值。
+
+    为什么不是"只给 requirements/notes 用"：状态是**长期**的（checkpoint 落盘，还可能进审计与
+    报告），凭据一旦写进去就没有回收路径；而这几处（ArtifactRef.note / PolicyTraceRef.reason /
+    ViolationRef.message / NodeRun.detail / FailureRef.detail）装的都是上游或外部文本，
+    不能靠"调用方自觉"。长度沿用各字段自己的上限（400）——这次只加凭据探针，不顺手改长度。
+    """
+
+    return _safe_text(value, limit=_MAX_TEXT)
+
+
 class NodeId(str, Enum):
     """工作流的节点。名字就是图里的节点名（CLI 与 checkpoint 都用它）。"""
 
@@ -204,7 +216,7 @@ class ArtifactRef(StrictModel):
     _check_path = field_validator("path")(
         lambda value: None if value is None else _relative_path(value)
     )
-    _check_note = field_validator("note")(lambda value: _short_text(value))
+    _check_note = field_validator("note")(_safe_state_text)
 
 
 class ContextRef(StrictModel):
@@ -228,6 +240,8 @@ class PolicyTraceRef(StrictModel):
     trace_id: Optional[str] = Field(default=None, max_length=_MAX_ID)
     rule_set_hash: Optional[str] = Field(default=None, max_length=80)
     reason: str = Field(default="", max_length=_MAX_TEXT)
+
+    _check_reason = field_validator("reason")(_safe_state_text)
 
 
 # H1：一次 block 属于哪一类——**受控闭集**（不留自由文本）。
@@ -304,6 +318,8 @@ class ViolationRef(StrictModel):
     message: str = Field(default="", max_length=_MAX_TEXT)
     evidence_kind: str = Field(default="", max_length=_MAX_ID)
     evidence_value: str = Field(default="", max_length=_MAX_TEXT)
+
+    _check_message = field_validator("message")(_safe_state_text)
 
     @field_validator("file")
     @classmethod
@@ -442,11 +458,15 @@ class NodeRun(StrictModel):
     failure_code: Optional[FailureCode] = None
     detail: str = Field(default="", max_length=_MAX_TEXT)
 
+    _check_detail = field_validator("detail")(_safe_state_text)
+
 
 class FailureRef(StrictModel):
     code: FailureCode
     node: Optional[NodeId] = None
     detail: str = Field(default="", max_length=_MAX_TEXT)
+
+    _check_detail = field_validator("detail")(_safe_state_text)
 
 
 class PlatformSnapshot(StrictModel):
