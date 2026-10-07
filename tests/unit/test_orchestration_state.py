@@ -803,6 +803,30 @@ def test_change_params_never_coerce_missing_values_to_empty() -> None:
     }
 
 
+def test_change_path_must_be_canonical() -> None:
+    """路径判据不许是词法的：policies/../src/other.py 以 policies/ 开头，写的却是别的文件。
+
+    词法前缀让"这一改动要不要走受治理的规则工具"由**一个别的文件**的名字决定；
+    构造期用平台自己的规范化器归一，拿不到规范形态就拒绝。
+    """
+
+    for raw in ("policies/../src/other.py", "/etc/passwd", "../outside.py"):
+        with pytest.raises(NodeContractError):
+            Change(path=raw, content="x\n")
+
+    # 等价写法归一：digest、params 与 tool_id 都对着同一个路径算
+    assert Change(path="./policies/ARCH-001.yaml", content="x\n").path == "policies/ARCH-001.yaml"
+
+
+def test_policy_tool_selection_follows_the_canonical_path() -> None:
+    """规则目录**之内**才走受治理的规则工具；判据是路径段，不是裸前缀。"""
+
+    assert Change(path="policies/coding/NEW-001.yaml", content="x\n").tool_id == "orc.policy.write"
+    assert Change(path="src/order/controller.py", content="x\n").tool_id == "orc.fs.write"
+    # 路径恰好是 policies 本身（目录）同样算规则目录之内
+    assert Change(path="policies", content="x\n").tool_id == "orc.policy.write"
+
+
 def test_policy_changes_use_approval_gated_tools_for_create_and_edit() -> None:
     """新建与编辑规则都会改变判定依据，不能落到普通文件工具。"""
 

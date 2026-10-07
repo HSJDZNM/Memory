@@ -21,6 +21,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Protocol, Tuple, runtime_checkable
 
+from policy.models import PolicyContextError, normalize_repo_path
+
 from .approvals import ApprovalGate
 from .client import (
     REASON_APPROVAL_REQUIRED,
@@ -72,6 +74,17 @@ PROTECTED_EDIT_TOOL = "orc.policy.edit"
 PROTECTED_WRITE_TOOL = "orc.policy.write"
 
 
+def _is_policy_path(path: str) -> bool:
+    """规则目录**之内**：按路径段判，不用裸前缀。
+
+    裸 `startswith("policies/")` 会被遍历段绕过（`policies/../src/other.py` 以 policies/ 开头），
+    于是"这一改动要不要走受治理的规则工具"由**一个别的文件**的名字决定。Canonical 之后
+    （Change 在构造期就用平台自己的规范化器归一）这个判据才是它字面上的意思。
+    """
+
+    return path == "policies" or path.startswith("policies/")
+
+
 @dataclass(frozen=True)
 class Change:
     """一次候选改动。`content` 与 `replacement` 二选一（写整文件 / 替换片段）。"""
@@ -96,6 +109,19 @@ class Change:
 
         if not self.path:
             raise NodeContractError("候选改动缺少目标路径")
+        # 路径判据（tool_id、是否在任务范围内）必须先有**规范形态**：平台自己的规范化器
+        # （policy.models.normalize_repo_path，与 Hook、Phase 4 同一个口径）拿不到形态就拒绝。
+        # 词法判断会被 `policies/../src/other.py` 绕过：它以 policies/ 开头，于是被判成受治理的
+        # 规则改动、走的却是写别的文件的那条路。`./x`、`x/` 这类等价写法顺带归一，
+        # 让 digest 与 params 都对着同一个路径算（平台执行时也会归一）。
+        try:
+            canonical = normalize_repo_path(self.path)
+        except PolicyContextError as error:
+            raise NodeContractError(
+                f"候选改动的目标 {self.path!r} 不是受控范围内的仓库相对路径：{error}"
+            ) from error
+        if canonical != self.path:
+            object.__setattr__(self, "path", canonical)
         editing = self.old is not None
         writing = self.content is not None
         if editing == writing:
@@ -122,8 +148,8 @@ class Change:
     @property
     def tool_id(self) -> str:
         if self.old is not None:
-            return PROTECTED_EDIT_TOOL if self.path.startswith("policies/") else EDIT_TOOL
-        return PROTECTED_WRITE_TOOL if self.path.startswith("policies/") else WRITE_TOOL
+            return PROTECTED_EDIT_TOOL if _is_policy_path(self.path) else EDIT_TOOL
+        return PROTECTED_WRITE_TOOL if _is_policy_path(self.path) else WRITE_TOOL
 
     def params(self) -> dict[str, Any]:
         # __post_init__ 已经保证"二选一"，这里不再用 `or ""` 把 None 抹成空串——
@@ -590,7 +616,7 @@ def _apply_change(
 ) -> NodeOutcome:
     """受治理的写入：先问平台（evaluate），再交给受控执行链。"""
 
-    if change.path != context.task.target and not change.path.startswith("policies/"):
+    if change.path != context.task.target and not _is_policy_path(change.path):
         raise NodeContractError(
             f"改动目标 {change.path!r} 超出任务声明的工作目标：拒绝越界修改", node=node
         )
