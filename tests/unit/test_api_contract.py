@@ -400,6 +400,33 @@ def test_load_api_config_requires_an_explicit_root(tmp_root: Path) -> None:
     assert config.service_root == str(REPO_ROOT)
 
 
+def test_decision_store_is_bounded_and_expires(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_decisions` 必须同时有 TTL 与容量上限：request_id 由调用方提供，不能任它增长。
+
+    历史缺陷（medium 台账 M1，runtime.py:550）：每次 evaluate 都以 `(tenant, request_id)`
+    为键把整份 `ValidationResult` 留在进程内存，全仓没有任何删除 / TTL / 容量上限——长跑服务
+    里"每次换一个 request_id"就能把内存撑满。
+    """
+
+    config_path, anchor = isolated_api(tmp_root)
+    config = load_api_config(config_path, root=anchor)
+    clock = {"now": 1000.0}
+    runtime = ApiRuntime(config, root=anchor, clock=lambda: clock["now"])
+    monkeypatch.setattr(ApiRuntime, "_MAX_REMEMBERED_DECISIONS", 2)
+
+    runtime._remember_decision("a", object())  # type: ignore[arg-type]
+    runtime._remember_decision("b", object())  # type: ignore[arg-type]
+    runtime._remember_decision("c", object())  # type: ignore[arg-type]
+    assert set(runtime._decisions) == {"b", "c"}, "容量上限没生效（最旧的应当先走）"
+
+    # TTL 到了：下一次写入顺带清掉过期项（默认 ttl = 900s）
+    clock["now"] += config.idempotency_ttl_seconds + 1
+    runtime._remember_decision("d", object())  # type: ignore[arg-type]
+    assert set(runtime._decisions) == {"d"}
+
+
 def test_a_timeout_is_counted_once(tmp_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """超时只许计一次：raise 点与错误码出口各计一次 = 真实值的两倍。
 

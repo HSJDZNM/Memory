@@ -211,6 +211,12 @@ def _context_from_dto(
 class ApiRuntime:
     """服务端的核心：一个进程一份，线程安全（多 worker 部署时每个 worker 各一份）。"""
 
+    # `_decisions`（decision_ref 的存储）的容量上限：TTL 之外的**第二道闸**。
+    # 这份存储只是"检索可以引用本服务算过的决策"的缓存，不是台账——丢掉只会让调用方
+    # 重新 evaluate 一次，因此有界是安全的；没有它，调用方每换一个 request_id 就能让长跑
+    # 服务的内存单调增长（request_id 由调用方提供，DTO 只限 200 字符）。
+    _MAX_REMEMBERED_DECISIONS = 4096
+
     def __init__(
         self,
         config: ApiConfig,
@@ -235,7 +241,8 @@ class ApiRuntime:
         self.rate_limiter = RateLimiter(config.rate_limit, clock=clock)
         self._idempotency: dict[str, IdempotencyLedger] = {}
         self._idempotency_lock = threading.Lock()
-        self._decisions: dict[str, ValidationResult] = {}
+        # 值带上写入时刻：TTL 与容量两道闸都按它判（clock 是注入的单调时钟）。
+        self._decisions: dict[str, Tuple[float, ValidationResult]] = {}
         self._decisions_lock = threading.RLock()
         self._semaphore = threading.BoundedSemaphore(config.limits.max_concurrency)
         self._readiness: Optional[Tuple[float, Mapping[str, Any], int]] = None
@@ -547,8 +554,7 @@ class ApiRuntime:
                 f"策略判定超出预算 {budget_ms}ms；未给出结论（不伪造 allow）",
                 retryable=True,
             )
-        with self._decisions_lock:
-            self._decisions[_decision_key(auth.tenant, request.request_id)] = result
+        self._remember_decision(_decision_key(auth.tenant, request.request_id), result)
         body: dict[str, Any] = {
             "api_version": API_SCHEMA_VERSION,
             "tenant": auth.tenant,
@@ -710,6 +716,34 @@ class ApiRuntime:
         facts = {"index_version": retrieval.index_version, "decision": "", "violations": 0}
         return 200, body, facts
 
+    def _decision_fresh(self, recorded_at: float, *, now: float) -> bool:
+        """决策引用的保留窗口；`idempotency_ttl_seconds == 0` 表示"不过期"（与幂等台账同口径）。"""
+
+        ttl = self.config.idempotency_ttl_seconds
+        return ttl == 0 or (now - recorded_at) < ttl
+
+    def _remember_decision(self, key: str, result: ValidationResult) -> None:
+        """记住一次决策供检索引用（`decision_ref`）；**有界**：TTL + 容量上限。
+
+        没有上限时，调用方每换一个 `request_id` 就能把长跑服务的内存撑满。上限复用配置里
+        已有的 `idempotency_ttl_seconds`（同一条"多久之内算同一次调用"的语义），容量上限用
+        类常量——不为它新增配置键。
+        """
+
+        now = self.clock()
+        with self._decisions_lock:
+            self._decisions[key] = (now, result)
+            if self.config.idempotency_ttl_seconds:
+                for stale in [
+                    item
+                    for item, (recorded_at, _) in self._decisions.items()
+                    if not self._decision_fresh(recorded_at, now=now)
+                ]:
+                    self._decisions.pop(stale, None)
+            while len(self._decisions) > self._MAX_REMEMBERED_DECISIONS:
+                # dict 保持插入序：最旧的先走
+                self._decisions.pop(next(iter(self._decisions)))
+
     def _policy_facts(
         self, tenant: LoadedTenant, auth: AuthContext, decision_ref: Optional[str]
     ) -> Tuple[Any, ...]:
@@ -717,13 +751,18 @@ class ApiRuntime:
 
         if not decision_ref:
             return ()
+        now = self.clock()
         with self._decisions_lock:
-            result = self._decisions.get(_decision_key(auth.tenant, decision_ref))
-        if result is None:  # noqa: SIM108 - 保持显式分支，便于阅读状态机
+            entry = self._decisions.get(_decision_key(auth.tenant, decision_ref))
+            if entry is not None and not self._decision_fresh(entry[0], now=now):
+                entry = None
+        if entry is None:  # noqa: SIM108 - 保持显式分支，便于阅读状态机
             raise ApiError(
                 ErrorCode.FORBIDDEN,
-                "decision_ref 指向的决策不在本服务上；拒绝用未经验证的决策扩权",
+                "decision_ref 指向的决策不在本服务上（或已超出保留窗口 "
+                f"{self.config.idempotency_ttl_seconds}s）；拒绝用未经验证的决策扩权",
             )
+        result = entry[1]
         current = tenant.rule_set_hash()
         if result.rule_set_hash and current and result.rule_set_hash != current:
             raise ApiError(
