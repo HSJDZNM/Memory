@@ -775,6 +775,31 @@ def test_generic_json_response_accepts_the_pending_findings_channel() -> None:
     assert response["executable"] is True
 
 
+def test_the_payload_digest_only_keeps_type_names_for_unsupported_values(tmp_root) -> None:
+    """摘要只由载荷本身决定：不认识的类型只留类型名，不带路径、不带 repr、不受顺序影响。
+
+    docstring 早就这么承诺，但 `default=str` 对任何不认识的类型调用 `str()`/`repr()`：
+    `pathlib.Path` 把绝对路径整条写进摘要输入，默认 `repr` 写成 `<Foo object at 0x…>`，
+    `set` 的顺序还受哈希随机化影响——同一份逻辑载荷在不同进程里得到不同摘要，而摘要是
+    幂等与关联的依据。
+    """
+
+    from adapters.models import event_payload_digest
+
+    first = event_payload_digest({"path": tmp_root / "secret-project" / "creds.txt"})
+    # ① 换一个绝对路径（同一个逻辑载荷形态）：摘要必须一样
+    other = event_payload_digest({"path": tmp_root / "another-place" / "creds.txt"})
+    assert first == other
+    # ② 与把路径展成字符串的载荷不同：对象本身没有被 str() 进摘要
+    assert first != event_payload_digest({"path": str(tmp_root / "secret-project" / "creds.txt")})
+
+    class Custom:
+        pass
+
+    # ③ 默认 repr 带内存地址：两个实例必须同摘要
+    assert event_payload_digest({"value": Custom()}) == event_payload_digest({"value": Custom()})
+
+
 def test_the_generic_json_adapter_normalises_the_tool_alias_at_construction() -> None:
     """别名归一发生在构造期：`validate_event` 只校验，不改写调用方手里的 frozen 事件。
 

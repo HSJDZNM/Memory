@@ -767,15 +767,28 @@ def _relative_to(candidate: Path, anchor: Path) -> str:
         raise AdapterEventError(str(error)) from error
 
 
+def _type_placeholder(item: Any) -> str:
+    """非 JSON 可序列化的值在摘要里只留类型名（与 docstring 的承诺一致）。"""
+
+    return "<" + type(item).__name__ + ">"
+
+
 def event_payload_digest(value: Any) -> str:
     """载荷摘要：稳定序列化后取 sha256。
 
     非 JSON 可序列化的值只留类型名，绝不把原始对象 `repr` 进摘要输入——
     `repr` 可能带出绝对路径或凭据，而这里的结果会进审计。
+
+    `default=str` 曾经与这句话相反：它对任何不认识的类型调用 `str()`/`repr()`，于是
+    `pathlib.Path` 把**绝对路径**整条写进摘要，默认 `repr` 写成 `<Foo object at 0x7f…>`
+    （跨进程不稳定），`set` 的迭代顺序还受哈希随机化影响——同一份逻辑载荷在不同进程里
+    得到不同摘要。摘要要当幂等与关联的依据，就必须只由载荷本身决定。
     """
 
     try:
-        canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        canonical = json.dumps(
+            value, ensure_ascii=False, sort_keys=True, default=_type_placeholder
+        )
     except (TypeError, ValueError):
         canonical = json.dumps(str(type(value).__name__), ensure_ascii=False)
     return "sha256:" + sha256(canonical.encode("utf-8")).hexdigest()
