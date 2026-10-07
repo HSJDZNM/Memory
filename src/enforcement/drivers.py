@@ -260,7 +260,14 @@ class ShellCommandDriver:
     def execute(
         self, request: ActionRequest, spec: ToolSpec, *, workspace: Optional[Path] = None
     ) -> DriverResult:
-        assert spec.command_param is not None
+        # 不用 assert：`python -O` 会把断言整条剥掉，之后 request.value_of(None) 只报
+        # 「缺少命令参数 None」——把"注册表没声明 command_param"这个配置错误说成参数缺失，
+        # 读的人会去查请求而不是查注册表。
+        if spec.command_param is None:
+            raise DriverError(
+                "shell_command 驱动要求注册表声明 command_param（命令文本所在参数）："
+                "证明不了哪个参数是命令就不执行"
+            )
         command = request.value_of(spec.command_param)
         if not isinstance(command, str) or not command.strip():
             raise DriverError(f"缺少命令参数 {spec.command_param}")

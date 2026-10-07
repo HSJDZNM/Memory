@@ -198,6 +198,33 @@ def test_background_requests_are_refused_explicitly(tmp_root):
     ).status is ExecutionStatus.EXECUTED
 
 
+def test_shell_driver_without_command_param_refuses_explicitly(enforcement_paths):
+    """注册表没声明 command_param 时必须显式报 DriverError，不能靠 assert。
+
+    assert 在 `python -O` 下被整条剥掉，失败会降级成 `缺少命令参数 None`——
+    把配置错误说成参数缺失。这条用例在 -O 与非 -O 两种模式下都要求同一条显式拒绝。
+    """
+
+    from enforcement.drivers import ShellCommandDriver
+
+    registry = enforcement_paths.registry_object()
+    spec = registry.tool("exec.shell")
+    broken = spec.model_copy(update={"command_param": None})
+    request = make_action(
+        registry,
+        enforcement_paths,
+        "exec.shell",
+        {"command": "print('ok')", "description": "probe"},
+    )
+
+    with pytest.raises(DriverError) as error:
+        ShellCommandDriver(shell=spec.shell).execute(
+            request, broken, workspace=enforcement_paths.workspace
+        )
+
+    assert "command_param" in str(error.value)
+
+
 def test_the_shell_driver_also_consumes_workdir(enforcement_paths):
     """shell 类工具同样消费 workdir：不存在的目录必须拒绝，而不是忽略它照跑。"""
 
