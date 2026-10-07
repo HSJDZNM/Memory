@@ -455,6 +455,32 @@ def test_validation_router_without_a_decision_is_a_contract_error(tmp_root) -> N
         executor.route(state, "fail")
 
 
+def test_resume_path_refuses_the_arguments_it_used_to_ignore(tmp_root) -> None:
+    """`config=` 是恢复路径：被静默丢掉的参数与默认 task id 都必须当场报错。
+
+    为什么必须这样：旧实现把 `config` 之外的 `engine` / `limits` / `**overrides` 算出来后
+    丢掉，调用方以为换了引擎或上限；更隐蔽的是 `task` 缺省——第一次运行用的是非默认 task id 时，
+    这里会去查另一个 checkpoint，查不到就**静默**规划一次全新运行，调用方以为恢复成功。
+    这一组用例只钉"拒绝"，不重复跑引擎：三种组合都在装配之前就失败。
+    """
+
+    config = graph_config(tmp_root, name="resume")
+
+    with pytest.raises(ValueError, match="config="):
+        run_graph(tmp_root, config=config, engine="langgraph", client=None, author=None, runner=None)
+    with pytest.raises(ValueError, match="config="):
+        run_graph(
+            tmp_root,
+            config=config,
+            limits=RunLimits(max_repair_rounds=0),
+            client=None,
+            author=None,
+            runner=None,
+        )
+    with pytest.raises(ValueError, match="task="):
+        run_graph(tmp_root, config=config, client=None, author=None, runner=None)
+
+
 # --------------------------------------------------------------------------- 依赖方向
 
 CORE_LAYERS = ("policy", "retrieval", "validators", "enforcement", "policy_api", "adapters")
