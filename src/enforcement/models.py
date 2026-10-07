@@ -925,6 +925,12 @@ class ActionRequest(StrictModel):
     @classmethod
     def _check_param_order(cls, value: Tuple[ParamValue, ...]) -> Tuple[ParamValue, ...]:
         names = [item.name for item in value]
+        if len(set(names)) != len(names):
+            raise ValueError(
+                "参数名不得重复：param() / value_of() 取首个匹配，而 action_hash 的载荷"
+                "由字典推导得出（last-wins），同一个请求会在「授权时哈希」与「执行时取值」"
+                "上指向两个不同的值——参数绑定授权会因此静默失效"
+            )
         if names != sorted(names):
             return tuple(sorted(value, key=lambda item: item.name))
         return value
