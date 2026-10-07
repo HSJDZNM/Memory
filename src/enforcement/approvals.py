@@ -40,7 +40,6 @@ from pydantic import Field, field_validator, model_validator
 from policy.models import StrictModel, canonical_identifier
 
 from .models import (
-    ENFORCEMENT_SCHEMA_VERSION,
     EnforcementError,
     to_timestamp,
     utc_now,
@@ -48,6 +47,7 @@ from .models import (
 
 __all__ = [
     "APPROVAL_SCHEMA_VERSION",
+    "SUPPORTED_APPROVAL_SCHEMA_VERSIONS",
     "ApprovalBinding",
     "ApprovalError",
     "ApprovalRecord",
@@ -56,7 +56,10 @@ __all__ = [
     "verify_approval",
 ]
 
+# 审批记录有自己的协议轴（与受控执行协议各走各的）：载荷键集合或语义变化时，
+# 只动这个常数——它不再是一个"定义了但没人用"的死常量。
 APPROVAL_SCHEMA_VERSION = "1.0"
+SUPPORTED_APPROVAL_SCHEMA_VERSIONS = frozenset({APPROVAL_SCHEMA_VERSION})
 
 # 参数模式名与参数名同口径（稳定标识符）：允许点号，便于将来扩展到嵌套结构。
 _PATTERN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
@@ -81,7 +84,7 @@ class ApprovalRecord(StrictModel):
     且必须声明至少一条 param_patterns 与次数上限——否则"模式"就成了无边界的通行证。
     """
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: str = APPROVAL_SCHEMA_VERSION
     approval_id: str = Field(min_length=1)
     binding: ApprovalBinding = ApprovalBinding.ACTION
     action_hash: Optional[str] = Field(
@@ -106,6 +109,18 @@ class ApprovalRecord(StrictModel):
         description="模式化绑定：参数名 -> 整串匹配正则（对规范化后的取值做 re.fullmatch）",
     )
     note: str = ""
+
+    @field_validator("schema_version")
+    @classmethod
+    def _check_schema_version(cls, value: str) -> str:
+        """未知审批协议版本一律拒绝：看不懂的条子不得按 1.0 的字段语义解释。"""
+
+        if value not in SUPPORTED_APPROVAL_SCHEMA_VERSIONS:
+            raise ApprovalError(
+                f"未知审批协议版本 {value!r}；只接受 "
+                f"{sorted(SUPPORTED_APPROVAL_SCHEMA_VERSIONS)}，拒绝按旧口径解释审批"
+            )
+        return value
 
     @field_validator("param_patterns")
     @classmethod

@@ -642,6 +642,42 @@ def test_naive_approval_timestamps_are_rejected_as_the_documented_error(tmp_root
         ApprovalRecord(**payload)
 
 
+def test_approval_schema_version_is_its_own_axis(tmp_root):
+    """审批记录走自己的版本轴：默认值来自 APPROVAL_SCHEMA_VERSION，未知版本一律拒绝。
+
+    旧行为：默认值取 ENFORCEMENT_SCHEMA_VERSION，而 APPROVAL_SCHEMA_VERSION 全仓只有
+    定义处与 __all__ 引用（死常量）；加载期也不比对，于是任何未知版本的审批文件都被
+    静默接受并按 1.0 的字段语义放行（AGENTS 第 3 条 / 第 55 条）。
+    """
+
+    from enforcement.approvals import APPROVAL_SCHEMA_VERSION
+
+    payload = {
+        "approval_id": "a-version",
+        "binding": "action",
+        "action_hash": "sha256:h",
+        "action_id": "act-1",
+        "tool_id": "exec.process",
+        "subject": "local-user",
+        "granted_by": "alice",
+        "granted_by_roles": ["reviewer"],
+        "granted_at": utc_now().isoformat(),
+        "expires_at": (utc_now() + timedelta(seconds=300)).isoformat(),
+    }
+
+    assert ApprovalRecord(**payload).schema_version == APPROVAL_SCHEMA_VERSION
+
+    path = tmp_root / "approval-version.json"
+    path.write_text(
+        json.dumps({**payload, "schema_version": "9.9"}, ensure_ascii=False),
+        encoding="utf-8",
+        newline="\n",
+    )
+    with pytest.raises(ApprovalError) as error:
+        load_approval(path)
+    assert "未知审批协议版本" in str(error.value)
+
+
 # --------------------------------------------------------------------------- 策略引擎
 
 
