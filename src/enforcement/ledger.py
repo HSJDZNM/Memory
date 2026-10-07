@@ -59,6 +59,22 @@ __all__ = [
     "LedgerClaim",
 ]
 
+
+def _recorded_at(value: Any) -> Optional[datetime]:
+    """台账行的 recorded_at → 带时区的 datetime；读不出来返回 None。
+
+    调用方对 None 必须按**失败关闭**处理（计入窗口），不能跳过：跳过等于把"证明不了"
+    当成"没发生"，限流与熔断都会少算。
+    """
+
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
+
 LEDGER_SCHEMA_VERSION = "1.0"
 
 
@@ -370,16 +386,9 @@ class EnforcementLedger:
         for item in self.of_kind(kind):
             if str(item.get(key_field)) != key_value:
                 continue
-            recorded = item.get("recorded_at")
-            if not isinstance(recorded, str):
-                continue
-            try:
-                when = datetime.fromisoformat(recorded.replace("Z", "+00:00"))
-            except ValueError:
-                continue
-            if when.tzinfo is None:
-                continue
-            if when >= cutoff:
+            when = _recorded_at(item.get("recorded_at"))
+            # 时间戳读不出来（被改过 / 手写行）时计入窗口：少算等于放宽限流（fail-open）。
+            if when is None or when >= cutoff:
                 total += 1
         return total
 
@@ -426,14 +435,9 @@ class EnforcementLedger:
                 continue
             if item.get("ok") is not False:
                 continue
-            recorded = item.get("recorded_at")
-            if not isinstance(recorded, str):
-                continue
-            try:
-                when = datetime.fromisoformat(recorded.replace("Z", "+00:00"))
-            except ValueError:
-                continue
-            if when.tzinfo is not None and when >= cutoff:
+            when = _recorded_at(item.get("recorded_at"))
+            # 同上：ok=false 的行本来就是失败，时间戳读不出来时按"在窗口内"计（熔断宁可早开）。
+            if when is None or when >= cutoff:
                 total += 1
         return total
 
