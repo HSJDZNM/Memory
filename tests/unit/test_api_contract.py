@@ -2031,3 +2031,23 @@ def test_verify_seal_refuses_unknown_anchor_protocol_version(tmp_root: Path) -> 
     log.append(make_entry(request_id="req-2"))
     after = verify_seal(log, unknown)
     assert after[0].startswith("锚的协议版本未知"), after
+
+
+def test_placeholder_guard_sees_digit_bearing_placeholders() -> None:
+    """模板占位符守卫必须覆盖带数字的名字：`{token_sha2}` 是模板里真实存在的一条。
+
+    为什么必须这样：这条守卫是"漏替换"的唯一拦路者。字符类写成 `[a-z_]+` 时，
+    `{token_sha2}` 这类名字**永远不会被检出**，于是 `str.replace` 少一条的后果不是当场失败，
+    而是配置里留下一个字面量令牌摘要——失败点被推迟到认证 / 租户装配阶段，
+    那里报出来的症状（401、找不到规则目录）指向的都不是真正的原因。
+    """
+
+    from api_support import _PLACEHOLDER_RE
+
+    found = _PLACEHOLDER_RE.findall("{token_sha2} {tenant_audit_beta} {project} {rules_extra}")
+    assert found == [
+        "{token_sha2}",
+        "{tenant_audit_beta}",
+        "{project}",
+        "{rules_extra}",
+    ], found

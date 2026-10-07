@@ -164,7 +164,9 @@ class OrderRepository:
 }
 
 # 模板里的占位符形态：替换完还剩下它们，说明 `str.replace` 漏了一条。
-_PLACEHOLDER_RE = re.compile(r"\{[a-z_]+\}")
+# 字符类必须含数字：模板里真实存在 `{token_sha2}`（以 `{token_sha}` 为前缀的那一条），
+# 只写 [a-z_] 会让它**永远不被检出**，漏替换的后果是配置里留下字面量而不是当场失败。
+_PLACEHOLDER_RE = re.compile(r"\{[A-Za-z0-9_]+\}")
 
 # 验证器数据文件：注册表的默认路径是**相对 root 的** "validation/validators.yaml"
 # （见 validators.registry.DEFAULT_REGISTRY / load_config），另外 tool.config 也是相对 root 的
