@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import threading
 from dataclasses import dataclass, field
 import yaml
@@ -109,13 +110,27 @@ class LoadedTenant:
             return None
 
     def _rule_files(self) -> Tuple[Path, ...]:
+        """规则文件集合：**一次**目录遍历收两种后缀。
+
+        `rules()` 每个请求都要算一次这个集合（签名 = 路径 + mtime + size），所以这是热路径；
+        原来两次 `rglob` 会把整棵规则树各走一遍。语义一点不放宽：两种后缀都算、**只有文件**
+        才算（`rglob` 会把名为 `x.yaml` 的目录也收进来，然后在加载期炸成"规则文件不存在"），
+        顺序不影响结果（`signature_of` 自己排序，`load_rule_set` 按 repo_path 排序）。
+        `os.walk` 默认不跟随目录符号链接，与 `rglob` 同。
+        """
+
         files: list[Path] = []
         for directory in self.rule_dirs:
             if directory.is_file():
                 files.append(directory)
-            elif directory.is_dir():
-                files.extend(sorted(directory.rglob("*.yaml")))
-                files.extend(sorted(directory.rglob("*.yml")))
+                continue
+            if not directory.is_dir():
+                continue
+            for root, dirnames, filenames in os.walk(directory):
+                dirnames.sort()
+                for name in sorted(filenames):
+                    if name.endswith((".yaml", ".yml")):
+                        files.append(Path(root) / name)
         return tuple(files)
 
     # ------------------------------------------------------------------ 检索

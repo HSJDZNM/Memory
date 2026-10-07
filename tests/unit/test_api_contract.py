@@ -1438,6 +1438,32 @@ def test_probe_unavailable_payload_is_a_consumable_decision_payload() -> None:
 # --------------------------------------------------------------------------- 冒烟
 
 
+def test_rule_files_collects_both_suffixes_and_only_files(tmp_root: Path) -> None:
+    """`_rule_files` 的语义：两种后缀都算、嵌套目录也走、**目录不算文件**。
+
+    历史缺陷（medium 台账 M1，services.py:76）：每个请求两次 rglob 各走一遍整棵规则树（热路径、
+    且都在租户锁里）；同一次修里也把"名为 x.yaml 的目录被当成规则文件"收掉——那种目录会在
+    加载期炸成一句"规则文件不存在"（真因是它不是文件）。
+    """
+
+    from policy_api.services import TenantStore
+
+    config_path, anchor = isolated_api(tmp_root)
+    store = TenantStore(load_api_config(config_path, root=anchor), root=anchor).load()
+    tenant = store.get("alpha")
+
+    rules_dir = tmp_root / "project" / "rules"
+    (rules_dir / "EXTRA.yml").write_text("id: EXTRA-001" + chr(10), encoding="utf-8", newline="")
+    nested = rules_dir / "nested"
+    nested.mkdir()
+    (nested / "NESTED.yaml").write_text("id: NESTED-001" + chr(10), encoding="utf-8", newline="")
+    (rules_dir / "not-a-rule.txt").write_text("x" + chr(10), encoding="utf-8", newline="")
+    (rules_dir / "trap.yaml").mkdir()  # 名字像规则文件的目录
+
+    names = sorted(item.name for item in tenant._rule_files())
+    assert names == ["ARCH-001.yaml", "EXTRA.yml", "NESTED.yaml"]
+
+
 def test_tenant_store_load_resets_previous_state(tmp_root: Path) -> None:
     """第二次 `load()` 不能留下上一轮的租户与错误：读数必须对应当前配置。
 
