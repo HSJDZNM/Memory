@@ -619,6 +619,17 @@ class ParamSpec(StrictModel):
             )
         if self.blocked_prefixes and self.type is not ParamType.PATH:
             raise ValueError(f"{self.name}: blocked_prefixes 只适用于 path 参数")
+        if self.type not in (ParamType.STRING, ParamType.PATH) and (
+            self.pattern is not None or self.max_chars is not None or self.enum
+        ):
+            # action._check_constraints 只对字符串取值生效：声明在 integer / boolean /
+            # string_list 上的 pattern / max_chars / enum 会被**静默跳过**。
+            # 与上面几条同一口径：会被忽略的声明直接拒绝，而不是"接受了但不执行"。
+            # （string_list 的长度约束走 max_items / max_item_chars，它们有自己的校验。）
+            raise ValueError(
+                f"{self.name}: pattern / max_chars / enum 只适用于 string 与 path 参数，"
+                f"当前类型是 {self.type.value}；在它上面声明这些约束会被静默跳过"
+            )
         if self.escalating_values and not self.requires_permission:
             raise ValueError(
                 f"{self.name}: 声明了 escalating_values 就必须声明 requires_permission，"

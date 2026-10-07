@@ -170,10 +170,26 @@ def _normalize_scalar(spec: ParamSpec, raw: Any, *, workspace: Optional[Path]) -
 
 
 def _check_constraints(spec: ParamSpec, value: Any) -> None:
+    """按声明的约束校验取值；**声明的约束不许被静默跳过**。
+
+    只有字符串有"文本形态"，所以 pattern / max_chars / enum 只对 string / path 生效；
+    ParamSpec._check_shape 已经在加载期拒绝把它们声明在别的类型上。这里再证一次：
+    万一有 Spec 绕过加载期校验（model_construct / 手搓），宁可报参数非法，也不静默放行。
+    """
+
     name = spec.name
+    declared_text_constraint = (
+        spec.max_chars is not None or spec.pattern is not None or bool(spec.enum)
+    )
     text = None
     if isinstance(value, str):
         text = value
+    elif declared_text_constraint:
+        raise _fail(
+            ReasonCode.PARAM_INVALID,
+            f"参数 {name} 声明了文本约束（max_chars / pattern / enum），"
+            f"但取值类型是 {type(value).__name__}，无法执行这些约束：拒绝静默跳过",
+        )
     if text is not None:
         if spec.max_chars is not None and len(text) > spec.max_chars:
             raise _fail(

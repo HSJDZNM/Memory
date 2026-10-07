@@ -10,16 +10,68 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from enforcement.action import _check_constraints
 from enforcement.models import (
     ActionRequest,
+    ActionRequestError,
     DriverKind,
     EffectKind,
+    ParamSpec,
     ParamType,
     ParamValue,
+    PathKind,
     RiskLevel,
     digest_of,
     utc_now,
 )
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        {"name": "timeoutMs", "type": "integer", "enum": ("1", "2")},
+        {"name": "run_in_background", "type": "boolean", "pattern": "true|false"},
+        {"name": "argv", "type": "string_list", "max_items": 2, "max_chars": 10},
+        {"name": "argv", "type": "string_list", "max_items": 2, "enum": ("a",)},
+    ],
+)
+def test_text_constraints_on_unsupported_types_are_rejected_at_load(declaration):
+    """pattern / max_chars / enum 只对 string 与 path 生效：声明在别的类型上加载期拒绝。
+
+    action._check_constraints 只对字符串取值做这三项校验，静默跳过等于"接受了但不执行"。
+    """
+
+    with pytest.raises(ValidationError) as error:
+        ParamSpec(**declaration)
+
+    assert "只适用于 string 与 path" in str(error.value)
+
+
+def test_declared_text_constraints_are_never_silently_skipped():
+    """绕过加载期校验的 Spec（model_construct）也不许静默跳过已声明的约束。"""
+
+    spec = ParamSpec.model_construct(
+        name="timeoutMs",
+        type=ParamType.INTEGER,
+        required=True,
+        description="",
+        max_chars=None,
+        max_items=None,
+        max_item_chars=None,
+        pattern="\\d+",
+        enum=(),
+        path_scope=None,
+        path_kind=PathKind.FILE,
+        blocked_prefixes=(),
+        escalating_values=(),
+        requires_permission=None,
+        secret=False,
+    )
+
+    with pytest.raises(ActionRequestError) as error:
+        _check_constraints(spec, 5)
+
+    assert "无法执行这些约束" in str(error.value)
 
 
 def param(name: str, value: str) -> ParamValue:
