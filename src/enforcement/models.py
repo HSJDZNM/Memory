@@ -1264,8 +1264,14 @@ class FileEffect(StrictModel):
             raise ValueError(
                 f"{self.path}: changed=False 但前后哈希不同——证据自相矛盾，拒绝记录"
             )
-        if self.changed and self.sha256_before == self.sha256_after and self.existed_before:
-            raise ValueError(f"{self.path}: changed=True 但哈希未变——证据自相矛盾")
+        if self.changed and self.sha256_before == self.sha256_after:
+            # 不附加 existed_before 条件：existed_before=False + 两侧都没有哈希 + changed=True
+            # 是"声称变了、却没有任何变化可证明"的空证据（baseline_recorded=True 还声称有基线）。
+            # 合法的"新建"是 before=None / after=<hash>，两侧本来就不相等，用不着放宽。
+            raise ValueError(
+                f"{self.path}: changed=True 但前后哈希相同（含两侧都没有哈希）——"
+                "证据自相矛盾：声称发生了变化却没有变化可证明"
+            )
         return self
 
 
