@@ -192,6 +192,34 @@ def test_deleting_a_record_breaks_the_chain(tmp_root):
     assert any("序号" in issue for issue in issues)
 
 
+def test_describe_reads_the_audit_file_once(tmp_root, monkeypatch):
+    """一份 describe() 只扫一次文件：链记录、外来行、final_digest 与 issues 同源。
+
+    旧实现把整份文件读了四遍（chain_records / foreign_records / verify / final_digest），
+    审计是只会变长的追加写文件，这个代价随历史线性增长。
+    """
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.REQUEST, payload={"a": 1})
+    second = sink.append(AuditStage.FINAL_DECISION, payload={"b": 2})
+
+    calls: list[int] = []
+    original = sink._scan
+
+    def counted():  # type: ignore[no-untyped-def]
+        calls.append(1)
+        return original()
+
+    monkeypatch.setattr(sink, "_scan", counted)
+    described = sink.describe()
+
+    assert len(calls) == 1, "describe() 只应扫一次文件"
+    assert described["chained_records"] == 2
+    assert described["foreign_records"] == 0
+    assert described["issues"] == []
+    assert described["final_digest"] == second.digest
+
+
 def test_append_refuses_to_write_while_another_writer_holds_the_lock(tmp_root, monkeypatch):
     """审计 append 是跨进程的读-改-写：拿不到锁必须失败关闭，绝不"没锁也写"。
 

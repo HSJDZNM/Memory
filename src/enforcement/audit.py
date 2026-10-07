@@ -472,19 +472,35 @@ class FileAuditSink:
         return record
 
     def final_digest(self) -> str:
-        records = self.chain_records()
-        return "" if not records else str(records[-1].get("digest", ""))
+        return self._final_digest(self.chain_records())
+
+    def _final_digest(self, chain: Sequence[Mapping[str, Any]]) -> str:
+        return "" if not chain else str(chain[-1].get("digest", ""))
 
     def describe(self) -> dict[str, Any]:
-        """审计健康度摘要（供 CLI / 证据使用，不含任何载荷内容）。"""
+        """审计健康度摘要（供 CLI / 证据使用，不含任何载荷内容）。
 
-        records = self.chain_records()
+        **只扫一次文件**：链记录、外来行计数、final_digest 与 issues 全部从同一次
+        `_scan()` 推出。旧实现为这一份读数把整个文件读了四遍（chain_records /
+        foreign_records / verify / final_digest 各一遍），每行还要 json.loads 四遍；
+        审计是追加写、只会变长的文件，这个代价随历史线性增长。
+        """
+
+        if not self.path.is_file():
+            chain: tuple[Mapping[str, Any], ...] = ()
+            foreign = 0
+            issues = list(self.verify())
+        else:
+            scan = self._scan()
+            chain = tuple(item for item, chained in scan.rows if chained)
+            foreign = sum(1 for _, chained in scan.rows if not chained)
+            issues = list(self._scan_issues(scan))
         return {
             "path": self.path.as_posix(),
-            "chained_records": len(records),
-            "foreign_records": self.foreign_records(),
-            "issues": list(self.verify()),
-            "final_digest": self.final_digest(),
+            "chained_records": len(chain),
+            "foreign_records": foreign,
+            "issues": issues,
+            "final_digest": self._final_digest(chain),
             "updated_at": to_timestamp(utc_now()),
-            "digest": digest_of([record.get("digest") for record in records]),
+            "digest": digest_of([record.get("digest") for record in chain]),
         }
