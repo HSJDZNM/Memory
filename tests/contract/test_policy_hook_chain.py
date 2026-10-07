@@ -68,6 +68,11 @@ const ctx = {
       if (behaviour.throwError) {
         throw new Error(behaviour.throwError);
       }
+      if ('returnValue' in behaviour) {
+        // 形状漂移：result 整个缺失、退出码改名、stderr 变成裸字符串——都必须由插件
+        // 明确拒绝，而不是让翻译步骤自己抛出去。
+        return behaviour.returnValue;
+      }
       return { exitCode: behaviour.exitCode, stderr: { text: behaviour.stderr } };
     },
   },
@@ -120,6 +125,13 @@ observations.pre_unknown_exit = await drivePre();
 
 behaviour = { throwError: 'spawn EPERM' };
 observations.pre_spawn_failure = await drivePre();
+
+// 形状漂移的两条：结果整个缺失；结果在、但 stderr 是裸字符串（退出码 2 的阻断理由）
+behaviour = { returnValue: undefined };
+observations.pre_result_missing = await drivePre();
+
+behaviour = { returnValue: { exitCode: 2, stderr: 'blocked by ARCH-001' } };
+observations.pre_result_string_stderr = await drivePre();
 
 behaviour = { exitCode: 0, stderr: '' };
 observations.post_allow = await drivePost({
@@ -1486,6 +1498,29 @@ def _assert_origin_shape(origin: dict) -> None:
     assert isinstance(origin["fix"], str) and origin["fix"].strip() != "", origin
     assert "联系管理员" not in origin["fix"]
     assert origin["causal_link"] in {"proven", "unproven"}
+
+
+def test_a_malformed_hook_result_is_refused_not_thrown(tmp_root) -> None:
+    """shell 结果形状漂移时必须**由插件**明确拒绝，而不是让翻译步骤抛出去。
+
+    `ctx.shell.run` 是唯一被 try/catch 包住的调用，其后的一切（取退出码、取 stderr、判定行
+    解析）此前都裸露在外：`result` 缺失时 `result.exitCode` 抛 TypeError，逃出插件处理器后
+    由 dsh 的错误处理接管——「只有 exit 0 放行」这条契约就不再由本插件保证。另外
+    `result.stderr?.text` 遇到裸字符串 stderr 会静默变成 ''，把 Hook 写的阻断理由整条丢掉。
+    """
+
+    observed = run_harness(tmp_root)
+
+    # ① 结果整个缺失：拒绝，不是抛异常（探针能跑完本身就是这条的证据）
+    missing = observed["pre_result_missing"]["outcome"]
+    assert missing["kind"] == "deny", missing
+    assert "退出码" in missing["reason"], missing
+    assert observed["pre_result_missing"]["nextCalls"] == 0
+
+    # ② 退出码 2 + 裸字符串 stderr：阻断理由必须原样读出来（不被吞成空串）
+    string_stderr = observed["pre_result_string_stderr"]["outcome"]
+    assert string_stderr["kind"] == "deny", string_stderr
+    assert "blocked by ARCH-001" in string_stderr["reason"], string_stderr
 
 
 def test_a_blank_project_dir_behaves_like_an_undeclared_one(tmp_root) -> None:

@@ -556,31 +556,43 @@ export function createRunHook(ctx, config) {
       return { allowed: false, reason: outcome.reason, origin: outcome.origin };
     }
 
-    const exitCode = result.exitCode;
-    const stderr = String(result.stderr?.text ?? '').trim();
+    // 结果形状只信我们认得的部分：`result` 缺失、`exitCode` 改名、`stderr` 变成裸字符串，
+    // 都不能让「翻译失败关闭」这一步自己抛出去——那会由 dsh 的错误处理接管，
+    // 「只有 exit 0 放行」就不再由本插件保证。形状不认识 = 明确拒绝（未知状态不放行）。
+    const exitCode = result?.exitCode;
+    const stderr = (
+      typeof result?.stderr === 'string' ? result.stderr : String(result?.stderr?.text ?? '')
+    ).trim();
     // N18：判定行是 Hook 自己写的策略事实；退出码只说明"进程怎么结束的"。
     const verdict = verdictOf(stderr);
     const detail = withoutVerdict(stderr);
-    if (exitCode === 2) {
-      if (verdict !== null) {
-        return { allowed: false, reason: policyReason(verdict, detail, exitCode) };
-      }
-      return { allowed: false, reason: stderr || 'blocked by policy hook' };
+
+    if (exitCode === 0) {
+      return { allowed: true, reason: '' };
     }
-    if (exitCode !== 0) {
-      if (verdict !== null) {
-        return { allowed: false, reason: policyReason(verdict, detail, exitCode) };
-      }
+    if (typeof exitCode !== 'number' || !Number.isFinite(exitCode)) {
       return {
         allowed: false,
         reason:
-          'policy-hook: Hook 退出码 ' +
-          String(exitCode) +
-          '，未知状态按失败关闭拒绝' +
+          'policy-hook: Hook 返回值里没有可读的退出码，未知状态按失败关闭拒绝' +
           (stderr ? '：' + stderr : ''),
       };
     }
-    return { allowed: true, reason: '' };
+    if (verdict !== null) {
+      // exit 2 与"其余非 0"共用同一份转译：两处各写一份，修一处就会漏另一处。
+      return { allowed: false, reason: policyReason(verdict, detail, exitCode) };
+    }
+    if (exitCode === 2) {
+      return { allowed: false, reason: stderr || 'blocked by policy hook' };
+    }
+    return {
+      allowed: false,
+      reason:
+        'policy-hook: Hook 退出码 ' +
+        String(exitCode) +
+        '，未知状态按失败关闭拒绝' +
+        (stderr ? '：' + stderr : ''),
+    };
   };
 
   return runHook;
