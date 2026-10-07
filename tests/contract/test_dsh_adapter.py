@@ -562,6 +562,53 @@ def test_unparseable_changed_text_fails_closed(dsh_config_path, dsh_project, arc
     assert "解析" in result.violations[0].message
 
 
+def test_missing_change_text_field_is_refused_not_treated_as_no_dependencies(
+    dsh_config_path, dsh_project
+):
+    """变更文本字段缺失 / 不是字符串 ≠「没有引入依赖」。
+
+    旧实现把这个载荷 join 成空串：`governed_dependencies("")` 返回 `()` 且不加
+    `UNPROVEN_CHANGED_TEXT`（空文本 ast.parse 得通），依赖类 checker 于是一致读到
+    「本次没有引入依赖」——一次不带 content 的 write 就能结构性绕过依赖规则。
+    """
+
+    config = load_config(dsh_config_path)
+
+    missing = event_for(
+        "pre-tool-use-edit-block.json",
+        dsh_project,
+        tool_input={"file_path": "src/shop/order_controller.py", "old_string": "x = 1"},
+    )
+    with pytest.raises(DshEventError) as error:
+        to_policy_event(missing, config=config)
+    assert "new_string" in str(error.value)
+
+    # 结构化内容块（不是字符串）同样证明不了，不得当成「没有依赖」
+    structured = event_for(
+        "pre-tool-use-write-block.json",
+        dsh_project,
+        tool_input={
+            "file_path": "src/shop/cart_controller.py",
+            "content": [{"type": "text", "text": "from shop import order_repository"}],
+        },
+    )
+    with pytest.raises(DshEventError):
+        to_policy_event(structured, config=config)
+
+
+def test_an_empty_change_text_is_still_a_declared_change(dsh_config_path, dsh_project):
+    """字段在、值是空串：清空文件 / 删掉一行是合法输入，不得被上一条拒掉。"""
+
+    config = load_config(dsh_config_path)
+    decision = to_policy_event(
+        edit_payload(dsh_project, file_path="src/shop/order_controller.py", text=""),
+        config=config,
+    )
+
+    assert decision.event is not None
+    assert decision.event.dependencies == ()
+
+
 def test_unproven_dependencies_only_block_when_a_dependency_rule_is_in_scope(
     dsh_config_path, dsh_project, arch_rules
 ):

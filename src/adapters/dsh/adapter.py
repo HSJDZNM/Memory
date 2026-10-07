@@ -1254,11 +1254,21 @@ def to_policy_event(raw: Any, *, config: AdapterConfig) -> AdapterDecision:
             f"路径 {repo_path} 没有命中 languages 映射；请补充规则或显式声明 default_language"
         )
 
-    text = "\n".join(
+    # 声明了变更文本字段的工具，至少要有一个字段真的带字符串：字段缺失 / 不是字符串
+    # 不等于「没有引入依赖」。旧实现会 join 成空串，`governed_dependencies("")` 返回
+    # 空元组、且不加 UNPROVEN_CHANGED_TEXT（空文本 ast.parse 得通），依赖类 checker
+    # 于是一致读到「本次没有引入依赖」——这正是结构性放行（R3 要求证明不了必须显式）。
+    proposed_values = [
         tool_input[field]
         for field in spec.proposed_fields
         if isinstance(tool_input.get(field), str)
-    )
+    ]
+    if spec.proposed_fields and not proposed_values:
+        raise DshEventError(
+            f"工具 {tool_name} 的变更文本字段 {list(spec.proposed_fields)} 缺失或不是字符串："
+            "依赖集无法证明，不得按「没有引入依赖」处理"
+        )
+    text = "\n".join(proposed_values)
     event = PolicyEvent(
         event_id=f"{session_id}:{tool_use_id}",
         request_id=f"{session_id}:{tool_use_id}",
