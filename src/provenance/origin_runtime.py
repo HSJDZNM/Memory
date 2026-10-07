@@ -99,7 +99,15 @@ def _observe(path: Path) -> tuple[str, str, bool, bool]:
     text, how = _read_text(path)
     if text is None:
         return "read", "读观测：" + how + "（文件在，但这份内容读不出来）", True, False
-    return "load", "load 观测：读到了 " + str(len(text)) + " 字符，这份输入是可用的", False, False
+    # 只读到"它是可读的 UTF-8"为止：**没有解析**它的内容。观测方法必须与真正做过的事
+    # 对齐——写 load 等于声称解析过（配置族的证伪理由还会据此说"不是配置读不到这一侧"），
+    # 而内容层面的问题（语法错、缺字段）要另一次核验才说得出来。
+    return (
+        "read",
+        "读观测：读到了 " + str(len(text)) + " 字符（UTF-8 可读）；这一步没有解析它的内容",
+        False,
+        False,
+    )
 
 
 def _evidence_unavailable_origin(*, detail: str) -> Origin:
@@ -166,8 +174,9 @@ def verification_of_config(config_path: Optional[Path | str], *, source: str) ->
     - `stat` 说它在、但读不到 / 不是 UTF-8 → `host.config_unreadable` 之下的
       `platform.config_unreadable`（**不是**"不存在"）——两者都是配置输入的问题，
       但理由必须说得出是哪一种；
-    - 读到了、也解析了 → **核验证伪了"读不到"这条指控** → `unknown_origin`；
-      `causal_link=unproven`：这条理由指着配置的"读"这一侧，而它不是。
+    - 读得到（UTF-8）→ **核验证伪了"读不到"这条指控** → `unknown_origin`，`method="read"`；
+      这一步只做了读观测、**没有解析**内容，所以结论只说"不是读不到这一侧"，
+      不声称内容层面没问题（那要另一次核验，`causal_link=unproven`）。
     - 配置路径给不出来 → `unknown_origin`（没有对象就没有核验）。
     """
 
@@ -215,7 +224,7 @@ def verification_of_config(config_path: Optional[Path | str], *, source: str) ->
         owner=OWNER,
         object_value=display,
         object_source=source,
-        method="load",
+        method=method,
     )
 
 

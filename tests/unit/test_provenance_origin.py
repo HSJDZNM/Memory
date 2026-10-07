@@ -338,7 +338,9 @@ def test_verification_falsifies_itself_when_the_config_is_fine(tmp_root: Path):
     assert origin.causal_link == "unproven"
     assert origin.object_value == "dsh-adapter.yaml"
     assert "证伪" in origin.result
-    assert origin.method == "load"
+    # 只读到"它是可读的 UTF-8"：方法必须是 read，理由不许声称解析过内容。
+    assert origin.method == "read"
+    assert "没有解析" in origin.result
 
 
 def test_verification_says_which_kind_of_unreadable_it_is(tmp_root: Path):
