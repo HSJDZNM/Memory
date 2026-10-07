@@ -839,6 +839,43 @@ def test_cli_inspect_reports_the_mapping(tmp_root: Path, capsys) -> None:
     assert payload["context"]["layer"] == "controller"
 
 
+def test_cli_inspect_reports_its_own_input_failures_with_exit_code_2(tmp_root: Path, capsys) -> None:
+    """inspect 的输入错误必须是「[adapters] 消息 + 退出码 2」，不是原始 traceback。
+
+    同一批读取（事件文件 / JSON 解析 / 规则集）在 check 里都有 try/except，inspect 此前裸露在
+    外：`--event` 指到不存在的文件抛 FileNotFoundError、内容不是 JSON 抛 JSONDecodeError、
+    policies 坏掉抛未捕获的 LoaderError——三种都会打出 traceback，破坏本模块的统一契约。
+    """
+
+    from adapters.cli import main
+
+    missing = tmp_root / "does-not-exist.json"
+    assert main(["--root", str(REPO_ROOT), "inspect", "--agent", "dsh", "--event", str(missing)]) == 2
+    assert "[adapters]" in capsys.readouterr().err
+
+    broken = tmp_root / "not-json.json"
+    broken.write_text("这不是 JSON" + chr(10), encoding="utf-8", newline="")
+    assert main(["--root", str(REPO_ROOT), "inspect", "--agent", "dsh", "--event", str(broken)]) == 2
+    assert "[adapters]" in capsys.readouterr().err
+
+
+def test_cli_inspect_reports_a_broken_rule_set_with_exit_code_2(tmp_root: Path, capsys, monkeypatch) -> None:
+    """规则集读不到同样按 EXIT_USAGE（与 check 的 LoaderError 分支同一口径）。"""
+
+    from adapters.cli import main
+    from policy.loader import LoaderError
+
+    def boom(root):
+        raise LoaderError("规则集坏了（测试替身）")
+
+    monkeypatch.setattr("adapters.cli._load_rules", boom)
+
+    event_path = tmp_root / "event.json"
+    event_path.write_text("{}" + chr(10), encoding="utf-8", newline="")
+    assert main(["--root", str(REPO_ROOT), "inspect", "--agent", "dsh", "--event", str(event_path)]) == 2
+    assert "规则集不可用" in capsys.readouterr().err
+
+
 def test_agent_loop_trace_scenario_reaches_an_allow_decision(capsys) -> None:
     from tools.agent_loop import main
 
