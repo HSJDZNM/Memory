@@ -809,17 +809,27 @@ class DshPreExecuteHook:
 
         if self.capture_dir is None:
             return
-        self.capture_dir.mkdir(parents=True, exist_ok=True)
-        self.sequence += 1
-        safe_tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool_name) or "unknown"
-        call_id = str(raw_payload.get("tool_use_id") or f"{self.sequence:03d}")
-        safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", call_id) or f"{self.sequence:03d}"
-        target = self.capture_dir / f"{safe_tool}-{safe_id}.json"
-        target.write_text(
-            json.dumps(dict(raw_payload), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-            newline="\n",
-        )
+        try:
+            self.capture_dir.mkdir(parents=True, exist_ok=True)
+            self.sequence += 1
+            safe_tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool_name) or "unknown"
+            call_id = str(raw_payload.get("tool_use_id") or f"{self.sequence:03d}")
+            safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", call_id) or f"{self.sequence:03d}"
+            target = self.capture_dir / f"{safe_tool}-{safe_id}.json"
+            target.write_text(
+                json.dumps(dict(raw_payload), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+        except OSError as error:
+            # 采集是**诊断**（`--capture` 的帮助写着"不影响判定"）：写不了就喊一声，
+            # 但绝不让它换掉这次的判定理由——让 OSError 逃出去会被 main 读成
+            # startup_error，而 handle 承诺过"任何异常路径都返回阻断，绝不抛给解释器"。
+            print(
+                "[policy] CAPTURE UNAVAILABLE "
+                + sanitize(str(error), project_root=self.config.project_root),
+                file=sys.stderr,
+            )
 
     def _pre_evidence(
         self, raw_payload: Any, *, event: PolicyEvent, context: Any
@@ -1164,10 +1174,33 @@ class DshPreExecuteHook:
                 "action_id": call_action_id(raw_payload),
             }
 
-        outcome = self._handle_guarded(raw_payload, started=started, base_record=base_record)
+        try:
+            outcome = self._handle_guarded(raw_payload, started=started, base_record=base_record)
+        except OSError as error:
+            # 审计 / 台账写不进去：`_fail` 自己也要写审计，所以它会在 except 处理器里再抛一次。
+            # 仍然失败关闭（退出码 2），但理由用**既有**原因码 config_error（模块本来就把 OSError
+            # 归到它），而不是把它读成"Hook 起不来"的 startup_error——那是错误归因，
+            # 会让人去查配置而不是查审计目标。这里不再尝试写审计（刚证明写不进去）。
+            return HookOutcome(
+                exit_code=EXIT_BLOCK,
+                reason_code="config_error",
+                stderr=sanitize(
+                    f"[policy] BLOCKED (config_error) detail: 审计与台账均不可写：{error}",
+                    project_root=self.config.project_root,
+                ),
+                elapsed_ms=int((self.clock() - started) * 1000),
+            )
         # G11：放在判定记录**之后**写。既有消费方（测试与工具）按"首行 = 本次判定"读审计，
         # 把留痕插到前面会改变这条既有约定（只增不改的意思是不动已有记录，不是随便插队）。
-        self._record_context_injection(base_record=base_record, started=started)
+        try:
+            self._record_context_injection(base_record=base_record, started=started)
+        except OSError as error:
+            # 留痕写不进去**不改判定**（G11 的那条留痕本来就是旁注）：喊一声，原样返回判定。
+            print(
+                "[policy] CONTEXT INJECTION LEDGER UNAVAILABLE "
+                + sanitize(str(error), project_root=self.config.project_root),
+                file=sys.stderr,
+            )
         return outcome
 
     def _handle_guarded(
