@@ -167,7 +167,16 @@ class GrantError(EnforcementError):
     """授权不可用：哈希不符、过期、已被使用、主体不符或缺少绑定信息。
 
     一律按失败关闭处理：不执行、不降级、不"再问一次模型"。
+
+    `reason_code` 是**结构化**的拒绝原因（ReasonCode 的值）：执行器据此写审计的
+    reason_code，不去解析消息文本——措辞、标点或本地化一改，读文本分流就会把
+    "过期 / 已被使用"悄悄降级成笼统的 GRANT_INVALID，而审计信号正是这条链路要保证的东西。
+    读不出来时调用方按最保守的 GRANT_INVALID 处理（仍然是拒绝，不会放行）。
     """
+
+    def __init__(self, message: str, *, reason_code: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 class LedgerError(EnforcementError):
@@ -1057,28 +1066,50 @@ class AuthorizationGrant(StrictModel):
         if self.action_hash != request.action_hash:
             raise GrantError(
                 "授权绑定的 action_hash 与当前动作不一致："
-                "参数、主体、schema 或上下文已经变化，旧决定不得复用"
+                "参数、主体、schema 或上下文已经变化，旧决定不得复用",
+                reason_code=ReasonCode.GRANT_INVALID.value,
             )
         if self.action_id != request.action_id:
-            raise GrantError("授权绑定的 action_id 与当前动作不一致")
+            raise GrantError(
+                "授权绑定的 action_id 与当前动作不一致",
+                reason_code=ReasonCode.GRANT_INVALID.value,
+            )
         if self.tool_id != request.tool_id:
-            raise GrantError("授权绑定的工具与当前动作不一致")
+            raise GrantError(
+                "授权绑定的工具与当前动作不一致", reason_code=ReasonCode.GRANT_INVALID.value
+            )
         if self.tool_schema_hash != request.tool_schema_hash:
-            raise GrantError("工具 schema 已变化（可能升级过 Agent），授权立即失效")
+            raise GrantError(
+                "工具 schema 已变化（可能升级过 Agent），授权立即失效",
+                reason_code=ReasonCode.GRANT_INVALID.value,
+            )
         if request.subject is None or self.subject != request.subject:
-            raise GrantError("授权主体与当前请求主体不一致：授权不可跨主体复用")
+            raise GrantError(
+                "授权主体与当前请求主体不一致：授权不可跨主体复用",
+                reason_code=ReasonCode.GRANT_INVALID.value,
+            )
         if now >= self.expires_at:
-            raise GrantError(f"授权已过期（{to_timestamp(self.expires_at)}）：必须重新走 pre-check")
+            raise GrantError(
+                f"授权已过期（{to_timestamp(self.expires_at)}）：必须重新走 pre-check",
+                reason_code=ReasonCode.GRANT_EXPIRED.value,
+            )
         if now < self.issued_at - timedelta(seconds=5):
-            raise GrantError("授权签发时间在未来：时钟或凭据不可信，拒绝执行")
+            raise GrantError(
+                "授权签发时间在未来：时钟或凭据不可信，拒绝执行",
+                reason_code=ReasonCode.GRANT_INVALID.value,
+            )
         if max_ttl_seconds is not None:
             ttl = (self.expires_at - self.issued_at).total_seconds()
             if ttl > max_ttl_seconds:
                 raise GrantError(
-                    f"授权有效期 {ttl:g}s 超过上限 {max_ttl_seconds}s：允许结果必须是短时效的"
+                    f"授权有效期 {ttl:g}s 超过上限 {max_ttl_seconds}s：允许结果必须是短时效的",
+                    reason_code=ReasonCode.GRANT_INVALID.value,
                 )
         if used and self.single_use:
-            raise GrantError("授权已被使用：单次授权不得重复消费")
+            raise GrantError(
+                "授权已被使用：单次授权不得重复消费",
+                reason_code=ReasonCode.GRANT_REUSED.value,
+            )
 
 
 class PreDecision(StrictModel):

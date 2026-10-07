@@ -21,6 +21,7 @@ from enforcement.ledger import EnforcementLedger
 from enforcement.models import (
     AuditStage,
     Decision,
+    GrantError,
     ExecutionStatus,
     FinalOutcome,
     LedgerError,
@@ -59,6 +60,20 @@ class SpyDriver:
     def execute(self, request, spec, *, workspace=None) -> DriverResult:
         self.calls += 1
         return self.inner.execute(request, spec, workspace=workspace)
+
+
+class RewordedGrantLedger(EnforcementLedger):
+    """"已被使用"换成一句完全不含关键词的话，但保留结构化 reason_code。"""
+
+    def consume_grant(self, grant, *, now=None) -> None:  # type: ignore[no-untyped-def]
+        raise GrantError("这张凭据不能再用了", reason_code="grant_reused")
+
+
+class UnlabelledGrantLedger(EnforcementLedger):
+    """文本长得像"过期"，但没有结构化原因码：只能按最保守的 GRANT_INVALID 处理。"""
+
+    def consume_grant(self, grant, *, now=None) -> None:  # type: ignore[no-untyped-def]
+        raise GrantError("授权已过期（文本像过期，但没有结构化原因码）")
 
 
 class FailingExecutionLedger(EnforcementLedger):
@@ -242,6 +257,54 @@ def test_driver_unavailable_does_not_burn_the_single_use_grant(enforcement_paths
     )
     assert retry.record.status is ExecutionStatus.EXECUTED
     assert spies["fs.edit"].calls == 1
+
+
+def test_grant_refusal_reason_comes_from_the_structured_field(enforcement_paths):
+    """审计里的拒绝原因必须来自结构化字段，不来自对消息文本的分词。
+
+    旧实现按消息里的"过期" / "已被使用"子串分流：换一句措辞，审计就静默降级成
+    GRANT_INVALID；反过来，一句长得像"过期"的话会被读成 GRANT_EXPIRED。
+    """
+
+    seed(enforcement_paths)
+    registry, sink, ledger, executor, spies = build(enforcement_paths)
+    request = make_action(registry, enforcement_paths, "fs.edit", edit_params())
+    pre = pre_execute(request, registry=registry, ledger=ledger, sink=sink)
+    spec = registry.tool("fs.edit")
+
+    def refuse_with(fake_ledger: EnforcementLedger):
+        return ControlledExecutor(
+            ledger=fake_ledger,
+            drivers=executor.drivers,
+            sink=sink,
+            max_grant_ttl_seconds=registry.max_grant_ttl_seconds,
+        ).execute(
+            request, spec=spec, pre=pre.decision, workspace=enforcement_paths.workspace
+        )
+
+    unlabelled = refuse_with(UnlabelledGrantLedger(enforcement_paths.ledger))
+    assert unlabelled.record.reason_code is ReasonCode.GRANT_INVALID, (
+        "文本像过期但没有结构化原因码：只能按最保守的原因码处理，"
+        f"得到 {unlabelled.record.reason_code}"
+    )
+
+    reworded = refuse_with(RewordedGrantLedger(enforcement_paths.ledger))
+    assert reworded.record.reason_code is ReasonCode.GRANT_REUSED, (
+        f"结构化 reason_code 必须被采用，得到 {reworded.record.reason_code}"
+    )
+
+    # 反真空：真的过期时仍要报 GRANT_EXPIRED（结构化字段在正常路径上同样要被采用）。
+    expired = pre.decision.model_copy(
+        update={
+            "grant": pre.decision.grant.model_copy(
+                update={"expires_at": utc_now() - timedelta(seconds=1)}
+            )
+        }
+    )
+    expired_outcome = executor.execute(
+        request, spec=spec, pre=expired, workspace=enforcement_paths.workspace
+    )
+    assert expired_outcome.record.reason_code is ReasonCode.GRANT_EXPIRED
 
 
 def test_refusal_paths_also_write_a_final_decision_record(enforcement_paths):

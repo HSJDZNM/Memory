@@ -180,7 +180,7 @@ class ControlledExecutor:
                 request,
                 spec,
                 pre,
-                reason=ReasonCode.GRANT_REUSED,
+                reason=self._grant_reason(error),
                 detail=str(error),
                 moment=moment,
                 notes=notes,
@@ -442,13 +442,25 @@ class ControlledExecutor:
                 max_ttl_seconds=self.max_grant_ttl_seconds,
             )
         except GrantError as error:
-            text = str(error)
-            if "过期" in text:
-                return ReasonCode.GRANT_EXPIRED
-            if "已被使用" in text:
-                return ReasonCode.GRANT_REUSED
-            return ReasonCode.GRANT_INVALID
+            return self._grant_reason(error)
         return None
+
+    @staticmethod
+    def _grant_reason(error: GrantError) -> ReasonCode:
+        """从**结构化字段**取原因码，不解析消息文本。
+
+        旧实现按消息里的中文子串（"过期" / "已被使用"）分流：措辞、标点或本地化一改，
+        审计里就会静默降级成笼统的 GRANT_INVALID——而"被拒绝的原因"正是这条链路要保证
+        的审计信号。读不出结构化原因时按最保守的 GRANT_INVALID 处理（仍然是拒绝）。
+        """
+
+        value = getattr(error, "reason_code", None)
+        if not value:
+            return ReasonCode.GRANT_INVALID
+        try:
+            return ReasonCode(str(value))
+        except ValueError:
+            return ReasonCode.GRANT_INVALID
 
     def _maybe_rollback(
         self,

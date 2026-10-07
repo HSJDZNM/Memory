@@ -48,6 +48,7 @@ from .models import (
     AuthorizationGrant,
     GrantError,
     LedgerError,
+    ReasonCode,
     to_timestamp,
     utc_now,
 )
@@ -243,7 +244,10 @@ class EnforcementLedger:
         """消费单次授权。已被消费、或已被其他进程抢走时抛 GrantError（失败关闭）。"""
 
         if self.grant_used(grant.grant_id):
-            raise GrantError("授权已被使用：单次授权不得重复消费")
+            raise GrantError(
+                "授权已被使用：单次授权不得重复消费",
+                reason_code=ReasonCode.GRANT_REUSED.value,
+            )
         # 认领身份必须**每次尝试唯一**：两个并发方可能拿到同一个 now（确定性时钟、
         # 同一毫秒、测试注入），用时间戳推导会让双方写出逐字节相同的 claim_id，
         # 于是下面"写入后复核"在两边都判自己赢，单次授权被消费两次。
@@ -253,7 +257,10 @@ class EnforcementLedger:
             item for item in self.of_kind("grant_used") if item.get("grant_id") == grant.grant_id
         ][0]
         if winner.get("claim_id") != claim_id:
-            raise GrantError("授权已被其他执行抢占：拒绝并发重复执行同一个动作")
+            raise GrantError(
+                "授权已被其他执行抢占：拒绝并发重复执行同一个动作",
+                reason_code=ReasonCode.GRANT_REUSED.value,
+            )
 
     def record_approval_use(
         self,
