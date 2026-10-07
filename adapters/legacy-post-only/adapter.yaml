@@ -11,6 +11,18 @@ project: memory
 timeout_ms: 5000
 
 layers:
+  # P4/P5：平台级「哪些路径算测试」只有一份声明——validation/test-layout.yaml 的
+  # test_patterns。这里必须逐条对应，并且放在生产层 glob **之前**：layers 是
+  # first-match-wins，tests/unit/test_order_repository.py 会先命中 **/*_repository.py
+  # 被判成 repository，而 policy.check 对同一个文件按平台声明给出 layer=test ——
+  # 同一个文件在两个层上被判，正是 P4/M1 要消灭的分叉（Hook 路径 allow、验证器路径
+  # block，两边读的人都不知道对方看到了什么）。
+  # 漂移由 tests/contract/test_agent_adapters.py 的对照用例钉住：平台每条 test_patterns
+  # 的见证路径都必须落到 test 层。
+  - pattern: "tests/**/test_*.py"
+    layer: test
+  - pattern: "tests/**/*_test.py"
+    layer: test
   - pattern: "**/*_controller.py"
     layer: controller
   - pattern: "**/*_service.py"

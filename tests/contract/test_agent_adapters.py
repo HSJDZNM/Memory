@@ -587,6 +587,94 @@ def test_every_scenario_renders_for_every_adapter() -> None:
             assert isinstance(raw, dict)
             assert raw
 
+# --------------------------------------------------------------------------- 分层声明（P4/P5）
+
+
+def _witness(pattern: str) -> str:
+    """把一条 glob 变成确定的见证路径（与 test_dsh_layer_declaration.py 同一手法）。
+
+    见证路径必须**自证**：调用方随后会用 glob_match(pattern, witness) 复查，
+    生成错了就当场红，而不是悄悄拿一条不匹配的路径去测别的规则。
+    """
+
+    segments: list[str] = []
+    for segment in pattern.split("/"):
+        if segment == "**":
+            segments.append("witness")
+            continue
+        segments.append(
+            segment.replace("**", "witness").replace("*", "witness").replace("?", "x")
+        )
+    return "/".join(segments)
+
+
+def _platform_test_patterns() -> tuple[str, ...]:
+    """平台级"哪些路径算测试"的唯一声明（validation/test-layout.yaml）。"""
+
+    from validators.registry import load_test_layout
+
+    return tuple(load_test_layout(root=REPO_ROOT).test_patterns)
+
+
+def _test_layer_gaps(adapters: dict) -> dict[str, str]:
+    """平台声明的每条测试 pattern 在 Phase 6 层次表里没落到 test 层的那些。"""
+
+    from validators.globs import glob_match
+
+    gaps: dict[str, str] = {}
+    for agent_id, adapter in adapters.items():
+        for pattern in _platform_test_patterns():
+            path = _witness(pattern)
+            assert glob_match(pattern, path), f"见证路径 {path!r} 不匹配平台 pattern {pattern!r}"
+            layer = adapter.layer_for(path)
+            if layer != "test":
+                gaps[f"{agent_id}:{pattern}"] = f"{path} -> {layer!r}"
+    return gaps
+
+
+def test_every_platform_test_pattern_lands_on_the_test_layer_for_every_adapter() -> None:
+    """P4/P5：同一个测试文件不许在 Hook 路径与验证器路径上拿到两个层。
+
+    平台级声明是 validation/test-layout.yaml 的 test_patterns（policy.check 缺 --layer
+    时按它定 layer=test）。Phase 6 的 adapters/*/adapter.yaml 不把同一条映射放在
+    layers 顶部，first-match-wins 就会让 tests/unit/test_order_repository.py 命中
+    **/*_repository.py、被判成 repository——同一个文件两条路径两个层。
+    """
+
+    from adapters.loader import load_adapters
+
+    adapters = load_adapters(["dsh", "generic-json", "legacy-post-only"], root=REPO_ROOT)
+
+    assert _test_layer_gaps(adapters) == {}
+
+
+def test_the_test_layer_check_reports_an_adapter_without_the_declaration(tmp_root: Path) -> None:
+    """变异证明这条检查会红：拿掉测试层两行，同一批平台 pattern 立刻被点名。
+
+    走的是真实装配路径（load_adapter + 真实层次表匹配），只把配置复制到 tmp 并把
+    project_root 写成绝对路径——不在这里重写一份层匹配实现。
+    """
+
+    from adapters.loader import load_adapter
+
+    source = ADAPTERS_ROOT / "dsh" / "adapter.yaml"
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    document["layers"] = [row for row in document["layers"] if row.get("layer") != "test"]
+    document["project_root"] = str(REPO_ROOT)
+    mutated = tmp_root / "dsh-adapter-without-test-layer.yaml"
+    mutated.write_text(
+        yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+        newline="",
+    )
+
+    adapter = load_adapter("dsh", root=REPO_ROOT, config_path=mutated)
+    gaps = _test_layer_gaps({"dsh": adapter})
+
+    assert set(gaps) == {f"dsh:{pattern}" for pattern in _platform_test_patterns()}
+    # 值里必须带"解析成了哪个层"，读的人不用再跑一次才知道差在哪
+    assert all(reason.endswith(("'repository'", "'module'", "'controller'", "'None'")) for reason in gaps.values()), gaps
+
 
 # --------------------------------------------------------------------------- 决策翻译
 
