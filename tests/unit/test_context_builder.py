@@ -276,6 +276,23 @@ def test_budget_too_small_for_policy_facts_raises() -> None:
         )
 
 
+def test_a_long_query_echo_does_not_eat_the_snippet_budget() -> None:
+    """长查询回显不算进不可让步的预留：它由 _fit 缩短，不该挤掉片段（复核发现）。"""
+
+    builder = ContextBuilder(budget_chars=800, max_snippet_chars=300, max_snippets=2)
+    long_query = "查询文本" * 50  # 200 字符回显（RetrievalQuery 允许到 2000）
+    context = builder.build(
+        retrieval=make_result(make_chunk(1, text="body " * 40)), query=long_query
+    )
+    assert context.status is ContextStatus.OK
+    assert context.snippets, "长查询回显不该把片段空间挤光"
+    rendered = render_context(context)
+    assert len(rendered) <= context.budget_chars
+    assert context.used_chars == len(rendered)
+    # 让步的是回显（它本来就只是回显），不是内容。
+    assert len(context.query) < len(long_query)
+
+
 def test_all_candidates_dropped_by_budget_downgrades_the_status() -> None:
     """检索成功但预算把候选全丢掉时，status / reason 与渲染必须一致（复核发现）。"""
 

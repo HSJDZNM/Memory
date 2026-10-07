@@ -212,8 +212,9 @@ class ContextBuilder(StrictModel):
                 detail_text = retrieval.detail
             ordered, dropped = self._ordered(retrieval.results)
 
+        decorated_query = query or (retrieval.query if retrieval is not None else "")
         header = _render_header(
-            query=query or (retrieval.query if retrieval is not None else ""),
+            query=decorated_query,
             request_id=request_id or (retrieval.request_id if retrieval is not None else None),
             trace_id=trace_id or (retrieval.trace_id if retrieval is not None else None),
             index_version=index_version,
@@ -223,7 +224,23 @@ class ContextBuilder(StrictModel):
 
         snippets: list[ContextSnippet] = []
         if status is ContextStatus.OK and ordered:
-            reserved = len(header) + len(policy_block) + len(_reference_header()) + len(REFERENCE_END) + 2
+            # 预留只覆盖**不可让步**的那部分：查询回显是客户端给的文本（最长 max_query_chars），
+            # 预算不够时由 _fit() 缩短。把它算进预留，一条长查询就会吃光片段空间（甚至直接
+            # ContextBudgetError 去怪配置），而那条回显本来就只是回显。
+            fixed_header = _render_header(
+                query="",
+                request_id=request_id or (retrieval.request_id if retrieval is not None else None),
+                trace_id=trace_id or (retrieval.trace_id if retrieval is not None else None),
+                index_version=index_version,
+                method=method,
+            )
+            reserved = (
+                len(fixed_header)
+                + len(policy_block)
+                + len(_reference_header())
+                + len(REFERENCE_END)
+                + 2
+            )
             if reserved > self.budget_chars:
                 raise ContextBudgetError(
                     f"预算 {self.budget_chars} 连固定的头部与策略事实都放不下（需要 {reserved}）"
