@@ -2033,6 +2033,43 @@ def test_verify_seal_refuses_unknown_anchor_protocol_version(tmp_root: Path) -> 
     assert after[0].startswith("锚的协议版本未知"), after
 
 
+def test_write_api_config_resolves_a_relative_project_for_extra_rules(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """project 给相对路径时，额外规则目录仍必须写成绝对路径。
+
+    为什么必须这样：`_copy_extra_rules` 返回的目录会原样写进租户的 `rules` 列表，而
+    `TenantSpec.rules` 的每一项相对**租户项目根**解析（不是仓库根）。project 没被解析时，
+    相对目录会拼成 `<project>/out/project/rules-extra/...`——租户装配直接失败，报错指向的
+    却是"找不到规则目录"，不是"project 参数是相对的"。
+    """
+
+    import yaml
+
+    from api_support import write_api_config
+
+    source = tmp_root / "extra-source"
+    source.mkdir(parents=True, exist_ok=True)
+    (source / "ARCH-001.yaml").write_text(
+        (REPO_ROOT / "policies" / "architecture" / "ARCH-001.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+        newline="\n",
+    )
+    monkeypatch.chdir(tmp_root)  # 相对 project 相对 cwd 解析：把基准固定住，用例不依赖调用方 cwd
+
+    config = write_api_config(tmp_root, project=Path("relative-project"), extra_rules=(source,))
+
+    document = yaml.safe_load(config.read_text(encoding="utf-8"))
+    rules = document["tenants"][0]["rules"]
+    assert rules[0] == "rules", rules
+    extras = rules[1:]
+    assert extras, "额外规则包没被写进配置：这条用例就什么都没证明"
+    for item in extras:
+        path = Path(item)
+        assert path.is_absolute(), f"额外规则目录必须绝对（TenantSpec 相对项目根解析）：{rules}"
+        assert path.is_relative_to(tmp_root.resolve()), path
+
+
 def test_placeholder_guard_sees_digit_bearing_placeholders() -> None:
     """模板占位符守卫必须覆盖带数字的名字：`{token_sha2}` 是模板里真实存在的一条。
 

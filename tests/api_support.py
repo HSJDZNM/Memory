@@ -277,7 +277,13 @@ def write_api_config(
     """
 
     root = Path(root)
-    project = _write_project(Path(project), docs=docs)
+    # project 先解析成绝对路径再使用：下面两处都要求"绝对"——`_relative_to_repo(project)`
+    # 写进配置的 project_root，而 `_copy_extra_rules` 返回的目录会**原样**写进 rules 列表，
+    # TenantSpec 又把每一项相对**租户项目根**解析。调用方给相对路径（例如
+    # `write_api_config(..., project="out/project")`）时，相对目录会被拼成
+    # `<project>/out/project/rules-extra/...` —— 一个不存在的路径，装配直接失败。
+    project = Path(project).resolve()
+    project = _write_project(project, docs=docs)
     if validation_root is not None:
         _write_validation(Path(validation_root))
     if (corpus_root is None) != (db is None):
