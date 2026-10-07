@@ -247,6 +247,34 @@ def test_vector_retriever_reports_stale_vector_dim_instead_of_crashing(tmp_root)
         store.close()
 
 
+def test_result_cache_tolerates_disabled_and_refreshes_without_evicting() -> None:
+    """max_entries=0 = 关缓存（不炸）；刷新已有键不许淘汰无关条目（复核发现）。"""
+
+    def result(text: str) -> RetrievalResult:
+        return RetrievalResult(
+            status=RetrievalStatus.EMPTY,
+            query=text,
+            index_version="idx",
+            reason=UnavailableReason.NO_RESULTS,
+        )
+
+    disabled = ResultCache(max_entries=0)
+    disabled.put("k", result("k"))  # 旧实现在这里 StopIteration
+    assert disabled.get("k") is None
+    assert disabled.size == 0
+
+    cache = ResultCache(max_entries=2)
+    cache.put("a", result("A"))
+    cache.put("b", result("B"))
+    cache.put("a", result("A2"))  # 刷新已有键
+    assert cache.get("b").query == "B", "刷新不该淘汰无关条目"
+    assert cache.get("a").query == "A2"
+    cache.put("c", result("C"))  # 真的满了才淘汰最旧的
+    assert cache.get("b") is None
+    assert cache.get("a").query == "A2"
+    assert cache.get("c").query == "C"
+
+
 def test_result_cache_key_covers_subject_permissions_index_and_plan(indexed) -> None:
     loaded, store, lexicon, scope = indexed
     cache = ResultCache()

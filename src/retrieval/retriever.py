@@ -51,6 +51,8 @@ class ResultCache:
     """
 
     def __init__(self, *, max_entries: int = 128) -> None:
+        # max_entries <= 0 = **显式关缓存**（不存、也不炸）：0 是"别缓存"的自然写法，
+        # 旧实现在空表上就会 next(iter(...)) 抛 StopIteration。
         self.max_entries = max_entries
         self._entries: dict[str, RetrievalResult] = {}
         self.hits = 0
@@ -73,6 +75,13 @@ class ResultCache:
         return result
 
     def put(self, key: str, result: RetrievalResult) -> None:
+        if self.max_entries <= 0:
+            return  # 关缓存：什么都不存
+        if key in self._entries:
+            # 命中已有键只是刷新（dict 保序，重插即移到最新）：不许顺手淘汰一条无关条目。
+            self._entries.pop(key)
+            self._entries[key] = result
+            return
         if len(self._entries) >= self.max_entries:
             oldest = next(iter(self._entries))
             self._entries.pop(oldest, None)
