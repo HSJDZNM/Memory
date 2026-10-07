@@ -400,6 +400,33 @@ def test_load_api_config_requires_an_explicit_root(tmp_root: Path) -> None:
     assert config.service_root == str(REPO_ROOT)
 
 
+def test_duplicate_client_id_is_rejected(tmp_root: Path) -> None:
+    """两个客户端共用一个 `client_id` 必须在加载期拒绝。
+
+    历史缺陷（medium 台账 M1，config.py:213）：交叉引用校验只查了 tenant_id 唯一与
+    client→tenant 链接，重复的 client_id 静默通过——而幂等台账键、指标标签与请求日志全部
+    按 client_id 记账，审计读到的是两个主体混在一起（谁先谁后还取决于配置里的书写顺序）。
+    """
+
+    text = (
+        'schema_version: "1.0"' + chr(10)
+        + "tenants:" + chr(10)
+        + "  - tenant_id: alpha" + chr(10)
+        + "    project_root: project" + chr(10)
+        + "    rules: [rules]" + chr(10)
+        + "clients:" + chr(10)
+        + "  - client_id: alpha-client" + chr(10)
+        + '    token_sha256: "' + "0" * 64 + '"' + chr(10)
+        + "    tenants: [alpha]" + chr(10)
+        + "  - client_id: alpha-client" + chr(10)
+        + '    token_sha256: "' + "1" * 64 + '"' + chr(10)
+        + "    tenants: [alpha]" + chr(10)
+    )
+    with pytest.raises(ConfigError) as error:
+        load_api_config(write_config(tmp_root, text), root=REPO_ROOT)
+    assert "client_id" in str(error.value)
+
+
 def test_hash_token_is_a_stable_sha256_hex_digest() -> None:
     """令牌只以摘要形式参与比较与落盘：这里钉死它的确切算法与形状。"""
 

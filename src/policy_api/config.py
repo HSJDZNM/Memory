@@ -269,6 +269,13 @@ class ApiConfig(StrictModel):
         known = {item.tenant_id for item in self.tenants}
         if len(known) != len(self.tenants):
             raise ValueError("tenant_id 必须唯一")
+        client_ids = [client.client_id for client in self.clients]
+        duplicates = sorted({name for name in client_ids if client_ids.count(name) > 1})
+        if duplicates:
+            # 两个客户端共用一个 client_id 会让"这对凭据是谁"不可判定：幂等台账键、指标标签
+            # 与请求日志全部按 client_id 记账，审计读到的是两个主体混在一起（而且谁先谁后还
+            # 取决于配置里的书写顺序）。
+            raise ValueError(f"client_id 必须唯一，重复：{duplicates}")
         for client in self.clients:
             unknown = sorted(set(client.tenants) - known)
             if unknown:
