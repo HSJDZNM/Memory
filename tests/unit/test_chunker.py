@@ -62,6 +62,40 @@ def test_unterminated_front_matter_keeps_every_character() -> None:
     assert body == text
 
 
+def test_bom_does_not_shift_front_matter_coordinates() -> None:
+    """BOM 只是被跳过的前缀，不得让 front matter 的边界错位（复核发现的坐标空间缺陷）。"""
+
+    text = "\ufeff---" + chr(10) + "title: x" + chr(10) + "---" + chr(10) + "# H" + chr(10) + chr(10) + "body" + chr(10)
+    front, body = split_front_matter(text)
+    assert front.kind == "yaml"
+    # 边界错位时 raw 会少掉最后一个 "-"，YAML 于是"解析失败"；错位修好后没有警告。
+    assert front.warning is None
+    assert front.raw == "---" + chr(10) + "title: x" + chr(10) + "---"
+    assert front.metadata["title"] == "x"
+    assert body == "# H" + chr(10) + chr(10) + "body" + chr(10)
+    # 带不带 BOM 必须得到同一份正文（body 里不许残留分隔符残字）。
+    assert split_front_matter(text.lstrip("\ufeff"))[1] == body
+
+
+def test_bom_before_a_heading_is_not_swallowed_into_the_preamble() -> None:
+    """没有 front matter 时，BOM 也不得留在正文里，否则首行标题会被吞进前言。"""
+
+    text = "\ufeff# Title" + chr(10) + chr(10) + "body text" + chr(10)
+    front, body = split_front_matter(text)
+    assert front.kind == ""
+    assert body == "# Title" + chr(10) + chr(10) + "body text" + chr(10)
+    assert [section.anchor for section in find_sections(body)] == ["title"]
+
+
+def test_bom_html_comment_front_matter_keeps_coordinates() -> None:
+    text = "\ufeff<!--" + chr(10) + "title: y" + chr(10) + "-->" + chr(10) + "# H2" + chr(10) + chr(10) + "body" + chr(10)
+    front, body = split_front_matter(text)
+    assert front.kind == "html-comment"
+    assert front.raw == "<!--" + chr(10) + "title: y" + chr(10) + "-->"
+    assert front.metadata["title"] == "y"
+    assert body == "# H2" + chr(10) + chr(10) + "body" + chr(10)
+
+
 def test_heading_inside_code_fence_is_not_a_heading() -> None:
     text = (
         "# Title\n\n"

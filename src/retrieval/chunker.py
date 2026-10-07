@@ -83,7 +83,7 @@ class FrontMatter:
     """front matter 的解析结果。
 
     kind 取值：yaml / html-comment / yaml-unterminated / html-comment-unterminated。
-    未闭合时正文原样保留（不删任何字符），只记录警告。
+    未闭合时正文原样保留（除被跳过的 BOM 外不删任何字符），只记录警告。
     """
 
     kind: str
@@ -161,7 +161,12 @@ def heading_anchor(heading_path: Sequence[str], occurrences: Mapping[str, int]) 
 
 
 def front_matter_bounds(text: str) -> Tuple[int, int, str, Optional[str]]:
-    """定位 front matter：返回 (start, end, kind, warning)；end 之前的字符属于 front matter。"""
+    """定位 front matter：返回 (start, end, kind, warning)；end 之前的字符属于 front matter。
+
+    返回的边界一律是 **text 坐标**：BOM 只是被跳过的前缀，不是坐标基准的位移。若把
+    stripped 坐标原样返回，raw 会少掉最后一个分隔符字符、body 会多出一个残字
+    （BOM 文档的 front matter 于是"解析失败"、正文首行也跟着错位）。
+    """
 
     stripped = text.lstrip("\ufeff")
     offset = len(text) - len(stripped)
@@ -169,7 +174,7 @@ def front_matter_bounds(text: str) -> Tuple[int, int, str, Optional[str]]:
         end = _find_closing_line(stripped, start=3, tokens=("---", "..."))
         if end is None:
             return offset, offset, "yaml-unterminated", "YAML front matter 未闭合，正文原样保留"
-        return offset, end, "yaml", None
+        return offset, offset + end, "yaml", None
     if stripped.startswith("<!--"):
         closing = stripped.find("-->")
         if closing == -1:
@@ -179,8 +184,8 @@ def front_matter_bounds(text: str) -> Tuple[int, int, str, Optional[str]]:
                 "html-comment-unterminated",
                 "HTML 注释 front matter 未闭合，正文原样保留",
             )
-        return offset, closing + 3, "html-comment", None
-    return 0, 0, "", None
+        return offset, offset + closing + 3, "html-comment", None
+    return offset, offset, "", None
 
 
 def _find_closing_line(text: str, *, start: int, tokens: Sequence[str]) -> Optional[int]:
@@ -201,7 +206,9 @@ def split_front_matter(text: str) -> Tuple[FrontMatter, str]:
 
     start, end, kind, warning = front_matter_bounds(text)
     if end <= start:
-        return FrontMatter(kind=kind, raw="", metadata={}, warning=warning), text
+        # 没有 front matter（或未闭合）：正文从 start 开始。被跳过的 BOM 不属于正文——
+        # 留着它，首行 "# 标题" 就匹配不上 HEADING_RE，整个标题会被吞进前言。
+        return FrontMatter(kind=kind, raw="", metadata={}, warning=warning), text[start:]
 
     raw = text[start:end]
     body = text[end:].lstrip(chr(10))
