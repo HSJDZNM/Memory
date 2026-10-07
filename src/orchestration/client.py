@@ -388,6 +388,22 @@ def _violations_from(payload: Mapping[str, Any]) -> Tuple[ViolationRef, ...]:
     return tuple(items)
 
 
+def _decoded_object(raw: bytes) -> Mapping[str, Any]:
+    """把响应体解成对象；解不出来就是**空对象**（不是异常，也不是半份数据）。
+
+    用在这里的是"版本凭据"的读取路径：调用方按"拿不到 = 变了"处理，所以正确的结果是
+    "不知道"，而不是把解码异常抛到熔断计数之外。
+    """
+
+    if not raw:
+        return {}
+    try:
+        decoded = json.loads(raw.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        return {}
+    return decoded if isinstance(decoded, Mapping) else {}
+
+
 def _mapping_items(
     value: Any, *, where: str, code: FailureCode
 ) -> Tuple[Mapping[str, Any], ...]:
@@ -564,16 +580,17 @@ class ApiPolicyClient:
         self.paths.append(path)
         try:
             with self._opener(request, timeout=self.timeout) as response:
-                raw = response.read().decode("utf-8")
-                return int(response.status), json.loads(raw) if raw else {}
+                return int(response.status), _decoded_object(response.read())
         except urllib.error.HTTPError as error:
-            raw = error.read().decode("utf-8", errors="replace")
-            try:
-                return int(error.code), json.loads(raw) if raw else {}
-            except json.JSONDecodeError:
-                return int(error.code), {}
-        except (urllib.error.URLError, TimeoutError, OSError):
+            return int(error.code), _decoded_object(error.read())
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
             # 版本凭据拿不到：如实说"不知道"，由调用方按"变了"处理。
+            #
+            # 为什么要接 ValueError：_decoded_object 已经不抛 JSONDecodeError 了，但**读取本身**
+            # 还可能失败（例如正文不是 UTF-8 时某些 opener 在 read() 期间抛 UnicodeDecodeError，
+            # 它是 ValueError 的子类）。旧实现只接 HTTPError / URLError / TimeoutError / OSError，
+            # 于是非 UTF-8 正文与 2xx 的非 JSON 正文会逃出 ResilientPolicyClient 的失败计数——
+            # 熔断与降级因此瞎掉，而契约说的是"拿不到就是拿不到"（state="unknown" / ready=False）。
             return 0, {}
 
     def readiness(self) -> PlatformReadiness:

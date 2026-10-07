@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import socket
 from dataclasses import dataclass, field
-from typing import Any, Tuple
+from typing import Any, Optional, Tuple
 
 import pytest
 
@@ -549,6 +549,59 @@ def test_validate_with_a_scalar_validators_field_is_a_contract_violation(tmp_roo
 
     assert error.value.code is FailureCode.VALIDATOR_UNAVAILABLE
     assert "对象列表" in str(error.value)
+
+
+class _RawResponse:
+    """给定**原始字节**的响应替身：用来喂非 UTF-8 / 非 JSON 的正文（FakeOpener 只收可 JSON 化的对象）。"""
+
+    def __init__(self, status: int, body: bytes) -> None:
+        self.status = status
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> "_RawResponse":
+        return self
+
+    def __exit__(self, *args: Any) -> bool:
+        return False
+
+
+def _raw_opener(status: int, body: bytes):
+    def opener(request: Any, timeout: Optional[float] = None) -> _RawResponse:
+        return _RawResponse(status, body)
+
+    return opener
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"\xff\xfe\x00\x01binary",  # 不是 UTF-8
+        b"<html>502 Bad Gateway</html>",  # 2xx 但不是 JSON（代理塞回来的页面）
+        b'["not", "an", "object"]',  # JSON 但不是对象
+        b"null",
+    ],
+    ids=["non-utf8", "html", "json-list", "json-null"],
+)
+def test_readiness_calls_unreadable_bodies_unknown(body: bytes) -> None:
+    """版本凭据读不出来 = **不知道**（unknown / not ready），既不是异常也不是"没变"。
+
+    旧实现只接 HTTPError / URLError / TimeoutError / OSError：非 UTF-8 正文抛 UnicodeDecodeError、
+    2xx 的非 JSON 正文抛 JSONDecodeError、JSON 但不是对象时把 list 当 Mapping 返回
+    （readiness 里 body.get(...) 直接 AttributeError）——三者都逃出熔断计数，
+    而契约说的是"拿不到就是拿不到"。
+    """
+
+    client = ApiPolicyClient(
+        "http://127.0.0.1:9", token="test-token", opener=_raw_opener(200, body), timeout=2.0
+    )
+
+    value = client.readiness()
+
+    assert value.state == "unknown"
+    assert value.ready is False
 
 
 def test_api_client_against_an_unused_port_fails_closed() -> None:
