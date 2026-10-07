@@ -3,12 +3,30 @@
 # 设计原则：核心协议需要的字段里，dsh 的 Hook 载荷只提供 file/operation/agent；
 # layer、language、project、principal、trace_id 全部在这里显式声明，
 # 没有声明项时 Adapter 失败关闭，绝不从文件名或目录猜测。
+#
+# 路径基准（最容易读错的一条）：本文件里的相对路径**不是**相对 project_root，而是相对
+# **本配置文件自己所在的目录**（load_config → config_from_mapping(base_dir=config_path.parent)，
+# 每个路径都过 _as_path(..., base_dir=...)，见 src/adapters/dsh/adapter.py）。
+# 所以下面的 ../.. 只在"本文件位于 examples/dsh/"（仓库根往下两级）时成立。
+# 把它复制到 <project>/.policy/ 之后，锚点跟着挪到 <project>/.policy/，这些值必须一起改：
+#
+#   project_root: ..                                   # = <project>
+#   rules: [../policies]                               # = <project>/policies
+#   audit_log: ../.tmp/artifacts/dsh-audit.jsonl
+#   registry: ../registry/tool-registry.yaml
+#   registry_approved: ../registry/tool-registry.approved.json
+#   enforcement_ledger: ../.tmp/artifacts/dsh-enforcement-ledger.jsonl
+#   pre_evidence.registry_root: ..                     # 只有启用取证时才需要
+#
+# 不改的后果不是"报错就算了"：项目里的 ../.. 指向受治理项目的**父目录**，project_root
+# （包含边界）会挪到项目之外——规则 / 注册表 / 台账多半不存在（失败关闭），
+# 恰好存在时则是**静默**加载了项目外的数据。
 
 agent_version: "0.1.6-alpha.2" # 记录用；必须与宿主实际版本一致（python -m adapters.cli host-version --check 会比对）；升级 dsh 后先重跑 fixture 与沙箱闭环再改这里
 project: memory
-project_root: ../.. # 仓库相对路径的锚点；越出这个根目录的写入一律拒绝
+project_root: ../.. # 相对**本文件所在目录**（见文件头）；越出这个根目录的写入一律拒绝
 rules:
-  - ../../policies # 至少一个规则目录；任一文件损坏则整体不加载
+  - ../../policies # 至少一个规则目录；任一文件损坏则整体不加载（同样相对本文件所在目录）
 
 timeout_ms: 5000 # 内部预算：必须严格小于 hooks.json 里的 timeout
 
