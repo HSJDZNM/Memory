@@ -39,6 +39,7 @@ from orchestration.errors import (
     ApprovalError,
     CheckpointError,
     LimitExceeded,
+    NodeContractError,
     OrchestrationError,
     status_for,
 )
@@ -766,6 +767,40 @@ def test_change_digest_binds_parameters() -> None:
     changed = Change(path=TARGET_PATH, summary="写入", content="b\n")
     assert action_key("task-1", base) != action_key("task-1", changed)
     assert action_key("task-1", base, repair_rounds=1) != action_key("task-1", base)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({}, id="neither-old-nor-content"),
+        pytest.param({"old": "a", "content": "b"}, id="both-old-and-content"),
+        pytest.param({"old": "a"}, id="old-without-replacement"),
+    ],
+)
+def test_change_contract_is_enforced_at_construction(kwargs: dict) -> None:
+    """三种畸形改动都必须在构造期被拒：它们以前都是**静默**的数据损失。
+
+    实测（修复前 params() 的读数）：都没有 → content: ''（整文件截断）；
+    有 old 没有 replacement → new_string: ''（把匹配到的文本删掉）；两个都有 → content 被丢掉。
+    候选改动是受治理写入的参数，错一个字段就是一次不可逆写入。
+    """
+
+    with pytest.raises(NodeContractError):
+        Change(path=TARGET_PATH, **kwargs)
+
+
+def test_change_params_never_coerce_missing_values_to_empty() -> None:
+    """params() 不再用 `or ""` 兜底：缺失的值不可能被抹成一次空写入。"""
+
+    writing = Change(path=TARGET_PATH, content="a\n")
+    assert writing.params() == {"file_path": TARGET_PATH, "content": "a\n"}
+
+    editing = Change(path=TARGET_PATH, old="a", replacement="b")
+    assert editing.params() == {
+        "file_path": TARGET_PATH,
+        "old_string": "a",
+        "new_string": "b",
+    }
 
 
 def test_policy_changes_use_approval_gated_tools_for_create_and_edit() -> None:
