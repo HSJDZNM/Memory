@@ -309,20 +309,37 @@ def ingest(
             note=None,
             **counters,
         )
-    except BaseException as error:
+    except Exception as error:
         failed_at = _stamp(_now(now))
         # 失败的 run 也可能已经提交过部分文档：generation 必须递增，
         # 否则常驻进程里"键里带 index_version"的结果缓存会继续返回旧内容。
-        store.bump_generation()
-        store.finish_run(
-            identifier,
-            status=IndexRunStatus.FAILED,
-            completed_at=failed_at,
-            note=f"{type(error).__name__}: {error}"[:500],
-        )
+        # 记账本身失败（例如原故障就是库句柄坏了）不许掩盖原始异常：原文挂成 note，
+        # 类型与因果链都不改。
+        try:
+            store.bump_generation()
+            store.finish_run(
+                identifier,
+                status=IndexRunStatus.FAILED,
+                completed_at=failed_at,
+                note=f"{type(error).__name__}: {error}"[:500],
+            )
+        except Exception as record_error:  # noqa: BLE001 - 原始异常优先，记账失败只记 note
+            error.add_note(
+                f"另外：run {identifier} 的失败记账也没成功："
+                f"{type(record_error).__name__}: {record_error}"
+            )
         if isinstance(error, (IndexingError, CorpusError)):
             raise
         raise IndexingError(f"索引中断（run {identifier} 已标记为 failed）: {error}") from error
+    except BaseException:
+        # 中断（KeyboardInterrupt / SystemExit）不是"失败"：run 留在 running，由下一次
+        # ingest 的 start_run 标成 interrupted（不变式 4）。只做一件尽力而为的事——递增
+        # generation，免得已提交的部分文档继续被旧缓存命中；它失败也照样抛原始中断。
+        try:
+            store.bump_generation()
+        except Exception:  # noqa: BLE001 - 原始中断优先
+            pass
+        raise
 
     duration = int((_now(now) - started).total_seconds() * 1000)
     return IndexReport(

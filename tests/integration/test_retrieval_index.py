@@ -723,6 +723,31 @@ def test_missing_file_fails_closed_and_needs_manifest_removal(tmp_root) -> None:
         store.close()
 
 
+def test_keyboard_interrupt_leaves_the_run_running(tmp_root) -> None:
+    """Ctrl-C 不是失败：run 留在 running，由下一次 ingest 标成 interrupted（复核发现）。"""
+
+    loaded = load_fixture_corpus(tmp_root)
+    store = open_store(tmp_root)
+    try:
+        def interrupt(entry) -> None:
+            if entry.source_path == "topics.md":
+                raise KeyboardInterrupt("用户中断")
+
+        with pytest.raises(KeyboardInterrupt):
+            ingest(
+                loaded, store, repo_root=tmp_root, after_document=interrupt, run_id="run_interrupt"
+            )
+        run = store.run("run_interrupt")
+        assert run is not None
+        assert run.status is IndexRunStatus.RUNNING, "中断不许冒充 failed"
+
+        # 不变式 4：下一次 run 开始时把遗留的 running 标成 interrupted。
+        ingest(loaded, store, repo_root=tmp_root, run_id="run_next")
+        assert store.run("run_interrupt").status is IndexRunStatus.INTERRUPTED
+    finally:
+        store.close()
+
+
 def test_failed_run_bumps_generation_so_caches_are_dropped(tmp_root) -> None:
     """失败的 run 也可能改过可检索内容：generation 必须递增，缓存不能继续命中。"""
 
