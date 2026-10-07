@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import http.client
+import io
 import json
 import os
 import time
+import urllib.error
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -538,6 +541,105 @@ def test_idempotency_ledger_fails_closed_on_corrupted_file(tmp_root: Path) -> No
         IdempotencyLedger(wrong_version).lookup(**lookup)
     assert info.value.code is ErrorCode.IDEMPOTENCY_UNAVAILABLE
     assert "协议版本" in info.value.detail
+
+
+# --------------------------------------------------------------------------- HTTP 探针
+
+
+class _FakeResponse:
+    """最小的 urlopen 返回值：只提供 post() 真正用到的 read/status/上下文管理。"""
+
+    def __init__(self, body: bytes = b"", status: int = 200) -> None:
+        self._body = body
+        self.status = status
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *args: Any) -> bool:
+        return False
+
+
+def _probe_client(*, body: bytes = b"", raises: BaseException | None = None) -> Any:
+    from policy_api.probe import HttpApiClient
+
+    def opener(request: Any, timeout: float | None = None) -> Any:
+        if raises is not None:
+            raise raises
+        return _FakeResponse(body)
+
+    return HttpApiClient("http://127.0.0.1:1", token="t", opener=opener)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"<html>proxy interstitial</html>", b"[]", b"null", b'"a string"', b"\xff\xfe"],
+)
+def test_probe_rejects_a_response_it_cannot_read_as_an_object(body: bytes) -> None:
+    """读不懂的应答 = 没有可判断的结论：必须抛 RegistryError，由 decide 转成阻断。
+
+    历史缺陷（OCR 全量审查 L10）：成功路径上的 `json.loads` 没有守卫——HTML 正文抛
+    JSONDecodeError、非对象 JSON 被原样返回（随后 `body.get` 炸成 AttributeError）、
+    非 UTF-8 抛 UnicodeDecodeError；而 `decide` 只接 RegistryError。修复前实测：
+    b'[]' -> returned (200, [])、b'null' -> returned (200, None)。
+    """
+
+    from adapters.base import RegistryError
+
+    with pytest.raises(RegistryError):
+        _probe_client(body=body).post("/v1/policy/evaluate", {})
+
+
+@pytest.mark.parametrize(
+    "error",
+    [http.client.IncompleteRead(b"abc"), http.client.BadStatusLine("garbage")],
+)
+def test_probe_turns_low_level_http_failures_into_registry_errors(
+    error: BaseException,
+) -> None:
+    """`http.client.HTTPException` 不是 OSError：漏掉它，"连接断在半路"就成了未处理异常。
+
+    失败关闭的语义是"策略服务不可用 → 阻断"，未处理异常不是阻断——调用方拿到的
+    是一个炸掉的适配器，而不是一条 block 判定。
+    """
+
+    from adapters.base import RegistryError
+
+    with pytest.raises(RegistryError):
+        _probe_client(raises=error).post("/v1/policy/evaluate", {})
+
+
+def test_probe_http_error_with_a_non_json_body_keeps_the_status() -> None:
+    """4xx/5xx 是"有应答"：正文不是受控信封时，状态码保留、错误码记 invalid_response。"""
+
+    error = urllib.error.HTTPError(
+        "http://127.0.0.1:1/v1/policy/evaluate",
+        503,
+        "Service Unavailable",
+        {},  # type: ignore[arg-type]
+        io.BytesIO(b"<html>upstream down</html>"),
+    )
+    status, body = _probe_client(raises=error).post("/v1/policy/evaluate", {})
+    assert status == 503
+    assert body["error"]["code"] == "invalid_response"
+
+
+def test_probe_unavailable_payload_reads_a_non_mapping_body_without_raising() -> None:
+    """阻断载荷的正文可能是任何东西：解析不出来也必须给出阻断，而不是 AttributeError。
+
+    历史缺陷（OCR 全量审查 L10）：`_unavailable` 直接用 `body.get(...)`，非对象正文
+    （代理的数组 / 字符串）在"必须阻断"的路径上抛 AttributeError。
+    """
+
+    from policy_api.probe import HttpApiAdapter
+
+    adapter = object.__new__(HttpApiAdapter)
+    payload = adapter._unavailable(503, ["not", "a", "mapping"])
+    assert payload["decision"] == "block"
+    assert payload["violations"][0]["evidence"]["value"] == "policy_unavailable"
 
 
 # --------------------------------------------------------------------------- 冒烟
