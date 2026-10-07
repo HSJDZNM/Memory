@@ -645,6 +645,42 @@ def test_approval_gate_accepts_a_valid_record_and_records_the_use(tmp_root) -> N
     assert excinfo.value.code is FailureCode.APPROVAL_CONSUMED
 
 
+def test_distinct_task_ids_never_share_a_checkpoint_file(tmp_root) -> None:
+    """task_id 的清洗是有损的：'a:b' 与 'ab' 曾经落到同一个文件（互相覆盖、互相读回来）。
+
+    现在只在"删字符真的改变了 id"时追加 id 摘要；安全字符组成的 id 文件名保持不变，
+    既有 checkpoint 照常读得到。
+    """
+
+    store = JsonCheckpointStore(tmp_root / "checkpoints")
+
+    assert store.path_for("a:b") != store.path_for("ab")
+    assert store.path_for("ab").name == "ab.checkpoint.json"
+
+    store.save(build_record(empty_state("a:b"), engine="reference", sequence=1))
+    store.save(build_record(empty_state("ab"), engine="reference", sequence=1))
+
+    assert store.load("a:b").task_id == "a:b"
+    assert store.load("ab").task_id == "ab"
+
+
+def test_load_refuses_a_checkpoint_belonging_to_another_task(tmp_root) -> None:
+    """文件名只是索引：记录里的 task_id 与请求不一致，就是读到了别的任务的状态，必须拒绝。"""
+
+    store = JsonCheckpointStore(tmp_root / "checkpoints")
+    record = build_record(empty_state("task-1"), engine="reference", sequence=1)
+    swapped = record.model_copy(update={"task_id": "task-2"})
+    swapped = swapped.model_copy(update={"record_digest": swapped.computed_digest()})
+    store.path_for("task-1").write_text(
+        swapped.model_dump_json(indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
+
+    with pytest.raises(CheckpointError) as error:
+        store.load("task-1")
+
+    assert "task_id" in str(error.value)
+
+
 def _pattern_approval(path: Path, *, approval_id: str = "approval-pattern") -> Path:
     """一份 binding=pattern 的审批：按契约**没有** action_id，是为"将来的某次调用"签的。"""
 

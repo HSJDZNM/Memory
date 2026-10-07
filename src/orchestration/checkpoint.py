@@ -126,10 +126,21 @@ class JsonCheckpointStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def path_for(self, task_id: str) -> Path:
+        """一个任务一个文件；**不同 task_id 绝不许落到同一个文件**。
+
+        旧实现把所有非 [alnum-_.] 字符直接删掉：`a:b` 与 `ab` 于是映射到同一个
+        `ab.checkpoint.json`——一个任务的 save 会覆盖另一个任务的 checkpoint。
+        现在只在"删字符真的改变了 id"时追加一段 **id 的摘要**：安全字符组成的 id 文件名不变
+        （既有 checkpoint 照常读得到），有歧义的 id 各自独立、且可读前缀仍在。
+        """
+
         safe = "".join(ch for ch in task_id if ch.isalnum() or ch in "-_.")
         if not safe:
             raise CheckpointError("task_id 里没有可用字符，拒绝构造 checkpoint 路径")
-        return self.root / f"{safe}.checkpoint.json"
+        if safe == task_id:
+            return self.root / f"{safe}.checkpoint.json"
+        suffix = canonical_digest({"task_id": task_id}).split(":", 1)[-1][:12]
+        return self.root / f"{safe}-{suffix}.checkpoint.json"
 
     def exists(self, task_id: str) -> bool:
         return self.path_for(task_id).is_file()
@@ -183,6 +194,13 @@ class JsonCheckpointStore:
         version = record.state.get("state_schema_version")
         if version not in SUPPORTED_STATE_SCHEMA_VERSIONS:
             raise CheckpointError(f"checkpoint 里的状态版本不可读：{version!r}")
+        if record.task_id != task_id:
+            # 文件名只是索引，**记录才说得出这是谁的状态**：两者不一致就是"读到了别的任务"，
+            # 绝不把它当成这次任务的状态继续跑（旧实现对此完全沉默）。
+            raise CheckpointError(
+                f"checkpoint 里的 task_id 与请求的不一致（{record.task_id!r} != {task_id!r}）："
+                "拒绝把另一份状态当成这次任务的状态"
+            )
         return record
 
 
