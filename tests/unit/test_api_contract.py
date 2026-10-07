@@ -1195,6 +1195,36 @@ def test_probe_unavailable_payload_is_a_consumable_decision_payload() -> None:
 # --------------------------------------------------------------------------- 冒烟
 
 
+def test_tenant_store_load_resets_previous_state(tmp_root: Path) -> None:
+    """第二次 `load()` 不能留下上一轮的租户与错误：读数必须对应当前配置。
+
+    历史缺陷（medium 台账 M1，services.py:217）：`load()` 只往里加、不重置——配置里已经被
+    禁用的租户仍然可服务（`has()`/`ids` 都还认它），而上一轮装配失败的条目会一直挂在
+    `_errors` 里把 readiness 钉在 not_ready。
+    """
+
+    from policy_api.services import TenantStore
+
+    config_path, anchor = isolated_api(tmp_root)
+    config = load_api_config(config_path, root=anchor)
+    store = TenantStore(config, root=anchor)
+    store.load()
+    assert store.ids == ("alpha", "beta")
+
+    disabled = config.model_copy(
+        update={
+            "tenants": tuple(
+                item.model_copy(update={"enabled": False}) for item in config.tenants
+            )
+        }
+    )
+    store.config = disabled
+    store.load()
+
+    assert store.ids == (), "被禁用的租户还留在 store 里"
+    assert store.errors == {}
+
+
 def test_readiness_without_any_assembled_tenant_says_that_explicitly(tmp_root: Path) -> None:
     """没有装配出任何租户时，detail 必须是一句完整的话，而不是悬空的半句。
 

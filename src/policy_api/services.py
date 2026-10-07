@@ -221,6 +221,11 @@ class TenantStore:
         """
 
         with self._lock:
+            # **先重置再装配**：第二次 load()（重试、或复用同一个 store 的调用方）不能留下
+            # 上一轮的状态——否则配置里已经被禁用的租户仍然可服务，而上一轮失败的条目会一直
+            # 挂在 `_errors` 里把 readiness 钉在 not_ready（两边都不是"当前配置"的读数）。
+            self._tenants.clear()
+            self._errors.clear()
             for spec in self.config.tenants:
                 if not spec.enabled:
                     continue
