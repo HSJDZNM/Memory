@@ -188,8 +188,9 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
     async def handle_route(
         route: str, request: Request, *, body_expected: bool = True
     ) -> JSONResponse:
-        limit = runtime.config.limits.max_request_bytes
         # 请求体由依赖读过一次（顺序见 _body_guard）：这里只消费结果，不再碰数据流。
+        # 上限**只在那里**判一次：在这里再比一遍 `limits.max_request_bytes` 是同一份值的第二次
+        # 拷贝，不会多查出任何东西（依赖是流式的，一超限就停），只会让"谁在管这件事"变模糊。
         raw = getattr(request.state, "raw_body", None)
         if raw is None and body_expected:
             # 依赖没生效（最典型的形态见下面 add_api_route 的注释：`_guard` 的注解被写成
