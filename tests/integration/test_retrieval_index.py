@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -378,6 +379,38 @@ def test_expired_runtime_quarantine_is_released_when_the_text_changes(tmp_root) 
         assert store.chunk(target.chunk_id).quarantined is False
     finally:
         store.close()
+
+
+def test_verify_corpus_is_idempotent_and_recomputes_file_issues(tmp_root) -> None:
+    """verify_corpus 不许把加载期已经算过的问题再写一遍（复核发现：CLI 里每条都两遍）。"""
+
+    loaded = load_fixture_corpus(tmp_root, drift=("guides/index.md",))
+    assert [issue.kind for issue in loaded.verification.issues] == ["hash_mismatch"]
+
+    once = verify_corpus(loaded, repo_root=tmp_root)
+    assert [issue.kind for issue in once.issues] == ["hash_mismatch"]
+    again = verify_corpus(loaded, repo_root=tmp_root)
+    assert [issue.kind for issue in again.issues] == ["hash_mismatch"]
+
+    # 文件侧的问题重算：文件不见了就报 missing_file（不是靠快照）。
+    clean = load_fixture_corpus(tmp_root)
+    (tmp_root / GUIDE_MIRROR / "index.md").unlink()
+    assert [issue.kind for issue in verify_corpus(clean, repo_root=tmp_root).issues] == [
+        "missing_file"
+    ]
+
+    # 镜像侧的问题（not_saved）无法重算：必须从加载期快照里保留下来，而且只有一份。
+    manifest_path = tmp_root / GUIDE_MIRROR / "manifest.json"
+    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    document["pages"][0]["saved"] = False
+    manifest_path.write_text(
+        json.dumps(document, ensure_ascii=False, indent=2) + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+    mirrored = load_corpus(clean.corpus_path, repo_root=tmp_root)
+    kinds = [issue.kind for issue in verify_corpus(mirrored, repo_root=tmp_root).issues]
+    assert kinds.count("not_saved") == 1, kinds
 
 
 def test_rule_source_registration_and_cascade_delete(tmp_root) -> None:

@@ -215,6 +215,10 @@ def _resolve_dataset(
     return tuple(resolved), tuple(issues)
 
 
+# 镜像 manifest 才能回答的 issue 类别：verify_corpus 不重算它们，只从加载期快照里带过来。
+_MIRROR_ISSUE_KINDS = frozenset({"not_saved"})
+
+
 def _string_or_none(value: Any) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
@@ -230,7 +234,13 @@ def _file_hash(path: Path) -> str:
 def verify_corpus(loaded: LoadedCorpus, *, repo_root: Path) -> CorpusVerification:
     """对已加载的清单做完整性检查：文件、哈希、许可声明、镜像目录。"""
 
-    issues: list[EntryIssue] = list(loaded.verification.issues)
+    # 只保留**无法在这里重算**的镜像侧问题（not_saved 来自 manifest 的 saved=false）；
+    # 文件侧的四类（missing_file / hash_mismatch / size_mismatch / license_source_missing）
+    # 下面会重算——直接播种会把同一条问题写两遍（CLI 正是先 load_corpus 再 verify_corpus），
+    # 而且中间修好的问题会跟着快照残留下来。
+    issues: list[EntryIssue] = [
+        issue for issue in loaded.verification.issues if issue.kind in _MIRROR_ISSUE_KINDS
+    ]
     mirrors = {dataset.name: dataset.mirror for dataset in loaded.manifest.datasets}
     for item in loaded.entries:
         mirror = mirrors.get(item.dataset)
