@@ -1404,6 +1404,7 @@ def check_g05(env: Env) -> Check:
         "dotdot": "../",
     }
     reasons: dict[str, str] = {}
+    outside_run: Optional[Run] = None
     for name, workdir in cases.items():
         run = _workdir_hook(env, name=name, workdir=workdir)
         reason = _hook_reason(run)
@@ -1412,9 +1413,15 @@ def check_g05(env: Env) -> Check:
         check.evidence.append(f"workdir={workdir!r} -> exit={run.exit} reason={reason}")
         if name in {"abs_root", "dot", "dot_slash", "subdir"}:
             check.facts[f"{name}_param_error"] = reason in {"enforcement_param_error"}
+        if name == "outside":
+            # 这一条的 stderr 片段直接从循环里留：**同一份载荷不能跑第二次**——
+            # call_id 与审计名都一样，复用会命中幂等台账，审计里就多一条 event_replay，
+            # 而 run 级守卫会把它读成"跨运行状态残留"（本模块 docstring 的同一条纪律）。
+            outside_run = run
     check.facts["reasons"] = reasons
-    outside_run = _workdir_hook(env, name="outside", workdir=env.work.as_posix())
-    check.facts["outside_detail_snippet"] = " ".join(outside_run.stderr.split())[:300]
+    check.facts["outside_detail_snippet"] = (
+        "" if outside_run is None else " ".join(outside_run.stderr.split())[:300]
+    )
     check.facts["outside_still_rejected"] = all(
         reasons.get(name, "") not in {"", "allow", "allow_delegated"}
         for name in ("outside", "dotdot")
