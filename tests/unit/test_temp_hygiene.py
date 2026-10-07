@@ -73,6 +73,32 @@ def test_gate_step_environment_injects_temp_root_for_subprocesses(monkeypatch, t
     probe.unlink()
 
 
+def test_session_temp_root_bootstrap_does_not_kill_the_session(monkeypatch, tmp_root) -> None:
+    """`.tmp/` 建不出来时必须退回 tempfile 默认解析，而不是让整个 pytest 会话起不来。
+
+    为什么必须这样：这段 bootstrap 在 conftest **导入期**执行，异常冒泡等于"一个用例都还没
+    收集就整体失败"——而系统临时目录明明可用，失败与被测代码毫无关系。契约是"建得出才改
+    环境变量"：目录没建出来就一个变量都不改，绝不把临时根指到一个不存在的路径
+    （那会让所有子进程的临时写入一起失败，比不改更糟）。
+    """
+
+    import conftest
+
+    blocker = tmp_root / "blocker"
+    blocker.write_text("这是一个文件，不是目录", encoding="utf-8")
+    blocked = blocker / "tmp"  # 祖先路径是文件 → mkdir 必然抛 OSError
+    monkeypatch.setattr(conftest, "SESSION_TEMP_ROOT", blocked)
+    before = {name: os.environ.get(name) for name in TEMP_VARIABLES}
+
+    fallen_back = conftest._install_session_temp_root()
+
+    assert isinstance(fallen_back, bool)
+    assert not blocked.exists()
+    assert {name: os.environ.get(name) for name in TEMP_VARIABLES} == before, (
+        "目录没建出来就不许改临时根：三个变量指到不存在的路径会让后续所有写入一起失败"
+    )
+
+
 def test_tempfile_creation_stays_out_of_the_repo_root(monkeypatch, tmp_root) -> None:
     """临时根指向夹具目录时，mkstemp 的文件落进夹具，仓库根一个 tmp* 都不多。"""
 
