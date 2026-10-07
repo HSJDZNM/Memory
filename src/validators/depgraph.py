@@ -194,8 +194,10 @@ def package_of(path: str, profile: ProjectProfile) -> Optional[Tuple[str, ...]]:
         if not remainder.endswith(".py"):
             continue
         parts = remainder[: -len(".py")].split("/")
-        if parts[-1] == "__init__":
-            parts = parts[:-1]
+        # `__init__.py` 的模块名**是它所在的包**（pkg/sub/__init__.py → pkg.sub），
+        # 所以它的包就是该目录本身：先把 "__init__" 去掉、再 parts[:-1] 会多去一级，
+        # `from . import x` 于是被展开到上层包、甚至被解析成凭空造出的顶层模块。
+        # 同一个表达式对两种形态都是对的（pkg/sub/a.py → ("pkg","sub")）。
         candidate = tuple(parts[:-1]) if parts else ()
         if best is None or len(prefix) > best[0]:
             best = (len(prefix), candidate)

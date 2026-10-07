@@ -12,7 +12,12 @@ from pathlib import Path
 import pytest
 
 from conftest import VALIDATOR_PROJECT, validators_config
-from validators.depgraph import build_dependencies, build_module_index, package_of
+from validators.depgraph import (
+    DependencyResolution,
+    build_dependencies,
+    build_module_index,
+    package_of,
+)
 from validators.python_ast import imported_names, parse_module
 from validators.source import SourceError, read_source, resolve_target
 
@@ -278,10 +283,32 @@ def test_module_index_maps_packages_and_modules() -> None:
     assert index.truncated is False
 
 
+def test_relative_import_inside_a_package_initializer_stays_in_that_package() -> None:
+    """`__init__.py` 里的相对导入必须展开到**它所在的包**，不是上一层、也不是顶层。
+
+    历史缺陷（OCR 全量审查 L12）：`package_of` 先把 "__init__" 去掉、再 `parts[:-1]`，
+    于是 src/shop/__init__.py 的包算成 ()、src/shop/sub/__init__.py 算成 ("shop",)。
+    后果是一条凭空造出的依赖边：`from . import order_service` 被解析成**外部包**
+    order_service，而真正的项目内模块 shop.order_service 反而没人指向。
+    """
+
+    result = dependencies_for(
+        "from . import order_service" + chr(10), target="src/shop/__init__.py"
+    )
+
+    internal = [
+        item for item in result.dependencies if item.resolution is DependencyResolution.INTERNAL
+    ]
+    assert [item.module for item in internal] == ["shop.order_service"]
+    assert result.unresolved == ()
+
+
 def test_package_of_prefers_the_most_specific_python_root() -> None:
     # src 布局：src/shop/a.py 的包是 shop（不是 src.shop），相对导入才按项目自己的路径展开
     assert package_of("src/shop/order_service.py", CONFIG.project) == ("shop",)
-    assert package_of("src/shop/__init__.py", CONFIG.project) == ()
+    # `__init__.py` 的包就是它所在的目录（历史缺陷：这里曾写着 ()，比正确值高一级）
+    assert package_of("src/shop/__init__.py", CONFIG.project) == ("shop",)
+    assert package_of("src/shop/sub/__init__.py", CONFIG.project) == ("shop", "sub")
     assert package_of("examples/good_service.py", CONFIG.project) == ("examples",)
     assert package_of("docs/readme.txt", CONFIG.project) is None
 
