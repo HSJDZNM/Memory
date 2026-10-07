@@ -5,8 +5,11 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -77,6 +80,58 @@ def test_non_ascii_paths_are_not_c_quoted(tmp_root, monkeypatch):
 
     assert "新 文件.txt" in changed, changed
     assert all(chr(34) not in item for item in changed), changed
+
+
+def test_git_status_failure_is_fail_closed(tmp_root, monkeypatch):
+    """读不到工作树状态时不许当成"没有改动"：门禁会按改动范围少跑步骤。"""
+
+    import types
+
+    ci_local = _load_ci_local()
+    repo = _git_repo(tmp_root)
+    monkeypatch.setattr(ci_local, "ROOT", repo)
+    real_run = ci_local.subprocess.run
+
+    def failing_status(command, **kwargs):
+        if list(command[:2]) == ["git", "status"]:
+            return types.SimpleNamespace(returncode=128, stdout="", stderr="fatal: not a git repository")
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(ci_local, "subprocess", types.SimpleNamespace(run=failing_status))
+
+    with pytest.raises(ci_local.ChangedPathsUnavailable) as error:
+        ci_local._changed_paths()
+
+    assert "git status" in str(error.value)
+    assert "128" in str(error.value)
+
+
+def test_cli_list_fails_closed_when_git_cannot_read_the_worktree(tmp_root):
+    """真实命令：git 读不到仓库时，--list 必须非 0 退出，而不是继续按"没有改动"选步。
+
+    让 git 真的失败（GIT_DIR 指向不存在的位置，实测 exit 128、stdout 为空）——
+    假 git 在 Windows 上挡不住真 git（CreateProcess 只按 .exe 找），所以用真实失败。
+    """
+
+    environment = dict(os.environ, GIT_DIR=str(tmp_root / "no-such-git-dir"))
+
+    completed = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "tools" / "ci_local.py"), "--list"],
+        cwd=REPO_ROOT, env=environment, capture_output=True, text=True, encoding="utf-8", check=False,
+    )
+
+    assert completed.returncode == 2, completed.stdout + completed.stderr
+    assert "改动文件" not in completed.stdout, "失败不许被报成 0 个改动"
+    assert "git status" in completed.stderr
+
+    completed = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "tools" / "ci_local.py"), "--list"],
+        cwd=REPO_ROOT, env=environment, capture_output=True, text=True, encoding="utf-8", check=False,
+    )
+
+    assert completed.returncode != 0, completed.stdout
+    assert "改动文件" not in completed.stdout, "失败不许被报成 0 个改动"
+    assert "git status" in completed.stderr
 
 
 def test_python_override_runs_modules_from_repo_src_and_preserves_environment(

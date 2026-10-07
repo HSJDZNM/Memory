@@ -323,6 +323,14 @@ def _steps() -> list[tuple[str, str]]:
     return collected
 
 
+class ChangedPathsUnavailable(RuntimeError):
+    """读不到改动清单。
+
+    门禁"按改动范围选择"完全建立在这份清单上：把它当成"没有改动"是门禁**自己**的
+    fail-open（少跑步骤还不报错），所以这里按失败关闭处理。
+    """
+
+
 def _changed_paths() -> list[str]:
     """相对 origin/main（取不到就相对 HEAD~1）的改动文件。"""
 
@@ -339,6 +347,8 @@ def _changed_paths() -> list[str]:
             tracked = [item for item in completed.stdout.split(chr(0)) if item.strip()]
             break
     else:
+        # 两条 base 都取不到就当作"没有可比的基线"：单提交仓库 / 没有 origin 都是正常状态，
+        # 这时 tracked 为空是**事实**而不是失败。（status 那条不一样，见下：它读不到就是读不到。）
         tracked = []
     # 必须用 -z（NUL 分隔）：porcelain 默认会把非 ASCII 路径按 C 字符串转义加引号，
     # 也会把重命名写成 "old -> new" 一条 —— 两种形态都匹配不上任何 *_PREFIXES，
@@ -348,6 +358,15 @@ def _changed_paths() -> list[str]:
         ["git", "status", "--porcelain", "-z"],
         cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8",
     )
+    if status.returncode != 0:
+        # git 读不到工作树状态时 stdout 可能为空：旧实现把它当成"没有未提交改动"，
+        # 于是 dirty == []、按改动范围选步少跑一组步骤——**门禁自己的 fail-open**。
+        # 失败关闭：抛出去，由 main() 报成环境错误并不执行任何一步。
+        detail = (status.stderr or "").strip().splitlines()
+        raise ChangedPathsUnavailable(
+            "git status --porcelain -z 执行失败（退出码 %s）：%s"
+            % (status.returncode, detail[-1][:200] if detail else "<无 stderr>")
+        )
     fields = status.stdout.split(chr(0))
     dirty: list[str] = []
     index = 0
@@ -1099,8 +1118,17 @@ def main(argv: list[str] | None = None) -> int:
     # `--list` 不取锁：它不写 `.tmp`，而且别的实例正在跑时也可能有人只想看看清单。
     # 规划本身也是只读的，所以它同样留在锁外面。
     if args.list:
-        plan, skipped, not_run = _plan_steps(args.full)
-        print("改动文件 %d 个；本次会跑：" % len(_changed_paths()))
+        try:
+            changed = _changed_paths()
+            plan, skipped, not_run = _plan_steps(args.full)
+        except ChangedPathsUnavailable as error:
+            print("ci_local: " + str(error), file=sys.stderr)
+            print(
+                "ci_local: 读不到改动清单就没有「按改动范围」的依据，失败关闭：不列出计划。",
+                file=sys.stderr,
+            )
+            return 2
+        print("改动文件 %d 个；本次会跑：" % len(changed))
         for name, _ in plan:
             print("  - " + name)
         if skipped:
@@ -1141,8 +1169,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        changed = _changed_paths()
-        plan, skipped, not_run = _plan_steps(args.full)
+        try:
+            changed = _changed_paths()
+            plan, skipped, not_run = _plan_steps(args.full)
+        except ChangedPathsUnavailable as error:
+            # 锁已经拿到、但改动清单读不到：一步都不执行（拿不到依据就不能按范围裁步骤）。
+            print("ci_local: " + str(error), file=sys.stderr)
+            print(
+                "ci_local: 读不到改动清单就没有「按改动范围」的依据，失败关闭：一步都不执行。",
+                file=sys.stderr,
+            )
+            return 2
         if not args.hook:
             print(
                 "改动文件 %d 个；执行 %d 步（本机跳过 %d 步，登记豁免 %d 步，只报告 %d 步）"
