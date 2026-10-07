@@ -200,6 +200,23 @@ class IdempotencyLedger:
                     "幂等台账协议版本未知；拒绝按不确定的语义去重",
                     retryable=True,
                 )
+            # **条目的字段形状也是台账协议的一部分**。以前只查协议版本与 entry_key，
+            # 于是 `lookup` 的类型信任会把坏条目洗成一份"原结论"：status 缺失/写错类型被
+            # 默认成 200、body 不是对象被换成 {}（客户端收到 200 + 空响应）、status=999
+            # 原样重放。这些都不是"重放上次的结论"，而是**凭空造一个**。
+            status = item.get("status")
+            body = item.get("body")
+            if (
+                not isinstance(status, int)
+                or isinstance(status, bool)
+                or not 100 <= status <= 599
+                or not isinstance(body, Mapping)
+            ):
+                raise ApiError(
+                    ErrorCode.IDEMPOTENCY_UNAVAILABLE,
+                    f"幂等台账第 {number} 行的 status/body 形状非法；拒绝按不确定的语义去重",
+                    retryable=True,
+                )
             key = str(item.get("entry_key") or "")
             if key:
                 entries[key] = dict(item)

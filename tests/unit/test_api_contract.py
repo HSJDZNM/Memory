@@ -613,6 +613,47 @@ def test_idempotency_record_refuses_to_replace_a_fresh_entry_with_another_digest
     assert replaced is not None and replaced.body == {"who": "second"}
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"status": "200", "body": {}},  # 类型不对（int() 能读，但台账协议里没有这种写法）
+        {"body": {}},  # status 缺失 → 以前被默认成 200
+        {"status": 999, "body": {}},  # 越界状态码 → 以前原样重放给客户端
+        {"status": 200, "body": ["not", "an", "object"]},  # → 以前被换成 {}，重放一个空响应
+    ],
+)
+def test_idempotency_ledger_rejects_malformed_entries(tmp_root: Path, entry: dict) -> None:
+    """条目的字段形状也是协议：坏条目必须失败关闭，不能被洗成一份"原结论"。
+
+    历史缺陷（medium 台账 M1，idempotency.py:221）：`_read_unlocked` 只校验协议版本与
+    `entry_key`，`lookup` 直接 `int(item.get("status", 200))` / `dict(body) if isinstance(...)`
+    ——status 缺失或写错类型被默认成 200、body 不是对象被换成 {}（客户端收到 200 + 空响应）、
+    status=999 原样重放。都不是"重放上次的结论"，而是凭空造一个。
+    """
+
+    path = tmp_root / "ledger.jsonl"
+    row = {
+        "ledger_schema_version": "1.0",
+        "entry_key": "alpha-client|1.0|evaluate|k1",
+        "request_digest": "d1",
+        "expires_at": "2099-01-01T00:00:00.000000Z",
+        **entry,
+    }
+    path.write_text(
+        json.dumps(row, ensure_ascii=False, sort_keys=True) + chr(10),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    ledger = IdempotencyLedger(path)
+    with pytest.raises(ApiError) as info:
+        ledger.lookup(
+            client_id="alpha-client", api_version="1.0", route="evaluate", key="k1", digest="d1"
+        )
+    assert info.value.code is ErrorCode.IDEMPOTENCY_UNAVAILABLE
+    assert info.value.status == 503
+
+
 @pytest.mark.skipif(os.name != "nt", reason="这一支是 Windows 的 msvcrt 代码路径")
 def test_lock_timeout_reports_the_timeout_not_a_permission_error(
     tmp_root: Path, monkeypatch: pytest.MonkeyPatch
