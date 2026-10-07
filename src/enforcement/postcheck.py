@@ -335,8 +335,10 @@ def validate(
         # 确定性验证没过 → 需要修复（比"证据不一致"更可操作）
         reason = ReasonCode.POST_CHECK_FAILED
         status = PostStatus.REPAIR_REQUIRED
-    elif any(item.check in ("file_changed", "content_matches") for item in failed):
-        # 只有"目标里看不到请求声明的结果"这一类失败时，才是证据自相矛盾
+    elif any(item.reason_code is ReasonCode.POST_EVIDENCE_INCONSISTENT for item in failed):
+        # 只有验证器**自己**判定"工具声称成功、目标却不是那个结果"时才是证据自相矛盾。
+        # 旧实现按检查项名字分流，于是"没有收集到文件证据 / 缺少执行前基线"这些**证据不足**
+        # 的失败也被写成"工具声称成功但目标根本没变"——那是另一种结论（需要修复）。
         reason = ReasonCode.POST_EVIDENCE_INCONSISTENT
         status = PostStatus.INCONSISTENT
     else:
@@ -398,6 +400,7 @@ def _run_post_check(
             name,
             False,
             f"{effect.path} 在执行前后没有任何变化：工具声称成功但目标未改变",
+            reason=ReasonCode.POST_EVIDENCE_INCONSISTENT,
         )
 
     if name == "content_matches":
@@ -405,8 +408,20 @@ def _run_post_check(
         if target is None or workspace is None:
             return _outcome(name, True, "非文件动作，跳过内容一致性检查")
         effect = evidence.file(target)
-        if effect is None or not effect.exists_after:
-            return _outcome(name, False, f"{target} 在执行后不存在：动作没有产生它声称的结果")
+        if effect is None:
+            # 没有证据 ≠ 证据自相矛盾：这里根本不知道目标变成了什么。
+            return _outcome(
+                name,
+                False,
+                "没有收集到文件证据：目标路径缺失 / 工作区未声明 / 目标逃出工作区被拒绝取证",
+            )
+        if not effect.exists_after:
+            return _outcome(
+                name,
+                False,
+                f"{target} 在执行后不存在：动作没有产生它声称的结果",
+                reason=ReasonCode.POST_EVIDENCE_INCONSISTENT,
+            )
         content = (Path(workspace) / target).read_text(encoding="utf-8", errors="replace")
         expected = request.value_of("content")
         if isinstance(expected, str):
@@ -416,13 +431,31 @@ def _run_post_check(
                 name,
                 False,
                 f"{target} 的内容与请求声明的 content 不一致（工具声称成功，目标却不是那个结果）",
+                reason=ReasonCode.POST_EVIDENCE_INCONSISTENT,
             )
         new = request.value_of("new_string")
         old = request.value_of("old_string")
         if isinstance(new, str) and new and new not in content:
-            return _outcome(name, False, f"{target} 里没有出现请求声明的 new_string")
+            return _outcome(
+                name,
+                False,
+                f"{target} 里没有出现请求声明的 new_string",
+                reason=ReasonCode.POST_EVIDENCE_INCONSISTENT,
+            )
         if isinstance(old, str) and isinstance(new, str) and old != new and not effect.changed:
-            return _outcome(name, False, f"{target} 没有变化，替换结果无迹可循")
+            if not effect.baseline_recorded:
+                # changed=False 在这里来自"没有基线"，不是"真的没变"：证据不足。
+                return _outcome(
+                    name,
+                    False,
+                    f"{target} 缺少执行前基线：无法证明替换真的发生过（证据不足，不是自相矛盾）",
+                )
+            return _outcome(
+                name,
+                False,
+                f"{target} 没有变化，替换结果无迹可循",
+                reason=ReasonCode.POST_EVIDENCE_INCONSISTENT,
+            )
         return _outcome(name, True, f"{target} 与请求声明的变更一致")
 
     if name == "file_syntax":
@@ -472,8 +505,18 @@ def _run_post_check(
     return _outcome(name, False, f"未知验证器 {name!r}：注册表加载阶段本应拦下它")
 
 
-def _outcome(name: str, passed: bool, detail: str) -> tuple[ValidatorOutcome, CheckResult]:
-    reason = ReasonCode.ALLOW if passed else ReasonCode.POST_CHECK_FAILED
+def _outcome(
+    name: str, passed: bool, detail: str, *, reason: Optional[ReasonCode] = None
+) -> tuple[ValidatorOutcome, CheckResult]:
+    """一条验证器结论。
+
+    失败时默认 POST_CHECK_FAILED（"需要修复"），只有验证器**自己**判定"工具声称成功、
+    目标却不是那个结果"时才显式传 POST_EVIDENCE_INCONSISTENT —— 判定侧因此能按原因码
+    区分"证据不足"与"证据自相矛盾"，而不是按检查项名字猜。
+    """
+
+    if reason is None:
+        reason = ReasonCode.ALLOW if passed else ReasonCode.POST_CHECK_FAILED
     status = CheckStatus.PASSED if passed else CheckStatus.FAILED
     return (
         ValidatorOutcome(

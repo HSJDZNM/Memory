@@ -860,7 +860,10 @@ def test_new_file_is_not_reported_as_missing_baseline(enforcement_paths):
     insufficient, _ = validate(
         request, spec, record, empty, workspace=enforcement_paths.workspace
     )
-    assert insufficient.status is PostStatus.INCONSISTENT
+    # 缺基线是**证据不足**（证明不了效果），不是"工具声称成功却没变"的自相矛盾：
+    # 按需要修复处理，理由码也必须是 POST_CHECK_FAILED 而不是 POST_EVIDENCE_INCONSISTENT。
+    assert insufficient.status is PostStatus.REPAIR_REQUIRED
+    assert insufficient.reason_code is ReasonCode.POST_CHECK_FAILED
     assert "缺少执行前基线" in insufficient.detail
 
 
