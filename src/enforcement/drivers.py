@@ -23,7 +23,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Optional, Protocol, Sequence
+from typing import Any, Mapping, Optional, Protocol, Sequence
 
 from .action import blocked_path_prefix
 from .models import (
@@ -368,47 +368,213 @@ def _run_process(
 ) -> DriverResult:
     started = time.monotonic()
     working_directory = cwd if cwd is not None else workspace
+    popen_kwargs: dict[str, Any] = {
+        "cwd": None if working_directory is None else str(working_directory),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "shell": False,
+    }
+    if os.name == "nt":
+        # Windows：新进程组 + job object（见 _assign_windows_job）。TerminateJobObject
+        # 带走整棵进程树——只 kill 直接子进程会留下它启动的命令继续跑。
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        # POSIX：独立会话 = 独立进程组，超时时 killpg(-pid) 一次带走整组。
+        popen_kwargs["start_new_session"] = True
     try:
-        completed = subprocess.run(
-            list(argv),
-            cwd=None if working_directory is None else str(working_directory),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_ms / 1000,
-            check=False,
-            shell=False,
-        )
-    except subprocess.TimeoutExpired as error:
-        stdout = error.stdout if isinstance(error.stdout, str) else ""
-        stderr = error.stderr if isinstance(error.stderr, str) else ""
-        return DriverResult(
-            status=ExecutionStatus.FAILED,
-            detail=f"命令在 {timeout_ms}ms 内没有结束：已终止（部分输出不代表完整结果）",
-            exit_code=None,
-            timed_out=True,
-            stdout=_clean(stdout),
-            stderr=_clean(stderr),
-            duration_ms=int((time.monotonic() - started) * 1000),
-        )
+        process = subprocess.Popen(list(argv), **popen_kwargs)
+        _assign_windows_job(process)
     except FileNotFoundError as error:
         raise DriverError(f"命令不可执行：{error}") from error
 
-    status = (
-        ExecutionStatus.EXECUTED
-        if completed.returncode == 0
-        else ExecutionStatus.FAILED
-    )
+    timed_out = False
+    try:
+        try:
+            out, err = process.communicate(timeout=timeout_ms / 1000)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            # 终止**整棵进程树**：ShellCommandDriver 的直接子进程是声明的 shell，
+            # 真正干活的往往是它再启动的命令（孙子进程）；旧实现用 subprocess.run，
+            # 它只 kill 直接子进程，孙子进程会继续运行并继续写文件。
+            _terminate_tree(process)
+            try:
+                out, err = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:  # pragma: no cover - 已经终止过
+                out, err = b"", b""
+    finally:
+        _close_windows_job(process)
+
+    stdout = _clean(out.decode("utf-8", errors="replace"))
+    stderr = _clean(err.decode("utf-8", errors="replace"))
+    if timed_out:
+        return DriverResult(
+            status=ExecutionStatus.FAILED,
+            detail=(
+                f"命令在 {timeout_ms}ms 内没有结束：已终止整棵进程树"
+                "（部分输出不代表完整结果）"
+            ),
+            exit_code=None,
+            timed_out=True,
+            stdout=stdout,
+            stderr=stderr,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+    returncode = process.returncode
+    status = ExecutionStatus.EXECUTED if returncode == 0 else ExecutionStatus.FAILED
     return DriverResult(
         status=status,
-        detail=f"exit={completed.returncode}",
-        exit_code=completed.returncode,
-        stdout=_clean(completed.stdout or ""),
-        stderr=_clean(completed.stderr or ""),
-        structured={"exit_code": completed.returncode},
+        detail=f"exit={returncode}",
+        exit_code=returncode,
+        stdout=stdout,
+        stderr=stderr,
+        structured={"exit_code": returncode},
         duration_ms=int((time.monotonic() - started) * 1000),
     )
+
+
+def _terminate_tree(process: subprocess.Popen) -> None:
+    """终止子进程及其后代。
+
+    - POSIX：进程组（start_new_session 已把子进程放进自己的组，killpg 带走全组）；
+    - Windows：优先 TerminateJobObject（见 _assign_windows_job），再退到 taskkill /T，
+      最后 process.kill()。为什么不用 taskkill 当主路径：在受限环境（沙箱 / 受限令牌）里
+      它可能直接 Access denied，而 job object 仍然有效。
+
+    实现与 `validators.adapters.base._terminate_tree` 同型：那一份属于 Phase 5 的验证器层，
+    enforcement 不反向导入它（分层方向相反），所以这里保留一份最小实现。
+    """
+
+    if process.poll() is not None:
+        return
+    try:
+        job = getattr(process, "_enforcement_job_handle", None)
+        if job:
+            _terminate_windows_job(job)
+        elif os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                capture_output=True,
+                check=False,
+            )
+        else:
+            os.killpg(os.getpgid(process.pid), 9)
+    except Exception:  # pragma: no cover - 尽力而为，随后再 kill 一次
+        pass
+    finally:
+        try:
+            process.kill()
+        except Exception:  # pragma: no cover
+            pass
+
+
+# Windows 的 job object：把子进程绑进一个 job，TerminateJobObject 会带走它的整棵进程树。
+# 只用标准库 ctypes（不引入 pywin32），非 Windows 上是空操作。
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+
+
+def _windows_job_api() -> Any:  # pragma: no cover - 平台分支
+    if os.name != "nt":
+        return None
+    cached = getattr(_windows_job_api, "_cached", None)
+    if cached is not None:
+        return cached
+    import ctypes
+    from ctypes import wintypes
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class _BasicLimit(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+            ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_void_p),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class _ExtendedLimit(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _BasicLimit),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    bundle = (kernel32, _ExtendedLimit)
+    _windows_job_api._cached = bundle  # type: ignore[attr-defined]
+    return bundle
+
+
+def _assign_windows_job(process: subprocess.Popen) -> None:
+    """把子进程绑进一个"关闭即杀"的 job object；失败就退回 taskkill 路径。"""
+
+    api = _windows_job_api()
+    if api is None:  # pragma: no cover - POSIX
+        return
+    kernel32, extended_limit = api
+    try:
+        import ctypes
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return
+        info = extended_limit()
+        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        kernel32.SetInformationJobObject(
+            job,
+            _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not kernel32.AssignProcessToJobObject(job, ctypes.c_void_p(int(process._handle))):
+            kernel32.CloseHandle(job)
+            return
+        process._enforcement_job_handle = job  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - 尽力而为
+        return
+
+
+def _terminate_windows_job(job: int) -> None:
+    api = _windows_job_api()
+    if api is None:  # pragma: no cover
+        return
+    kernel32, _ = api
+    try:
+        kernel32.TerminateJobObject(job, 1)
+    except Exception:  # pragma: no cover
+        pass
+
+
+def _close_windows_job(process: subprocess.Popen) -> None:
+    job = getattr(process, "_enforcement_job_handle", None)
+    if not job:
+        return
+    api = _windows_job_api()
+    if api is None:  # pragma: no cover
+        return
+    kernel32, _ = api
+    try:
+        kernel32.CloseHandle(job)
+    except Exception:  # pragma: no cover
+        pass
+    process._enforcement_job_handle = None  # type: ignore[attr-defined]
 
 
 class DelegatingDriver:

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -154,6 +155,40 @@ def test_timeout_ms_shortens_the_budget(tmp_root):
     assert result.status is ExecutionStatus.FAILED
     assert result.timed_out is True, result.detail
     assert result.exit_code is None
+
+
+def test_timeout_kills_the_whole_process_tree(tmp_root):
+    """超时只杀直接子进程会留下它启动的命令继续跑：整棵树都必须被终止。
+
+    ShellCommandDriver 的直接子进程是声明的 shell，平台类工具的真正执行者是它的子进程。
+    旧实现用 subprocess.run，它只 kill 直接子进程——孙子进程会继续运行并继续写文件。
+    这里让孙子进程在被杀后 2 秒写一个标记文件：整棵树被终止时这个文件永远不出现。
+    """
+
+    from enforcement.drivers import ProcessDriver
+
+    _, spec, workspace, build = _probe_setup(tmp_root)
+    spawned = tmp_root / "grandchild-spawned.txt"
+    marker = tmp_root / "grandchild-alive.txt"
+    grandchild = (
+        f"import time; time.sleep(2.0); open({str(marker)!r}, 'w').write('alive')"
+    )
+    parent = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {grandchild!r}]); "
+        f"open({str(spawned)!r}, 'w').write('1'); "
+        "time.sleep(300)"
+    )
+    request = build({"argv": _python(parent), "description": "probe", "timeoutMs": 600})
+
+    result = ProcessDriver().execute(request, spec, workspace=workspace)
+
+    assert result.status is ExecutionStatus.FAILED
+    assert result.timed_out is True
+    assert spawned.is_file(), "孙子进程根本没起来：这条用例就会变成空测"
+    # 比孙子进程的写入时刻再多等一秒：它活着就一定会写出标记文件。
+    time.sleep(3.0)
+    assert not marker.exists(), "超时后孙子进程还活着并写了文件：整棵进程树没有被终止"
 
 
 def test_timeout_ms_above_the_registry_cap_is_refused(tmp_root):
