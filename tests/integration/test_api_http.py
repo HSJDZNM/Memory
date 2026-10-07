@@ -532,6 +532,31 @@ def test_oversized_idempotent_response_fails_explicitly_without_a_false_replay(
 # --------------------------------------------------------------------------- readiness
 
 
+def test_a_tenant_whose_rule_directory_is_empty_is_refused_on_cold_start(
+    tmp_root: Path,
+) -> None:
+    """冷启动时规则目录里一个规则文件都没有：拒绝服务，而不是"零条规则 = 全部放行"。
+
+    历史缺陷（OCR 全量审查 L10）：空集守卫写成
+    `if not loaded.rules and self._rules is not None:`，只保护"替换"路径；首次加载拿到空集时
+    `self._rules` 还是 None，守卫不触发，空 RuleSet 被缓存并开始服务——模块 docstring 明写
+    不允许的"没有规则 = 全部放行"。这里删掉规则**文件**但保留规则目录（装配仍然成功），
+    正是"目录存在、里面没有规则"这种部署形态。
+    """
+
+    runtime, client, _ = build_api(tmp_root)
+    rules_dir = tmp_root / "project" / "rules"
+    for item in sorted(rules_dir.glob("*.yaml")):
+        item.unlink()
+    assert rules_dir.is_dir() and list(rules_dir.iterdir()) == [], "目录必须还在，只是空了"
+
+    blocked = client.post(
+        "/v1/policy/evaluate", headers=auth(), json=envelope("it-empty-rules", context=GOOD_CONTEXT)
+    )
+    assert blocked.status_code == 503
+    assert error_code(blocked) == "rule_set_unavailable"
+
+
 def test_readiness_goes_not_ready_when_the_rule_directory_disappears(tmp_root: Path) -> None:
     """规则目录被删掉：readiness 立刻 503 not_ready，evaluate 得到 503 rule_set_unavailable。
 
