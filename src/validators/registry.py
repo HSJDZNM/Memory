@@ -136,11 +136,17 @@ def _check_registry(registry: Registry, *, path: Path, root: Path) -> None:
         )
 
     by_id = {item.id: item for item in registry.validators}
+    # 第一遍先把**所有** spec 的阶段合法性查完，再查依赖顺序：依赖顺序那一遍要读
+    # `stage_index[target.stage]`，而 target 可能是列表里**靠后**的那一条（它的阶段
+    # 在单遍循环里还没被查过）。不先查完，"被依赖者声明了未定义的阶段"就会在那一行
+    # 抛裸 KeyError——加载期的配置错误变成未处理异常，退出码与错误分类都丢了，
+    # 而本函数承诺的是"任何一条不满足都拒绝加载"。
     for spec in registry.validators:
         if spec.stage not in stage_index:
             raise RegistryError(
                 f"{path}: {spec.id} 声明了未定义的阶段 {spec.stage!r}；已声明的阶段为 {list(stages)}"
             )
+    for spec in registry.validators:
         unknown = sorted(set(spec.checkers) - SUPPORTED_CHECKERS)
         if unknown:
             raise RegistryError(
