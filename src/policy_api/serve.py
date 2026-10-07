@@ -16,19 +16,42 @@ from .runtime import ApiRuntime
 __all__ = ["endpoint", "serve"]
 
 
-def endpoint(config: Any) -> tuple[str, int]:
-    """从 base_url 解析监听地址（配置即数据，不写死端口）。"""
+def _port(text: str, *, source: Any) -> int:
+    """端口必须是 1-65535 的整数；否则抛 ConfigError（配置错误，不是运行时错误）。"""
 
-    url = str(config.base_url)
+    try:
+        port = int(text)
+    except ValueError as error:
+        raise ConfigError(f"base_url 端口非法：{source!r}") from error
+    if not 1 <= port <= 65535:
+        raise ConfigError(f"base_url 端口越界（1-65535）：{source!r}")
+    return port
+
+
+def endpoint(config: Any) -> tuple[str, int]:
+    """从 base_url 解析监听地址（配置即数据，不写死端口）。
+
+    解析失败一律 **ConfigError**：监听地址是部署边界，拼错一个字符必须变成
+    "配置不可用，拒绝启动 = 2"。以前 `int(port_text)` 的 ValueError 会从 `endpoint()`
+    直接冒出去（`serve()` 只把 ConfigError 翻译成退出码 2），部署者看到的是一段
+    traceback 而不是可判断的退出码；未闭合的 `[` 还会静默产出 `('::1', 8088)`
+    这种捏造出来的地址。
+    """
+
+    source = str(config.base_url)
+    url = source
     if "://" in url:
         url = url.split("://", 1)[1]
     url = url.split("/", 1)[0]
     if url.startswith("["):  # IPv6 字面量
-        host, _, rest = url[1:].partition("]")
-        port = int(rest.lstrip(":") or 8088)
-        return host, port
+        host, closing, rest = url[1:].partition("]")
+        if not closing:
+            raise ConfigError(f"base_url 的 IPv6 字面量缺少闭合的 ']'：{source!r}")
+        if not host:
+            raise ConfigError(f"base_url 的 IPv6 字面量为空：{source!r}")
+        return host, _port(rest.lstrip(":") or "8088", source=source)
     host, _, port_text = url.partition(":")
-    return host or "127.0.0.1", int(port_text or 8088)
+    return host or "127.0.0.1", _port(port_text or "8088", source=source)
 
 
 def serve(
@@ -58,7 +81,13 @@ def serve(
                 if not item.get("ok"):
                     print(f"  - {tenant.get('tenant')} / {item.get('check')}: {item.get('detail')}")
         return 3
-    host, port = endpoint(config)
+    try:
+        host, port = endpoint(config)
+    except ConfigError as error:
+        # 与 load_api_config 同一条出口：配置读不懂 / 写错了都是"拒绝启动 = 2"，
+        # 绝不把部署配置的错误变成一段 traceback（那既没有退出码语义，也掩盖了原因）。
+        print(f"policy-api: 配置不可用，拒绝启动：{error}")
+        return 2
     uvicorn.run(
         create_app(instance),
         host=host,

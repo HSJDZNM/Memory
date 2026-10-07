@@ -19,6 +19,7 @@ import os
 import time
 import urllib.error
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
 import pytest
@@ -42,6 +43,7 @@ from policy_api.observability import (
     verify_seal,
 )
 from policy_api.runtime import ApiRuntime, RateLimiter, budget_for
+from policy_api.serve import endpoint, serve
 from policy_api.services import signature_of
 from policy_api.timeout import Budget, BudgetExceeded, run_with_budget
 
@@ -640,6 +642,57 @@ def test_probe_unavailable_payload_reads_a_non_mapping_body_without_raising() ->
     payload = adapter._unavailable(503, ["not", "a", "mapping"])
     assert payload["decision"] == "block"
     assert payload["violations"][0]["evidence"]["value"] == "policy_unavailable"
+
+
+# --------------------------------------------------------------------------- 监听地址
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1:8088x",  # 端口拼错
+        "http://127.0.0.1:not-a-port",
+        "http://[::1",  # IPv6 字面量未闭合：以前静默产出 ('::1', 8088)
+        "http://host:70000",  # 端口越界
+        "http://host:0",
+    ],
+)
+def test_endpoint_rejects_an_unusable_base_url_as_a_config_error(base_url: str) -> None:
+    """监听地址是部署边界：写错必须变成 ConfigError，由 serve 翻译成退出码 2。
+
+    历史缺陷（OCR 全量审查 L10）：`int(port_text)` 的 ValueError 直接冒出 `endpoint()`，
+    `serve()` 于是以 traceback 结束而不是"配置不可用，拒绝启动 = 2"。
+    """
+
+    with pytest.raises(ConfigError):
+        endpoint(SimpleNamespace(base_url=base_url))
+
+
+def test_endpoint_parses_the_documented_forms() -> None:
+    """加了校验之后，正常形态一个都不能变（默认端口 / 显式端口 / IPv6 / 无 scheme）。"""
+
+    assert endpoint(SimpleNamespace(base_url="http://127.0.0.1:8088")) == ("127.0.0.1", 8088)
+    assert endpoint(SimpleNamespace(base_url="https://api.example.com")) == ("api.example.com", 8088)
+    assert endpoint(SimpleNamespace(base_url="127.0.0.1:9999")) == ("127.0.0.1", 9999)
+    assert endpoint(SimpleNamespace(base_url="http://[::1]:9000")) == ("::1", 9000)
+    assert endpoint(SimpleNamespace(base_url="http://[::1]")) == ("::1", 8088)
+
+
+def test_serve_refuses_to_start_with_an_unparsable_base_url(tmp_root: Path) -> None:
+    """整条路径：配置文件里的端口写错 → serve() 返回 2，而不是抛 ValueError。
+
+    只断言退出码是不够的，所以这里走 `serve()` 本身（readiness 先通过，然后在
+    解析监听地址时被 ConfigError 拦下，不会真的起 uvicorn）。
+    """
+
+    config_path, anchor = isolated_api(tmp_root)
+    text = config_path.read_text(encoding="utf-8").replace(
+        "base_url: http://127.0.0.1:8088", "base_url: http://127.0.0.1:8088x"
+    )
+    assert "8088x" in text, "配置模板变了：这条取证没有再测到它要测的东西"
+    config_path.write_text(text, encoding="utf-8", newline="\n")
+
+    assert serve(config_path, root=anchor) == 2
 
 
 # --------------------------------------------------------------------------- 冒烟
