@@ -695,6 +695,46 @@ def test_verify_approval_directly_covers_the_edge_cases(enforcement_paths):
         verify_approval(approval, **{**arguments, "action_id": "other"})
 
 
+def test_pattern_approval_without_a_use_count_is_refused(enforcement_paths):
+    """uses 缺省不再等于 0：拿不到台账里的已用次数就证明不了额度没用完。
+
+    旧签名 uses: int = 0：调用方忘了传次数时，一张有上限的模式条子会静默退化成
+    "到期前无限次"——而同一个下午刚为 params=None 写过"证明不了即失败关闭"。
+    """
+
+    registry = enforcement_paths.registry_object()
+    request = make_action(
+        registry, enforcement_paths, "exec.process", process_params(), roles=("owner",)
+    )
+    now = utc_now()
+    record = ApprovalRecord(
+        approval_id="approval-uses-none",
+        binding="pattern",
+        tool_id=request.tool_id,
+        subject=request.subject or "local-user",
+        granted_by="alice",
+        granted_by_roles=("reviewer",),
+        granted_at=now - timedelta(seconds=1),
+        expires_at=now + timedelta(seconds=300),
+        max_uses=5,
+        param_patterns={"description": ".*"},
+    )
+
+    with pytest.raises(ApprovalError) as error:
+        verify_approval(  # 故意不传 uses
+            record,
+            action_hash=request.action_hash,
+            action_id=request.action_id,
+            tool_id=request.tool_id,
+            subject=request.subject,
+            approval_roles=("reviewer",),
+            used=False,
+            params={item.name: item.value for item in request.params},
+        )
+
+    assert "已用次数" in str(error.value)
+
+
 def test_naive_approval_timestamps_are_rejected_as_the_documented_error(tmp_root):
     """无时区的审批时间必须在加载期报 ApprovalError，不能等到校验路径抛 TypeError。
 
