@@ -145,6 +145,18 @@ class Origin:
             raise OriginError("fix 不能为空：写不出修复动作的 origin 不许存在")
         if not isinstance(self.verified, bool) or not isinstance(self.run_scoped, bool):
             raise OriginError("verified / run_scoped 必须是布尔值")
+        # unknown_origin 是"归因没有建立起来"的落点（方案 §3.4：核验证伪了自己人）。
+        # 它与 verified=True / causal_link="proven" 自相矛盾：unknown_origin() 助手一直按这条
+        # 纪律写，但直接构造能绕过去——不变式必须在**构造期**成立，不能靠调用方自觉。
+        if self.origin == "unknown_origin":
+            if self.causal_link != "unproven":
+                raise OriginError(
+                    "unknown_origin 的 causal_link 只能是 unproven，得到 "
+                    + repr(self.causal_link)
+                    + "（归因没有建立起来）"
+                )
+            if self.verified:
+                raise OriginError("unknown_origin 不许 verified=True：核验没有建立任何因果链")
 
     def to_payload(self) -> dict[str, Any]:
         """进审计 / 诊断行的形状（键固定、顺序稳定、可直接 JSON 序列化）。"""

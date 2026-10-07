@@ -177,6 +177,25 @@ def test_the_cross_language_validator_matches_the_python_hard_rules():
             _good(**{field: value})
 
 
+def test_unknown_origin_cannot_claim_a_proven_causal_link():
+    """unknown_origin 是"归因没有建立起来"：verified / causal_link 不许自相矛盾（复核发现）。
+
+    只有 unknown_origin() 助手按这条纪律写；直接构造（或未来某个调用方）能绕过它，
+    而这样一条记录在审计里会被读成"已证明的另一侧"。
+    """
+
+    with pytest.raises(OriginError):
+        _good(origin="unknown_origin")  # causal_link 仍是 proven
+    with pytest.raises(OriginError):
+        _good(origin="unknown_origin", causal_link="unproven")  # verified 仍是 True
+    with pytest.raises(OriginError):
+        _good(origin="unknown_origin", causal_link="proven", verified=False)
+
+    consistent = _good(origin="unknown_origin", causal_link="unproven", verified=False)
+    assert consistent.origin == "unknown_origin"
+    assert payload_is_well_formed(consistent.to_payload())
+
+
 def test_unknown_origin_is_the_only_landing_place_when_verification_fails():
     origin = unknown_origin(reason="核验判据不成立：没有指名任何输入")
     assert origin.origin == "unknown_origin"
