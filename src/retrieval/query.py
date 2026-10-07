@@ -113,21 +113,51 @@ def fts_expression(terms: Sequence[str]) -> str:
     return " OR ".join(fts_phrase(term) for term in terms if term)
 
 
-def _structural_terms(query: RetrievalQuery) -> Tuple[str, ...]:
-    """结构化字段作为**软词项**：它们提高排序相关性，但从不单独构成过滤条件。"""
+def _controlled_term(value: str, *, max_chars: int) -> bool:
+    """**扩展短语**在进 FTS 表达式之前必须满足的字符类与长度约束。
+
+    允许字母 / 数字 / 下划线 / 连字符 / 中日韩文字，以及短语内部的空格。连字符是有意的：
+    声明里的术语本来就有 human-in-the-loop / multi-tenant 这类写法，而 fts_phrase 会把整条
+    短语加引号——连字符在 FTS 侧只是分词符，不是语法。长度上界用 policy.max_query_chars：
+    比整个查询预算还长的"词"没有意义。控制字符、标点与超长串一律拒绝。
+    """
+
+    if not value or len(value) > max_chars:
+        return False
+    return all(
+        char in " _-"
+        or (char.isascii() and char.isalnum())
+        or bool(CJK_RE.fullmatch(char))
+        for char in value
+    )
+
+
+def _structural_terms(
+    query: RetrievalQuery, *, max_chars: int
+) -> Tuple[Tuple[str, ...], bool]:
+    """结构化字段作为**软词项**：它们提高排序相关性，但从不单独构成过滤条件。
+
+    这些值必须过与文本同一套受控分词：它们最终会进 fts_expression，而本模块的安全前提是
+    "词项只允许字母/数字/下划线/中日韩文字、且受长度上限约束"——上游只做 strip/lower，
+    含空格的值会变成多词短语、超长值绕过词项上限、控制字符也一路带到表达式里。
+    """
 
     terms: list[str] = []
-    if query.language:
-        terms.append(query.language)
-    if query.module:
-        terms.append(query.module)
+    dropped = False
+    for value in (query.language, query.module):
+        if not value:
+            continue
+        found, lost = _tokenize_with_stats(value)
+        terms.extend(found)
+        dropped = dropped or lost
     if query.file:
         stem = query.file.rsplit("/", 1)[-1]
         if "." in stem:
             stem = stem.rsplit(".", 1)[0]
-        for token in tokenize(stem):
-            terms.append(token)
-    return tuple(dict.fromkeys(terms))
+        found, lost = _tokenize_with_stats(stem)
+        terms.extend(found)
+        dropped = dropped or lost
+    return tuple(dict.fromkeys(terms)), dropped
 
 
 def build_plan(
@@ -149,15 +179,29 @@ def build_plan(
     normalized, text_truncated = normalize_query_text(raw_text, max_chars=policy.max_query_chars)
 
     text_terms, text_dropped = _tokenize_with_stats(normalized)
-    expanded = lexicon.expand(normalized) if lexicon is not None else ()
-    structural = _structural_terms(query)
+
+    # 扩展词项同样要过受控词项检查（load_expansion 只守声明文件；本模块允许直接构造
+    # ExpansionLexicon，那条路径不该能把句子 / 超长串 / 控制字符带进表达式）。
+    expanded_terms: list[str] = []
+    expanded_dropped = False
+    for term in lexicon.expand(normalized) if lexicon is not None else ():
+        if term in expanded_terms:
+            continue
+        if _controlled_term(term, max_chars=policy.max_query_chars):
+            expanded_terms.append(term)
+        else:
+            expanded_dropped = True
+    expanded = tuple(expanded_terms)
+    structural, structural_dropped = _structural_terms(
+        query, max_chars=policy.max_query_chars
+    )
 
     ordered: list[str] = []
     for term in (*text_terms, *expanded, *structural):
         if term and term not in ordered:
             ordered.append(term)
     # 字符截断、超长词项被丢弃、词项数超上限——三种"这次搜索比原始请求窄"都要记 truncated。
-    truncated = text_truncated or text_dropped
+    truncated = text_truncated or text_dropped or expanded_dropped or structural_dropped
     if len(ordered) > policy.max_query_terms:
         ordered = ordered[: policy.max_query_terms]
         truncated = True
@@ -172,7 +216,7 @@ def build_plan(
     return QueryPlan(
         text=normalized,
         terms=tuple(ordered),
-        expanded_terms=tuple(expanded),
+        expanded_terms=expanded,
         structural_terms=structural,
         filters=filters,
         fts_expression=fts_expression(ordered),

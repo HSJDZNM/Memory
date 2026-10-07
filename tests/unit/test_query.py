@@ -46,6 +46,43 @@ def test_over_long_token_is_reported_as_truncated() -> None:
     assert plan("review checklist").truncated is False
 
 
+def test_structural_and_expanded_terms_pass_the_controlled_tokenizer() -> None:
+    """language/module 与扩展词项都要过受控分词（复核发现）。"""
+
+    # 含空格的结构化字段：拆成词项，而不是当成一个多词短语。
+    spaced = plan("review", language="Code Review")
+    assert "code" in spaced.terms and "review" in spaced.terms
+    assert "code review" not in spaced.terms
+    assert "Code Review" not in spaced.fts_expression
+
+    # 超长 module：整串不许进表达式，并且要记 truncated。
+    long_module = "m" * 200
+    oversized = plan("review", module=long_module)
+    assert long_module not in oversized.terms
+    assert oversized.truncated is True
+
+    # 直接构造的术语表给出句子/超长/控制字符条目：一律不许进表达式。
+    noisy = ExpansionLexicon(
+        version=1,
+        terms=(ExpansionTerm(zh=("评审",), en=("a" * 500, "bad\x00term", "code review")),),
+    )
+    noisy_plan = build_plan(
+        RetrievalQuery(text="评审"), scope=SCOPE, policy=CorpusPolicy(), lexicon=noisy
+    )
+    assert "a" * 500 not in noisy_plan.terms
+    assert all("\x00" not in term for term in noisy_plan.terms)
+    assert "code review" in noisy_plan.expanded_terms  # 合规的短语照常保留
+    assert noisy_plan.truncated is True
+
+    # 声明里的连字符术语必须仍然合法：把字符类收紧到"只允许字母数字下划线"会让
+    # human-in-the-loop / multi-tenant 这类声明词项被丢掉，受门槛约束的评测基线随之改变。
+    from retrieval import query as query_module
+
+    assert query_module._controlled_term("human-in-the-loop", max_chars=200) is True
+    assert query_module._controlled_term("multi-tenant", max_chars=200) is True
+    assert query_module._controlled_term("句。", max_chars=200) is False
+
+
 def test_normalize_applies_nfkc_and_collapses_whitespace() -> None:
     text, truncated = normalize_query_text("  ＡＢＣ   code \t review \n\n ", max_chars=100)
     assert text == "ABC code review"
