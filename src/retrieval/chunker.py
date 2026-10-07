@@ -411,7 +411,11 @@ def find_sections(body: str, *, line_start: int = 1) -> Tuple[Section, ...]:
     occurrences: dict[str, int] = {}
     stack: list[Tuple[int, str]] = []
     current_path: Tuple[str, ...] = ()
+    # current_start 是**章节**的起始行（标题那一行，供 Section.line_start 用）；
+    # buffer_start 是缓冲区里第一行正文的真实行号——标题行本身 `continue` 掉了、不进 buffer，
+    # 两者因此在标题之后差一行（旧实现共用一个变量，让每个标题章节的 Block.line_start 都早一行）。
     current_start = line_start
+    buffer_start = line_start
     buffer: list[str] = []
     fence: Optional[str] = None
     newline = chr(10)
@@ -420,7 +424,7 @@ def find_sections(body: str, *, line_start: int = 1) -> Tuple[Section, ...]:
         nonlocal buffer
         text = newline.join(buffer)
         buffer = []
-        blocks = iter_blocks(text, line_start=current_start)
+        blocks = iter_blocks(text, line_start=buffer_start)
         if not blocks and not current_path:
             # 正文之前没有任何内容：不需要为空白占一个"章节"。
             return
@@ -459,6 +463,7 @@ def find_sections(body: str, *, line_start: int = 1) -> Tuple[Section, ...]:
             stack.append((level, title))
             current_path = tuple(item[1] for item in stack)
             current_start = number
+            buffer_start = number + 1
             continue
         buffer.append(line)
 

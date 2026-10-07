@@ -243,6 +243,32 @@ def test_duplicate_headings_get_distinct_stable_anchors() -> None:
     assert "DUP-MARKER" in notes[1].text
 
 
+def test_block_line_numbers_point_at_the_real_first_line() -> None:
+    """标题章节里的 Block.line_start 必须指向真正的第一行（复核发现：整体早一行）。"""
+
+    text = (
+        "# Title" + chr(10)          # 1
+        + chr(10)                     # 2
+        + "intro line" + chr(10)      # 3
+        + "## Sub" + chr(10)          # 4
+        + chr(10)                     # 5
+        + "sub body" + chr(10)        # 6
+        + chr(10)                     # 7
+        + FENCE + "python" + chr(10)  # 8
+        + "code line" + chr(10)       # 9
+        + FENCE + chr(10)             # 10
+    )
+    sections = {section.anchor: section for section in find_sections(text)}
+    assert sections["title"].line_start == 1
+    assert sections["title/sub"].line_start == 4
+    assert sections["title"].blocks[0].line_start == 3
+    assert sections["title"].blocks[0].text == "intro line"
+    sub_blocks = sections["title/sub"].blocks
+    assert sub_blocks[0].line_start == 6
+    assert sub_blocks[-1].kind is ChunkKind.CODE
+    assert sub_blocks[-1].line_start == 8
+
+
 def test_empty_section_is_skipped_but_visible_in_sections() -> None:
     text = "# Title\n\nbody\n\n## Appendix\n\n## After Appendix\n\ntail\n"
     sections = find_sections(text)
