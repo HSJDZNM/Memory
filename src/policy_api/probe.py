@@ -23,7 +23,13 @@ from typing import Any, Callable, Mapping, Optional
 
 from adapters.base import Adapter, AdapterConfig, RegistryError
 from adapters.models import AgentEvent, AdapterManifest
-from policy.models import SCHEMA_VERSION, Decision, PolicyContext
+from policy.models import (
+    SCHEMA_VERSION,
+    Decision,
+    PolicyContext,
+    ProtocolError,
+    parse_decision,
+)
 
 __all__ = ["HttpApiAdapter", "HttpApiClient"]
 
@@ -208,6 +214,22 @@ class HttpApiAdapter(Adapter):
         decision = body.get("decision")
         if not isinstance(decision, Mapping) or "decision" not in decision:
             return self._unavailable(status, {"error": {"code": "invalid_response"}})
+        try:
+            # **按核心协议解析一遍**，不是只看有没有 `decision` 键：未知决策值（"deny" /
+            # "Allow"）、未知协议版本、字段形状不对，都必须在这里失败关闭——否则它们会被原样
+            # 交给调用方，而调用方按枚举读，等于让一个"看不懂的结论"当成结论过去
+            # （AGENTS 第 3/7 条：未知枚举与未知协议版本一律拒绝）。
+            parse_decision(decision)
+        except ProtocolError as error:
+            return self._unavailable(
+                status,
+                {
+                    "error": {
+                        "code": "invalid_response",
+                        "detail": type(error).__name__,
+                    }
+                },
+            )
         return decision
 
     def _unavailable(self, status: int, body: Any) -> Mapping[str, Any]:

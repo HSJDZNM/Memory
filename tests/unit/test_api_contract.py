@@ -1244,6 +1244,49 @@ def test_serve_refuses_to_start_with_an_unparsable_base_url(tmp_root: Path) -> N
     assert serve(config_path, root=anchor) == 2
 
 
+def test_probe_rejects_a_decision_it_cannot_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    """只有 `decision` 键不算决策：未知决策值 / 未知协议版本必须失败关闭。
+
+    历史缺陷（medium 台账 M1，probe.py:156）：`decide` 只检查 `"decision" in decision`，
+    一个 `"deny"` / `"Allow"` 或未来协议版本的载荷会被原样交给调用方——而调用方按枚举读，
+    等于把"看不懂的结论"当成结论用（AGENTS 第 3/7 条）。
+    """
+
+    from policy_api.probe import HttpApiAdapter
+
+    def fake_post(path: str, payload: object) -> tuple[int, dict]:
+        return 200, {
+            "decision": {
+                "schema_version": "1.1",
+                "request_id": "it-probe-unknown",
+                "decision": "deny",  # 不在核心枚举里
+            }
+        }
+
+    adapter = object.__new__(HttpApiAdapter)
+    adapter.client = SimpleNamespace(post=fake_post)  # type: ignore[assignment]
+    monkeypatch.setattr(
+        HttpApiAdapter,
+        "to_policy_context",
+        lambda self, event, workspace=None: SimpleNamespace(
+            principal=None,
+            file="src/a.py",
+            layer="service",
+            language="python",
+            module=None,
+            operation=None,
+            dependencies=(),
+            agent=None,
+            project=None,
+        ),
+    )
+
+    result = adapter.decide(SimpleNamespace(request_id="it-probe-unknown", trace_id=None))
+
+    assert result["decision"] == "block", "看不懂的决策被原样交给了调用方"
+    assert result["violations"][0]["evidence"]["value"] == "invalid_response"
+
+
 def test_probe_forwards_base_dir_to_the_inner_json_adapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
