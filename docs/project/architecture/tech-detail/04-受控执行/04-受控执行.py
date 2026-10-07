@@ -560,13 +560,34 @@ sink.append(
     request_id="nb04:audit-redact",
     tool_id="fs.edit",
 )
-written = json.dumps(sink.chain_records()[-1], ensure_ascii=False)
-leaked_path = "someone" + chr(92) + "notes.txt"
+record = sink.chain_records()[-1]
+written = json.dumps(record, ensure_ascii=False)
+# **针必须与被搜索的文本同一套转义口径**：审计行落到 JSONL 时，路径里的反斜杠会被转义成两个字符，
+# 拿"单个反斜杠"的针去搜 `json.dumps` 的输出，就算路径原样落盘也永远搜不到——这条断言于是恒真，
+# 而它还打印着"含外部绝对路径 = False"。下面同时做结构检查（不依赖转义口径）。
+leaked_path = json.dumps("someone" + chr(92) + "notes.txt")[1:-1]
 print("落盘的审计行里: 含密钥原文 =", "sk-live-abcdefgh12345678" in written,  # secret-scan: allow（合成值：用来验证审计链把密钥换成 <redacted-secret>，不是真凭据）
       "| 含外部绝对路径 =", leaked_path in written)
 assert "sk-live-abcdefgh12345678" not in written  # secret-scan: allow（合成值：用来验证审计链把密钥换成 <redacted-secret>，不是真凭据）
 assert "<redacted-secret>" in written
 assert leaked_path not in written
+
+
+def _texts(value):
+    """记录里所有字符串（含嵌套 dict / list）：结构检查不受 JSON 转义口径影响。"""
+
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _texts(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _texts(item)
+    elif isinstance(value, str):
+        yield value
+
+
+leaked = [text for text in _texts(record) if "someone" in text and "notes.txt" in text]
+assert not leaked, leaked
 
 # 单条超限：失败关闭，而且不落盘。
 tiny_path = TEMP / "tiny-audit.jsonl"
