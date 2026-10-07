@@ -1117,6 +1117,32 @@ def test_probe_unavailable_payload_is_a_consumable_decision_payload() -> None:
 # --------------------------------------------------------------------------- 冒烟
 
 
+def test_readiness_without_any_assembled_tenant_says_that_explicitly(tmp_root: Path) -> None:
+    """没有装配出任何租户时，detail 必须是一句完整的话，而不是悬空的半句。
+
+    历史缺陷（medium 台账 M1，ops.py:153）：`"没有可服务的租户：" + ... or "未装配任何租户"`
+    里 or 左侧永远为真（拼上字面量就非空），兜底是死代码；租户全部 disabled 时 detail
+    就是一句悬空的"没有可服务的租户："。
+    """
+
+    from policy_api.ops import readiness_report
+
+    text = (
+        'schema_version: "1.0"' + chr(10)
+        + "tenants:" + chr(10)
+        + "  - tenant_id: alpha" + chr(10)
+        + "    enabled: false" + chr(10)
+        + "    project_root: project" + chr(10)
+        + "    rules: [rules]" + chr(10)
+    )
+    config = load_api_config(write_config(tmp_root, text), root=REPO_ROOT)
+    report = readiness_report(ApiRuntime(config, root=REPO_ROOT))
+
+    assert report["state"] == "not_ready"
+    assert report["ready"] is False
+    assert report["detail"] == "未装配任何租户"
+
+
 def test_audit_log_probe_uses_a_unique_filename(
     tmp_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
