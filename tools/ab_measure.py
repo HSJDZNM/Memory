@@ -1098,6 +1098,67 @@ def _oracle_argv(spec: Mapping[str, Any], python: str, tree: Path) -> list[str]:
     return [python, *argv]
 
 
+def _oracle_declared_tree(oracle: Mapping[str, Any]) -> Optional[Path]:
+    """oracle 载荷**自己声明的树**（这份 oracle 属于哪棵树）。
+
+    ab_arm 的 measurement_input.json 给 arm_tree.path（display() 出来的仓库根相对路径），
+    ab_tasks 的 --oracle 载荷给 baseline_dir（默认 --root 也是仓库根相对）。相对路径按仓库根
+    解析；没有声明就返回 None——调用方这时只能按"被测树"处理，不能凭空推。
+    """
+
+    candidates: list[Any] = []
+    arm_tree = oracle.get("arm_tree")
+    if isinstance(arm_tree, Mapping):
+        candidates.append(arm_tree.get("path"))
+    candidates.append(oracle.get("baseline_dir"))
+    for item in candidates:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        path = Path(item.strip())
+        return path if path.is_absolute() else (REPO / path)
+    return None
+
+
+def _resolve_oracle_cwd(
+    tree: Path, spec: Mapping[str, Any], declared: Optional[Path]
+) -> Optional[Path]:
+    """把 oracle 的 cwd 解析成**被测树内**的一个真实目录。
+
+    `test_command.cwd` 是 oracle **所属那棵树**的路径，两个生产方都不以"被测树"为基准：
+    ab_arm 给 display(tree)（仓库根相对），ab_tasks 给 <root>/<id>/baseline（进程 CWD 相对，
+    默认也是仓库根）。因此：
+
+      1. 相对路径按仓库根解析、绝对路径原样，得到 resolved；
+      2. resolved 落在**声明的那棵树**里 → 按同一相对子路径映射进本次被测的 tree
+         （反事实路径因此强制落在 target_root 内，不会跑去跑原始基线树）；
+      3. resolved 本来就落在被测 tree 里 → 原样使用；
+      4. 都不是 → 退回"相对被测树"的老读法（手工写的 cwd: tests 这类）；
+      5. 四条都不成立 → 返回 None，由调用方写 unavailable + reason（不猜、不回落）。
+    """
+
+    tree = tree.resolve()
+    raw = str(spec.get("cwd") or "").strip()
+    if raw in ("", "."):
+        return tree if tree.is_dir() else None
+    candidate = Path(raw)
+    resolved = (candidate if candidate.is_absolute() else (REPO / candidate)).resolve()
+    bases = [declared.resolve() if declared else None, tree]
+    for base in bases:
+        if base is None:
+            continue
+        try:
+            relative = resolved.relative_to(base)
+        except ValueError:
+            continue
+        mapped = (tree / relative).resolve()
+        if mapped.is_dir():
+            return mapped
+    legacy = (tree / candidate).resolve()
+    if not candidate.is_absolute() and legacy.is_dir():
+        return legacy
+    return None
+
+
 def run_pytest_oracle(
     *,
     tree: Path,
@@ -1111,11 +1172,15 @@ def run_pytest_oracle(
     spec = oracle.get("test_command") or {}
     python = str(oracle.get("python") or sys.executable)
     argv = _oracle_argv(spec, python, tree)
-    cwd = tree / str(spec.get("cwd") or ".")
-    if not cwd.is_dir():
+    declared = _oracle_declared_tree(oracle)
+    cwd = _resolve_oracle_cwd(tree, spec, declared)
+    if cwd is None:
         return {
             "status": STATUS_UNAVAILABLE,
-            "reason": "oracle 的 cwd 不存在：" + str(spec.get("cwd")),
+            "reason": sanitize(
+                "oracle 的 cwd 解析不到被测树里的目录：cwd=" + str(spec.get("cwd")) + "；声明的树=" + str(declared) + "；被测树=" + str(tree),
+                root=tree,
+            ),
         }
     limit = float(spec.get("timeout_s") or timeout_s)
     plugin_dir = write_pytest_plugin(workdir)

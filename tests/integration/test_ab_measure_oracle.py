@@ -14,12 +14,15 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
 import pytest
 
 import ab_measure
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.integration
 
@@ -88,3 +91,92 @@ def test_interpreter_relative_oracle_actually_runs(tmp_root: Path) -> None:
     assert trial["pytest_status"] == "ok", trial.get("reason")
     assert trial["counts"]["total"] == 1
     assert trial["cwd"] == "."
+
+def _failing_test(path: Path) -> None:
+    path.write_text(
+        "def test_extra():" + chr(10) + "    assert False" + chr(10),
+        encoding="utf-8",
+        newline=chr(10),
+    )
+
+
+def test_cwd_from_the_declared_tree_is_rebased_into_the_measured_tree(tmp_root: Path) -> None:
+    """ab_arm 形态（arm_tree.path + 仓库根相对的 cwd）：cwd 必须映射进**被测的那棵树**。
+
+    副本里多一条会红的用例：如果实现跑去跑原始臂树，读数会是 ok——本条用例就是靠这个分辨的。
+    """
+
+    arm = _tree(tmp_root, name="arm")
+    copy = tmp_root / "cf"
+    shutil.copytree(arm, copy)
+    _failing_test(copy / "tests" / "test_extra.py")
+    relative = arm.relative_to(REPO_ROOT).as_posix()
+    oracle = {
+        "python": sys.executable,
+        "arm_tree": {"path": relative},
+        "test_command": {"argv": [sys.executable, "-m", "pytest", "-q"], "cwd": relative},
+    }
+
+    trial = ab_measure.run_pytest_oracle(
+        tree=copy, oracle=oracle, workdir=tmp_root / "work", timeout_s=120.0
+    )
+
+    assert trial["status"] == "available", trial.get("reason")
+    assert trial["pytest_status"] == "red", trial.get("reason")
+    assert trial["cwd"] == "."
+
+
+def test_repo_relative_cwd_pointing_at_the_measured_tree_is_accepted(tmp_root: Path) -> None:
+    """cwd 正好是声明树本身（两个生产方的常态）：映射结果就是被测树。"""
+
+    tree = _tree(tmp_root, name="rel-tree")
+    relative = tree.relative_to(REPO_ROOT).as_posix()
+    oracle = {
+        "python": sys.executable,
+        "arm_tree": {"path": relative},
+        "test_command": {"argv": [sys.executable, "-m", "pytest", "-q"], "cwd": relative},
+    }
+
+    trial = ab_measure.run_pytest_oracle(
+        tree=tree, oracle=oracle, workdir=tmp_root / "work", timeout_s=120.0
+    )
+
+    assert trial["status"] == "available", trial.get("reason")
+    assert trial["pytest_status"] == "ok"
+    assert trial["cwd"] == "."
+
+
+def test_cwd_outside_every_candidate_tree_is_unavailable(tmp_root: Path) -> None:
+    """cwd 指向别处的一棵真树：不许跑去那里跑，写 unavailable + 理由。"""
+
+    tree = _tree(tmp_root, name="measured")
+    elsewhere = _tree(tmp_root, name="elsewhere")
+    oracle = {
+        "python": sys.executable,
+        "test_command": {"argv": [sys.executable, "-m", "pytest", "-q"], "cwd": str(elsewhere)},
+    }
+
+    trial = ab_measure.run_pytest_oracle(
+        tree=tree, oracle=oracle, workdir=tmp_root / "work", timeout_s=120.0
+    )
+
+    assert trial["status"] == "unavailable"
+    assert "解析不到" in trial["reason"]
+
+
+def test_hand_written_tree_relative_cwd_still_runs(tmp_root: Path) -> None:
+    """没有声明树的裸 oracle（cwd 相对被测树）保持老读法，不被这次收紧误伤。"""
+
+    tree = _tree(tmp_root, name="manual")
+    oracle = {
+        "python": sys.executable,
+        "test_command": {"argv": [sys.executable, "-m", "pytest", "-q"], "cwd": "tests"},
+    }
+
+    trial = ab_measure.run_pytest_oracle(
+        tree=tree, oracle=oracle, workdir=tmp_root / "work", timeout_s=120.0
+    )
+
+    assert trial["status"] == "available", trial.get("reason")
+    assert trial["pytest_status"] == "ok"
+    assert trial["cwd"] == "tests"
