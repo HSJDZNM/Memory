@@ -458,6 +458,26 @@ class CorpusManifest(StrictModel):
         unknown = sorted(set(self.restricted_datasets) - declared)
         if unknown:
             raise ValueError(f"restricted_datasets 引用了未声明的数据集：{unknown}")
+        # 这份名单在生产代码里没有第二个消费者（检索期真正生效的是 documents.visibility
+        # 与 AccessScope.allow_restricted），所以它必须与 visibility **逐项一致**：
+        # 登记成受限而 visibility 还是 public = 按清单作者的意思该受限、实际任何人都能检索
+        # （fail-open）；反过来漏登记 = 这份"哪些数据集受限"的声明在骗读者。
+        # 一致的写法只有一种：登记 ∩ restricted == visibility==restricted 的数据集集合。
+        restricted = {dataset.name for dataset in self.datasets if dataset.visibility is Visibility.RESTRICTED}
+        listed = set(self.restricted_datasets)
+        fail_open = sorted(listed - restricted)
+        if fail_open:
+            raise ValueError(
+                "restricted_datasets 与 visibility 不一致（这些数据集被登记为受限，"
+                f"但 visibility 不是 restricted，检索不会被拦）：{fail_open}；"
+                "要么把它们的 visibility 改成 restricted，要么从这份名单里去掉"
+            )
+        missing = sorted(restricted - listed)
+        if missing:
+            raise ValueError(
+                "restricted_datasets 漏登记了 visibility=restricted 的数据集："
+                f"{missing}；请登记（这份名单必须与 visibility 一致）"
+            )
         for item in self.rule_sources:
             if item.dataset not in declared:
                 raise ValueError(f"rule_sources 引用了未声明的数据集：{item.dataset}")
