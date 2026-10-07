@@ -107,16 +107,39 @@ assert PACKAGES, f"{SRC} 下没有发现任何包：src 布局变了？"
 print("扫描的顶层包：" + ", ".join(PACKAGES))
 
 
+def from_targets(node, package):
+    """把一条 from-import 解析成"仓库内部顶层包名"候选。
+
+    相对导入必须**按本文件所在的包回溯 level-1 层**再判断：只看 node.module 会把
+    `from .adapters.base import probe_tool`（真实目标是 validators.adapters）记成
+    "validators 依赖顶层包 adapters"——一个并不存在的同名顶层包，于是凭空多出一条边、
+    入边与 I = Ce/(Ca+Ce) 跟着一起失真。
+    """
+    if node.level == 0:
+        return [node.module or ""]
+    drop = node.level - 1
+    if drop > len(package):
+        # 回溯越过了顶层：不可能指向仓库里的某个顶层包（这种写法本身也是错的）。
+        return []
+    base = package[: len(package) - drop]
+    if base:
+        # 仍在同一个顶层包内（包内相对导入）：目标是本包，不产生跨包边。
+        return [base[0]]
+    # 正好回溯到顶层：module 的第一段就是顶层包名。
+    return [node.module or ""]
+
+
 def file_imports(path):
     """一个文件 import 到的仓库内部顶层包，返回 (模块级目标, 函数内目标)。"""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     top_level = {id(node) for node in tree.body}
+    package = path.relative_to(SRC).parts[:-1]  # 本文件所在的包（__init__.py 同理）
     eager, lazy = set(), set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             names = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
-            names = [node.module or ""]
+            names = from_targets(node, package)
         else:
             continue
         for name in names:
