@@ -338,7 +338,14 @@ class TraceRegistry:
         request_id: str = "",
     ) -> None:
         if self.path is None:
-            return
+            # 没有登记表路径 = 这个模式**根本登记不了** trace：静默返回会让登记方以为登记成功，
+            # 而它发出去的子 trace 会被 `check` 以「父 trace 不在登记表里」拒绝——真相是
+            # 「没有地方登记」，卡住这次接入的其实是配置。证明不了就失败关闭。
+            # 读侧（owner / known / check）不变：没有登记表就是什么都没登记。
+            raise RuntimeLedgerError(
+                "trace 登记表没有路径（TraceRegistry(path=None)）：无法登记 trace；"
+                "请给运行时一个 trace_path，或不要在这一模式下引用父 trace"
+            )
         if not isinstance(trace_id, str) or not trace_id.strip():
             raise RuntimeLedgerError("trace_id 必须是非空字符串")
         if not isinstance(owner_agent, str) or not owner_agent.strip():

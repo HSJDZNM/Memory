@@ -404,6 +404,20 @@ def test_trace_registry_separates_owners(tmp_root: Path) -> None:
     assert registry.check(agent_id="dsh", trace_id=None, parent_trace_id="t-a") == ""
 
 
+def test_registering_a_trace_without_a_registry_path_is_refused() -> None:
+    """没有登记表路径 = 根本登记不了：静默返回会让登记方以为成功。
+
+    后续一旦发子 trace，`check` 给的理由是「父 trace 不在登记表里」——真相是「没有地方登记」，
+    卡住这次接入的其实是配置。读侧不变：没有登记表就是什么都没登记。
+    """
+
+    registry = TraceRegistry(None)
+    with pytest.raises(RuntimeLedgerError) as error:
+        registry.register(trace_id="t-1", owner_agent="generic-json")
+    assert "trace 登记表没有路径" in str(error.value)
+    assert registry.known("t-1") is False
+
+
 def test_trace_owner_cannot_be_reassigned(tmp_root: Path) -> None:
     registry = TraceRegistry(tmp_root / "traces.jsonl")
     registry.register(trace_id="t-a", owner_agent="dsh", request_id="r")
