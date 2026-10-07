@@ -1116,8 +1116,18 @@ def _resolve_file(raw_path: Any, *, cwd: Optional[str], config: AdapterConfig) -
     if not isinstance(raw_path, str) or not raw_path.strip():
         raise DshEventError("工具参数缺少目标文件路径；路径是安全关键字段，不得猜测")
 
-    candidate = Path(raw_path.strip())
-    if not candidate.is_absolute() and cwd:
+    raw = raw_path.strip()
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        if not cwd:
+            # dsh 的相对路径基准是**会话工作目录**，不是仓库根：没有 cwd 时按仓库根解释
+            # 会让"被判定的文件"与"Agent 真正写的文件"不是同一个（例如会话 cwd 是
+            # <root>/packages/api 而路径是 src/x.py），layer / language / 规则范围全跟着错。
+            # 证明不了基准就失败关闭——与 _resolve_read_scope 同一条规矩。
+            raise DshEventError(
+                f"工具参数是相对路径 {raw!r}，但载荷里没有会话 cwd：dsh 的相对路径基准是"
+                "会话工作目录，没有它就无法证明这次写的是哪个文件（不得按配置默认值猜）"
+            )
         candidate = Path(cwd) / candidate
 
     return repo_relative_path(str(candidate), repo_root=config.project_root)
@@ -1154,8 +1164,15 @@ def _resolve_read_scope(
 
     candidate: Optional[Path] = None
     if isinstance(raw_path, str) and raw_path.strip():
-        candidate = Path(raw_path.strip())
-        if not candidate.is_absolute() and cwd:
+        raw = raw_path.strip()
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            if not cwd:
+                # 同 _resolve_file：相对路径的基准是会话 cwd，没有它就只能拒绝。
+                raise DshEventError(
+                    f"{tool} 的路径 {raw!r} 是相对路径，但载荷里没有会话 cwd："
+                    "无法证明读取范围在受控项目内（基准不得按配置默认值猜），拒绝放行"
+                )
             candidate = Path(cwd) / candidate
     elif cwd:
         candidate = Path(cwd)
