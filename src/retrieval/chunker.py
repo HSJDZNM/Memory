@@ -246,9 +246,39 @@ def split_front_matter(text: str) -> Tuple[FrontMatter, str]:
 
 
 def _scalar(value: Any) -> str:
+    """把 front matter 的值转成字符串：**永不抛出**，且同一输入永远同一结果。
+
+    YAML 会产出 json 不认识的类型（datetime.date / bytes / set，以及它们在嵌套映射、
+    序列与映射键里的形态），json.dumps 遇到这些就抛 TypeError。而 _scalar 在
+    split_front_matter 的 YAML 异常分支**之外**被调用——一个元数据字段就能把整份文档
+    （乃至整个索引 run）带走，与"未闭合 / 解析失败只记警告"的模块约定相矛盾。
+    """
+
     if isinstance(value, str):
         return value
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return _plain_scalar(value)
+
+
+def _plain_scalar(value: Any) -> str:
+    """json 序列化不了的值 -> 确定性文本；集合先排序，避免哈希随机化改变结果。"""
+
+    if isinstance(value, Mapping):
+        # 键也可能是 date 这类 json 不认识的对象：先转成字符串再排序。
+        return json.dumps(
+            {str(key): _plain_scalar(item) for key, item in value.items()},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    if isinstance(value, (list, tuple)):
+        return json.dumps([_plain_scalar(item) for item in value], ensure_ascii=False)
+    if isinstance(value, (set, frozenset)):
+        return "{" + ", ".join(sorted(_plain_scalar(item) for item in value)) + "}"
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", errors="backslashreplace")
+    return str(value)
 
 
 def iter_blocks(body: str, *, line_start: int = 1) -> Tuple[Block, ...]:
