@@ -478,6 +478,11 @@ def norm(url, spec):
         return None
     if path.rstrip("/") in [s.rstrip("/") for s in spec.get("skip_paths", [])]:
         return None
+    # `<dir>/index.html` 与 `<dir>/` 是同一页（服务器用 index.html 承接目录请求）。
+    # 不归一的话两者各自成为 URL 键，却都落到 `<dir>/index.md`：后写的覆盖先写的、manifest 里
+    # 出现两条同 local_path 的 saved 条目、README 的"已按尾斜杠形式归一"当场变成假话。
+    if path.endswith("/index.html"):
+        path = path[: -len("index.html")]
     # 只给无扩展名的目录式路径补尾斜杠，.html 等文件路径必须原样保留
     if not path.endswith("/") and "." not in path.rsplit("/", 1)[-1]:
         path += "/"
