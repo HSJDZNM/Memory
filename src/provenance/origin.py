@@ -157,6 +157,15 @@ class Origin:
                 )
             if self.verified:
                 raise OriginError("unknown_origin 不许 verified=True：核验没有建立任何因果链")
+        if not isinstance(self.verified_at, str):
+            raise OriginError(
+                f"verified_at 必须是 ISO-8601 字符串，得到 {self.verified_at!r}"
+            )
+        if not self.verified_at:
+            # 观测时刻在**构造期**取一次。若留到 to_payload() 再取，同一份归因序列化两次会
+            # 得到两个时刻（审计里的去重 / diff 跟着漂移），而 verified_at 的语义就是
+            # "这一次观测的时刻"——它属于这条记录，不属于那一次序列化。
+            object.__setattr__(self, "verified_at", _now_iso())
 
     def to_payload(self) -> dict[str, Any]:
         """进审计 / 诊断行的形状（键固定、顺序稳定、可直接 JSON 序列化）。"""
@@ -174,7 +183,7 @@ class Origin:
                 "method": self.method,
                 "result": self.result,
                 "verified": self.verified,
-                "verified_at": self.verified_at or _now_iso(),
+                "verified_at": self.verified_at,
                 "run_scoped": self.run_scoped,
             },
             "fix": self.fix,

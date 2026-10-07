@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from provenance import origin as origin_module
 from provenance.origin import (
     CAUSAL_LINKS,
     OBJECT_KINDS,
@@ -194,6 +195,51 @@ def test_unknown_origin_cannot_claim_a_proven_causal_link():
     consistent = _good(origin="unknown_origin", causal_link="unproven", verified=False)
     assert consistent.origin == "unknown_origin"
     assert payload_is_well_formed(consistent.to_payload())
+
+
+def test_the_observation_time_is_fixed_once_at_construction(monkeypatch: pytest.MonkeyPatch):
+    """观测时刻只取一次：同一份归因序列化两次必须逐字相同（复核发现）。
+
+    旧实现把 `verified_at or _now_iso()` 放在 to_payload() 里：直接构造的 Origin
+    （dataclass 默认空串）每次序列化都会换一个时刻，同一件事在审计里有了两个时间。
+    """
+
+    stamps = iter(["2026-01-01T00:00:00Z", "2026-01-01T00:00:07Z"])
+    monkeypatch.setattr(origin_module, "_now_iso", lambda: next(stamps))
+
+    record = Origin(
+        origin="project.workdir_missing",
+        owner="platform.attribution",
+        object_kind="workdir",
+        object_value="C:/probe/missing",
+        object_source="config.projectDir",
+        method="stat",
+        result="stat 观测：该路径不存在（ENOENT）",
+        verified=True,
+        fix="创建它，或把 config.projectDir 指向真实存在的目录",
+        causal_link="proven",
+    )
+    assert record.verified_at == "2026-01-01T00:00:00Z"
+    first = record.to_payload()
+    second = record.to_payload()
+    assert first["observation"]["verified_at"] == record.verified_at
+    assert first == second
+
+    # 非字符串的 verified_at 不许流进载荷（它会被 json 原样带出去）。
+    with pytest.raises(OriginError):
+        Origin(
+            origin="project.workdir_missing",
+            owner="platform.attribution",
+            object_kind="workdir",
+            object_value="C:/probe/missing",
+            object_source="config.projectDir",
+            method="stat",
+            result="stat 观测：该路径不存在（ENOENT）",
+            verified=True,
+            fix="创建它",
+            causal_link="proven",
+            verified_at=7,
+        )
 
 
 def test_unknown_origin_is_the_only_landing_place_when_verification_fails():
