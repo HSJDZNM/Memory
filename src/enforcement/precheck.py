@@ -602,44 +602,32 @@ def check_list(
         )
     )
     prior_hashes: list[object] = [item.get("action_hash") for item in claims]
-    if sink is not None and hasattr(sink, "chain_records"):
-        occupants: list[object] = []
-        executed: set[object] = set()
-        corrected: set[object] = set()
-        for item in sink.chain_records():  # type: ignore[attr-defined]
-            if item.get("action_id") != request.action_id:
-                continue
-            if item.get("stage") not in ("pre_decision", "final_decision", "execution"):
-                continue
-            payload = item.get("payload") or {}
-            if not isinstance(payload, Mapping):
-                continue
-            # 只有"真的允许过 / 真的跑过"才占用 action_id：被阻断的尝试没有产生副作用，
-            # 修好参数或补齐审批之后必须能重试，否则失败关闭会变成无法恢复的死锁。
-            blocked = (
-                payload.get("decision") == "block"
-                or payload.get("outcome") == "blocked"
-                or payload.get("status") == "refused"
+    chain_error = ""
+    if sink is None:
+        chain_error = "没有配置审计端口"
+    else:
+        try:
+            chain = list(sink.chain_records())
+        except AuditError as error:
+            chain_error = str(error)
+        except AttributeError as error:
+            # 端口没有实现声明里的 chain_records（第三方端口 / 旧实现）：同样按证据缺失处理。
+            chain_error = f"审计端口没有实现 chain_records（{error}）"
+        else:
+            _collect_chain_occupants(
+                chain, request=request, prior_hashes=prior_hashes
             )
-            if blocked or payload.get("dry_run"):
-                # dry-run 的 allow 不是授权，也不占用 action_id：它不能挡住真正的执行。
-                # 唯一的例外是"纠正记录"：它明确撤回**同一次尝试**的 allow（台账登记失败时
-                # 决策从 allow 翻成 block），否则修好台账之后那个 action_id 会被自己挡住。
-                if blocked and _is_corrected_pre_decision(payload):
-                    corrected.add(
-                        payload.get("action_hash") or f"<unknown:{item.get('digest')}>"
-                    )
-                continue
-            # 记录里没有 action_hash 时不能拿"当前请求的哈希"顶替：那会把
-            # "这个 action_id 发生过"误判成"就是这次这个动作"。
-            marker = payload.get("action_hash") or f"<unknown:{item.get('digest')}>"
-            occupants.append(marker)
-            if item.get("stage") in ("execution", "final_decision"):
-                executed.add(marker)
-        # 纠正只对"没有执行痕迹"的尝试生效：一旦有执行 / 终态记录，那条 allow 永远占用。
-        prior_hashes.extend(
-            marker for marker in occupants if marker not in corrected or marker in executed
+    if chain_error:
+        checks.append(
+            _check(
+                "audit_replay",
+                CheckStatus.SKIPPED,
+                ReasonCode.ALLOW,
+                f"审计链记录不可读（{chain_error}）：重放判据退化为**只看台账**这一份证据——"
+                "这是证据缺失，不是'没有重放'，本条结论只能按单一来源解读",
+            )
         )
+        warnings.append("replay_evidence_degraded")
     prior = [item for item in prior_hashes if item is not None]
     if prior:
         same = any(item == request.action_hash for item in prior)
@@ -759,6 +747,54 @@ def _unavailable_outcome(
         checks=list(checks),
         spec=spec,
         claim_id=None,
+    )
+
+
+def _collect_chain_occupants(
+    chain: Sequence[Mapping[str, Any]],
+    *,
+    request: ActionRequest,
+    prior_hashes: list[object],
+) -> None:
+    """把审计链里"真的允许过 / 真的跑过"的记录并进重放判据的占用集。
+
+    只有产生过副作用的记录才占用 action_id：被阻断的尝试没有副作用，修好参数或补齐审批
+    之后必须能重试，否则失败关闭会变成无法恢复的死锁。唯一的例外是"纠正记录"：它明确撤回
+    **同一次尝试**的 allow（台账登记失败时决策从 allow 翻成 block）。
+    """
+
+    occupants: list[object] = []
+    executed: set[object] = set()
+    corrected: set[object] = set()
+    for item in chain:
+        if item.get("action_id") != request.action_id:
+            continue
+        if item.get("stage") not in ("pre_decision", "final_decision", "execution"):
+            continue
+        payload = item.get("payload") or {}
+        if not isinstance(payload, Mapping):
+            continue
+        blocked = (
+            payload.get("decision") == "block"
+            or payload.get("outcome") == "blocked"
+            or payload.get("status") == "refused"
+        )
+        if blocked or payload.get("dry_run"):
+            # dry-run 的 allow 不是授权，也不占用 action_id：它不能挡住真正的执行。
+            if blocked and _is_corrected_pre_decision(payload):
+                corrected.add(
+                    payload.get("action_hash") or f"<unknown:{item.get('digest')}>"
+                )
+            continue
+        # 记录里没有 action_hash 时不能拿"当前请求的哈希"顶替：那会把
+        # "这个 action_id 发生过"误判成"就是这次这个动作"。
+        marker = payload.get("action_hash") or f"<unknown:{item.get('digest')}>"
+        occupants.append(marker)
+        if item.get("stage") in ("execution", "final_decision"):
+            executed.add(marker)
+    # 纠正只对"没有执行痕迹"的尝试生效：一旦有执行 / 终态记录，那条 allow 永远占用。
+    prior_hashes.extend(
+        marker for marker in occupants if marker not in corrected or marker in executed
     )
 
 

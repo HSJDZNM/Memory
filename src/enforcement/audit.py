@@ -179,6 +179,16 @@ class AuditSink(Protocol):
     ) -> AuditRecord:
         ...
 
+    def chain_records(self) -> tuple[Mapping[str, Any], ...]:
+        """本层的链式记录：重放判据的第二份独立证据源。
+
+        声明在端口上（而不是让调用方靠 hasattr 试探）：只实现 append 的端口会让
+        "台账 + 审计链两处都要看"的判据**静默**退化成只看台账。读不出来（不可读 /
+        端口不提供持久化审计）必须抛 AuditError，由调用方把"证据缺失"写成显式状态。
+        """
+
+        ...
+
 
 @dataclass
 class NullAuditSink:
@@ -188,6 +198,17 @@ class NullAuditSink:
 
     def append(self, stage: AuditStage, **_kwargs: Any) -> AuditRecord:
         raise AuditError("NullAuditSink 不提供持久化审计：按失败策略拒绝继续")
+
+    def chain_records(self) -> tuple[Mapping[str, Any], ...]:
+        """端口不提供持久化审计：没有链记录可读。
+
+        返回空元组会让重放判据把"证明不了"读成"没有重放"；这里显式抛错，
+        由调用方把退化写成结论（审计端口自己不能假装有证据）。
+        """
+
+        raise AuditError(
+            "NullAuditSink 不提供持久化审计：没有链记录可读（这是证据缺失，不是'没有重放'）"
+        )
 
 
 @dataclass

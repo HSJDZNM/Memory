@@ -10,6 +10,7 @@ import json
 import threading
 import time
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -108,6 +109,53 @@ def reason_of(outcome) -> ReasonCode:
 
 
 # --------------------------------------------------------------------------- 注册表与参数
+
+
+class AppendOnlySink:
+    """只实现 append 的审计端口（没有 chain_records）。
+
+    按旧声明接口写出来的端口就是这样：判定能继续，但它拿不出链记录——
+    "台账 + 审计链两处都要看"的判据于是只剩一处，这件事必须写成显式状态。
+    """
+
+    def __init__(self) -> None:
+        self.appended = 0
+
+    def append(self, stage, *, payload, **kwargs):  # type: ignore[no-untyped-def]
+        self.appended += 1
+        return SimpleNamespace(sequence=self.appended)
+
+
+def test_a_sink_without_chain_records_makes_the_replay_degradation_visible(tmp_root):
+    """只实现 append 的端口拿不出链记录：重放判据的退化必须看得见。
+
+    旧实现用 hasattr 试探，试探不到就什么都不写：判定悄悄退化成只看台账这一份证据，
+    而注释里恰恰写着"只看台账不能信"。现在它是一条 SKIPPED 检查项 + 一条警告。
+    """
+
+    from enforcement_support import EnforcementPaths
+
+    paths = EnforcementPaths(tmp_root)
+    registry = paths.registry_object()
+    request = make_action(
+        registry, paths, "fs.read", {"file_path": "src/shop/order_controller.py"}
+    )
+    sink = AppendOnlySink()
+
+    outcome = pre_execute(
+        request,
+        registry=registry,
+        ledger=EnforcementLedger(paths.ledger),
+        sink=sink,
+    )
+
+    assert sink.appended == 1, "前置条件：这次判定确实用到了这个端口"
+    assert outcome.decision.decision is Decision.ALLOW_WITH_WARNINGS
+    assert outcome.decision.reason_code is ReasonCode.ALLOW_WITH_WARNINGS
+    degraded = outcome.decision.check("audit_replay")
+    assert degraded is not None, "重放判据退化必须留下一条显式检查项"
+    assert degraded.status is CheckStatus.SKIPPED
+    assert "证据缺失" in degraded.detail
 
 
 def test_rate_limit_holds_under_concurrent_requests(enforcement_paths, monkeypatch):
