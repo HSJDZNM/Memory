@@ -73,8 +73,13 @@ def _text_items(source: Mapping[str, Any], key: str) -> tuple[str, ...]:
     return tuple(str(item) for item in value)
 
 
-def task_from_document(document: Mapping[str, Any]) -> tuple[TaskSpec, ScriptedAuthor]:
-    """任务文件 → (TaskSpec, 作者)。作者是**可替换端口**：这里用声明式的脚本作者。"""
+def task_from_document(document: Mapping[str, Any]) -> tuple[TaskSpec, list[Change]]:
+    """任务文件 → (TaskSpec, 候选改动列表)。
+
+    返回**改动列表**而不是作者：作者是可替换端口，由调用方决定用哪个实现
+    （CLI 这里包成 `ScriptedAuthor(changes)`）。此前注解写的是 ScriptedAuthor、返回值却是列表，
+    靠一个 `type: ignore[return-value]` 压住类型检查——注解与实现不一致时，读的人会信注解。
+    """
 
     changes = document.get("changes")
     if not isinstance(changes, Sequence) or not changes:
@@ -106,7 +111,7 @@ def task_from_document(document: Mapping[str, Any]) -> tuple[TaskSpec, ScriptedA
         acceptance=_text_items(document, "acceptance"),
         trace_id=None if document.get("trace_id") is None else str(document["trace_id"]),
     )
-    return task, parsed  # type: ignore[return-value]
+    return task, parsed
 
 
 def _principal(document: Mapping[str, Any]) -> dict[str, Any]:
@@ -333,7 +338,7 @@ def status_command(args: argparse.Namespace) -> int:
 
 def run_command(args: argparse.Namespace) -> int:
     document = _load_document(args.task)
-    task, changes = task_from_document(document)  # type: ignore[misc]
+    task, changes = task_from_document(document)
     config = build_config(args, document)
     assembly = build_assembly(config, task=task, author=ScriptedAuthor(changes))
     state = empty_state(
