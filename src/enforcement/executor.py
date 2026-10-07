@@ -378,8 +378,11 @@ class ControlledExecutor:
                 ),
                 risk=request.risk.value,
             )
-        except LedgerError:
-            pass
+        except LedgerError as error:
+            # 台账写入失败不能静默：kind=execution 的记录是熔断计数的唯一来源
+            # （precheck 读 failures_since(kind="execution", ok=False)），丢了它
+            # 等于窗口内失败数少算；与 _audit 同口径，把失败如实记进 notes。
+            note(f"台账写入失败（execution）：{error}")
 
         note(
             self._audit(
