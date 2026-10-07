@@ -375,8 +375,17 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
                 print(f"  ! [{issue.kind}] {issue.dataset}:{issue.source_path} {issue.detail}")
         return EXIT_OK if report.ok else EXIT_NEGATIVE
 
+    check_only = args.command == "index" and bool(getattr(args, "check", False))
+    if check_only and not Path(db_path).is_file():
+        # --check 的承诺是**只读**（"只检查是否需要重建，不写入索引库"）：没有索引库时
+        # 不建库、不初始化结构，直接回答"要重建"。旧实现用 create=True 打开，于是这条
+        # 检查命令会真的造出一个空索引库，并报出它的版本号（一个刚被自己建出来的读数）。
+        _emit_index_check(
+            loaded=loaded, as_json=as_json, indexed_input_hash=None, index_version="", needed=True
+        )
+        return EXIT_OK
     try:
-        store = _open_store(db_path, create=args.command == "index")
+        store = _open_store(db_path, create=args.command == "index" and not check_only)
     except StoreError as error:
         print(f"store error: {error}", file=sys.stderr)
         return EXIT_ERROR
@@ -393,6 +402,32 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
         store.close()
 
 
+def _emit_index_check(
+    *,
+    loaded: Any,
+    as_json: bool,
+    indexed_input_hash: Optional[str],
+    index_version: str,
+    needed: bool,
+) -> None:
+    """`index --check` 的读数（两个分支共用同一份形状：键集合不变）。
+
+    没有索引库时 index_version 写空串（与 IndexStats.index_version 的默认值同一含义：
+    "还不知道版本"），而不是去新建一个库再报它的版本号。
+    """
+
+    payload = {
+        "needs_reindex": needed,
+        "input_hash": loaded.input_hash,
+        "indexed_input_hash": indexed_input_hash,
+        "index_version": index_version,
+    }
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+    print("rebuild needed" if needed else "index is up to date for this corpus input")
+
+
 def _dispatch(
     args: argparse.Namespace, *, loaded: Any, store: ChunkStore, anchor: Path, as_json: bool
 ) -> int:
@@ -403,19 +438,13 @@ def _dispatch(
     )
     if args.command == "index":
         if args.check:
-            needed = needs_reindex(loaded, store)
-            payload = {
-                "needs_reindex": needed,
-                "input_hash": loaded.input_hash,
-                "indexed_input_hash": store.corpus_input_hash,
-                "index_version": store.index_version,
-            }
-            if as_json:
-                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-            else:
-                print(
-                    "rebuild needed" if needed else "index is up to date for this corpus input"
-                )
+            _emit_index_check(
+                loaded=loaded,
+                as_json=as_json,
+                indexed_input_hash=store.corpus_input_hash,
+                index_version=store.index_version,
+                needed=needs_reindex(loaded, store),
+            )
             return EXIT_OK
         report = ingest(loaded, store, repo_root=anchor, run_id=args.run_id)
         print(json.dumps(report.model_dump(), ensure_ascii=False, indent=2, sort_keys=True) if as_json else render_index(report))
