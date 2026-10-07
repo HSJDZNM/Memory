@@ -14,10 +14,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Optional, Protocol, Sequence
+from typing import Any, Iterator, Mapping, Optional, Protocol, Sequence
 
 from .models import (
     AuditError,
@@ -46,6 +49,76 @@ DEFAULT_MAX_RECORD_BYTES = 16384
 _MAX_STRING_CHARS = 2000
 _MAX_DEPTH = 6
 _MAX_ITEMS = 64
+
+#: 抢不到审计锁时的等待上限；超时即失败关闭（拒绝写，绝不在没锁的情况下追加）。
+_LOCK_TIMEOUT_SECONDS = 5.0
+
+
+@contextmanager
+def _audit_lock(path: Path, *, timeout_seconds: float = _LOCK_TIMEOUT_SECONDS) -> Iterator[None]:
+    """审计文件的跨进程互斥：Windows 用 msvcrt，POSIX 用 flock。
+
+    **锁的是独立的 `.lock` 文件，不是审计文件本身**：Windows 上给数据文件加字节锁会让
+    同一进程里的 `read_text()` 吃 `PermissionError`（这条坑 Phase 6/Phase 7 都踩过，
+    见 `adapters.runtime._process_file_lock` 与 `policy_api.idempotency._file_lock`）。
+    enforcement 是它们两者的下层，不能反向导入，所以这里保留一份最小实现。
+
+    抢不到锁**不写**：审计是摘要链，"两个写入方各自算出同一个 sequence/prev_digest"
+    会让链静默分叉，事后只能靠 verify() 发现。
+    """
+
+    lock_path = path.with_name(path.name + ".lock")
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = lock_path.open("a+b")
+        if handle.seek(0, 2) == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+    except OSError as error:
+        raise AuditError(f"审计日志锁不可用: {lock_path.name}（{error}）") from error
+
+    held = False
+    try:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    # 非阻塞抢锁 + 自己的截止时间：POSIX 的 LOCK_EX 会一直等下去，
+                    # 那会把"另一个写入方卡住"变成这里卡住（失败关闭要先能失败）。
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as error:
+                if time.monotonic() >= deadline:
+                    raise AuditError(
+                        f"审计日志锁超时: {path.name}（有另一个写入方持锁）："
+                        "拿不到锁就不写，宁可失败关闭"
+                    ) from error
+                time.sleep(0.01)
+        held = True
+        yield
+    finally:
+        try:
+            if held:
+                # 只解自己真的拿到的锁：对未持有的区间解锁会从 finally 抛 PermissionError，
+                # 把在途的"锁超时"这个真正的原因替换掉。
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
 # 绝对路径与密钥样式：审计里出现它们就等于把环境信息或凭据写进了日志。
 _ABS_PATH_RE = re.compile(
@@ -363,30 +436,39 @@ class FileAuditSink:
     ) -> AuditRecord:
         if not self.available:
             raise AuditError("审计端口被标记为不可用：按失败策略拒绝继续")
-        record = AuditChain.next_record(
-            self.chain_records(),
-            stage=stage,
-            payload=payload,
-            trace_id=trace_id,
-            action_id=action_id,
-            request_id=request_id,
-            tool_id=tool_id,
-            now=now,
-            workspace=self.workspace,
-        )
-        line = json.dumps(json.loads(record.model_dump_json()), ensure_ascii=False, sort_keys=True)
-        if len(line.encode("utf-8")) > self.max_record_bytes:
-            raise AuditError(
-                f"审计记录超过 {self.max_record_bytes} 字节上限："
-                "宁可失败关闭，也不写一条被截断的证据"
+        # 读-改-写必须在同一把跨进程锁里：sequence 与 prev_digest 都由"当前链尾"推出，
+        # 两个进程（dsh 每次事件调用都是一个新进程）各自读、各自写就会算出同一序号，
+        # 链静默分叉，只有事后 verify() 才发现。拿不到锁就失败关闭。
+        with _audit_lock(self.path, timeout_seconds=_LOCK_TIMEOUT_SECONDS):
+            record = AuditChain.next_record(
+                self.chain_records(),
+                stage=stage,
+                payload=payload,
+                trace_id=trace_id,
+                action_id=action_id,
+                request_id=request_id,
+                tool_id=tool_id,
+                now=now,
+                workspace=self.workspace,
             )
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(line + "\n")
-                handle.flush()
-        except OSError as error:
-            raise AuditError(f"审计日志不可写: {self.path.name}（{error}）") from error
+            line = json.dumps(
+                json.loads(record.model_dump_json()), ensure_ascii=False, sort_keys=True
+            )
+            if len(line.encode("utf-8")) > self.max_record_bytes:
+                raise AuditError(
+                    f"审计记录超过 {self.max_record_bytes} 字节上限："
+                    "宁可失败关闭，也不写一条被截断的证据"
+                )
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+                    handle.write(line + "\n")
+                    handle.flush()
+                    # flush 只是把数据交给 OS；摘要链是防篡改证据，落盘前 fsync，
+                    # 否则"写入成功但机器随后崩溃"会留下一条读不回来的记录。
+                    os.fsync(handle.fileno())
+            except OSError as error:
+                raise AuditError(f"审计日志不可写: {self.path.name}（{error}）") from error
         return record
 
     def final_digest(self) -> str:

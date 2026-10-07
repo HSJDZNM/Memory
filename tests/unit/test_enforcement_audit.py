@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import timedelta
 
 import pytest
@@ -189,6 +190,41 @@ def test_deleting_a_record_breaks_the_chain(tmp_root):
 
     issues = sink.verify()
     assert any("序号" in issue for issue in issues)
+
+
+def test_append_refuses_to_write_while_another_writer_holds_the_lock(tmp_root, monkeypatch):
+    """审计 append 是跨进程的读-改-写：拿不到锁必须失败关闭，绝不"没锁也写"。
+
+    两个 dsh 事件各自是一个进程：若各自读链尾再各自追加，就会写出同一个 sequence 与
+    prev_digest，链静默分叉——而 verify() 只能事后发现，那时动作已经执行完了。
+    """
+
+    from enforcement import audit as audit_module
+
+    sink = sink_for(tmp_root)
+    monkeypatch.setattr(audit_module, "_LOCK_TIMEOUT_SECONDS", 0.2)
+    holding = threading.Event()
+    release = threading.Event()
+
+    def hold() -> None:
+        with audit_module._audit_lock(sink.path, timeout_seconds=5.0):
+            holding.set()
+            release.wait(5)
+
+    writer = threading.Thread(target=hold, daemon=True)
+    writer.start()
+    try:
+        assert holding.wait(5)
+        with pytest.raises(AuditError) as error:
+            sink.append(AuditStage.REQUEST, payload={"a": 1})
+        assert "锁" in str(error.value)
+    finally:
+        release.set()
+        writer.join(5)
+
+    # 锁释放后写入恢复：失败关闭没有把审计端口永久锁死。
+    sink.append(AuditStage.REQUEST, payload={"a": 1})
+    assert sink.verify() == ()
 
 
 def test_mid_file_damage_is_reported_as_an_issue(tmp_root):
