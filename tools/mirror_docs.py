@@ -939,10 +939,15 @@ def write_structure(out, spec, manifest, edges):
                     emit(child, prefix + ("    " if last else "│   "), full)
 
         emit(build(sorted(ok)), "", "")
-        width = max(len(r[0]) for r in rows) + 2
         L += ["## 2. 层级结构", "", FENCE]
-        for text, note in rows:
-            L.append(text if not note else text.ljust(width) + "# " + note)
+        if rows:
+            width = max(len(r[0]) for r in rows) + 2
+            for text, note in rows:
+                L.append(text if not note else text.ljust(width) + "# " + note)
+        else:
+            # 一页都没保存（发现为空 / 全部抓取失败）：这是**读数**，不是崩点。
+            # 旧实现在这里 max() 空序列 → ValueError，STRUCTURE.md 根本没写出来。
+            L.append("（本次没有任何页面被保存：发现为空或全部抓取失败——没有层级可列）")
         L += [FENCE, ""] + spec.get("structure_tree_note", [
                 "本地路径完整保留站点 URL 层级（未剥离前缀），因此各专题根互不覆盖，",
                 "且任意文件都能反查回其线上地址。",
