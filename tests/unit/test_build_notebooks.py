@@ -65,6 +65,29 @@ def test_markdown_only_chapter_does_not_crash_the_table_helper_injection() -> No
     assert module.notebook_cells(spec) == [("markdown", "说明里提到 pad( 这个词")]
 
 
+def test_git_status_failure_does_not_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`git status` 失败时必须显式失败：拿不到基线就证明不了"没动仓库"。
+
+    历史缺陷（medium 台账 MA0，build_notebooks.py:334）：`check=False` 之后从不看 returncode，
+    git 失败时 stdout 为空、`after - before` 恒为空——"单元执行期间动了仓库"这条守卫永远绿。
+    """
+
+    from types import SimpleNamespace
+
+    module = load_tool()
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=128, stdout="", stderr="fatal: not a git repository"
+        ),
+    )
+
+    with pytest.raises(SystemExit) as info:
+        module.git_untracked_snapshot()
+    assert info.value.code == 2
+
+
 def test_unique_chapter_numbers_still_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """对照组：编号唯一时照常返回（不是"永远报错"）。"""
 

@@ -354,6 +354,17 @@ def git_untracked_snapshot() -> set[str]:
         errors="replace",
         check=False,
     )
+    if result.returncode != 0:
+        # **拿不到基线就不许报"干净"**：git 失败（tarball 检出里没有 .git、索引坏了、
+        # dubious ownership）时 stdout 是空的，`after - before` 于是恒为空——
+        # "单元动了仓库"这条守卫会永远绿。它是守卫，不是尽力而为的读数。
+        detail = (result.stderr or "").strip().splitlines()
+        print(
+            "git status 失败（退出码 " + str(result.returncode) + "）：工作区守卫拿不到基线，"
+            "拒绝按“没有改动”继续" + (f"：{detail[0][:200]}" if detail else ""),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     return {line for line in result.stdout.splitlines() if line.strip()}
 
 
