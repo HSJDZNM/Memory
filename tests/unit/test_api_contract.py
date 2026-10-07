@@ -1145,6 +1145,31 @@ def test_endpoint_parses_the_documented_forms() -> None:
     assert endpoint(SimpleNamespace(base_url="http://[::1]")) == ("::1", 8088)
 
 
+def test_serve_binds_the_address_of_the_runtime_it_was_given(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """注入 runtime 时，监听地址必须来自**它自己的** config，而不是重新读进来的那份文件。
+
+    历史缺陷（medium 台账 M1，serve.py:61）：`endpoint(config)` 用的是刚加载的 `config`，
+    而真正在服务的是注入的 `runtime`——两份配置可以不同，"听在哪个地址"与"按哪份配置判定"
+    因此分家（例如运维换了一份配置重启，但仍注入旧 runtime）。
+    """
+
+    import uvicorn
+
+    config_path, anchor = isolated_api(tmp_root)
+    runtime = ApiRuntime(load_api_config(config_path, root=anchor), root=anchor)
+    # 注入的 runtime 带一份"端口写错"的配置：它就该被拒绝启动，而不是去用文件里的好端口
+    broken = runtime.config.model_copy(update={"base_url": "http://127.0.0.1:8088x"})
+    injected = ApiRuntime(broken, root=anchor, store=runtime.store)
+
+    calls: list[dict] = []
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: calls.append(kwargs))
+
+    assert serve(config_path, root=anchor, runtime=injected) == 2
+    assert calls == [], "按文件里的地址起了服务：注入的 config 被忽略了"
+
+
 def test_serve_refuses_to_start_with_an_unparsable_base_url(tmp_root: Path) -> None:
     """整条路径：配置文件里的端口写错 → serve() 返回 2，而不是抛 ValueError。
 
