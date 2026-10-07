@@ -117,6 +117,42 @@ def test_a_declaration_matching_only_excluded_files_is_unprovable(tmp_root: Path
         worktree.platform_revision(tree, ["**/*.pyc"])
 
 
+def test_relative_paths_are_lexical_not_resolved(tmp_root: Path) -> None:
+    """_relative 必须词法计算（复核发现）。
+
+    resolve() 在链接指向根外时让 relative_to 失败，于是退回一个随调用方式变化的
+    （可能绝对的）路径；同一棵树在不同挂载点/不同 root 写法下会算出不同指纹。
+    """
+
+    tree = tmp_root / "tree"
+    tree.mkdir()
+    _tree(tree)
+    elsewhere = tmp_root / "elsewhere"  # 树**之外**的目录
+    elsewhere.mkdir()
+    (elsewhere / "x.py").write_text("x" + chr(10), encoding="utf-8")
+
+    relative = worktree._relative(elsewhere / "x.py", tree)
+    assert relative == "../elsewhere/x.py"
+    assert not Path(relative).is_absolute()
+    # 根内的取值与以前一致；根目录本身写成 "."。
+    assert worktree._relative(tree / "pkg" / "one.py", tree) == "pkg/one.py"
+    assert worktree._relative(tree, tree) == "."
+
+
+def test_symlinks_are_recorded_as_themselves(tmp_root: Path) -> None:
+    """根内的文件链接记录的是链接这一项，不是它的目标（否则制造重复键）。"""
+
+    tree = _tree(tmp_root)
+    link = tree / "pkg" / "alias.py"
+    try:
+        link.symlink_to(tree / "pkg" / "one.py")
+    except (OSError, NotImplementedError):
+        pytest.skip("本机不允许创建符号链接（Windows 需要特权）：该断言在 CI/Linux 上执行")
+
+    assert worktree._relative(link, tree) == "pkg/alias.py"
+    assert worktree.tree_digest(tree).files == 3  # top.py / pkg/one.py / pkg/alias.py
+
+
 def test_platform_revision_scope_comes_from_the_declaration(tmp_root: Path) -> None:
     tree = _tree(tmp_root)
     before = worktree.platform_revision(tree, ["pkg/*.py"])

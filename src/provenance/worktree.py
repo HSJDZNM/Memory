@@ -157,11 +157,17 @@ def _excluded(relative: str, excludes: Sequence[str]) -> bool:
 
 
 def _relative(path: Path, root: Path) -> str:
-    """仓库相对路径（POSIX 分隔符）；等于根目录时返回空串。"""
+    """仓库相对路径（POSIX 分隔符）；等于根目录时返回 "."。
+
+    这里**不做 resolve()**：解析会跟随符号链接——指向工作区之外的链接让 relative_to
+    失败，然后退回一个随调用方式变化的（可能绝对的）路径，同一棵树换个挂载点就得到另一个
+    指纹（确定性要求 2）；留在根内的链接也会被记成目标的相对路径，制造重复键。
+    词法相对路径记录的是"链接本身"，正是遍历看到的那一项。
+    """
 
     try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
-    except (OSError, ValueError):  # pragma: no cover - os.walk 只会给出 root 之下的路径
+        return Path(os.path.relpath(path, root)).as_posix()
+    except ValueError:  # pragma: no cover - 不同盘符（Windows）没有相对形式
         return path.as_posix()
 
 
