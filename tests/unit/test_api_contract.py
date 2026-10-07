@@ -1305,6 +1305,32 @@ def test_request_log_disabled_fails_closed(tmp_root: Path) -> None:
     assert memory_only.read_back() == ()
 
 
+def test_read_back_fails_closed_on_a_torn_line(tmp_root: Path) -> None:
+    """半截写入的行必须报错，不能被跳过（跳过 = 用剩下的部分冒充整份日志）。
+
+    历史缺陷（medium 台账 M1，observability.py:208）：`json.loads(line)` 没有守卫，截断的
+    尾部让 chain_digest / summary / seal_audit / verify_seal 一起抛原始 JSONDecodeError——
+    运维拿到 traceback，而不是"这份日志读不了 / 被动过"。非对象行则被静默跳过。
+    """
+
+    path = tmp_root / "audit" / "service.jsonl"
+    log = RequestLog(path)
+    log.append(make_entry(request_id="req-good"))
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        handle.write('{"log_schema_version": "1.0", "request_id": "req-torn"')  # 半截写入
+
+    with pytest.raises(ApiError) as info:
+        log.read_back()
+    assert info.value.code is ErrorCode.AUDIT_UNAVAILABLE
+    assert "第 2 行" in info.value.detail
+
+    # 合法的 JSON、但不是记录对象：同样不许静默跳过
+    path.write_text("[]" + chr(10), encoding="utf-8", newline="")
+    with pytest.raises(ApiError) as info:
+        log.read_back()
+    assert info.value.code is ErrorCode.AUDIT_UNAVAILABLE
+
+
 def test_request_log_buffers_only_the_path_that_never_hits_the_disk(tmp_root: Path) -> None:
     """内存缓冲只服务"不落盘"的路径；落盘路径的"记下来了"由 read_back 回答。
 

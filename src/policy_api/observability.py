@@ -203,18 +203,46 @@ class RequestLog:
             return tuple(dict(item) for item in self._written)
 
     def read_back(self) -> Tuple[Mapping[str, Any], ...]:
-        """把落盘内容读回来（CI 与闭环用它证明"决定确实被记下来了"）。"""
+        """把落盘内容读回来（CI 与闭环用它证明"决定确实被记下来了"）。
+
+        **读不懂的行不跳过，只报错**：`read_back` 是 `chain_digest` / `summary` / `seal_audit` /
+        `verify_seal` 四条读数的共同底座，跳过一行就等于用"剩下的部分"冒充整份日志——
+        摘要链末值会因此与锚不符，而"为什么不符"（半截写入 / 被改过）被吞掉。
+        以前 raw `JSONDecodeError` 会冒到 CLI 变成 traceback；现在是一条带行号的
+        `audit_unavailable`，调用方拿得到退出码语义与可读的原因（AGENTS 第 52 条）。
+        """
 
         if self.path is None or not self.path.is_file():
             return ()
-        rows: list[Mapping[str, Any]] = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            item = json.loads(line)
-            if isinstance(item, Mapping):
+        with self._lock:
+            try:
+                text = self.path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as error:
+                raise ApiError(
+                    ErrorCode.AUDIT_UNAVAILABLE,
+                    f"请求日志不可读（{type(error).__name__}）",
+                    retryable=True,
+                ) from error
+            rows: list[Mapping[str, Any]] = []
+            for number, line in enumerate(text.splitlines(), start=1):
+                if not line.strip():
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise ApiError(
+                        ErrorCode.AUDIT_UNAVAILABLE,
+                        f"请求日志第 {number} 行不是合法 JSON；拒绝把残缺的日志当作完整证据",
+                        retryable=True,
+                    ) from error
+                if not isinstance(item, Mapping):
+                    raise ApiError(
+                        ErrorCode.AUDIT_UNAVAILABLE,
+                        f"请求日志第 {number} 行不是对象；拒绝把残缺的日志当作完整证据",
+                        retryable=True,
+                    )
                 rows.append(item)
-        return tuple(rows)
+            return tuple(rows)
 
     # ------------------------------------------------------------------ 外部锚定
 
