@@ -58,13 +58,20 @@ def test_install_writes_an_executable_hook(tmp_root, monkeypatch):
     assert os.access(hook, os.X_OK), "钩子没有可执行位：git 会静默忽略它"
 
 
-def test_install_still_writes_the_hook_script(tmp_root, monkeypatch):
-    """反真空（跨平台）：安装仍然写出脚本本体，且引用的是本仓库的 ci_local。"""
+def test_install_writes_a_hook_that_resolves_the_tree_at_runtime(tmp_root, monkeypatch):
+    """钩子在运行时解析仓库根：同一个钩子文件（所有工作树共用）必须跟着 cwd 走。
+
+    写死安装时的绝对路径会让 worktree 里的推送去跑另一棵树的 ci_local —— 门禁测的不是
+    你要推的那棵树（实测：只能靠 git push --no-verify 绕过）。
+    """
 
     module = _load()
     repo = _fake_repo(tmp_root)
     hook = _install(module, monkeypatch, repo)
 
     text = hook.read_text(encoding="utf-8")
-    assert (repo / "tools" / "ci_local.py").as_posix() in text
+    assert "ROOT=$(git rev-parse --show-toplevel)" in text
+    assert '"$ROOT/tools/ci_local.py"' in text
+    assert '"$ROOT/.venv/Scripts/python.exe"' in text
     assert "CI_LOCAL_PYTHON" in text
+    assert (repo / "tools" / "ci_local.py").as_posix() not in text, "不许再写死安装时的路径"
