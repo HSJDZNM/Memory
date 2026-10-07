@@ -234,36 +234,42 @@ def plan_resume(
     state = _revivable(GraphState.model_validate(dict(record.state)))
     revalidate = tuple(name for name in changed if name in _REVALIDATE_DIMENSIONS)
     reapprove = tuple(name for name in changed if name in _REAPPROVE_DIMENSIONS)
-    if revalidate:
-        cleared = state.model_copy(
-            update={
-                "traces": (),
-                "validation": None,
-                "test_validation": None,
-                "contexts": (),
-                "stage": _rewind_stage(state.stage),
-                "notes": state.notes
-                + (f"规则集或索引变化（{', '.join(revalidate)}）：旧决定作废，重新评估",),
-            }
-        )
+    if revalidate or reapprove:
+        # 两件事**可以同时发生**（规则集与工具 schema 一起变），所以两边的失效都要做。
+        # 老实现里 revalidate 分支先 return，reapprove 的清空被整段丢掉——审批绑的是旧工具
+        # schema 算出来的 action_hash，却跟着恢复进新一轮，等于让一张过期条子继续生效，
+        # 而"工具 schema 变了要重新审批"正是这个函数自己写下的不变量。
+        notes = state.notes
+        update: dict[str, object] = {}
+        if revalidate:
+            update.update(
+                {
+                    "traces": (),
+                    "validation": None,
+                    "test_validation": None,
+                    "contexts": (),
+                    "stage": _rewind_stage(state.stage),
+                }
+            )
+            notes = notes + (
+                f"规则集或索引变化（{', '.join(revalidate)}）：旧决定作废，重新评估",
+            )
+        if reapprove:
+            update["approvals"] = ()
+            notes = notes + ("工具 schema 变化：旧审批作废，需要重新审批",)
+        update["notes"] = notes
+        if revalidate and reapprove:
+            detail = "规则集或索引与工具 schema 都变了：不沿用旧 allow，旧审批一并作废"
+        elif revalidate:
+            detail = "规则集或索引已变化：不沿用旧 allow"
+        else:
+            detail = "工具 schema 已变化：审批需要重新签发"
         return ResumePlan(
-            mode=ResumeMode.REVALIDATE,
-            state=cleared.replace(),
+            # mode 取"退得更远"的那个：重评会把阶段退回检索节点，清审批只是其中一步。
+            mode=ResumeMode.REVALIDATE if revalidate else ResumeMode.REAPPROVE,
+            state=state.model_copy(update=update).replace(),
             changed=changed,
-            detail="规则集或索引已变化：不沿用旧 allow",
-        )
-    if reapprove:
-        cleared = state.model_copy(
-            update={
-                "approvals": (),
-                "notes": state.notes + ("工具 schema 变化：旧审批作废，需要重新审批",),
-            }
-        )
-        return ResumePlan(
-            mode=ResumeMode.REAPPROVE,
-            state=cleared.replace(),
-            changed=changed,
-            detail="工具 schema 已变化：审批需要重新签发",
+            detail=detail,
         )
     return ResumePlan(
         mode=ResumeMode.RESUME, state=state, changed=changed, detail="与当前平台兼容，接着跑"

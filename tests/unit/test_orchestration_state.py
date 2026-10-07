@@ -525,6 +525,38 @@ def test_plan_resume_tool_schema_change_reapproves() -> None:
     assert any("重新审批" in note for note in state.notes)
 
 
+def test_plan_resume_rule_change_and_tool_schema_change_both_invalidate() -> None:
+    """规则集与工具 schema **一起**变：两边的失效都要做，不能只做前一件。
+
+    老实现里 revalidate 分支先 return，reapprove 的清空被整段丢掉——审批绑的是旧工具 schema
+    算出来的 action_hash，却跟着恢复进新一轮，等于让一张过期条子继续生效。
+    """
+
+    recorded = _history_state()
+    record = build_record(recorded, engine="reference", sequence=3)
+    current = _snapshot(
+        rule_set_hash="sha256:" + "f" * 64, tool_schema_hash="sha256:" + "e" * 64
+    )
+    plan = plan_resume(record, current, fresh_state=empty_state("task-1"))
+
+    # 退得更远的那一个决定 mode：重评会把阶段退回检索节点。
+    assert plan.mode is ResumeMode.REVALIDATE
+    assert set(plan.changed) == {"rule_set_hash", "tool_schema_hash"}
+    state = plan.state
+    assert state is not None
+    # 决定失效
+    assert state.traces == ()
+    assert state.validation is None
+    assert state.test_validation is None
+    assert state.contexts == ()
+    assert state.stage is NodeId.POLICY_RETRIEVAL
+    # 审批**同样**失效（这一条就是老实现丢掉的那一半）
+    assert recorded.approvals != ()
+    assert state.approvals == ()
+    assert any("重新评估" in note for note in state.notes)
+    assert any("重新审批" in note for note in state.notes)
+
+
 @pytest.mark.parametrize("changed_dimension", ["policy_version", "decision_schema_version"])
 def test_plan_resume_generation_change_refuses(changed_dimension: str) -> None:
     """协议世代变了就直接拒绝恢复：不沿用任何旧决定（ResumeError → checkpoint_incompatible）。"""
