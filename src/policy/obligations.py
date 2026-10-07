@@ -196,16 +196,35 @@ def _append(path: Path, record: Mapping) -> None:
 
 
 def _check_existing(path: Path) -> None:
-    """已知的第一行要能读懂：版本不认识 / 键集合不认识 → 拒绝续写（AGENTS 核心约束 3）。"""
+    """续写之前先确认已有内容能读懂（失败关闭，不往坏账本里续写，AGENTS 核心约束 3）。
+
+    检查三件事，都是"追加"这个动作真的会踩到的：
+
+    1. 第一行能读懂——协议身份（版本 / 键集合 / kind）；
+    2. 文件**以换行结尾**——上一次写入被中断时，新记录会被接在最后一个 JSON 对象后面，
+       变成一行 `{...}{...}`，从此 `load()` 永远读不了，而本模块从不重写账本，没有自愈；
+    3. 最后一行能读懂——尾部被截断的记录同样会让新记录落进一个 `load()` 会整份拒收的文件。
+
+    中间行的损坏**不在这里扫**：追加在判定热路径上，逐行扫是每次 O(n)、而账本只增不减。
+    那种损坏不是追加造成的（load 会拒绝整份账本，由人处置），这条残余缺口写在这里，
+    不假装它不存在。
+    """
 
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            first = handle.readline()
-    except OSError as error:  # pragma: no cover - 权限 / 竞态
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:  # pragma: no cover - 权限 / 竞态
         raise ObligationsError("义务账本读不到：" + str(error)) from error
-    if not first.strip():
-        raise ObligationsError("义务账本的第一行是空行：说不出它是什么协议，拒绝续写")
-    _parse_record(first, path=path, line_number=1)
+    if not text.strip():
+        raise ObligationsError("义务账本的现有内容是空白：说不出它是什么协议，拒绝续写")
+    if not text.endswith("\n"):
+        raise ObligationsError(
+            "义务账本的最后一行没有换行结尾：上一次写入可能是被中断的，续写会把新记录接在"
+            "那条 JSON 后面、从此整份账本读不出来；拒绝续写"
+        )
+    lines = text.splitlines()
+    _parse_record(lines[0], path=path, line_number=1)
+    if len(lines) > 1:
+        _parse_record(lines[-1], path=path, line_number=len(lines))
 
 
 def _parse_record(text: str, *, path: Path, line_number: int) -> Mapping:

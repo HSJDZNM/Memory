@@ -183,6 +183,55 @@ def test_python_tests_executed_must_be_a_bool_not_a_truthy_value(tmp_root: Path,
     assert "不是布尔值" in str(error.value)
 
 
+def test_append_refuses_a_ledger_whose_last_line_is_not_terminated(tmp_root: Path) -> None:
+    """上一次写入被中断（没有结尾换行）时拒绝续写。
+
+    否则新记录会被**接在**最后一个 JSON 对象后面，变成一行 `{...}{...}`；
+    本模块从不重写账本，那之后整份账本再也读不出来。
+    """
+
+    ledger = tmp_root / "o.jsonl"
+    pending(ledger)
+    ledger.write_text(ledger.read_text(encoding="utf-8").rstrip("\n"), encoding="utf-8")
+
+    with pytest.raises(ObligationsError) as error:
+        pending(ledger, rule="TESTING-003")
+
+    assert "没有换行结尾" in str(error.value)
+
+
+def test_append_refuses_a_truncated_last_record(tmp_root: Path) -> None:
+    """尾部记录被截断时拒绝续写：别把新记录追加进一个 load() 会整份拒收的文件。"""
+
+    ledger = tmp_root / "o.jsonl"
+    pending(ledger)
+    text = ledger.read_text(encoding="utf-8")
+    ledger.write_text(text[:-12] + "\n", encoding="utf-8")
+
+    with pytest.raises(ObligationsError):
+        pending(ledger, rule="TESTING-003")
+
+
+def test_middle_corruption_is_left_to_load_and_recorded_as_a_known_gap(tmp_root: Path) -> None:
+    """中间行损坏：追加**不扫**（热路径 O(1) 成本），由 load() 整份拒收。
+
+    这不是承诺，是写下来的残余缺口：追加不是造成中间损坏的原因，而逐行扫会让每次记账变成 O(n)。
+    """
+
+    ledger = tmp_root / "o.jsonl"
+    pending(ledger, rule="TESTING-001")
+    real_run(ledger)
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    lines.insert(1, "{ 这不是 JSON")
+    ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # 追加照旧成功（第一行与最后一行都是好的）……
+    pending(ledger, rule="TESTING-004")
+    # ……而读整份账本会明确拒绝，缺口不会静默。
+    with pytest.raises(ObligationsError):
+        load(ledger)
+
+
 def test_real_pytest_run_needs_all_three_structural_facts() -> None:
     """三条结构化事实缺一不可（不解析 reasons 文本，AGENTS 第 49 条同一纪律）。"""
 
