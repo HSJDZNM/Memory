@@ -174,10 +174,15 @@ class ApprovalGate:
             if item.approval_id == (record.approval_id if record else "")
             and item.action_hash == action_hash
         )
-        uses_left = min(
-            state.limits.max_approval_uses - used,
-            state.limits.max_approval_uses,
-        )
+        # 额度取"本地预算"与"**这张条子自己的上限**"中更小的那个：
+        # binding=action 的条子在构造期就被钉死 max_uses=1（"单次使用"是条子自己写的），
+        # 而 RunLimits.max_approval_uses 是编排层的预算数——两者语义不同。
+        # 只按预算算的话，配置成 2 就能让一张**单次**条子用两次（平台那边收不到"已消费"的事实，
+        # 见下面 verify_approval 的 used 参数）。
+        allowed = state.limits.max_approval_uses
+        if record is not None:
+            allowed = min(allowed, record.max_uses)
+        uses_left = max(allowed - used, 0)
         code = self._classify(
             record,
             action_hash=action_hash,
@@ -196,6 +201,12 @@ class ApprovalGate:
         assert record is not None  # _classify 已经排除了 None
         try:
             # 判定权仍然在 Phase 4：角色、签发时间与单次使用都由它复核。
+            #
+            # used 的口径按 Phase 4 的契约来（enforcement.approvals.verify_approval）：
+            # 它问的是"**这张条子**是否已经消费过"（binding=action 时 max_uses 恒为 1），
+            # 所以判据是 used >= 1。此前传的是 used >= max_approval_uses——那是编排层的预算数，
+            # 与条子无关：预算配成 2 时，一张已经用过的单次条子会被平台看成"没用过"，
+            # 平台那次复核于是**永远不可能触发**（这正是"单次使用"最后一层保证）。
             verify_approval(
                 record,
                 action_hash=action_hash,
@@ -203,7 +214,7 @@ class ApprovalGate:
                 tool_id=tool_id,
                 subject=subject,
                 approval_roles=self.approval_roles,
-                used=used >= state.limits.max_approval_uses,
+                used=used >= 1,
                 now=self._now(),
             )
         except Exception as error:  # noqa: BLE001 - Phase 4 拒绝即拒绝，只翻译分类

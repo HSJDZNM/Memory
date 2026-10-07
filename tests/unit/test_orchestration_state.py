@@ -875,22 +875,65 @@ def test_directory_inbox_prefers_a_pattern_approval_over_an_unrelated_record(tmp
     assert ApprovalGate(only_action, approval_roles=("reviewer",)).resolve(ACTION_HASH) == unrelated
 
 
-def test_approval_use_is_bounded_by_max_approval_uses(tmp_root) -> None:
-    """复用次数是显式策略（RunLimits.max_approval_uses）：到上限即拒，不用猜。"""
+def test_a_single_use_approval_stays_single_use_even_when_the_budget_allows_more(tmp_root) -> None:
+    """条子自己的 max_uses 与编排层的预算数**不是一回事**：单次条子只能用一次。
+
+    旧实现只按 RunLimits.max_approval_uses 算额度，并把 `used >= max_approval_uses` 传给 Phase 4：
+    预算配成 2 时，一张单次条子可以用两次，而且平台那次"这张条子是否已消费"的复核永远收到 False——
+    "单次使用"于是只剩编排层这一层保证，而它当时算错了。
+    """
 
     path = approval_file(
         tmp_root / "approvals" / "approval.json", action_hash=ACTION_HASH, action_id=ACTION_HASH
     )
     gate = ApprovalGate(path, approval_roles=("reviewer",))
     state = _gate_state(max_approval_uses=2)
+
     first = _use(gate, state)
     state = ApprovalGate.consume(state, first)
-    second = _use(gate, state)
-    state = ApprovalGate.consume(state, second)
-    assert state.approvals[0].uses == 2
+    assert state.approvals[0].uses == 1
+
     with pytest.raises(ApprovalError) as excinfo:
         _use(gate, state)
     assert excinfo.value.code is FailureCode.APPROVAL_CONSUMED
+
+
+def test_the_platform_side_recheck_sees_a_consumed_record(tmp_root) -> None:
+    """平台那次复核必须收得到"这张条子已经消费过"这件事实（used 的口径是 >= 1，不是预算数）。
+
+    这条钉的是**参数口径**：编排层的计数被绕过时，最后一层保证在 Phase 4 侧——
+    而它只有在拿到真实事实时才拦得住。
+    """
+
+    from enforcement.approvals import load_approval, verify_approval
+
+    path = approval_file(
+        tmp_root / "approvals" / "approval.json", action_hash=ACTION_HASH, action_id=ACTION_HASH
+    )
+    record = load_approval(path)
+
+    with pytest.raises(Exception) as error:
+        verify_approval(
+            record,
+            action_hash=ACTION_HASH,
+            action_id=ACTION_HASH,
+            tool_id="orc.fs.write",
+            subject="local-user",
+            approval_roles=("reviewer",),
+            used=True,
+        )
+    assert "已被使用" in str(error.value)
+
+    # 反向：没消费过时必须放行（复核不是"一律拒绝"）
+    verify_approval(
+        record,
+        action_hash=ACTION_HASH,
+        action_id=ACTION_HASH,
+        tool_id="orc.fs.write",
+        subject="local-user",
+        approval_roles=("reviewer",),
+        used=False,
+    )
 
 
 @pytest.mark.parametrize(
