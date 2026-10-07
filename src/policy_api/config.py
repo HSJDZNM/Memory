@@ -313,7 +313,15 @@ def load_api_config(
     except ValidationError as error:
         failure = RuleValidationError.from_pydantic(error, model_name=f"API 配置 {target.name}")
         raise ConfigError(str(failure)) from error
-    anchor = Path(root) if root is not None else target.parent.parent
+    if root is None:
+        # 规则 3：锚点由加载方显式给出，**不从配置文件位置推断**。以前这里退回
+        # `target.parent.parent`：同一份配置换个目录放置，租户的规则 / 索引 / 验证器的
+        # 解析基准就跟着变（安全边界随文件摆放漂移），而调用方以为自己拿到的还是同一套边界。
+        raise ConfigError(
+            "加载 API 配置必须显式给出 root（相对路径的解析锚点）；"
+            "不接受从配置文件位置推断：请传部署根或仓库根"
+        )
+    anchor = Path(root)
     return config.model_copy(
         update={
             "service_root": str(Path(anchor).resolve()),

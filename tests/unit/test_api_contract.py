@@ -204,7 +204,9 @@ def _config_with_expiry(expires_at: str) -> str:
 def test_client_expires_at_accepts_the_documented_iso_forms(tmp_root: Path, value: str) -> None:
     """三种形态都要能加载：把校验提到加载期，不能顺手收窄可接受的写法。"""
 
-    config = load_api_config(write_config(tmp_root, _config_with_expiry('"' + value + '"')))
+    config = load_api_config(
+        write_config(tmp_root, _config_with_expiry('"' + value + '"')), root=REPO_ROOT
+    )
     assert config.clients[0].expires_at == value
 
 
@@ -217,7 +219,7 @@ def test_client_expires_at_is_rejected_at_load_time(tmp_root: Path) -> None:
     """
 
     with pytest.raises(ConfigError) as error:
-        load_api_config(write_config(tmp_root, _config_with_expiry('"昨天"'))),
+        load_api_config(write_config(tmp_root, _config_with_expiry('"昨天"')), root=REPO_ROOT),
     assert "expires_at" in str(error.value)
     assert "alpha-client" in str(error.value)
 
@@ -344,7 +346,7 @@ def test_client_projects_are_canonicalized_at_load_time(tmp_root: Path) -> None:
         + "    tenants: [alpha]" + chr(10)
         + "    projects: [Alpha-Sub]" + chr(10)
     )
-    config = load_api_config(write_config(tmp_root, text))
+    config = load_api_config(write_config(tmp_root, text), root=REPO_ROOT)
     client = config.clients[0]
 
     assert client.projects == ("alpha-sub",)
@@ -359,8 +361,27 @@ def test_client_projects_are_canonicalized_at_load_time(tmp_root: Path) -> None:
                 tmp_root,
                 text.replace("projects: [Alpha-Sub]", 'projects: ["   "]'),
                 name="blank-project.yaml",
-            )
+            ),
+            root=REPO_ROOT,
         )
+
+
+def test_load_api_config_requires_an_explicit_root(tmp_root: Path) -> None:
+    """锚点必须显式：**不从配置文件位置推断**（config.py 的规则 3）。
+
+    历史缺陷（medium 台账 M1，config.py:257）：`root` 省略时退回 `target.parent.parent`，
+    于是同一份配置换个目录放置，租户的规则 / 索引 / 验证器的解析基准就跟着变——安全边界
+    随文件摆放漂移，而调用方以为自己拿到的还是同一套边界。
+    """
+
+    path = write_config(tmp_root, BASE_CONFIG)
+    with pytest.raises(ConfigError) as error:
+        load_api_config(path)
+    assert "root" in str(error.value)
+
+    # 显式给出 root 时照常工作，且锚点就是给的那个
+    config = load_api_config(path, root=REPO_ROOT)
+    assert config.service_root == str(REPO_ROOT)
 
 
 def test_hash_token_is_a_stable_sha256_hex_digest() -> None:
