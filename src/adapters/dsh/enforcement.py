@@ -349,7 +349,12 @@ class EnforcementBridge:
 
         state = self.state_for(event.event_id)
         if state is None:
-            # 这次调用没有经过 pre-check（工具表之外的历史调用）：只记录，不编造结论。
+            # 这次调用没有经过 pre-check：它可能是被 pre 拒绝过（dsh 仍会送来 PostToolUse），
+            # 也可能是根本没有 pre 阶段（接线缺失 / 旁路）而工具真的执行了。事后既没有授权、
+            # 也没有基线，属于**证据不足**：按 AGENTS 第 15 条必须按 repair_required /
+            # inconsistent 处理，绝不能返回 None —— hooks 把 None 读成 post_not_required
+            # 并放行，一次未经授权、无法核对的执行就会伪装成「不需要事后核对」。
+            # 占位记录照写：审计仍能区分「跑过 post 但没有基线」与「事后核对完成」。
             self.sink.append(
                 AuditStage.POST_EVIDENCE,
                 payload={
@@ -361,7 +366,10 @@ class EnforcementBridge:
                 action_id=event.event_id,
                 tool_id=spec.id,
             )
-            return None
+            raise DshEventError(
+                "PostToolUse 找不到对应的 pre-check 记录：既证明不了这次执行被授权过，"
+                "也证明不了它被拒绝过——证据不足，不得按放行处理"
+            )
 
         request = self._restore_request(state)
         if request is None:
@@ -375,7 +383,13 @@ class EnforcementBridge:
                 action_id=event.event_id,
                 tool_id=spec.id,
             )
-            return None
+            # 台账里有一条 pre_state（动作被授权过），但请求视图重建不出来：
+            # 拿不到 action_hash 就核对不了这次执行到底做了什么。原文里已经写着
+            # 「证据不足，按需修复处理」，那就必须真的按需修复处理，不能返回 None 放行。
+            raise DshEventError(
+                "台账里的请求视图不可重建（可能含 secret 参数）：证据不足，"
+                "按需修复处理，不得按放行处理"
+            )
 
         # N16：执行是**委派**给 Agent 运行时的，退出码只能来自 PostToolUse 载荷里插件转发
         # 的退出事实。修前这里不传 exit_code，而字段默认 None 不会报错——于是注册表声明了
