@@ -457,6 +457,40 @@ def test_the_violation_payload_is_sanitized(dsh_config_path, dsh_project):
     assert "<repo>" in dumped
 
 
+def test_the_model_facing_feedback_is_sanitized_like_the_audit(dsh_config_path, dsh_project):
+    """同一条违规在账本里是 `<repo>/…`，在模型面前也必须是脱敏形态。
+
+    `feedback_text` 是唯一一条把 `violation.message` 与 `evidence.value/detail` **原样**送进
+    模型上下文的路径：规则作者写的 message、验证器给的 evidence 都可能带本机绝对路径或凭据，
+    而审计那一侧早就过了 `sanitize`——同一个字段族两套口径。
+    """
+
+    from adapters.dsh.hooks import feedback_text
+
+    decision = ValidationResult(
+        decision=Decision.BLOCK,
+        request_id="req-1",
+        violations=(
+            report(
+                "ARCH-001",
+                message=f"禁止依赖 {dsh_project}/src/shop/x.py",
+                value=f"{dsh_project}/src/shop/order_repository.py",
+            ),
+        ),
+    )
+
+    text = feedback_text(
+        reason_code="policy_block", event=None, decision=decision, project_root=dsh_project
+    )
+
+    assert str(dsh_project) not in text
+    assert str(dsh_project).replace("\\", "/") not in text
+    assert "<repo>" in text
+    # 结构性字段不受影响：规则 ID、严重级别、证据 kind=value 的形态照旧
+    assert "rule ARCH-001@1 severity=error" in text
+    assert "evidence: import=" in text
+
+
 # --------------------------------------------------------------------------- 生产 CLI
 
 

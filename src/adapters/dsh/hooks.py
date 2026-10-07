@@ -596,8 +596,15 @@ def feedback_text(
     event: Optional[PolicyEvent],
     decision: Optional[ValidationResult],
     detail: str = "",
+    project_root: Optional[Path] = None,
 ) -> str:
-    """面向模型的阻断理由：规则 ID、严重级别、原因、证据与期望修复方向。"""
+    """面向模型的阻断理由：规则 ID、严重级别、原因、证据与期望修复方向。
+
+    规则作者写的 message 与验证器给的 evidence 都是**不可信文本**（可能带本机绝对路径或凭据）：
+    这是唯一一条把这些字段直接送进模型上下文的路径，因此与审计走同一份 `sanitize`——
+    否则同一条违规在账本里是 `<repo>/…`、在模型面前却是本机布局（AGENTS 第 16/19 条：
+    证据与理由都不许出现绝对路径，脱敏不开例外）。
+    """
 
     lines: list[str] = []
     header = "[policy] BLOCKED" + (f" {event.tool}" if event else "")
@@ -609,14 +616,17 @@ def feedback_text(
     if decision is not None:
         for violation in decision.violations:
             lines.append(
-                f"rule {violation.canonical_id} severity={violation.severity.value}: "
-                f"{violation.message}"
+                sanitize(
+                    f"rule {violation.canonical_id} severity={violation.severity.value}: "
+                    f"{violation.message}",
+                    project_root=project_root,
+                )
             )
             evidence = violation.evidence
             evidence_line = f"evidence: {evidence.kind}={evidence.value}"
             if evidence.detail:
                 evidence_line += f" ({evidence.detail})"
-            lines.append(evidence_line)
+            lines.append(sanitize(evidence_line, project_root=project_root))
         if decision.required_action is not None:
             lines.append(f"required_action: {decision.required_action.value}")
         lines.append(
@@ -1407,7 +1417,10 @@ class DshPreExecuteHook:
                 exit_code=EXIT_BLOCK,
                 reason_code="policy_block",
                 stderr=feedback_text(
-                    reason_code="policy_block", event=event, decision=decision
+                    reason_code="policy_block",
+                    event=event,
+                    decision=decision,
+                    project_root=self.config.project_root,
                 ),
                 decision=decision,
                 event=event,
@@ -1711,7 +1724,11 @@ class DshPreExecuteHook:
             exit_code=EXIT_BLOCK,
             reason_code=reason_code,
             stderr=feedback_text(
-                reason_code=reason_code, event=event, decision=None, detail=detail
+                reason_code=reason_code,
+                event=event,
+                decision=None,
+                detail=detail,
+                project_root=self.config.project_root,
             ),
             elapsed_ms=int((self.clock() - started) * 1000),
             origin=origin,
