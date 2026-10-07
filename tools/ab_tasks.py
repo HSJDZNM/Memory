@@ -313,6 +313,14 @@ def baseline(instance_id: str, *, root: Path, apply_test_patch: bool = False) ->
 
 
 def _run(argv: list[str], *, cwd: Path, timeout: int = 900, env: dict | None = None) -> dict:
+    """跑一条命令。**完整输出**（stdout / stderr）与截断尾（*_tail，只给读数看）都要给：
+
+    旧版只留最后 4000 字符，而 _collect 的 node id、verify_oracle 的 PASSED/FAILED 摘要都从
+    `stdout_tail` 里解析——超过 4000 字符的套件（SWE-bench 仓库的常态）于是**静默丢节点与结果**，
+    node 落进 unresolved / 既非红也非绿。subprocess.run 本来就把整份输出读进内存，
+    保留完整串不增加内存量级；截断只用于载荷里的展示字段。
+    """
+
     started = time.time()
     merged = dict(os.environ)
     merged.update(env or {})
@@ -320,13 +328,16 @@ def _run(argv: list[str], *, cwd: Path, timeout: int = 900, env: dict | None = N
         completed = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True,
                                    encoding="utf-8", errors="replace", timeout=timeout, env=merged)
         return {"exit_code": completed.returncode, "seconds": round(time.time() - started, 2),
+                "stdout": completed.stdout, "stderr": completed.stderr,
                 "stdout_tail": completed.stdout[-4000:], "stderr_tail": completed.stderr[-2000:],
                 "timed_out": False}
     except subprocess.TimeoutExpired as exc:
-        return {"exit_code": None, "seconds": round(time.time() - started, 2), "stdout_tail": "",
+        return {"exit_code": None, "seconds": round(time.time() - started, 2),
+                "stdout": "", "stderr": "", "stdout_tail": "",
                 "stderr_tail": "timeout after %ss" % timeout, "timed_out": True}
     except OSError as exc:
-        return {"exit_code": None, "seconds": round(time.time() - started, 2), "stdout_tail": "",
+        return {"exit_code": None, "seconds": round(time.time() - started, 2),
+                "stdout": "", "stderr": "", "stdout_tail": "",
                 "stderr_tail": "%s: %s" % (type(exc).__name__, exc), "timed_out": False}
 
 
@@ -367,7 +378,7 @@ def probe(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON) -> dict
     payload = oracle(instance_id, root=root, python=python)
     argv = [python] + payload["test_command"]["argv"] + ["--collect-only", "-q"] + payload["test_files"]
     result = _run(argv, cwd=directory, timeout=600, env=payload["test_command"]["env"])
-    tail = (result["stdout_tail"] + result["stderr_tail"]).lower()
+    tail = (result["stdout"] + result["stderr"]).lower()
     if result["timed_out"]:
         status, reason = "environment_unavailable", "collect-only 超时"
     elif "modulenotfounderror" in tail or "importerror" in tail:
@@ -398,7 +409,7 @@ def run_oracle(instance_id: str, *, root: Path, phase: str, python: str = DEFAUL
         argv += payload["test_files"]
     result = _run(argv, cwd=directory, timeout=payload["test_command"]["timeout_s"],
                   env=payload["test_command"]["env"])
-    tail = result["stdout_tail"] + result["stderr_tail"]
+    tail = result["stdout"] + result["stderr"]
     return {"instance_id": instance_id, "phase": phase, "argv": argv, "exit_code": result["exit_code"],
             "seconds": result["seconds"], "timed_out": result["timed_out"],
             "passed": tail.count(" PASSED"), "failed": tail.count(" FAILED"), "errors": tail.count(" ERROR"),
@@ -428,8 +439,8 @@ def _collect(instance_id: str, *, root: Path, python: str) -> dict:
     directory = Path(payload["test_command"]["cwd"])
     argv = [python] + payload["test_command"]["argv"] + ["--collect-only", "-q"] + payload["test_files"]
     result = _run(argv, cwd=directory, timeout=900, env=payload["test_command"]["env"])
-    text = result["stdout_tail"] + result["stderr_tail"]
-    ids = [line.strip() for line in result["stdout_tail"].splitlines() if "::" in line and not line.startswith(" ")]
+    text = result["stdout"] + result["stderr"]
+    ids = [line.strip() for line in result["stdout"].splitlines() if "::" in line and not line.startswith(" ")]
     errors = len([line for line in text.splitlines() if line.startswith("ERROR ") or " error" in line.lower() and "errors" in line.lower()])
     needs: list[str] = []
     for line in text.splitlines():
@@ -487,7 +498,7 @@ def verify_oracle(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON)
         result = _run(argv, cwd=directory, timeout=payload["test_command"]["timeout_s"],
                       env=payload["test_command"]["env"])
         return {"argv": argv, "exit_code": result["exit_code"], "seconds": result["seconds"],
-                "outcomes": _outcomes(result["stdout_tail"]), "stdout_tail": result["stdout_tail"][-2500:],
+                "outcomes": _outcomes(result["stdout"]), "stdout_tail": result["stdout_tail"][-2500:],
                 "stderr_tail": result["stderr_tail"][-1200:]}
 
     f2p_run = run(f2p)
