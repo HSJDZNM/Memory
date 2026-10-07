@@ -28,6 +28,7 @@ from .models import (
     DocumentRecord,
     IndexRunStatus,
     IndexingError,
+    QuarantineOrigin,
     ResolvedEntry,
     StrictModel,
     document_id_for,
@@ -362,20 +363,24 @@ def _apply_quarantine(
             text_hash=item.text_hash,
             quarantined_at=stamp,
             document_id=chunk.document_id,
+            origin=QuarantineOrigin.MANIFEST,
         )
         quarantined.append(item.chunk_id)
 
-    # 清单是隔离状态的唯一事实来源：清单里没有的记录一律释放（chunk 被删除或文本已变化同理）。
+    # 解除条件按来源分开（这正是 origin 存在的理由）：
+    # - 内容已失效（chunk 被删除 / 正文哈希变了）：两种来源都释放；
+    # - 清单类：清单是它的唯一事实来源，清单里删掉就释放；
+    # - 运行期类：只能由运维显式解除（CLI quarantine --release）——"不在清单里"
+    #   从来就不是运行期隔离的解除条件，否则一次 ingest 就把安全隔离放回索引。
     wanted = {item.chunk_id: item.text_hash for item in loaded.manifest.quarantine}
     released: list[str] = []
     for record in store.quarantined():
         chunk = store.chunk(record.chunk_id)
-        stale = (
-            record.chunk_id not in wanted
-            or chunk is None
-            or chunk.text_hash != record.text_hash
+        expired = chunk is None or chunk.text_hash != record.text_hash
+        dropped_from_manifest = (
+            record.origin is QuarantineOrigin.MANIFEST and record.chunk_id not in wanted
         )
-        if stale:
+        if expired or dropped_from_manifest:
             store.release_quarantine(record.chunk_id)
             released.append(record.chunk_id)
     return tuple(sorted(quarantined)), tuple(sorted(released))
@@ -436,7 +441,11 @@ def quarantine_chunk(
     reason: str,
     quarantined_at: str,
 ) -> str:
-    """运行期隔离一个 chunk（供 CLI 与运维使用）：保留审计记录并立即从索引移除。"""
+    """运行期隔离一个 chunk（供 CLI 与运维使用）：保留审计记录并立即从索引移除。
+
+    这是**运行期**隔离（origin=runtime）：它不写回 corpus.yaml，因此后续 ingest 不得
+    以"清单里没有它"为理由释放它；解除只有两条路——运维显式解除，或内容失效。
+    """
 
     chunk = store.chunk(chunk_id)
     if chunk is None:
@@ -447,6 +456,7 @@ def quarantine_chunk(
         text_hash=chunk.text_hash,
         quarantined_at=quarantined_at,
         document_id=chunk.document_id,
+        origin=QuarantineOrigin.RUNTIME,
     )
     store.bump_generation()
     return chunk.text_hash

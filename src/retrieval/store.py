@@ -32,6 +32,7 @@ from .models import (
     DocumentRecord,
     IndexRunRecord,
     IndexRunStatus,
+    QuarantineOrigin,
     QuarantinedChunk,
     StrictModel,
     StoreError,
@@ -143,7 +144,8 @@ SCHEMA_STATEMENTS: Tuple[str, ...] = (
         document_id TEXT NOT NULL,                   -- 归属文档（留痕用）
         text_hash TEXT NOT NULL,                     -- 登记时的正文哈希；内容变了要重新确认（C9）
         reason TEXT NOT NULL,                        -- 隔离原因（必须写清楚）
-        quarantined_at TEXT NOT NULL                 -- 登记时间
+        quarantined_at TEXT NOT NULL,                -- 登记时间
+        origin TEXT NOT NULL DEFAULT 'runtime'       -- manifest / runtime；决定"谁能解除"（缺省失败关闭）
     )
     """,
     """
@@ -701,18 +703,26 @@ class ChunkStore:
         return row is not None and str(row["text_hash"]) == text_hash
 
     def quarantine(self, chunk_id: str, *, reason: str, text_hash: str, quarantined_at: str,
-                   document_id: str) -> QuarantinedChunk:
-        """隔离一个已知恶意 chunk：保留审计记录并从 FTS 索引移除。"""
+                   document_id: str, origin: QuarantineOrigin) -> QuarantinedChunk:
+        """隔离一个已知恶意 chunk：保留审计记录并从 FTS 索引移除。
+
+        origin 必须由调用方显式给出（没有默认值）：它决定这条记录将来"谁能解除"——
+        清单类随清单移除释放，运行期类只能由运维显式解除。来源不明就按运行期处理。
+        """
 
         self._execute(
             """
-            INSERT INTO quarantined_chunks(chunk_id, document_id, text_hash, reason, quarantined_at)
-            VALUES (?,?,?,?,?)
+            INSERT INTO quarantined_chunks(
+                chunk_id, document_id, text_hash, reason, quarantined_at, origin
+            ) VALUES (?,?,?,?,?,?)
             ON CONFLICT(chunk_id) DO UPDATE SET
                 document_id=excluded.document_id, text_hash=excluded.text_hash,
-                reason=excluded.reason, quarantined_at=excluded.quarantined_at
+                reason=excluded.reason, quarantined_at=excluded.quarantined_at,
+                -- 运行期隔离永远优先：清单里的一条声明不得把运维隔离降级成"清单删了就自动释放"。
+                origin=CASE WHEN quarantined_chunks.origin = 'runtime'
+                            THEN 'runtime' ELSE excluded.origin END
             """,
-            (chunk_id, document_id, text_hash, reason, quarantined_at),
+            (chunk_id, document_id, text_hash, reason, quarantined_at, origin.value),
         )
         self._execute("DELETE FROM chunks_fts WHERE chunk_id = ?", (chunk_id,))
         self._execute("UPDATE chunks SET quarantined = 1 WHERE chunk_id = ?", (chunk_id,))
@@ -722,6 +732,7 @@ class ChunkStore:
             text_hash=text_hash,
             reason=reason,
             quarantined_at=quarantined_at,
+            origin=origin,
         )
 
     def release_quarantine(self, chunk_id: str) -> bool:
@@ -748,6 +759,8 @@ class ChunkStore:
                 text_hash=str(row["text_hash"]),
                 reason=str(row["reason"]),
                 quarantined_at=str(row["quarantined_at"]),
+                # 未知取值直接报错（QuarantineOrigin 是枚举）：来源读不出来就不能猜。
+                origin=QuarantineOrigin(str(row["origin"])),
             )
             for row in rows
         )
