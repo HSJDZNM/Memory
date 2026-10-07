@@ -118,11 +118,12 @@ def verify_chain(records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
             decided.add(group)
             continue
 
-        # "没有决策就没有执行"只针对**真的产生了效果**的阶段：
-        # refused 的执行记录恰恰是"没有决策/决策属于别的动作"时的合法留痕。
-        produced_effect = record.stage is AuditStage.EXECUTION and (
-            str((record.payload or {}).get("status", "")) in ("executed", "delegated", "failed")
-        )
+        # "没有决策就没有执行"只针对**真的产生了效果**的阶段：refused 的执行记录恰恰是
+        # "没有决策/决策属于别的动作"时的合法留痕。判据取**补集**：只有显式的 refused 才算
+        # 没效果，缺失 / 拼错 / 未来新增的状态一律按"产生了效果"处理——否则一条 status 写坏
+        # 或写错的执行记录会从这条不变式下面溜走（旧实现正是白名单，属于失败打开）。
+        status = str((record.payload or {}).get("status", ""))
+        produced_effect = record.stage is AuditStage.EXECUTION and status != "refused"
         if (produced_effect or record.stage is AuditStage.POST_EVIDENCE) and group not in decided:
             issues.append(
                 f"#{index}: {group} 出现 {record.stage.value} 之前没有任何 pre_decision "

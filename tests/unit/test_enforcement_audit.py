@@ -279,6 +279,61 @@ def test_execution_without_a_pre_decision_is_reported(tmp_root):
     assert any("没有决策就不能有执行" in issue for issue in issues)
 
 
+def test_an_execution_with_an_unknown_status_still_needs_a_decision(tmp_root):
+    """判据取补集：只有显式 refused 才算"没产生效果"，status 缺失/拼错一律按产生了效果算。"""
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.EXECUTION, payload={"status": "executed-typo"}, action_id="act-11")
+
+    issues = verify_chain(sink.chain_records())
+
+    assert any("没有决策就不能有执行" in issue for issue in issues), issues
+
+
+def test_unreadable_timestamps_count_as_inside_the_window(tmp_root):
+    """时间戳读不出来的行必须计入窗口：少算等于放宽限流与熔断（fail-open）。"""
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    ledger.append({"kind": "pre_decision", "limit_key": "local-user|fs.edit"})
+    ledger.append({"kind": "pre_decision", "limit_key": "local-user|fs.edit"})
+    ledger.append(
+        {
+            "kind": "pre_decision",
+            "limit_key": "local-user|fs.edit",
+            "recorded_at": "2026/10/08 06:00",  # 不可解析：不是 ISO
+        }
+    )
+
+    counted = ledger.count_since(
+        kind="pre_decision",
+        key_field="limit_key",
+        key_value="local-user|fs.edit",
+        window_seconds=60,
+    )
+
+    assert counted == 3, "读不出时间戳的行不许被静默跳过"
+
+
+def test_unreadable_timestamps_count_as_failures(tmp_root):
+    """ok=false 的执行行本来就失败：时间戳读不出来时按"在窗口内"计（熔断宁可早开）。"""
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    ledger.append(
+        {
+            "kind": "execution",
+            "limit_key": "local-user|exec.pwsh",
+            "ok": False,
+            "recorded_at": "not-a-timestamp",
+        }
+    )
+
+    counted = ledger.failures_since(
+        key_field="limit_key", key_value="local-user|exec.pwsh", window_seconds=60
+    )
+
+    assert counted == 1
+
+
 def test_refused_execution_without_a_decision_is_not_flagged(tmp_root):
     """refused 恰恰是"没有决策/决策属于别的动作"时的合法留痕，不能被当成链不完整。"""
 
