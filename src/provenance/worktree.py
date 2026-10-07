@@ -454,9 +454,15 @@ def resolve_landing_state(
     if requested == "landed_peer_verified":
         if peer_evidence is None:
             raise LandingStateError("landed_peer_verified 必须交出 peer_evidence，缺了就是证明不了")
-        verifier = str(peer_evidence.get("verifier", "")).strip()
-        artifact = str(peer_evidence.get("artifact", "")).strip()
-        digest = str(peer_evidence.get("sha256", "")).strip()
+        # 只接受**真的给了字符串**：str(None) 会变成真值 "None"，于是
+        # {"verifier": null, "artifact": null} 这样一份伪造的 peer 验收会被放进来；
+        # 数字同样不行（一个 64 位十进制整数能骗过 sha256 的正则）。
+        raw_verifier = peer_evidence.get("verifier")
+        raw_artifact = peer_evidence.get("artifact")
+        raw_digest = peer_evidence.get("sha256")
+        verifier = raw_verifier.strip() if isinstance(raw_verifier, str) else ""
+        artifact = raw_artifact.strip() if isinstance(raw_artifact, str) else ""
+        digest = raw_digest.strip() if isinstance(raw_digest, str) else ""
         if not verifier or not artifact:
             raise LandingStateError("peer_evidence 缺 verifier 或 artifact（谁验的、验的是哪份）")
         if not re.fullmatch(r"[0-9a-f]{64}", digest):

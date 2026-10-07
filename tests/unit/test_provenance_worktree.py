@@ -196,6 +196,27 @@ def test_landing_states_are_not_collapsed() -> None:
         )
 
 
+def test_peer_evidence_must_carry_real_strings() -> None:
+    """null / 数字都不是"给了一个值"：str(None) == "None" 会放行伪造的 peer 验收（复核发现）。"""
+
+    good = {"verifier": "peer-a", "artifact": "receipt.json", "sha256": "a" * 64}
+    assert (
+        worktree.resolve_landing_state("landed_peer_verified", peer_evidence=good)
+        == "landed_peer_verified"
+    )
+    for broken in (
+        {"verifier": None, "artifact": None, "sha256": "a" * 64},
+        {"verifier": "", "artifact": "receipt.json", "sha256": "a" * 64},
+        {"verifier": "peer-a", "artifact": "   ", "sha256": "a" * 64},
+        {"verifier": 7, "artifact": "receipt.json", "sha256": "a" * 64},
+        {"verifier": "peer-a", "artifact": "receipt.json", "sha256": None},
+        # 64 位十进制整数：str() 之后能骗过 sha256 的正则，但它不是摘要。
+        {"verifier": "peer-a", "artifact": "receipt.json", "sha256": 10**63},
+    ):
+        with pytest.raises(worktree.LandingStateError):
+            worktree.resolve_landing_state("landed_peer_verified", peer_evidence=broken)
+
+
 def test_load_declaration_ignores_comments_and_blank_lines(tmp_root: Path) -> None:
     path = tmp_root / "declaration.txt"
     path.write_text("# 注释\n\nsrc/**/*.py\n   \ntools/*.py\n", encoding="utf-8")
