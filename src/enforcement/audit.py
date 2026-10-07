@@ -284,6 +284,23 @@ class FileAuditSink:
         return sum(1 for _, chained in self._scan() if not chained)
 
     def verify(self) -> tuple[str, ...]:
+        """校验本层摘要链；**产物不存在时不能返回"没有问题"**。
+
+        _scan() 对不存在的文件返回空列表（追加写需要它这么做），于是从未写过审计的
+        路径会得到"issues 为空 = 通过"的读数：CLI 的 verify 子命令正把
+        "not issues" 当 ok（cli.py:710），这条静默的绿会把"产物不存在"读成
+        "链校验通过"，而同一份文件上 verdict 子命令是直接报错（cli.py:743）。
+
+        "文件存在但本层没有任何链式记录"（例如同一个文件里只有 Phase 2 的外来行）
+        是**产物状态**而不是链完整性问题：本方法保持"本层链完整性"这一个语义，
+        由消费方按"没有证据"处理（cli.py::_verify 会据此判不通过）。
+        """
+
+        if not self.path.is_file():
+            return (
+                f"审计日志不存在: {self.path.name}："
+                "没有产物不能被读成链完整（缺证据按失败关闭处理）",
+            )
         return AuditChain.verify(self.chain_records())
 
     # ------------------------------------------------------------------ 写

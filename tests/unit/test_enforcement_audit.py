@@ -128,6 +128,39 @@ def test_chain_links_records_and_verifies(tmp_root):
     assert sink.final_digest() == second.digest
 
 
+def test_a_missing_audit_file_is_not_a_verified_chain(tmp_root):
+    """没有产物 ≠ 链完整：CLI 的 verify 子命令把 issues 为空当 ok，这里不能是空。"""
+
+    sink = sink_for(tmp_root)
+
+    issues = sink.verify()
+
+    assert issues and "不存在" in issues[0]
+    described = sink.describe()
+    assert described["chained_records"] == 0
+    assert described["issues"], "describe() 也不能把缺产物报成健康"
+
+
+def test_an_existing_audit_file_without_chained_records_stays_chain_only(tmp_root):
+    """只有外来行的文件：链完整性没有可报的问题，但"本层没有证据"是产物状态。
+
+    这条边界是刻意的：Phase 2 的 dsh 审计行与 Phase 4 的链式记录共用同一个文件，
+    链只跟随本层记录（见 FileAuditSink 的文档字符串与
+    tests/unit/test_hook_audit_reading_context.py 的混排用例）；
+    "有没有产生过证据"由消费方（cli.py::_verify）判定并据此拒绝判通过。
+    """
+
+    path = tmp_root / "audit.jsonl"
+    path.write_text(
+        json.dumps({"decision": "block", "file": "src/x.py"}) + "\n", encoding="utf-8"
+    )
+    sink = FileAuditSink(path, workspace=tmp_root)
+
+    assert sink.verify() == ()
+    assert sink.chain_records() == ()
+    assert sink.foreign_records() == 1
+
+
 def test_tampering_with_a_record_is_detected(tmp_root):
     sink = sink_for(tmp_root)
     sink.append(AuditStage.REQUEST, payload={"a": 1})

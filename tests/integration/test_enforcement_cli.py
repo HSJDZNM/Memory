@@ -111,6 +111,29 @@ def test_registry_verify_passes_for_the_repository_asset():
     assert "exec.pwsh" in completed.stdout
 
 
+def test_verify_refuses_a_missing_or_evidence_less_audit_artifact(tmp_root):
+    """没有产物 ≠ 链完整：缺失的、或只有外来行的审计文件都不能读成"校验通过"。
+
+    旧行为：文件不存在时 _scan() 返回空列表 → verify() 无 issue → exit 0 +
+    "审计链校验通过"；只有 Phase 2 外来行时同样。而同一份文件上 verdict 子命令
+    对"文件不存在"是直接报错的（cli.py:743），两条路径自相矛盾。
+    """
+
+    paths = EnforcementPaths(tmp_root)
+    assert not paths.audit.exists()
+
+    missing = run_cli("verify", "--audit", str(paths.audit))
+    assert missing.returncode == 2
+    assert "不存在" in missing.stdout
+
+    paths.audit.write_text(
+        json.dumps({"decision": "block", "file": "src/x.py"}) + "\n", encoding="utf-8"
+    )
+    foreign_only = run_cli("verify", "--audit", str(paths.audit))
+    assert foreign_only.returncode == 2
+    assert "没有本层" in foreign_only.stdout
+
+
 def test_tampered_registry_is_reported(tmp_root):
     paths = EnforcementPaths(tmp_root)
     document = json.loads(
@@ -142,6 +165,7 @@ def test_tampered_registry_is_reported(tmp_root):
     assert "problem:" in self_check.stdout
 
     # verify 默认只校验审计链；显式加 --check-registry 才会把注册表审核状态纳入门禁
+    # （self-check 已经往 --audit 指定的文件里写过本层记录，所以这里是"有证据"的 0）。
     audit_only = run_cli("verify", "--audit", str(paths.audit))
     assert audit_only.returncode == 0
     with_registry = run_cli("verify", "--check-registry", *paths_args(paths))
