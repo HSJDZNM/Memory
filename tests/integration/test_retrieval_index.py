@@ -488,6 +488,57 @@ def test_rule_source_registration_and_cascade_delete(tmp_root) -> None:
         store.close()
 
 
+def test_rule_source_swap_is_atomic_when_a_rule_fails(tmp_root) -> None:
+    """溯源换血先全部解析、再一个事务里换：中途失败不许留下清了一半的表（复核发现）。"""
+
+    loaded = load_fixture_corpus(
+        tmp_root,
+        rule_sources=[
+            {
+                "rule_id": "REVIEW-903",
+                "rule_version": 1,
+                "dataset": "guides",
+                "source_path": "topics.md",
+                "heading_path": ["Review Topics", "Tests"],
+            }
+        ],
+    )
+    store = open_store(tmp_root)
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        before = store.rule_sources(rule_id="REVIEW-903")
+        assert before
+
+        broken = load_fixture_corpus(
+            tmp_root,
+            rule_sources=[
+                {
+                    "rule_id": "REVIEW-903",
+                    "rule_version": 1,
+                    "dataset": "guides",
+                    "source_path": "topics.md",
+                    "heading_path": ["Review Topics", "Documentation"],
+                },
+                {
+                    "rule_id": "REVIEW-904",
+                    "rule_version": 1,
+                    "dataset": "guides",
+                    "source_path": "topics.md",
+                    "heading_path": ["Review Topics", "No Such Heading"],
+                },
+            ],
+        )
+        with pytest.raises(IndexingError):
+            ingest(broken, store, repo_root=tmp_root)
+
+        # 失败的一趟不许动表：REVIEW-903 仍指着旧 chunk，且关系可反查。
+        after = store.rule_sources(rule_id="REVIEW-903")
+        assert [row.chunk_id for row in after] == [row.chunk_id for row in before]
+        assert store.rules_for_chunk(after[0].chunk_id) == (("REVIEW-903", 1),)
+    finally:
+        store.close()
+
+
 def test_rule_source_is_replaced_when_the_heading_changes(tmp_root) -> None:
     """溯源是派生数据：改标题路径后必须**替换**旧行，而不是与旧行并集。
 

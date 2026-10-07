@@ -25,6 +25,7 @@ from .chunker import CHUNKER_VERSION, chunk_document, effective_chunker_version
 from .corpus import EntryIssue, LoadedCorpus
 from .models import (
     CorpusError,
+    CorpusRuleSource,
     DocumentRecord,
     IndexRunStatus,
     IndexingError,
@@ -427,11 +428,11 @@ def _resolve_rule_sources(
 
     declared = sorted({(item.rule_id, item.rule_version) for item in loaded.manifest.rule_sources})
     declared_set = set(declared)
-    stale = [key for key in store.rule_source_keys() if key not in declared_set]
-    for rule_id, rule_version in declared + stale:
-        store.clear_rule_source(rule_id=rule_id, rule_version=rule_version)
 
-    registered: list[Tuple[str, int, str]] = []
+    # 先**全部解析**、再动库：任何一条规则解析不出来（文档没索引、标题路径不存在）时，
+    # 溯源表必须原样不动。旧实现先按声明清空再逐条登记，中途失败会留下"清了一半 + 写了一半"
+    # 的溯源——`rules --rule X` 静默返回空，直到下一次完全成功的 run 才回来。
+    resolved: list[Tuple[CorpusRuleSource, str]] = []
     for item in loaded.manifest.rule_sources:
         document_id = document_id_for(item.dataset, item.source_path)
         chunks = store.chunks(document_id)
@@ -452,10 +453,20 @@ def _resolve_rule_sources(
                 f"{' > '.join(wanted) or '<root>'} @ {item.source_path}"
             )
         for chunk in matches:
+            resolved.append((item, chunk.chunk_id))
+
+    # 换血是一个事务：清旧行与写新行要么全成、要么全不动（transaction 可重入，
+    # 调用方即使已经开事务也不会各自提交）。
+    registered: list[Tuple[str, int, str]] = []
+    stale = [key for key in store.rule_source_keys() if key not in declared_set]
+    with store.transaction():
+        for rule_id, rule_version in declared + stale:
+            store.clear_rule_source(rule_id=rule_id, rule_version=rule_version)
+        for item, chunk_id in resolved:
             store.register_rule_source(
-                rule_id=item.rule_id, rule_version=item.rule_version, chunk_id=chunk.chunk_id
+                rule_id=item.rule_id, rule_version=item.rule_version, chunk_id=chunk_id
             )
-            registered.append((item.rule_id, item.rule_version, chunk.chunk_id))
+            registered.append((item.rule_id, item.rule_version, chunk_id))
     return tuple(sorted(registered))
 
 
