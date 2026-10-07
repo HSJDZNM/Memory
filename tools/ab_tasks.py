@@ -350,6 +350,33 @@ def baseline(instance_id: str, *, root: Path, apply_test_patch: bool = False) ->
             "reused": reused, "download": record, "test_patch_applied": applied, "files": files}
 
 
+#: pytest 的 rootdir 锚点：任务树里有任意一个，pytest 就会把 rootdir 定在树里，
+#: 不会再向上读到**宿主仓库**的配置。
+PYTEST_ROOT_ANCHORS = ("pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg", "setup.py")
+
+
+def _pytest_isolation(argv: list[str], *, cwd: Path, task_dir: Path) -> list[str]:
+    """任务树自己没有任何 pytest 根标记时，给 oracle 一份**隔离的空配置**。
+
+    oracle 跑在 <root>/<id>/baseline 下，而它常常落在平台仓库之内（.tmp/）：pytest 从参数的
+    共同祖先向上找 rootdir 锚点，一路找到**本仓库的 pytest.ini**，于是 -p no:cacheprovider
+    与仓库的 cache_dir + --strict-config 冲突（实测 ERROR: Unknown config option: cache_dir、
+    退出码 4）。那是宿主配置泄漏，不是这个任务跑不起来——把环境问题说成任务问题正是要避免的
+    归因错误。隔离配置写在任务目录（<root>/<id>/）里，不碰 baseline 树本身。
+
+    树里**有**锚点时原样返回：任务自己的配置（addopts / markers / testpaths）必须照用，
+    pytest 也不会再向上走。
+    """
+
+    if any((cwd / name).is_file() for name in PYTEST_ROOT_ANCHORS):
+        return argv
+    ini = task_dir / "pytest-isolation.ini"
+    if not ini.is_file():
+        task_dir.mkdir(parents=True, exist_ok=True)
+        ini.write_text("[pytest]" + chr(10), encoding="utf-8", newline=chr(10))
+    return [*argv, "-c", str(ini), "--rootdir", str(cwd)]
+
+
 def _run(argv: list[str], *, cwd: Path, timeout: int = 900, env: dict | None = None) -> dict:
     """跑一条命令。**完整输出**（stdout / stderr）与截断尾（*_tail，只给读数看）都要给：
 
@@ -415,6 +442,7 @@ def probe(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON) -> dict
                 "status_reason": "基线树还没有：先跑 --baseline %s --apply-test-patch" % instance_id}
     payload = oracle(instance_id, root=root, python=python)
     argv = [python] + payload["test_command"]["argv"] + ["--collect-only", "-q"] + payload["test_files"]
+    argv = _pytest_isolation(argv, cwd=directory, task_dir=Path(root) / instance_id)
     result = _run(argv, cwd=directory, timeout=600, env=payload["test_command"]["env"])
     tail = (result["stdout"] + result["stderr"]).lower()
     if result["timed_out"]:
@@ -445,6 +473,7 @@ def run_oracle(instance_id: str, *, root: Path, phase: str, python: str = DEFAUL
         argv += payload["test_files"] + ["-k", " or ".join(names)]
     else:
         argv += payload["test_files"]
+    argv = _pytest_isolation(argv, cwd=directory, task_dir=Path(root) / instance_id)
     result = _run(argv, cwd=directory, timeout=payload["test_command"]["timeout_s"],
                   env=payload["test_command"]["env"])
     tail = result["stdout"] + result["stderr"]
@@ -476,6 +505,7 @@ def _collect(instance_id: str, *, root: Path, python: str) -> dict:
     payload = oracle(instance_id, root=root, python=python)
     directory = Path(payload["test_command"]["cwd"])
     argv = [python] + payload["test_command"]["argv"] + ["--collect-only", "-q"] + payload["test_files"]
+    argv = _pytest_isolation(argv, cwd=directory, task_dir=Path(root) / instance_id)
     result = _run(argv, cwd=directory, timeout=900, env=payload["test_command"]["env"])
     text = result["stdout"] + result["stderr"]
     ids = [line.strip() for line in result["stdout"].splitlines() if "::" in line and not line.startswith(" ")]
@@ -533,6 +563,7 @@ def verify_oracle(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON)
         if not ids:
             return {"argv": [], "exit_code": None, "seconds": 0.0, "outcomes": {}, "stdout_tail": "", "stderr_tail": ""}
         argv = [python] + payload["test_command"]["argv"] + ids
+        argv = _pytest_isolation(argv, cwd=directory, task_dir=Path(root) / instance_id)
         result = _run(argv, cwd=directory, timeout=payload["test_command"]["timeout_s"],
                       env=payload["test_command"]["env"])
         return {"argv": argv, "exit_code": result["exit_code"], "seconds": result["seconds"],

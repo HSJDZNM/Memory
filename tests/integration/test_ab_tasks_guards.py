@@ -41,8 +41,12 @@ def _task_root(
     fail_to_pass: tuple[str, ...] = ("tests/test_demo.py::test_000",),
     pass_to_pass: tuple[str, ...] = ("tests/test_demo.py::test_001",),
     source_record: bool = False,
+    pytest_ini: bool = True,
 ) -> tuple[Path, Path]:
-    """合成一个任务：rows.jsonl + baseline 树（自带空 pytest.ini），返回 (root, baseline)。"""
+    """合成一个任务：rows.jsonl + baseline 树，返回 (root, baseline)。
+
+    pytest_ini=False 模拟"树里没有任何 pytest 根标记"的 checkout。
+    """
 
     root = tmp_root / "ab-tasks"
     dataset = root / ("swe-bench-verified@" + REVISION)
@@ -62,7 +66,8 @@ def _task_root(
     }
     _write(dataset / "rows.jsonl", json.dumps(row, ensure_ascii=False) + "\n")
     baseline = root / INSTANCE / "baseline"
-    _write(baseline / "pytest.ini", "[pytest]\n")
+    if pytest_ini:
+        _write(baseline / "pytest.ini", "[pytest]\n")
     if test_source is None:
         test_source = "\n".join(
             "def test_%03d():\n    assert True" % index for index in range(tests)
@@ -315,3 +320,52 @@ def test_missing_source_record_is_a_clean_cli_error(tmp_root: Path) -> None:
     assert completed.returncode == 2, completed.stdout + completed.stderr
     assert "Traceback" not in completed.stderr, completed.stderr
     assert "ab_tasks: 缺来源记录" in completed.stderr, completed.stderr
+
+def test_oracle_gets_an_isolated_config_when_the_tree_declares_none(tmp_root: Path) -> None:
+    """树里没有 pytest 根标记时：oracle 必须拿到隔离配置，不许读到宿主仓库的 pytest.ini。"""
+
+    root, _baseline = _task_root(tmp_root, tests=1, pytest_ini=False)
+
+    collected = ab_tasks._collect(INSTANCE, root=root, python=sys.executable)
+
+    assert collected["exit_code"] == 0, collected["stderr_tail"]
+    assert collected["collected"] == 1
+    assert "-c" in collected["argv"]
+    assert "--rootdir" in collected["argv"]
+
+
+def test_task_with_its_own_config_is_left_alone(tmp_root: Path) -> None:
+    """树自带 pytest.ini：不许再插一份隔离配置（任务自己的 addopts / markers 要照用）。"""
+
+    root, _baseline = _task_root(tmp_root, tests=1, pytest_ini=True)
+
+    collected = ab_tasks._collect(INSTANCE, root=root, python=sys.executable)
+
+    assert collected["exit_code"] == 0, collected["stderr_tail"]
+    assert "-c" not in collected["argv"]
+
+
+def test_probe_says_runnable_for_a_tree_without_config(tmp_root: Path) -> None:
+    """没有配置的树不该被判成 environment_unavailable：那不是任务的问题。"""
+
+    root, _baseline = _task_root(tmp_root, tests=1, pytest_ini=False)
+
+    reading = ab_tasks.probe(INSTANCE, root=root, python=sys.executable)
+
+    assert reading["measured_status"] == "runnable", reading["status_reason"]
+
+
+def test_verify_oracle_accepts_a_task_without_config(tmp_root: Path) -> None:
+    """F2P 全红 + P2P 全绿、树里没有配置：修好泄漏后这类任务应当被接受。"""
+
+    payload = _verify(
+        tmp_root,
+        test_source=DECIDED_SOURCE,
+        fail_to_pass=("tests/test_demo.py::test_f2p",),
+        pass_to_pass=("tests/test_demo.py::test_p2p",),
+        pytest_ini=False,
+    )
+
+    assert payload["reject"] == {"rejected": False, "reason": ""}
+    assert payload["measured"]["fail_to_pass_all_red"] is True
+    assert payload["measured"]["pass_to_pass_all_green"] is True
