@@ -311,7 +311,17 @@ def _sanitized(value: Any, *, project_root: Optional[Path]) -> Any:
 DECISION_REASON_APPROVAL_REQUIRED = "approval_required"
 DECISION_REASON_POLICY_VIOLATION = "policy_violation"
 DECISION_REASON_EVIDENCE_UNAVAILABLE = "evidence_unavailable"
-UNREPAIRABLE_VIOLATION_DETAILS = frozenset({"uncovered_checker", "blocker"})
+# "平台没能查"的结构化标志：这两类 violation 的 `evidence.kind` 都是 "validator"——
+#   checkers.blocker_violation           → value=验证器状态、detail=**自由文本**原因；
+#   checkers.uncovered_checker_violation → value=checker 名、detail="uncovered_checker"。
+# 规则真的报了违规时 kind 是 checker 名（style_lint / failing_tests …）、"dependency"
+# 或 "context"（`rule.enforcement.checker` 必填且取值受控，见 policy.models.KNOWN_CHECKERS），
+# 因此 kind 是这两类之间**唯一稳定的结构化区别**。
+# 判据不能读 detail：blocker 的 detail 是自由文本原因，拿它比受控取值永远比不中，
+# 那条"平台没能查"会被判成 policy_violation，修复节点于是去改一个平台根本没查的文件
+# ——H1 要防的正是这件事。编排侧 `orchestration.models.UNREPAIRABLE_EVIDENCE_KINDS`
+# 是同一条判据，两侧由 tests/contract/test_decision_reason_parity.py 的跨侧用例钉住。
+UNREPAIRABLE_EVIDENCE_KINDS = frozenset({"validator"})
 
 
 def decision_reason(decision: ValidationResult) -> Optional[str]:
@@ -329,8 +339,7 @@ def decision_reason(decision: ValidationResult) -> Optional[str]:
     if not decision.violations:
         return None
     if all(
-        violation.evidence.kind == "validator"
-        and (violation.evidence.detail or "") in UNREPAIRABLE_VIOLATION_DETAILS
+        violation.evidence.kind in UNREPAIRABLE_EVIDENCE_KINDS
         for violation in decision.violations
     ):
         return DECISION_REASON_EVIDENCE_UNAVAILABLE
