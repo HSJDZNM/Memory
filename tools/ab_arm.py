@@ -171,16 +171,60 @@ SANITIZATION: tuple[SanitizedPath, ...] = (
     SanitizedPath(".policy/**", "钩子配置 / 审计 / 台账（存在就删；臂运行时自己生成自己的）"),
 )
 
-# 内容扫描：规则身份的形态。
-# 局限写在这里：它只认"大写字母组-三位数字"这类身份串与几个明显的键名，
+# 内容扫描：规则身份。
+# 局限写在这里：它只认**本平台自己的规则 ID**与几个明显的键名，
 # **认不出**中文意译、改名后的 YAML、或把规则编码进别的东西里——所以清单以路径为主。
-LEAK_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r"\b[A-Z][A-Z0-9]{1,9}-\d{1,4}\b", "规则身份形态（例如 ARCH-001 / STYLE-018）"),
+RULE_ID_SHAPE_PATTERN: tuple[str, str] = (
+    r"\b[A-Z][A-Z0-9]{1,9}-\d{1,4}\b",
+    "规则身份形态（兜底：policies/ 读不到时才用；UTF-8 / SHA-256 / AB-5 这类标准写法也会命中）",
+)
+
+#: 判定协议 / 审计记录里的键名：改名后的 YAML 认不出，但这几个键名一出现就是协议形态的泄露。
+PROTOCOL_KEY_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\brule_id\b", "判定协议里的 rule_id 键名"),
     (r"\bmatched_rules\b", "判定协议里的 matched_rules 键名"),
     (r"\bskipped_rules\b", "判定协议里的 skipped_rules 键名"),
     (r"\bviolations_by_severity\b", "审计记录里的按级别分布键名"),
 )
+
+#: 扫描器**自己的源文件**：它必然包含模式串、载荷键名与自证植入的规则 ID。
+#: 把这几样当成"泄露"，会让一棵真正干净的臂树永远报 dirty（实测：只放这一个文件的树上命中 15 行）。
+SELF_SOURCE = "tools/ab_arm.py"
+
+
+def rule_identities(root: Path | None = None) -> tuple[str, ...]:
+    """本平台自己的规则 ID：policies/<domain>/<ID>.yaml 的文件名主干。
+
+    这是"规则身份"的**权威集合**——比"大写字母组-数字"的形态串精确得多：
+    UTF-8 / SHA-256 / ISO-8601 / R16-4 这些标准写法与章节号都不在其中。
+    读不到（没有 policies/ 目录）就返回空元组，由调用方回退到形态串并**在读数里说明**。
+    """
+
+    base = (root or REPO_ROOT) / "policies"
+    if not base.is_dir():
+        return ()
+    identities: list[str] = []
+    for path in sorted(base.glob("*/*.yaml")):
+        value = path.stem.strip()
+        if value and value not in identities:
+            identities.append(value)
+    return tuple(identities)
+
+
+def leak_patterns(root: Path | None = None) -> tuple[tuple[str, str], ...]:
+    """本次真正使用的扫描模式：规则 ID（优先取权威集合） + 协议键名。"""
+
+    identities = rule_identities(root)
+    if identities:
+        head = (
+            (
+                r"\b(?:" + "|".join(re.escape(item) for item in identities) + r")\b",
+                "本平台规则 ID（%d 条，取自 policies/*/*.yaml）" % len(identities),
+            ),
+        )
+    else:
+        head = (RULE_ID_SHAPE_PATTERN,)
+    return head + PROTOCOL_KEY_PATTERNS
 
 # 内容扫描只扫这些后缀（其余当二进制跳过）
 TEXT_SUFFIXES = {
@@ -687,7 +731,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     {"pattern": item.pattern, "reason": item.reason, "added_by": item.added_by}
                     for item in SANITIZATION
                 ],
-                "leak_patterns": [{"regex": pattern, "label": label} for pattern, label in LEAK_PATTERNS],
+                "leak_patterns": [{"regex": pattern, "label": label} for pattern, label in leak_patterns()],
                 "copy_ignore": list(COPY_IGNORE),
                 "kept": "tests/ 只删 fixtures/rules 与 fixtures/decisions；其余保留（可用性 oracle 要用）",
                 "limits": (
@@ -966,7 +1010,8 @@ def leak_scan(tree: Path) -> Mapping[str, Any]:
     所以它是**兜底**，主判据是路径删除。扫过的文件数与跳过数都要报出来。
     """
 
-    compiled = [(re.compile(pattern), label) for pattern, label in LEAK_PATTERNS]
+    patterns = leak_patterns()
+    compiled = [(re.compile(pattern), label) for pattern, label in patterns]
     hits: list[Mapping[str, Any]] = []
     scanned = 0
     skipped = 0
@@ -974,6 +1019,10 @@ def leak_scan(tree: Path) -> Mapping[str, Any]:
     for relative in files:
         path = tree / relative
         if path.suffix.lower() not in TEXT_SUFFIXES:
+            skipped += 1
+            continue
+        if relative == SELF_SOURCE:
+            # 扫描器自己的声明不算证据：它写着模式串、载荷键名，还写着自证要植入的规则 ID。
             skipped += 1
             continue
         try:
@@ -1000,10 +1049,16 @@ def leak_scan(tree: Path) -> Mapping[str, Any]:
         "files_with_hits": len({item["path"] for item in hits}),
         "hit_unit": "lines（每行首个命中模式，命中即 break）",
         "scan_root": display(tree),
-        "excludes": "不排除任何目录（净化后的臂树本来就只剩任务树；tests/ 在夹具路线下是测试集）",
+        "excludes": (
+            "只排除扫描器自己的源文件 " + SELF_SOURCE
+            + "（它必然包含模式串、载荷键名与自证植入的规则 ID）；其余不排除"
+        ),
         "suffix_filter": sorted(TEXT_SUFFIXES),
-        "patterns": [{"regex": pattern, "label": label} for pattern, label in LEAK_PATTERNS],
-        "limits": "只认规则身份的形态串；中文意译 / 改名后的 YAML / 编码过的规则它抓不到（主判据是路径删除）",
+        "patterns": [{"regex": pattern, "label": label} for pattern, label in patterns],
+        "limits": (
+            "只认本平台规则 ID 与几个协议键名；中文意译 / 改名后的 YAML / 编码过的规则它抓不到"
+            "（主判据是路径删除）"
+        ),
     }
 
 
