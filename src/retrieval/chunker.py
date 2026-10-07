@@ -47,6 +47,7 @@ __all__ = [
     "compact_text",
     "effective_chunker_version",
     "find_sections",
+    "fence_match",
     "front_matter_bounds",
     "heading_anchor",
     "iter_blocks",
@@ -56,7 +57,22 @@ __all__ = [
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 # 围栏用 \x60（反引号）的十六进制写法，避免源码里出现难以阅读的连续反引号。
-FENCE_RE = re.compile(r"^\s{0,3}(\x60{3,}|~{3,})\s*([^\s\x60]*)\s*$")
+#
+# info string 按 CommonMark：反引号围栏的 info string **不许**含反引号（含了这行就不是
+# 围栏，只是正文），波浪线围栏允许；两种都允许 info string 里有空格——```python
+# title="x.py" / ```jsx live / ```bash copy 都是常见写法，旧实现（[^\s\x60]*）把整行
+# 当正文，块里的 # 注释于是被 find_sections 当成标题，正是本模块要防的那件事。
+FENCE_RE = re.compile(r"^\s{0,3}(\x60{3,}|~{3,})[ \t]*([^\x60]*?)[ \t]*$")
+_TILDE_FENCE_RE = re.compile(r"^\s{0,3}(~{3,})[ \t]*(.*?)[ \t]*$")
+
+
+def fence_match(line: str) -> Optional["re.Match[str]"]:
+    """解析一行围栏；不是围栏返回 None（info string 的 CommonMark 规则见上面的注释）。"""
+
+    match = FENCE_RE.match(line)
+    if match is not None:
+        return match
+    return _TILDE_FENCE_RE.match(line)
 SLUG_RE = re.compile(r"[^0-9a-z\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff]+")
 # 中日韩文字区间：这些语言没有空格分词，FTS5 的 unicode61 会把整段当成一个词，
 # 因此索引与查询两侧都按"逐字切分"生成检索文本（同一套切分，避免两侧不一致）。
@@ -337,7 +353,7 @@ def iter_blocks(body: str, *, line_start: int = 1) -> Tuple[Block, ...]:
                 fence_info = ""
             continue
 
-        match = FENCE_RE.match(line)
+        match = fence_match(line)
         if match:
             flush_prose()
             fence = match.group(1)[0] * 3
@@ -420,9 +436,9 @@ def find_sections(body: str, *, line_start: int = 1) -> Tuple[Section, ...]:
             if _closes_fence(line, fence):
                 fence = None
             continue
-        fence_match = FENCE_RE.match(line)
-        if fence_match:
-            fence = fence_match.group(1)[0] * 3
+        opening = fence_match(line)
+        if opening:
+            fence = opening.group(1)[0] * 3
             buffer.append(line)
             continue
         heading = HEADING_RE.match(line)

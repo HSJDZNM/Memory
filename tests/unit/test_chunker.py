@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from retrieval import chunker
 from retrieval.chunker import (
     ANCHOR_PREAMBLE,
     blocks_are_preserved,
     chunk_document,
     compact_text,
+    fence_match,
     find_sections,
     iter_blocks,
     search_text,
@@ -128,6 +130,51 @@ def test_yaml_values_json_cannot_serialize_do_not_break_chunking() -> None:
     # 真正要保证的事：一个元数据字段不能让整个分块步骤失败。
     _, chunks = chunk_document(text, document_id="doc_meta", max_chars=200, hard_max_chars=400)
     assert [(item.heading_anchor, item.text) for item in chunks] == [("h", "body")]
+
+
+def test_fence_info_string_may_contain_spaces() -> None:
+    """带参数的围栏（```python title="x.py" 这类）必须被认成围栏（复核发现）。
+
+    旧正则的 info 组不许出现空白，于是 ```jsx live / ```bash copy 整行被
+    当成正文，块里的 # 注释被 find_sections 当成标题——代码被切碎，正是本模块要防的事。
+    """
+
+    cases = (
+        ('```python title="x.py"', FENCE, 'python title="x.py"'),
+        ("```jsx live", FENCE, "jsx live"),
+        ("```bash copy", FENCE, "bash copy"),
+        ("~~~text with spaces", "~~~", "text with spaces"),
+    )
+    for opening, closing, expected_info in cases:
+        text = (
+            "# Title" + chr(10) + chr(10)
+            + opening + chr(10) + "# NOT-A-HEADING" + chr(10) + "print(1)" + chr(10)
+            + closing + chr(10) + chr(10) + "## After" + chr(10) + chr(10) + "tail" + chr(10)
+        )
+        sections = find_sections(text)
+        assert [section.anchor for section in sections] == ["title", "title/after"], opening
+        code = [
+            block
+            for section in sections
+            for block in section.blocks
+            if block.kind is ChunkKind.CODE
+        ]
+        assert len(code) == 1, opening
+        assert "# NOT-A-HEADING" in code[0].text, opening
+        assert code[0].info == expected_info, opening
+
+
+def test_backtick_fence_info_string_may_not_contain_a_backtick() -> None:
+    """CommonMark：反引号围栏的 info string 含反引号 -> 这行不是围栏；波浪线围栏允许。"""
+
+    assert fence_match(FENCE + "py" + chr(96) + "thon") is None
+    tilde = fence_match("~~~info " + chr(96) + " backtick")
+    assert tilde is not None
+    assert tilde.group(1) == "~~~"
+    # 普通围栏与带空格的 info string 都要认得出来。
+    assert fence_match(FENCE + "python").group(2) == "python"
+    assert fence_match("   " + FENCE + "   ").group(2) == ""
+    assert fence_match("not a fence") is None
 
 
 def test_heading_inside_code_fence_is_not_a_heading() -> None:
