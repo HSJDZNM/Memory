@@ -210,6 +210,43 @@ def test_vector_retriever_without_embeddings_is_unavailable(tmp_root) -> None:
         store.close()
 
 
+def test_vector_retriever_reports_stale_vector_dim_instead_of_crashing(tmp_root) -> None:
+    """同模型名下维度已过期的向量：结构化 UNAVAILABLE + 可修复，而不是裸 ValueError。"""
+
+    loaded = load_fixture_corpus(tmp_root)
+    store = ChunkStore(tmp_root / "index.sqlite3")
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        retriever = VectorRetriever(store, policy=loaded.policy)
+        scope = AccessScope(subject="u", datasets=frozenset(loaded.manifest.dataset_names))
+        retriever.build()
+        model = retriever.model_name
+        target = store.candidates(scope=scope)[0].chunk_id
+        # 模拟"自定义 embedding 换了 dim 但 name 没变"：同一模型名下留下旧维度向量。
+        import array
+
+        store.store_embedding(
+            chunk_id=target,
+            model=model,
+            vector=array.array("f", [0.0] * 4).tobytes(),
+            dim=4,
+            embedded_at="2026-01-01T00:00:00Z",
+        )
+
+        result = retriever.retrieve(RetrievalQuery(text="review checklist"), scope)
+        assert result.status is RetrievalStatus.UNAVAILABLE
+        assert result.reason is UnavailableReason.RETRIEVAL_FAILED
+        assert "维度" in (result.detail or "") and "--build" in (result.detail or "")
+        assert result.results == ()
+
+        # 重建必须真的修好过期行（只比较 chunk_id 的话它会一直被跳过）。
+        assert retriever.build() == 1
+        repaired = retriever.retrieve(RetrievalQuery(text="review checklist"), scope)
+        assert repaired.status is RetrievalStatus.OK
+    finally:
+        store.close()
+
+
 def test_result_cache_key_covers_subject_permissions_index_and_plan(indexed) -> None:
     loaded, store, lexicon, scope = indexed
     cache = ResultCache()

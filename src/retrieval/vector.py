@@ -120,7 +120,13 @@ class VectorRetriever:
 
         datasets = tuple(name for name, _ in self.store.stats().datasets)
         scope = AccessScope(subject="indexer", datasets=frozenset(datasets), allow_restricted=True)
-        existing = {chunk_id for chunk_id, _ in self.store.embeddings(model=self.model_name)}
+        # 只有"维度与当前 embedding 一致"的行才算已存在：同模型名下的旧维度行
+        # （换过 dim 的自定义实现）必须重算，否则它们永远不会被修好。
+        existing = {
+            chunk_id
+            for chunk_id, vector in self.store.embeddings(model=self.model_name)
+            if len(vector) == self.embedder.dim
+        }
         pending = [hit for hit in self.store.candidates(scope=scope) if hit.chunk_id not in existing]
         if not pending:
             return 0
@@ -225,12 +231,42 @@ class VectorRetriever:
             )
 
         query_vector = self.embedder.embed((" ".join(plan.terms),))[0]
+        if len(query_vector) != self.embedder.dim:
+            # embedding 端口违背了自己的声明：这是实现/配置错误，不能退化成"没有结果"。
+            raise QueryError(
+                f"embedding 实现返回的维度与声明不一致：{len(query_vector)} != {self.embedder.dim}"
+            )
         scored: list[Tuple[float, SearchHit]] = []
+        stale: list[str] = []
         for hit in candidates:
             vector = stored.get(hit.chunk_id)
             if vector is None:
                 continue
+            if len(vector) != len(query_vector):
+                # 同一模型名下的旧维度向量（换过 dim 的自定义 embedding，
+                # 或旧库遗留行）：跳过并显式报告，绝不拿它算余弦
+                # （_cosine 会抛裸 ValueError，调用方只把它当"进程崩了"）。
+                stale.append(hit.chunk_id)
+                continue
             scored.append((_cosine(query_vector, vector), hit))
+        if stale:
+            # 静默丢掉这些行等于悄悄缩小候选集：索引对当前 embedding 已经不自洽，
+            # 按"检索不可用"失败关闭，并给出可执行的修复动作。
+            return RetrievalResult(
+                status=RetrievalStatus.UNAVAILABLE,
+                query=plan.text,
+                plan=plan,
+                method=self.method,
+                index_version=index_version,
+                reason=UnavailableReason.RETRIEVAL_FAILED,
+                detail=(
+                    f"索引里有 {len(stale)} 条 {self.model_name} 向量与当前 embedding 维度"
+                    f"不一致（期望 {len(query_vector)}）：向量已过期；"
+                    "先运行 python -m retrieval.cli vector --build 重建向量"
+                ),
+                request_id=query.request_id,
+                trace_id=query.trace_id,
+            )
         scored.sort(key=lambda item: (-item[0], item[1].chunk_id))
         floor = self.policy.vector_min_similarity
         relevant = [item for item in scored if item[0] >= floor]
