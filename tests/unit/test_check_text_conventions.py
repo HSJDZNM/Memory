@@ -110,6 +110,35 @@ def test_empty_file_list_is_not_a_pass(monkeypatch, capsys):
     assert "没东西可查" in capsys.readouterr().out
 
 
+def test_crlf_suffixes_only_exempt_the_line_ending_rule(monkeypatch, capsys, tmp_root):
+    """.ps1/.bat/.cmd 只豁免行尾：BOM / 行尾空白照查（旧实现对它们跳过全部规则）。"""
+
+    module = _load()
+    ps1 = tmp_root / "script.ps1"
+    ps1.write_bytes(b"\xef\xbb\xbfWrite-Host 'x' " + b"\r\n")
+    monkeypatch.setattr(module, "tracked_files", lambda: {ps1.as_posix()})
+    monkeypatch.setattr(module, "committed_paths", lambda: {ps1.as_posix()})
+
+    assert module.main(["check_text_conventions.py"]) == 1
+    out = capsys.readouterr().out
+    assert "含 UTF-8 BOM" in out
+    assert "行尾有空白" in out
+    assert "含 CRLF" not in out, "行尾豁免本身不能被这条修复取消"
+
+
+def test_crlf_suffix_still_needs_a_final_newline(monkeypatch, capsys, tmp_root):
+    """豁免行尾 ≠ 豁免末尾换行：.bat 没有末尾换行同样要报。"""
+
+    module = _load()
+    bat = tmp_root / "run.bat"
+    bat.write_bytes(b"echo hi")
+    monkeypatch.setattr(module, "tracked_files", lambda: {bat.as_posix()})
+    monkeypatch.setattr(module, "committed_paths", lambda: {bat.as_posix()})
+
+    assert module.main(["check_text_conventions.py"]) == 1
+    assert "未以单个换行符结尾" in capsys.readouterr().out
+
+
 def test_real_problems_are_still_reported(monkeypatch, capsys, tmp_root):
     """没被握住的文件照常检查：行尾空白仍然让门禁红（修复不得削弱检查本身）。"""
 

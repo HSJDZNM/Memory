@@ -150,9 +150,10 @@ def main(argv: list[str]) -> int:
         if b"\x00" in data[:4096]:
             continue
         checked += 1
-        if path.suffix.lower() in CRLF_SUFFIXES:
-            continue
-        if b"\r\n" in data:
+        # .bat / .cmd / .ps1 只豁免**行尾**：.editorconfig/.gitattributes 对这三个后缀
+        # 覆盖的只有 end_of_line，BOM、UTF-8、末尾换行、行尾空白照查。旧实现对它们直接
+        # continue，于是这些文件被计入"检查 N 个文本文件"却一条规则都没跑——静默通过。
+        if path.suffix.lower() not in CRLF_SUFFIXES and b"\r\n" in data:
             problems.append(f"{path}: 含 CRLF，仓库约定为 LF")
         if data.startswith(b"\xef\xbb\xbf"):
             problems.append(f"{path}: 含 UTF-8 BOM")
