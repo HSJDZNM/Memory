@@ -329,9 +329,7 @@ class ApiRuntime:
                         status = replay.status
                         body = dict(replay.body)
                         headers["Idempotency-Replayed"] = "true"
-                        decision_value = str(
-                            body.get("decision") or body.get("summary", {}).get("decision") or ""
-                        )
+                        decision_value = _decision_label(body)
                         outcome = "replayed"
                         elapsed = int((self.clock() - started) * 1000)
                         self._record(
@@ -930,6 +928,27 @@ def _principal_field(payload: Mapping[str, Any], name: str) -> Any:
     if isinstance(principal, Mapping):
         return principal.get(name)
     return None
+
+
+def _decision_label(body: Mapping[str, Any]) -> str:
+    """重放响应里的决策标签：先读 summary.decision，再接受**本来就是字符串**的顶层 decision。
+
+    为什么不能直接 `str(body.get("decision") or ...)`：evaluate / validate 的顶层
+    `decision` 是**整份决策载荷**（`ValidationResult.to_decision_dict()` 返回 Mapping），
+    `str()` 出来是一段内嵌 request_id 的 Python repr——它既不是"这次判定的结论"，
+    作为 `Metrics.observe(decision=...)` 的标签还会让标签集合随请求数无界增长
+    （每个 request_id 一个新标签），并且与非重放路径的标签对不上。
+    """
+
+    summary = body.get("summary")
+    if isinstance(summary, Mapping):
+        value = summary.get("decision")
+        if value:
+            return str(value)
+    top = body.get("decision")
+    if isinstance(top, str) and top:
+        return top
+    return ""
 
 
 def _canonical_body(body: Mapping[str, Any]) -> Mapping[str, Any]:

@@ -500,7 +500,13 @@ def test_idempotency_replays_the_stored_response_and_conflicts_on_other_bodies(t
     assert conflict.status_code == 409
     assert error_code(conflict) == "idempotency_key_conflict"
 
-    assert [row["replayed"] for row in runtime.request_log.read_back()] == [False, True, False]
+    rows = runtime.request_log.read_back()
+    assert [row["replayed"] for row in rows] == [False, True, False]
+    # 重放记录的 decision 必须是决策字符串，不是把整份决策载荷 repr 出来
+    # （顶层 decision 是 Mapping；那串 repr 内嵌 request_id，作为指标标签会让标签集合
+    #  随请求数无界增长，历史缺陷：OCR 全量审查 L10）。第三条是 409，没有结论。
+    assert [row["decision"] for row in rows] == ["block", "block", ""]
+    assert runtime.metrics.to_payload()["decisions"] == {"block": 2}
 
 
 def test_oversized_idempotent_response_fails_explicitly_without_a_false_replay(
