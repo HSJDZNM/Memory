@@ -74,6 +74,50 @@ def _manifest_document(**overrides) -> dict:
 # --------------------------------------------------------------------------- manifest
 
 
+def test_the_hook_wire_names_come_from_the_manifest() -> None:
+    """事件名是 manifest 声明的一部分：改了名的 Agent 不能再被判成「未支持事件」。
+
+    `HookNames.pre_execute` / `post_execute` 就是为了承载 Agent 侧的事件名（conformance 的
+    渲染器也按它生成事件），但取值此前只查硬编码的 `AGENT_WIRE`：声明了非默认名的 manifest
+    于是「声明了却接不上」——它发的每个事件都被判未支持，而套件渲染出来的正是那个名字。
+    """
+
+    from adapters.base import AdapterSpec
+    from adapters.loader import load_adapter
+
+    adapter = load_adapter("legacy-post-only", root=REPO_ROOT)
+    document = yaml.safe_load(
+        (ADAPTERS_ROOT / "legacy-post-only" / "manifest.yaml").read_text(encoding="utf-8")
+    )
+    document["hooks"]["post_execute"] = "AfterTool"
+    renamed_manifest = AdapterSpec.model_validate(document).to_manifest(
+        path=ADAPTERS_ROOT / "legacy-post-only" / "manifest.yaml"
+    )
+    renamed = type(adapter)(
+        manifest=renamed_manifest,
+        config=adapter.config,
+        config_path="<memory>",
+        base_dir=REPO_ROOT,
+    )
+
+    raw = json.loads(
+        (ADAPTERS_ROOT / "legacy-post-only" / "fixtures" / "post-tool-use-save.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    raw.pop("_fixture")
+    raw["cwd"] = str(adapter.workspace)
+    raw["hook_event_name"] = "AfterTool"
+
+    event = renamed.to_policy_event(raw, workspace=adapter.workspace)
+    assert event.event_type is EventType.TOOL_POST_EXECUTE
+
+    # 两个集合都没有的名字照旧拒绝（未知事件不得静默放行）
+    raw["hook_event_name"] = "OnToolCall"
+    with pytest.raises(AdapterEventError):
+        renamed.to_policy_event(raw, workspace=adapter.workspace)
+
+
 def test_manifest_rejects_unknown_field() -> None:
     with pytest.raises((ManifestError, ValidationError)):
         AdapterManifest.model_validate(_manifest_document(unexpected="x"))
