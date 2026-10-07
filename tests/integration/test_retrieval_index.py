@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from retrieval.chunker import chunk_document
 from retrieval.corpus import load_corpus, verify_corpus
 from retrieval.indexer import IndexingError, ingest, needs_reindex
 from retrieval.models import (
@@ -559,6 +560,52 @@ def test_failed_run_bumps_generation_so_caches_are_dropped(tmp_root) -> None:
         with pytest.raises(IndexingError):
             ingest(changed, store, repo_root=tmp_root, after_document=explode)
         assert store.index_version != version_before
+    finally:
+        store.close()
+
+
+def test_chunk_budget_change_forces_a_recut(tmp_root) -> None:
+    """清单里改分块预算必须强制重切（复核发现：旧实现静默沿用旧边界）。
+
+    只比较 content_hash + CHUNKER_VERSION 时，改 max_chunk_chars 会让输入指纹变化、
+    needs_reindex() 返回 True，但每份文档都被"内容没变"短路掉：run 报 completed，
+    索引里的 chunk 边界却还是旧的。
+    """
+
+    loaded = load_fixture_corpus(tmp_root)
+    store = open_store(tmp_root)
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        document_id = loaded.entry("guides", INDEX_DOCUMENT).document_id
+        before = store.chunks(document_id)
+
+        tighter = load_fixture_corpus(tmp_root, policy={"max_chunk_chars": 250})
+        assert tighter.input_hash != loaded.input_hash
+        assert needs_reindex(tighter, store) is True
+        report = ingest(tighter, store, repo_root=tmp_root)
+
+        # 预算变了：没有文档可以再报 "unchanged"。
+        assert report.chunks_created + report.chunks_updated > 0
+        assert all(outcome.status != "unchanged" for outcome in report.documents)
+        after = store.chunks(document_id)
+        assert len(after) > len(before)
+        # 库里的边界必须与"用新预算重新分块"的结果逐字一致。
+        _, drafts = chunk_document(
+            (tmp_root / GUIDE_MIRROR / INDEX_DOCUMENT).read_text(encoding="utf-8"),
+            document_id=document_id,
+            max_chars=tighter.policy.max_chunk_chars,
+            hard_max_chars=tighter.policy.hard_max_chunk_chars,
+        )
+        assert [(item.chunk_id, item.ordinal, item.text_hash) for item in after] == [
+            (item.chunk_id, item.ordinal, item.text_hash) for item in drafts
+        ]
+        assert sorted(item.ordinal for item in after) == list(range(len(after)))
+        store.assert_integrity()
+
+        # 换完预算之后仍然是幂等的：同一份输入再摄取一次不再改动任何 chunk。
+        third = ingest(tighter, store, repo_root=tmp_root)
+        assert third.chunks_created == 0 and third.chunks_updated == 0
+        assert all(outcome.status == "unchanged" for outcome in third.documents)
     finally:
         store.close()
 

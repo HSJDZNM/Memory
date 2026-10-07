@@ -3,7 +3,8 @@
 不变式：
 
 1. **幂等**：同一输入连续摄取两次，document/chunk 数量不变，chunk_id 与 text_hash 完全一致；
-   内容没变的文档连分块都不会重跑（content_hash + chunker_version 短路）。
+   内容没变的文档连分块都不会重跑（content_hash + **有效分块版本**短路，后者含预算参数，
+   因此清单里改分块预算同样会强制重切）。
 2. **只动相关 chunk**：文档内容变化时按 chunk_id + text_hash 比对，未变的 chunk 保持
    revision 不变（可被测试直接观察），只有真正变化的 chunk 被替换。
 3. **删除失效**：清单里没有的入口（源文件被删除/被移出清单）对应文档及其 chunk 会被删除，
@@ -20,7 +21,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 
-from .chunker import CHUNKER_VERSION, chunk_document
+from .chunker import CHUNKER_VERSION, chunk_document, effective_chunker_version
 from .corpus import EntryIssue, LoadedCorpus
 from .models import (
     CorpusError,
@@ -131,6 +132,7 @@ def _document_record(
     content_hash: str,
     byte_size: int,
     ingested_at: str,
+    chunker_version: str = CHUNKER_VERSION,
 ) -> DocumentRecord:
     return DocumentRecord(
         document_id=entry.document_id,
@@ -147,7 +149,7 @@ def _document_record(
         manifest_hash=entry.manifest_sha256,
         byte_size=byte_size,
         mirror_revision=entry.mirror_revision,
-        chunker_version=CHUNKER_VERSION,
+        chunker_version=chunker_version,
         ingested_at=ingested_at,
     )
 
@@ -178,6 +180,12 @@ def ingest(
     identifier = run_id or "run_" + uuid.uuid4().hex[:16]
     mirrors = {dataset.name: dataset.mirror for dataset in loaded.manifest.datasets}
     policy = loaded.manifest.policy
+    # 有效分块版本：分块器版本 + 影响切分的预算参数。清单里改预算（例如 max_chunk_chars）
+    # 会改变 loaded.input_hash，但如果只比 content_hash + CHUNKER_VERSION，每份文档都会
+    # 被"内容没变"短路掉——run 报 completed，索引却仍沿用旧边界。
+    chunker_version = effective_chunker_version(
+        max_chars=policy.max_chunk_chars, hard_max_chars=policy.hard_max_chunk_chars
+    )
 
     store.start_run(loaded.input_hash, started_at=stamp, run_id=identifier)
     outcomes: list[DocumentOutcome] = []
@@ -208,7 +216,7 @@ def ingest(
                 if (
                     existing is not None
                     and existing.content_hash == content_hash
-                    and existing.chunker_version == CHUNKER_VERSION
+                    and existing.chunker_version == chunker_version
                 ):
                     untouched = len(store.chunks(entry.document_id))
                     outcomes.append(
@@ -235,7 +243,11 @@ def ingest(
                     hard_max_chars=policy.hard_max_chunk_chars,
                 )
                 record = _document_record(
-                    entry, content_hash=content_hash, byte_size=byte_size, ingested_at=stamp
+                    entry,
+                    content_hash=content_hash,
+                    byte_size=byte_size,
+                    ingested_at=stamp,
+                    chunker_version=chunker_version,
                 )
                 with store.transaction():
                     store.upsert_document(record, front_matter=tuple(front.metadata.items()))

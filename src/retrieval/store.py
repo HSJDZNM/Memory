@@ -75,7 +75,7 @@ SCHEMA_STATEMENTS: Tuple[str, ...] = (
         manifest_hash TEXT,                          -- manifest 登记的 sha256；与上一列不等即哈希漂移（C6）
         byte_size INTEGER NOT NULL,                  -- 字节数（与 manifest 的 bytes 比对）
         mirror_revision TEXT,                        -- 镜像抓取时间（该镜像的 revision）
-        chunker_version TEXT NOT NULL,               -- 分块器版本；变化即强制重切（幂等短路失效）
+        chunker_version TEXT NOT NULL,               -- 有效分块版本（分块器版本+预算参数）；变化即强制重切
         front_matter TEXT NOT NULL DEFAULT '[]',     -- 页头键值对 JSON（分块时已剔除，保留可审计）
         ingested_at TEXT NOT NULL,                   -- 摄取时间（只记录，不参与幂等判定）
         UNIQUE (dataset, source_path)                -- 同一数据集内不允许同路径两份

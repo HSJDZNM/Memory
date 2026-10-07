@@ -45,6 +45,7 @@ __all__ = [
     "chunk_document",
     "cjk_split",
     "compact_text",
+    "effective_chunker_version",
     "find_sections",
     "front_matter_bounds",
     "heading_anchor",
@@ -137,6 +138,24 @@ def search_text(text: str) -> str:
     """FTS 检索列的内容：原文 + 中日韩逐字切分。展示用的原文另存一列，永不改写。"""
 
     return cjk_split(text)
+
+
+def effective_chunker_version(
+    *,
+    max_chars: int,
+    hard_max_chars: int,
+    chunker_version: str = CHUNKER_VERSION,
+) -> str:
+    """写入 document.chunker_version 的**有效分块版本**：分块器版本 + 影响切分的预算参数。
+
+    只比较 CHUNKER_VERSION 会漏掉"预算改了、代码没改"的情况：清单里改 max_chunk_chars 时
+    摄取输入指纹会变（needs_reindex=True），但每份文档都被"内容没变"短路掉，索引于是静默
+    沿用旧边界。把预算折进版本串后，"是否需要重切"只剩一个判据。
+    旧库里的裸版本号（例如 "markdown-sections-2"）与新串不相等，会被重切一次——这是失败的
+    安全方向：多切一次只是浪费，少切一次就永远修不回来。
+    """
+
+    return f"{chunker_version}+max{max_chars}-hard{hard_max_chars}"
 
 
 def _slug(value: str) -> str:
