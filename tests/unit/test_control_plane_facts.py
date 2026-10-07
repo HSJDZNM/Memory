@@ -363,6 +363,30 @@ def test_c2_marks_the_orchestrator_relation_unavailable(default_payload):
     ]
 
 
+def test_c2_human_line_is_derived_from_the_computed_resolution():
+    """人类输出那行的括注必须来自算出来的 reason，不能是与状态相反的一句硬编码。"""
+
+    module = _load_tool()
+    available = {
+        "orchestrator_resolution": {
+            "status": "available",
+            "reason": "这些字面量在 src/orchestration/nodes.py 里被读到——对应关系可评",
+        }
+    }
+    unavailable = {
+        "orchestrator_resolution": {"status": "unavailable", "reason": "查不到：没有读取点"}
+    }
+
+    line = module._orchestrator_relation_line(available)  # noqa: SLF001 - 这就是被测接缝
+
+    assert line == (
+        "  C2 orchestrator 关系: available"
+        "（这些字面量在 src/orchestration/nodes.py 里被读到——对应关系可评）"
+    )
+    assert "没有读取点" not in line, "状态说读到了、括注不能说没读到"
+    assert module._orchestrator_relation_line(unavailable).endswith("查不到：没有读取点）")
+
+
 def test_the_c2_search_excludes_declarations_and_its_own_source():
     """搜索器不能自证循环：声明处与自己的源码不算读取点，真读取点要搜得到。"""
 
