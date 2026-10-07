@@ -157,6 +157,33 @@ def test_timeout_ms_shortens_the_budget(tmp_root):
     assert result.exit_code is None
 
 
+def test_large_output_is_bounded_in_memory(tmp_root):
+    """verbose 命令的输出不能先整份进内存再截断：读取时就要有上限。
+
+    capture_output/communicate 会把整份 stdout 缓冲在内存里，之后 _clean 才截到 8000 字符；
+    超时只限时间、不限产量，所以一条 5MB 输出的白名单命令就能把执行进程的内存吃光。
+    这里用 tracemalloc 量**本进程**的峰值：读取有界时它远小于输出体积。
+    """
+
+    import tracemalloc
+
+    from enforcement.drivers import ProcessDriver
+
+    _, spec, workspace, build = _probe_setup(tmp_root)
+    request = build({"argv": _python("print('x' * 5_000_000)"), "description": "probe"})
+
+    tracemalloc.start()
+    try:
+        result = ProcessDriver().execute(request, spec, workspace=workspace)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert result.status is ExecutionStatus.EXECUTED
+    assert result.stdout.endswith("...[truncated]")
+    assert peak < 2_000_000, f"5MB 输出被整份读进了内存（peak={peak} 字节）"
+
+
 def test_timeout_kills_the_whole_process_tree(tmp_root):
     """超时只杀直接子进程会留下它启动的命令继续跑：整棵树都必须被终止。
 

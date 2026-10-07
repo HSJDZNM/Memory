@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,6 +49,8 @@ __all__ = [
 ]
 
 _MAX_OUTPUT_CHARS = 8000
+#: 每条流**读进内存**的上限：先整份读进来再截断等于把命令的输出量变成进程的内存占用。
+_MAX_OUTPUT_BYTES = 64 * 1024
 _SAFE_TEXT_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
@@ -90,6 +93,30 @@ class ToolDriver(Protocol):
         self, request: ActionRequest, spec: ToolSpec, *, workspace: Optional[Path] = None
     ) -> DriverResult:
         ...
+
+
+def _read_bounded(stream: Any, limit: int = _MAX_OUTPUT_BYTES) -> bytes:
+    """从管道读最多 limit 字节；超出部分照样读掉，只是不保留。
+
+    **不能读到上限就不读了**：管道写满后子进程会阻塞在 write 上永远不退出，那会把一次
+    "输出很多"变成一次假的"超时"。所以超限的部分继续读、直接丢掉——内存有界，语义不变。
+    """
+
+    kept = bytearray()
+    while True:
+        chunk = stream.read(8192)
+        if not chunk:
+            break
+        if len(kept) < limit:
+            kept.extend(chunk[: limit - len(kept)])
+    return bytes(kept)
+
+
+def _drain(stream: Any, sink: list[bytes]) -> None:  # pragma: no cover - 线程体
+    try:
+        sink.append(_read_bounded(stream))
+    except Exception:  # noqa: BLE001 - 管道被强杀时的读取异常不影响判定
+        sink.append(b"")
 
 
 def _clean(text: str, limit: int = _MAX_OUTPUT_CHARS) -> str:
@@ -387,10 +414,21 @@ def _run_process(
     except FileNotFoundError as error:
         raise DriverError(f"命令不可执行：{error}") from error
 
+    # 边跑边读、读到上限就只丢不存：communicate() 会先把整份输出缓冲进内存，
+    # 一条 verbose（但仍在白名单里）的命令就能把执行进程的内存吃光——超时只限时间、不限产量。
+    out_box: list[bytes] = []
+    err_box: list[bytes] = []
+    readers = [
+        threading.Thread(target=_drain, args=(process.stdout, out_box), daemon=True),
+        threading.Thread(target=_drain, args=(process.stderr, err_box), daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+
     timed_out = False
     try:
         try:
-            out, err = process.communicate(timeout=timeout_ms / 1000)
+            process.wait(timeout=timeout_ms / 1000)
         except subprocess.TimeoutExpired:
             timed_out = True
             # 终止**整棵进程树**：ShellCommandDriver 的直接子进程是声明的 shell，
@@ -398,14 +436,16 @@ def _run_process(
             # 它只 kill 直接子进程，孙子进程会继续运行并继续写文件。
             _terminate_tree(process)
             try:
-                out, err = process.communicate(timeout=5)
+                process.wait(timeout=5)
             except subprocess.TimeoutExpired:  # pragma: no cover - 已经终止过
-                out, err = b"", b""
+                pass
     finally:
         _close_windows_job(process)
+        for reader in readers:
+            reader.join(5)
 
-    stdout = _clean(out.decode("utf-8", errors="replace"))
-    stderr = _clean(err.decode("utf-8", errors="replace"))
+    stdout = _clean((out_box[0] if out_box else b"").decode("utf-8", errors="replace"))
+    stderr = _clean((err_box[0] if err_box else b"").decode("utf-8", errors="replace"))
     if timed_out:
         return DriverResult(
             status=ExecutionStatus.FAILED,
