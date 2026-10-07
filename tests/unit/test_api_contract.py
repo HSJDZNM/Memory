@@ -695,6 +695,30 @@ def test_serve_refuses_to_start_with_an_unparsable_base_url(tmp_root: Path) -> N
     assert serve(config_path, root=anchor) == 2
 
 
+def test_probe_unavailable_payload_is_a_consumable_decision_payload() -> None:
+    """失败关闭载荷必须能被平台自己的协议消费方解析，版本只能从核心取值。
+
+    历史缺陷（delegate 轮 OCR 审查 probe.py:164）：`_unavailable` 把 `schema_version`
+    写死成 `"1.0"`，而核心是 `SCHEMA_VERSION = "1.1"`、`SUPPORTED_SCHEMA_VERSIONS` 只含
+    1.1（AGENTS 第 7/31/55 条）。策略服务不可达时产出的这份**阻断**载荷会被
+    `policy.models.parse_decision` 以"未知决策协议版本"拒收，拒绝理由从
+    "策略服务不可用"变成"协议版本不认识"。
+    """
+
+    from policy.models import SCHEMA_VERSION, parse_decision
+    from policy_api.probe import HttpApiAdapter
+
+    adapter = object.__new__(HttpApiAdapter)
+    payload = adapter._unavailable(503, {"error": {"code": "policy_unavailable"}})
+    assert payload["schema_version"] == SCHEMA_VERSION
+
+    # 真解析一遍（不是比字符串）：解析不了会抛 ProtocolError，这正是要挡住的后果。
+    parsed = parse_decision(payload)
+    assert parsed.decision.value == "block"
+    assert parsed.request_id == ""
+    assert parsed.violations[0].rule_id == "API-000"
+
+
 # --------------------------------------------------------------------------- 冒烟
 
 

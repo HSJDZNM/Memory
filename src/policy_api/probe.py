@@ -23,7 +23,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from adapters.base import Adapter, AdapterConfig, RegistryError
 from adapters.models import AgentEvent, AdapterManifest
-from policy.models import Decision, PolicyContext
+from policy.models import SCHEMA_VERSION, Decision, PolicyContext
 
 __all__ = ["HttpApiAdapter", "HttpApiClient"]
 
@@ -215,7 +215,11 @@ class HttpApiAdapter(Adapter):
         error = candidate if isinstance(candidate, Mapping) else {}
         code = str(error.get("code") or "policy_unavailable")
         return {
-            "schema_version": "1.0",
+            # 决策协议版本**只能从核心取**（AGENTS 第 7/31 条）：写死 "1.0" 会让这份
+            # 失败关闭载荷被平台自己的消费方（policy.models.parse_decision）以
+            # "未知决策协议版本"拒收——拒绝理由从"策略服务不可用"变成"协议版本不认识"，
+            # 而它本来是"服务不可达 → 阻断"这条链路上唯一的证据。
+            "schema_version": SCHEMA_VERSION,
             "decision": Decision.BLOCK.value,
             "request_id": "",
             "trace_id": None,
