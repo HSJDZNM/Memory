@@ -16,7 +16,7 @@ jobs:
       # 本项目不把 src/ 装进 site-packages：CI 与本地都用同一条路径找到包。
       PYTHONPATH: src
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Install uv
         # 第三方 action 锁到完整 commit SHA：可变 tag 可以被重新指向，
