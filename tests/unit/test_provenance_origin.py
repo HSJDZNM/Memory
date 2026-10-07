@@ -278,6 +278,41 @@ def test_verification_proves_the_claim_when_the_config_is_really_missing(tmp_roo
     assert origin.fix
 
 
+def test_the_stat_probe_reports_the_real_failure_instead_of_throwing(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """观测路径自己不许抛异常：stat 失败要如实写进 result（复核发现）。
+
+    旧实现用 Path.exists()/is_dir()：它们只吞 ENOENT/ENOTDIR/EBADF/ELOOP，EACCES 这类
+    会直接逃逸，把"记下失败原因"的那条路径变成另一次崩溃；而返回 False 时又一律被
+    说成"不存在（ENOENT）"，尽管 errno 从没被读过。
+    """
+
+    target = tmp_root / "config" / "dsh-adapter.yaml"
+    real_stat = Path.stat
+
+    def denied(self, *args, **kwargs):
+        if self.name == "dsh-adapter.yaml":
+            raise PermissionError(13, "Permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(Path, "stat", denied)
+        origin = verification_of_config(target, source="--config")
+
+    assert origin.origin == "platform.config_unreadable"
+    assert origin.method == "stat"
+    assert origin.verified is True
+    assert origin.causal_link == "proven"
+    assert "PermissionError" in origin.result
+    assert "不存在" not in origin.result
+
+    # 真的不存在时才说"不存在（ENOENT）"——那句话必须是观测来的。
+    missing = verification_of_config(tmp_root / "nope" / "dsh-adapter.yaml", source="--config")
+    assert missing.verified is True
+    assert "不存在（ENOENT）" in missing.result
+
+
 def test_verification_names_the_shape_when_the_config_is_a_directory(tmp_root: Path):
     directory = tmp_root / "adapter-config-dir"
     directory.mkdir(parents=True, exist_ok=True)

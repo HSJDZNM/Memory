@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import stat as stat_module
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -68,21 +69,37 @@ def _read_text(path: Path) -> tuple[Optional[str], str]:
         return None, f"OSError：{type(error).__name__}: {error}"
 
 
-def _evidence_input_observation(path: Path) -> tuple[str, str, bool]:
-    """对被点名的**取证输入**做一次真实观测：返回 (method, result, 是否确实不可用)。
+def _describe(error: OSError) -> str:
+    """OSError 的可读描述：类型 + strerror（`str(OSError)` 会带上出错的绝对文件名）。"""
 
-    四种结果一种都不合并（与 verification_of_config 同一口径）：不存在 / 是目录 /
-    读不出来 → 这份输入确实不可用；读得到 → 这条"不可用"的指控被证伪。
+    return type(error).__name__ + "（" + (error.strerror or str(error)) + "）"
+
+
+def _observe(path: Path) -> tuple[str, str, bool, bool]:
+    """对一个被点名的输入做一次**真实观测**。
+
+    返回 (method, result, 是否确实不可用, 是不是目录)；四种结果一种都不合并：
+    不存在 / 是目录 / 读不出来 → 这份输入确实不可用；读得到 → 指控被证伪。
+
+    观测自己**不许抛异常**：stat 也会抛（EACCES、路径在检查与读取之间被换掉、名字太长…），
+    而这条路径存在的意义就是"把失败原因记下来"——抛出去等于把原因弄丢，调用方
+    （只认结构化结果的那一侧）还会把它当成另一种失败。顺带，只有真的读过 errno
+    才说得出是哪一种观测结果：`Path.exists()` 只吞 ENOENT/ENOTDIR/EBADF/ELOOP，
+    其余 OSError 会逃逸；而它返回 False 时也分不清"不存在"与"看不到"。
     """
 
-    if not path.exists():
-        return "stat", "stat 观测：该路径不存在（ENOENT）", True
-    if path.is_dir():
-        return "stat", "stat 观测：该路径是一个目录，不是一份可读的输入", True
+    try:
+        info = path.stat()
+    except FileNotFoundError:
+        return "stat", "stat 观测：该路径不存在（ENOENT）", True, False
+    except OSError as error:
+        return "stat", "stat 观测：" + _describe(error), True, False
+    if stat_module.S_ISDIR(info.st_mode):
+        return "stat", "stat 观测：该路径是一个目录，不是一份可读的输入", True, True
     text, how = _read_text(path)
     if text is None:
-        return "read", "读观测：" + how + "（文件在，但这份内容读不出来）", True
-    return "load", "load 观测：读到了 " + str(len(text)) + " 字符，这份输入是可用的", False
+        return "read", "读观测：" + how + "（文件在，但这份内容读不出来）", True, False
+    return "load", "load 观测：读到了 " + str(len(text)) + " 字符，这份输入是可用的", False, False
 
 
 def _evidence_unavailable_origin(*, detail: str) -> Origin:
@@ -110,7 +127,7 @@ def _evidence_unavailable_origin(*, detail: str) -> Origin:
         )
     path = Path(named)
     display = path.name or str(path)
-    method, result, unavailable = _evidence_input_observation(path)
+    method, result, unavailable, _is_directory = _observe(path)
     if not unavailable:
         return unknown_origin(
             reason=(
@@ -164,46 +181,24 @@ def verification_of_config(config_path: Optional[Path | str], *, source: str) ->
 
     path = Path(str(config_path))
     display = path.name or str(path)
-    exists = path.exists()
-    if not exists:
+    # 一次真实观测决定一切：观测路径自己不抛异常，所以"看不到"（EACCES 等）与
+    # "不存在"不会被合并成同一句话，也不会把这条诊断路径变成一次崩溃。
+    method, result, unavailable, is_directory = _observe(path)
+    if unavailable:
         return build_origin(
             origin="platform.config_unreadable",
             owner=OWNER,
-            object_kind="file",
+            object_kind="path" if is_directory else "file",
             object_value=display,
             object_source=source,
-            method="stat",
-            result="stat 观测：该路径不存在（ENOENT）",
+            method=method,
+            result=result,
             verified=True,
-            fix=_CONFIG_FIX,
-            causal_link="proven",
-        )
-    if path.is_dir():
-        return build_origin(
-            origin="platform.config_unreadable",
-            owner=OWNER,
-            object_kind="path",
-            object_value=display,
-            object_source=source,
-            method="stat",
-            result="stat 观测：该路径是一个目录，不是配置文件",
-            verified=True,
-            fix="把配置指到一个文件（而不是目录）：" + _CONFIG_FIX,
-            causal_link="proven",
-        )
-
-    text, how = _read_text(path)
-    if text is None:
-        return build_origin(
-            origin="platform.config_unreadable",
-            owner=OWNER,
-            object_kind="file",
-            object_value=display,
-            object_source=source,
-            method="read",
-            result="读观测：" + how + "（文件在，但这份内容读不出来）",
-            verified=True,
-            fix=_CONFIG_FIX,
+            fix=(
+                "把配置指到一个文件（而不是目录）：" + _CONFIG_FIX
+                if is_directory
+                else _CONFIG_FIX
+            ),
             causal_link="proven",
         )
 
@@ -214,8 +209,8 @@ def verification_of_config(config_path: Optional[Path | str], *, source: str) ->
             "核验证伪了自己人：被点名的配置 "
             + display
             + " 存在、可读、是 UTF-8（"
-            + str(len(text))
-            + " 字符），因此这条理由不是「配置读不到」这一侧的问题"
+            + result
+            + "），因此这条理由不是「配置读不到」这一侧的问题"
         ),
         owner=OWNER,
         object_value=display,
