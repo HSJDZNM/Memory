@@ -46,7 +46,9 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
         else:
             parts.append(re.escape(char))
         index += 1
-    compiled = re.compile("^" + "".join(parts) + "$")
+    # \Z 而不是 $：$ 还会匹配"结尾换行之前"的位置，于是 glob_match("*.md", "README.md\n")
+    # 为真——带结尾换行的字符串不是仓库相对路径（复核发现）。
+    compiled = re.compile("^" + "".join(parts) + r"\Z")
     _CACHE[pattern] = compiled
     return compiled
 
