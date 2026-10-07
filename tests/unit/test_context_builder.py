@@ -15,6 +15,7 @@ from retrieval.context import (
 from retrieval.models import (
     ContextStatus,
     CorpusPolicy,
+    EngineeringContext,
     PolicyFact,
     RetrievalMethod,
     RetrievalResult,
@@ -281,6 +282,28 @@ def test_max_snippets_cap_is_enforced() -> None:
     context = builder.build(retrieval=make_result(*chunks))
     assert len(context.snippets) == 2
     assert [item.reason for item in context.dropped] == ["max_snippets", "max_snippets"]
+
+
+def test_context_status_and_reason_must_be_coherent() -> None:
+    """结构与 RetrievalResult 同口径：ok 必须有片段，unavailable 必须说原因（复核发现）。"""
+
+    with pytest.raises(Exception):
+        EngineeringContext(status=ContextStatus.OK, budget_chars=100, used_chars=0)
+    with pytest.raises(Exception):
+        EngineeringContext(
+            status=ContextStatus.KNOWLEDGE_UNAVAILABLE,
+            reason=None,
+            budget_chars=100,
+            used_chars=0,
+        )
+    # 两条合规形态照常可构造。
+    unavailable = EngineeringContext(
+        status=ContextStatus.KNOWLEDGE_UNAVAILABLE,
+        reason=UnavailableReason.NO_RESULTS,
+        budget_chars=100,
+        used_chars=0,
+    )
+    assert unavailable.is_available is False
 
 
 def test_budget_too_small_for_policy_facts_raises() -> None:

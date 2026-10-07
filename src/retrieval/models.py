@@ -913,6 +913,20 @@ class EngineeringContext(StrictModel):
         return self.status is ContextStatus.OK
 
     @model_validator(mode="after")
+    def _status_matches_sources(self) -> "EngineeringContext":
+        """与 RetrievalResult._status_matches_results 同口径：状态与内容必须自洽。
+
+        只查预算的话，status=ok 却一条片段/策略事实都没有（"available 但空空如也"）与
+        knowledge_unavailable 却给不出原因（调用方无法据此失败关闭）都能构造出来。
+        """
+
+        if self.status is ContextStatus.OK and not self.snippets:
+            raise ValueError("status=ok 必须带至少一条片段：没有可追溯来源时只能是 knowledge_unavailable")
+        if self.status is ContextStatus.KNOWLEDGE_UNAVAILABLE and self.reason is None:
+            raise ValueError("status=knowledge_unavailable 必须说明 reason（受控原因）")
+        return self
+
+    @model_validator(mode="after")
     def _budget_is_respected(self) -> "EngineeringContext":
         if self.used_chars > self.budget_chars:
             raise ValueError(
