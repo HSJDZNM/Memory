@@ -102,7 +102,13 @@ class GraphSpec(StrictModel):
         return None
 
     def problems(self) -> Tuple[str, ...]:
-        """图定义自检：每个节点要么有出边、要么是终点的前一步，且分支本身不能自相矛盾。"""
+        """图定义自检：能走通、**能走到终点**、每个节点都到得了，且分支本身不能自相矛盾。
+
+        为什么可达性也算：只查"每个节点有没有出边"是**不够**的——`validation ⇄ repair` 这种
+        没有出口的环满足它，却永远不会结束（引擎会把这条自检当契约错误，见 BaseEngine.__init__，
+        所以漏掉它等于让一张跑不完的图通过自检）；孤立节点同样满足它，却永远跑不到。
+        自检要回答的是"这张图能不能跑完"，不是"每个节点有没有写下一步"。
+        """
 
         issues: list[str] = []
         nodes = tuple(node.value for node in NodeId)
@@ -132,6 +138,27 @@ class GraphSpec(StrictModel):
                 issues.append(
                     f"节点 {router.source!r} 同时有静态边与条件分支：静态边会被忽略"
                 )
+        # 从入口出发做一次可达性遍历（静态边 + 条件分支的**全部**目标：分支走到哪条由判定决定，
+        # 自检只看"有没有可能走到"）。
+        reachable: set[str] = set()
+        frontier = [item for item in (self.entry,) if item in nodes]
+        while frontier:
+            current = frontier.pop()
+            if current in reachable:
+                continue
+            reachable.add(current)
+            router = self.router_for(current)
+            targets = list(self.outgoing(current))
+            if router is not None:
+                targets.extend(router.targets.values())
+            frontier.extend(target for target in targets if target not in reachable)
+        if self.entry in nodes and END not in reachable:
+            issues.append(
+                "从入口出发到不了终点 end：这张图永远不会结束（存在没有出口的环）"
+            )
+        for node in nodes:
+            if node not in reachable:
+                issues.append(f"节点 {node!r} 从入口不可达：写了但永远跑不到")
         return tuple(issues)
 
 

@@ -314,6 +314,29 @@ def test_graph_problems_reject_contradictory_routers() -> None:
     assert DEFAULT_SPEC.problems() == ()
 
 
+def test_graph_problems_reject_a_graph_that_cannot_finish() -> None:
+    """自检要回答"这张图能不能跑完"：没有出口的环与孤立节点都必须报出来。
+
+    只查"每个节点有没有出边"是不够的：`validation ⇄ repair` 满足它却永远不会结束
+    （实测旧版本对这个环报出 6 条，全是别的节点没有出边，**没有一条**说它到不了终点），
+    而这条自检在引擎构造期是契约错误（`BaseEngine.__init__`）——漏掉它等于让跑不完的图通过。
+    """
+
+    loop = GraphSpec(
+        entry=NodeId.VALIDATION.value,
+        edges=(
+            Edge(source=NodeId.VALIDATION.value, target=NodeId.REPAIR.value),
+            Edge(source=NodeId.REPAIR.value, target=NodeId.VALIDATION.value),
+        ),
+    )
+    issues = loop.problems()
+    assert any("到不了终点 end" in issue for issue in issues)
+    assert any("从入口不可达" in issue and "requirement_analysis" in issue for issue in issues)
+
+    # 反向不变量：真实的图定义一条都不误报（自检不能靠"多报"显得有用）
+    assert DEFAULT_SPEC.problems() == ()
+
+
 def test_engine_level_failure_keeps_progress_and_persists_it(tmp_root) -> None:
     """引擎级失败：失败状态长在"最后一步的状态"上，而且必须落盘。
 
