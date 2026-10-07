@@ -162,6 +162,17 @@ def _clients(args: argparse.Namespace, config: ApiConfig) -> int:
 def _openapi(args: argparse.Namespace, config: ApiConfig, root: Path) -> int:
     from .contract import openapi_document, snapshot_diff, write_snapshot
 
+    if args.write and args.check:
+        # 两个开关语义相反（"显式更新快照" vs "只比较、不写"）。以前 `--check` 被解析后
+        # 从未被引用，`openapi --write --check` 会静默执行写操作——CI 门禁里一旦混用，
+        # 漂移就被直接固化进 api/openapi.json，而调用方以为自己只要了一个比较结果。
+        # 矛盾用法一律拒绝：不替调用方在两个相反意图里选一个。
+        print(
+            "policy-api: --write 与 --check 不能同时用（一个要写、一个只比较）；"
+            "请只保留一个",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
     runtime = ApiRuntime(config, root=root)
     document = openapi_document(runtime)
     target = root / SNAPSHOT

@@ -775,6 +775,30 @@ def test_a_missing_raw_body_on_a_body_route_is_rejected_not_substituted() -> Non
     assert "请求体" in info.value.detail
 
 
+# --------------------------------------------------------------------------- CLI 用法
+
+
+def test_openapi_write_and_check_together_are_refused_without_touching_the_snapshot() -> None:
+    """`--write` 与 `--check` 语义相反：矛盾用法必须拒绝，不能静默写快照。
+
+    历史缺陷（medium 台账 M1，cli.py:65）：`--check` 被解析后全文件从未被引用，
+    `openapi --write --check` 于是静默执行写操作——CI 门禁里一旦混用这两个开关，漂移会被
+    直接固化进 api/openapi.json，而调用方以为自己只要了一个比较结果。
+    """
+
+    from policy_api import cli
+
+    snapshot = REPO_ROOT / "api" / "openapi.json"
+    before = snapshot.read_bytes()
+
+    assert cli.run(["openapi", "--write", "--check"]) == cli.EXIT_ERROR
+    assert snapshot.read_bytes() == before, "矛盾用法竟然改了快照"
+
+    # 单独用仍然是各自原来的语义：--check 只比较、不写
+    assert cli.run(["openapi", "--check"]) == cli.EXIT_OK
+    assert snapshot.read_bytes() == before
+
+
 # --------------------------------------------------------------------------- 监听地址
 
 
