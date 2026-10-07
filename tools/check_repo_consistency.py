@@ -154,6 +154,9 @@ def read_requirements_lock() -> dict[str, str]:
         line = line.split("#", 1)[0].strip()
         if not line or line.startswith("--hash"):
             continue
+        # 生成的锁文件用行尾反斜杠续行（pip 的 --hash 必须与依赖在同一条逻辑行上）：
+        # 解析时先去掉续行符，否则每条固定版本都会被判成"没有锁定"。
+        line = line.removesuffix("\\").strip()
         match = _PIN_RE.match(line)
         if match is None:
             continue
