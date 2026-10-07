@@ -136,14 +136,17 @@ class DshAdapter(Adapter):
         )
 
     def raw_path_base(self, event: AgentEvent) -> Optional[str]:
-        """dsh 的 pre-execute 路径相对**会话 cwd** 解析（载荷里的 cwd）。
+        """固定返回 None：这里的 `payload["path"]` 已经在 `_build_event` 里解析过一次。
 
-        没有 cwd 时返回 None，由公共层用本次判定的工作区解析：dsh 给的是
-        原始字符串，"相对哪里"必须有唯一答案，而配置默认值不是那个答案。
+        `_resolve` 按会话 cwd 把原始路径归一成**工作区相对**路径（并做过包含性检查），
+        因此公共层不得再拿 cwd 当基准解析第二遍：cwd 不是工作区根时
+        （workspace=/repo、cwd=/repo/sub），`sub/src/f.py` 会被接成
+        `sub/sub/src/f.py` —— 一个不存在的幻影路径，layer / language / 规则范围
+        与审计记录全都跟着看错文件。范围校验一个字没放宽：路径在构造事件时
+        就已经按 cwd 解析过，逃出工作区在那一步就拒绝了。
         """
 
-        value = event.payload.get("cwd")
-        return value if isinstance(value, str) and value.strip() else None
+        return None
 
     def response_from_decision(
         self, decision: Any, *, event: Optional[AgentEvent] = None
