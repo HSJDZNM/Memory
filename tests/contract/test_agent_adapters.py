@@ -336,6 +336,29 @@ def test_normalize_event_path_allows_the_workspace_root() -> None:
     assert normalize_event_path(".", workspace=workspace) == "."
     assert normalize_event_path(str(workspace), workspace=workspace) == "."
 
+@pytest.mark.parametrize("raw", ["..", "../..", "./..", chr(92).join(["..", ".."]), "./../"])
+def test_escape_shaped_dot_paths_are_not_read_as_the_workspace_root(raw: str) -> None:
+    """只有纯点斜线写法才是工作区根：`strip("./")` 会把 `..` 一起剥成空串。
+
+    旧判据 `raw.strip("./") == ""` 对 ".."、"../.."、"./.." 全为真——它们被当成工作区根
+    返回 "."，下面那条 `..` 拒绝根本走不到：一次逃逸被静默改写成「范围正好是项目根」，
+    而这份归一化的结果要驱动 layer / language / 规则范围。
+    """
+
+    workspace = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
+    with pytest.raises(AdapterEventError):
+        normalize_event_path(raw, workspace=workspace)
+
+
+def test_dot_slash_spellings_of_the_workspace_root_still_resolve_to_the_root() -> None:
+    """根写法的等价形态一个都不收紧：".", "./", "././" 都是范围等于项目根。"""
+
+    workspace = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
+    for raw in (".", "./", "././", ".//"):
+        assert normalize_event_path(raw, workspace=workspace) == ".", raw
+    # "..." 既不是根写法也不是逃逸：它保持成自己的名字，不得被折叠成 "."
+    assert normalize_event_path("...", workspace=workspace) == "..."
+
 
 def test_phase_six_glob_double_star_slash_matches_zero_directories() -> None:
     """`**/` 匹配零个或多个目录：层与语言的映射不得漏掉根目录文件。

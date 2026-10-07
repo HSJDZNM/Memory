@@ -722,8 +722,12 @@ def normalize_event_path(value: str, *, workspace: Path, path_base: Optional[Pat
             )
         return _relative_to(candidate, anchor)
 
-    if raw.replace(chr(92), "/").strip("./") == "":
-        # "." 与 "./" 表示工作区根：只读工具常以项目根为范围。
+    root_segments = raw.replace(chr(92), "/").split("/")
+    if all(segment in ("", ".") for segment in root_segments):
+        # "."、"./"、"././" 这类**纯点斜线**写法表示工作区根：只读工具常以项目根为范围。
+        # 判据必须逐段看：`strip("./")` 会把 ".."、"../.."、"./.." 一起剥成空串，于是它们
+        # 全被当成工作区根返回 "."，下面那条 `..` 拒绝根本走不到——一次逃逸被静默改写成
+        # 「范围正好是项目根」。
         return "."
     if ".." in raw.replace(chr(92), "/").split("/"):
         # 相对路径里的 ".." 一律拒绝，**不**依赖调用方先做 normpath。
