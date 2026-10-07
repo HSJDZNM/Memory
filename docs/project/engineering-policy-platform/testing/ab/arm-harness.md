@@ -45,6 +45,9 @@ validation/validators.yaml 消失而在**收集期**失败；同一棵树上仍*
 （`docs/project/rule-effects/**` 逐条点评规则、`docs/project/reviews/**` 是审查报告）。
 因此 `--self-proof --baseline .` 的 clean 段报红**说明的是你在问一个不该问的问题**，
 既不是扫描器误报，也不是净化清单漏了东西（清单**不为此改动**：改清单等于改 treatment 定义）。
+本工具对这类输入**失败关闭**：检出基线树就是平台仓库（特征组合 = 规则本体 policies/*/*.yaml +
+核心判定引擎 src/policy/engine.py + 本机门禁 tools/ci_local.py，三条同时成立）时，直接以用法错误
+退出（exit 2）并说明"要给外部任务树"；`--baseline` 的默认值已从 `.` 移除（缺基线也是用法错误）。
 修复后实测：模式收窄到本平台规则 ID 之后，平台副本路线仍命中 920 行 / 113 文件，
 绝大多数来自上面两条路径；文档命令 `--self-proof --baseline-fixture shop` 一直是 pass。
 

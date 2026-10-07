@@ -132,6 +132,49 @@ COPY_IGNORE = (
 )
 
 
+#: 「这棵树就是平台仓库自己」的特征**组合**：单看任何一条都会误伤（外部任务树也可能带 policies/），
+#: 三条同时成立才算——规则本体 + 核心判定引擎 + 本机门禁。
+PLATFORM_REPO_FEATURES: tuple[str, ...] = (
+    "policies/*/*.yaml（规则本体）",
+    "src/policy/engine.py（核心判定引擎）",
+    "tools/ci_local.py（本机门禁）",
+)
+
+
+def platform_repo_features(tree: Path) -> list[str]:
+    """基线树命中了哪几条「平台仓库自己」的特征。"""
+
+    hits: list[str] = []
+    if any((tree / "policies").glob("*/*.yaml")):
+        hits.append(PLATFORM_REPO_FEATURES[0])
+    if (tree / "src" / "policy" / "engine.py").is_file():
+        hits.append(PLATFORM_REPO_FEATURES[1])
+    if (tree / "tools" / "ci_local.py").is_file():
+        hits.append(PLATFORM_REPO_FEATURES[2])
+    return hits
+
+
+def assert_supported_baseline(baseline: Path) -> None:
+    """`--baseline` 只收**外部任务树**；平台仓库自己按用法错误拒绝（退出码 2）。
+
+    clean 判据问的是「这棵臂树里能不能读到平台自己的规则集与产物」。平台仓库必然在自己的
+    追溯语料里引用规则 ID（docs/project/rule-effects/**、docs/project/reviews/**），此时 clean
+    段报红是**在问一个不该问的问题**——所以不受支持的输入要在这里失败关闭，而不是产出一份
+    让人误以为是缺陷的读数。判据是**特征组合**（三条同时成立），不是单一路径：外部任务树
+    带一份 policies/ 是正常的。
+    """
+
+    hits = platform_repo_features(baseline)
+    if len(hits) == len(PLATFORM_REPO_FEATURES):
+        raise UsageError(
+            "基线树看起来就是平台仓库自己（命中：" + "；".join(hits) + "）。"
+            "`--baseline` 的输入是**外部任务树**：clean 判据问的是「这棵臂树里能不能读到平台自己的"
+            "规则集与产物」，而平台仓库必然在追溯语料里引用规则 ID（docs/project/rule-effects/**、"
+            "docs/project/reviews/**），此时报红是在问一个不该问的问题，不是缺陷。"
+            "平台自测请用 --baseline-fixture shop。"
+        )
+
+
 class UsageError(Exception):
     """用法 / 配置错误：退出码 2。"""
 
@@ -693,10 +736,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--baseline",
-        default=".",
-        help="外部任务树的基线（**平台仓库自己不是受支持的基线**：clean 判据问的是这棵臂树能不能"
-             "读到平台自己的规则集与产物，而平台仓库必然在追溯语料里引用规则 ID；平台自测用 "
-             "--baseline-fixture）",
+        default=None,
+        help="外部任务树的基线。**平台仓库自己不是受支持的基线**（clean 判据问的是这棵臂树能不能"
+             "读到平台自己的规则集与产物，而平台仓库必然在追溯语料里引用规则 ID）——检出这种输入"
+             "直接按用法错误拒绝（exit 2）；平台自测用 --baseline-fixture。不给基线且不用夹具时"
+             "同样是用法错误，没有"默认仓库自己"这回事",
     )
     parser.add_argument(
         "--baseline-fixture",
@@ -730,14 +774,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not out_root.is_absolute():
         out_root = REPO_ROOT / out_root
     if args.baseline_fixture:
-        baseline = build_fixture_baseline(args.baseline_fixture, out_root)
+        baseline: Path | None = build_fixture_baseline(args.baseline_fixture, out_root)
         if not args.pass_to_pass and not args.fail_to_pass:
             args.pass_to_pass = list(FIXTURE_NODE_IDS)
-    else:
+    elif args.baseline:
         baseline = Path(args.baseline)
         if not baseline.is_absolute():
             baseline = (REPO_ROOT / baseline).resolve()
+    else:
+        baseline = None  # 只有不需要基线的动作（--list-sanitization / --assert-clean）允许为空
     run_id = args.run_id or (utc_stamp() + "-" + uuid.uuid4().hex[:6])
+
+    def require_baseline(resolved: Path | None) -> Path:
+        """用基线的动作统一走这里：缺基线 / 不受支持的基线都在这里失败关闭。"""
+
+        if resolved is None:
+            raise UsageError(
+                "缺基线：给 --baseline-fixture <name>（夹具项目，例如 shop）或 --baseline <外部任务树>"
+            )
+        assert_supported_baseline(resolved)
+        return resolved
 
     try:
         if args.list_sanitization:
@@ -760,9 +816,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_OK
 
         if args.self_proof:
-            if not baseline.is_dir():
-                raise UsageError("基线树不存在：" + display(baseline))
-            payload = self_proof(baseline=baseline, out_root=out_root)
+            current = require_baseline(baseline)
+            if not current.is_dir():
+                raise UsageError("基线树不存在：" + display(current))
+            payload = self_proof(baseline=current, out_root=out_root)
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) if args.json else render_self_proof(payload))
             return EXIT_OK if payload["result"] == "pass" else EXIT_FAIL
 
@@ -791,19 +848,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_OK if clean else EXIT_FAIL
 
         if args.materialize:
-            if not baseline.is_dir():
-                raise UsageError("基线树不存在：" + display(baseline))
+            current = require_baseline(baseline)
+            if not current.is_dir():
+                raise UsageError("基线树不存在：" + display(current))
             run_dir = out_root / run_id
             arms = ARMS if args.arm == "all" else (args.arm,)
             manifests = {}
             for arm in arms:
-                manifests[arm] = prepare_arm(baseline=baseline, arm_dir=run_dir / arm, arm=arm, rules_root=REPO_ROOT)
+                manifests[arm] = prepare_arm(baseline=current, arm_dir=run_dir / arm, arm=arm, rules_root=REPO_ROOT)
             payload = {
                 "ab_arm_schema_version": AB_ARM_SCHEMA_VERSION,
                 "kind": "materialize",
                 "run_id": run_id,
                 "run_dir": display(run_dir),
-                "baseline": display(baseline),
+                "baseline": display(current),
                 "arms": {arm: {"tree": manifest["tree"], "removed": len(manifest["sanitization"]), "seeded": manifest["seeded_fixture"]} for arm, manifest in manifests.items()},
                 "timestamp": reading.utc_now(),
             }
@@ -811,8 +869,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_OK
 
         if args.run:
-            if not baseline.is_dir():
-                raise UsageError("基线树不存在：" + display(baseline))
+            current = require_baseline(baseline)
+            if not current.is_dir():
+                raise UsageError("基线树不存在：" + display(current))
             if args.preset and args.preset not in PRESETS:
                 raise UsageError("未知 preset " + repr(args.preset) + "；有 " + " / ".join(sorted(PRESETS)))
             arms = ARMS if args.arm == "all" else (args.arm,)
@@ -822,7 +881,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for arm in arms:
                 outputs.append(
                     run_one(
-                        baseline=baseline,
+                        baseline=current,
                         out_root=out_root,
                         run_id=run_id,
                         arm=arm,
