@@ -165,7 +165,13 @@ def load_trace(
 
     entries: list[TraceEntry] = []
     for item in selected:
-        record = parse_audit_record(item)
+        # 读不出来的记录**不跳过**、也不把异常抛给调用方：verify_chain 已经把它记成问题，
+        # 这里必须把同一条诊断带回报告，否则 CLI 只看到 traceback 而不是结论。
+        try:
+            record = parse_audit_record(item)
+        except AuditError as error:
+            issues.append(f"#{item.get('sequence', '?')}: 记录不可解析（{error}）")
+            continue
         entries.append(
             TraceEntry(
                 sequence=record.sequence,

@@ -211,6 +211,33 @@ def test_trace_replay_orders_the_chain_and_requires_a_final_decision(tmp_root):
     assert verify_chain(report.records) == ()
 
 
+def test_trace_replay_reports_an_unparsable_record_instead_of_raising(tmp_root):
+    """链上有一条读不出来的记录时，重放要给出诊断，而不是把 AuditError 抛给 CLI。
+
+    verify_chain 一直把"记录不可解析"记成问题；load_trace 曾经在这条路径上直接
+    parse_audit_record（无 try），于是同一条坏记录让 trace 子命令以 traceback 收场。
+    """
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.REQUEST, payload={"a": 1}, action_id="act-1", trace_id="trace-1")
+
+    path = tmp_root / "audit.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[0])
+    record["payload"]["a"] = 2  # 摘要与内容不再一致：parse_audit_record 会抛 AuditError
+    path.write_text(
+        json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    report = load_trace(path, trace_id="trace-1")
+
+    assert not report.ok
+    assert any("不可解析" in issue for issue in report.issues)
+    assert report.entries == []  # 读不出来的记录不进条目，但它在 issues 里被点名
+
+
 def test_execution_without_a_pre_decision_is_reported(tmp_root):
     sink = sink_for(tmp_root)
     sink.append(AuditStage.EXECUTION, payload={"status": "executed"}, action_id="act-9")
