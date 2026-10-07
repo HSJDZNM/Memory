@@ -38,6 +38,32 @@ def sheet_urls(links):
             out.append(h)
     return out
 
+def crawl_failed(r):
+    """失败原因原文；没有就写"无 error_message"，不猜。"""
+    return getattr(r, "error_message", "") or "无 error_message"
+
+def markdown_of(r, name):
+    """一次抓取的正文。抓取失败 / 正文取不到一律显式报错：
+
+    失败的 crawl 会给出空正文（旧写法 `str(r.markdown)` 还会把它变成字符串 "None"），
+    parse_sections 于是返回 0 个 section，而流程照旧写出一份 indexes 全空、UNMAPPED 一长串的
+    taxonomy.json——"没抓到"被读成了"没有内容"。
+    """
+    if not getattr(r, "success", False):
+        raise RuntimeError(name + " 抓取失败：" + crawl_failed(r))
+    markdown = getattr(r, "markdown", None)
+    raw = getattr(markdown, "raw_markdown", "") if markdown is not None else ""
+    if not raw:
+        raise RuntimeError(name + " 抓取成功但正文为空（markdown 没有 raw_markdown）")
+    return raw
+
+def internal_links(r, name):
+    """站内链接：抓取失败显式报错；`links` 为 None 时按"没有链接"处理，不 AttributeError。"""
+
+    if not getattr(r, "success", False):
+        raise RuntimeError(name + " 抓取失败：" + crawl_failed(r))
+    return (getattr(r, "links", None) or {}).get("internal", []) or []
+
 async def main():
     strat = AsyncHTTPCrawlerStrategy(browser_config=HTTPCrawlerConfig())
     async with AsyncWebCrawler(crawler_strategy=strat, config=BrowserConfig(verbose=False)) as c:
@@ -45,10 +71,11 @@ async def main():
         pages = {}
         for name in ["index.html","IndexASVS.html","IndexProactiveControls.html","IndexTopTen.html","IndexMASVS.html","Glossary.html"]:
             r = await c.arun(BASE+name, config=cfg)
-            pages[name] = getattr(r.markdown,"raw_markdown","") or str(r.markdown)
+            pages[name] = markdown_of(r, name)
         r_seed = await c.arun(SEED, config=cfg)
-        s_seed = set(sheet_urls(r_seed.links.get("internal")))
-        s_idx  = set(sheet_urls((await c.arun(BASE+"index.html", config=cfg)).links.get("internal")))
+        s_seed = set(sheet_urls(internal_links(r_seed, "seed")))
+        r_index = await c.arun(BASE+"index.html", config=cfg)
+        s_idx  = set(sheet_urls(internal_links(r_index, "index.html")))
         all_sheets = sorted(s_seed | s_idx)
         print("union sheets:", len(all_sheets))
 
@@ -73,4 +100,5 @@ async def main():
         json.dump(out, open("_work/owasp-cheatsheets/taxonomy.json","w",encoding="utf-8"), indent=1)
         print("saved taxonomy.json")
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
