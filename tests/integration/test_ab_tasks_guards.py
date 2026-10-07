@@ -12,6 +12,7 @@ cache_dir + --strict-config 冲突，实测退出码 4），那是宿主配置�
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ import ab_tasks
 
 pytestmark = pytest.mark.integration
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTANCE = "demo__demo-1"
 REVISION = ab_tasks.SOURCES["swe-bench-verified"].revision
 
@@ -184,3 +186,132 @@ def test_fully_measured_task_is_still_accepted(tmp_root: Path) -> None:
     assert measured["fail_to_pass_all_red"] is True
     assert measured["pass_to_pass_all_green"] is True
     assert measured["problems"] == []
+
+def _no_download(monkeypatch: pytest.MonkeyPatch) -> list:
+    """把下载换成会失败的替身：一旦被调用就说明"复用"判据没生效。"""
+
+    calls: list = []
+
+    def sentinel(url: str, timeout: int = 600) -> bytes:
+        calls.append(url)
+        raise ab_tasks.AbTaskError("测试替身：不该下载")
+
+    monkeypatch.setattr(ab_tasks, "_get", sentinel)
+    return calls
+
+
+def test_partial_baseline_directory_is_not_reused(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """非空但没有 source.json 的 baseline/（中断的提取）必须重新解压，不许直接复用。"""
+
+    root, baseline = _task_root(tmp_root, tests=1)
+    assert any(baseline.iterdir()), "这条用例的前提是目录非空"
+    assert not (root / INSTANCE / "source.json").exists()
+    calls = _no_download(monkeypatch)
+
+    with pytest.raises(ab_tasks.AbTaskError):
+        ab_tasks.baseline(INSTANCE, root=root)
+
+    assert calls, "没有正向标记的目录必须走重新下载那一支"
+
+
+def test_stale_source_record_for_another_commit_is_not_reused(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """source.json 记的是别的 commit 的 tarball：这棵树同样是脏的，必须重新解压。"""
+
+    root, _baseline = _task_root(tmp_root, tests=1, source_record=True)
+    record = root / INSTANCE / "source.json"
+    record.write_text(
+        json.dumps(
+            {
+                "url": ab_tasks.tarball_url("demo/demo", "f" * 40),
+                "sha256": "0" * 64,
+                "bytes": 1,
+                "baseline_source": "fresh_extract",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    calls = _no_download(monkeypatch)
+
+    with pytest.raises(ab_tasks.AbTaskError):
+        ab_tasks.baseline(INSTANCE, root=root)
+
+    assert calls
+
+
+def test_valid_extraction_is_reused_without_download(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """正向标记齐全时照旧复用：这次修复不许把正常路径变成"每次重下"。"""
+
+    root, _baseline = _task_root(tmp_root, tests=1, source_record=True)
+    calls = _no_download(monkeypatch)
+
+    result = ab_tasks.baseline(INSTANCE, root=root)
+
+    assert calls == []
+    assert result["reused"] is True
+    assert result["baseline_source"] == "reused"
+    assert result["recorded_source"] == "fresh_extract"
+    assert result["download"]["url"] == ab_tasks.tarball_url("demo/demo", "0" * 40)
+
+
+def _unresolvable(tmp_root: Path, *, source_record: bool = False) -> Path:
+    """f2p/p2p 都指向不存在的 node id：收集跑一次就结束，把读数停在来源记录那一步。"""
+
+    root, _baseline = _task_root(
+        tmp_root,
+        tests=1,
+        fail_to_pass=("tests/test_demo.py::test_missing_f2p",),
+        pass_to_pass=("tests/test_demo.py::test_missing_p2p",),
+        source_record=source_record,
+    )
+    return root
+
+
+def test_verify_oracle_without_source_record_raises_clear_error(tmp_root: Path) -> None:
+    """缺 source.json：抛 AbTaskError（不是 FileNotFoundError），理由里写清怎么修。"""
+
+    root = _unresolvable(tmp_root)
+
+    with pytest.raises(ab_tasks.AbTaskError) as error:
+        ab_tasks.verify_oracle(INSTANCE, root=root, python=sys.executable)
+
+    assert "缺来源记录" in str(error.value)
+    assert "--baseline" in str(error.value)
+
+
+def test_verify_oracle_incomplete_source_record_raises_clear_error(tmp_root: Path) -> None:
+    """source.json 存在但字段不全：同样显式报错，不再只剩一句 ab_tasks: 'url'。"""
+
+    root = _unresolvable(tmp_root)
+    (root / INSTANCE / "source.json").write_text("{}\n", encoding="utf-8", newline="\n")
+
+    with pytest.raises(ab_tasks.AbTaskError) as error:
+        ab_tasks.verify_oracle(INSTANCE, root=root, python=sys.executable)
+
+    assert "缺字段" in str(error.value)
+    assert "url" in str(error.value)
+
+
+def test_missing_source_record_is_a_clean_cli_error(tmp_root: Path) -> None:
+    """CLI 层：退出码 2 + 一行 ab_tasks: 理由，不是一段栈回溯。"""
+
+    root = _unresolvable(tmp_root)
+    completed = subprocess.run(
+        [sys.executable, "tools/ab_tasks.py", "--verify-oracle", INSTANCE, "--root", str(root)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+    assert completed.returncode == 2, completed.stdout + completed.stderr
+    assert "Traceback" not in completed.stderr, completed.stderr
+    assert "ab_tasks: 缺来源记录" in completed.stderr, completed.stderr

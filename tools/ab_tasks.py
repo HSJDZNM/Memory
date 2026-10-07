@@ -221,6 +221,44 @@ def _source_record(instance_id: str, *, root: Path) -> dict | None:
         return None
 
 
+def _required_source_record(instance_id: str, *, root: Path) -> dict:
+    """要用的来源记录：缺了 / 读不出来 / 字段不全一律显式报错。
+
+    旧写法 `json.loads(...)` 会在缺文件时抛 FileNotFoundError、在字段缺失时抛 KeyError，
+    两条都绕过了 main 的 (AbTaskError, KeyError) 分类（KeyError 只剩一句 `ab_tasks: 'url'`）。
+    """
+
+    path = Path(root) / instance_id / "source.json"
+    record = _source_record(instance_id, root=root)
+    if record is None:
+        raise AbTaskError(
+            "缺来源记录 %s：先跑 --baseline %s（partial 提取或手工建的树都没有它）"
+            % (path, instance_id)
+        )
+    missing = [key for key in ("url", "sha256", "bytes") if key not in record]
+    if missing:
+        raise AbTaskError(
+            "来源记录 %s 缺字段 %s：重跑 --baseline %s 重建（不猜、不补 0）"
+            % (path, "/".join(missing), instance_id)
+        )
+    return record
+
+
+def _baseline_marker(instance_id: str, *, root: Path, url: str) -> bool:
+    """baseline/ 目录能不能被当成「已经解压好的那棵树」。
+
+    判据是**正向标记**：目录非空 + source.json 读得出来 + url 与这次要下载的一致。
+    只看「目录非空」会把 partial / 中断的提取、上一次别的 commit 留下的树一起当成可用，
+    而且不会写 source.json——下游 verify_oracle 随后就在缺字段上崩。
+    """
+
+    directory = _baseline_dir(instance_id, root)
+    if not (directory.is_dir() and any(directory.iterdir())):
+        return False
+    record = _source_record(instance_id, root=root)
+    return record is not None and record.get("url") == url
+
+
 def tarball_url(repo: str, commit: str) -> str:
     return "https://codeload.github.com/%s/tar.gz/%s" % (repo, commit)
 
@@ -276,8 +314,8 @@ def baseline(instance_id: str, *, root: Path, apply_test_patch: bool = False) ->
     (task_dir / "test.patch.diff").write_text(row["test_patch"], encoding="utf-8", newline="\n")
     source_record = task_dir / "source.json"
     reused = False
-    if not (directory.is_dir() and any(directory.iterdir())):
-        url = tarball_url(repo, commit)
+    url = tarball_url(repo, commit)
+    if not _baseline_marker(instance_id, root=root, url=url):
         started = time.time()
         data = _get(url, timeout=600)
         elapsed = round(time.time() - started, 2)
@@ -301,7 +339,7 @@ def baseline(instance_id: str, *, root: Path, apply_test_patch: bool = False) ->
         )
     else:
         reused = True
-    record = json.loads(source_record.read_text(encoding="utf-8")) if source_record.is_file() else {}
+    record = _required_source_record(instance_id, root=root)
     applied: dict = {"applied": False}
     if apply_test_patch:
         applied = apply_patch(instance_id, root=root, patch_name="test.patch.diff")
@@ -542,7 +580,7 @@ def verify_oracle(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON)
         reason = "unrunnable_local"
     else:
         reason = ""
-    source = json.loads((Path(root) / instance_id / "source.json").read_text(encoding="utf-8"))
+    source = _required_source_record(instance_id, root=root)
     return {
         "task_id": instance_id,
         "source": {"dataset": "swe-bench-verified", "revision": SOURCES["swe-bench-verified"].revision,
