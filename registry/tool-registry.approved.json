@@ -1,8 +1,8 @@
 {
-  "approved_at": "2026-10-07T22:51:11.930183Z",
+  "approved_at": "2026-10-07T23:14:57.813046Z",
   "approved_schema_version": "1.1",
   "governance_digest": "sha256:2e23208554ec392b109d196eb3ee848d3c96d6e80e7baf131b6ae7adbc1eafe0",
-  "registry_digest": "sha256:af7d5d93e4fc505479ac8677cf7ae477470451cfc272b83cfa0321e9c9240964",
+  "registry_digest": "sha256:3b4e0980aedeb4c17e9887b2307d365ac20ece32cfc521e9839a42240872d5c2",
   "registry_version": 1,
   "reviewed_by": "fix-adapters",
   "tools": {
@@ -11,7 +11,7 @@
       "schema_version": "1.0"
     },
     "exec.pwsh": {
-      "schema_hash": "sha256:97dffb281e091357d3544c7c7faec8b891cb1d5b42762d72fec5496e0b88a8b4",
+      "schema_hash": "sha256:564cf332dedef51808b13f17e6af209071e06f0e0b4844a125b030ead246e654",
       "schema_version": "1.0"
     },
     "exec.run_code": {
