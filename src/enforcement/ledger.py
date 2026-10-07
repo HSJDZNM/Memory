@@ -228,7 +228,10 @@ class EnforcementLedger:
 
         if self.grant_used(grant.grant_id):
             raise GrantError("授权已被使用：单次授权不得重复消费")
-        claim_id = f"{grant.grant_id}:{to_timestamp(now or utc_now())}"
+        # 认领身份必须**每次尝试唯一**：两个并发方可能拿到同一个 now（确定性时钟、
+        # 同一毫秒、测试注入），用时间戳推导会让双方写出逐字节相同的 claim_id，
+        # 于是下面"写入后复核"在两边都判自己赢，单次授权被消费两次。
+        claim_id = f"{grant.grant_id}:{uuid.uuid4().hex}"
         self.append({"kind": "grant_used", "grant_id": grant.grant_id, "claim_id": claim_id})
         winner = [
             item for item in self.of_kind("grant_used") if item.get("grant_id") == grant.grant_id

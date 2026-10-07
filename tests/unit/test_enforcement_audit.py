@@ -313,6 +313,47 @@ def test_grant_is_single_use(tmp_root):
         ledger.consume_grant(grant)
 
 
+def _grant(grant_id: str = "grant-1") -> AuthorizationGrant:
+    now = utc_now()
+    return AuthorizationGrant(
+        grant_id=grant_id,
+        action_id="a-1",
+        action_hash="sha256:h",
+        tool_id="fs.edit",
+        tool_schema_hash="sha256:s",
+        subject="local-user",
+        permissions=("repo.write",),
+        risk="reversible_write",
+        issued_at=now,
+        expires_at=now + timedelta(seconds=60),
+        nonce="n-1",
+    )
+
+
+def test_grant_claim_identity_is_not_derived_from_the_clock(tmp_root, monkeypatch):
+    """两个并发方拿到同一个 now 时，不能因为 claim_id 相同而双双得手。
+
+    单次消费的真正闸门是"先追加、再复核序号最小者"；旧实现用
+    f"{grant_id}:{to_timestamp(now)}" 做认领身份，于是同一个 now 下两个进程写出
+    逐字节相同的 claim_id，winner 比对在两边都成立——一张授权被消费两次。
+    这里把"双方都在对方写入之前读过台账"这个竞态用 monkeypatch 还原成确定性场景。
+    """
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    now = utc_now()
+    grant = _grant("grant-race")
+    ledger.consume_grant(grant, now=now)
+
+    # 前置的 grant_used 是读-判-写，天然有竞态；写入后的复核才是真正的一致性点。
+    monkeypatch.setattr(ledger, "grant_used", lambda grant_id: False)
+    with pytest.raises(GrantError):
+        ledger.consume_grant(grant, now=now)
+
+    uses = ledger.of_kind("grant_used")
+    assert len(uses) == 2  # 两方都追加过
+    assert uses[0]["claim_id"] != uses[1]["claim_id"], "认领身份不得由 now 推导"
+
+
 def test_rate_limit_windows_count_only_recent_records(tmp_root):
     ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
     ledger.append({"kind": "pre_decision", "limit_key": "local-user|fs.edit"})
