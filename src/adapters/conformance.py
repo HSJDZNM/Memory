@@ -363,7 +363,11 @@ def render_event(
     call = scenario.call + (f"-{index}" if scenario.call_suffix else "")
     # {outside} 的唯一含义是"受控工作区的同级路径"：把"越界"定义成
     # "相对工作区往外一层"，它才与工作区放在哪里无关。
-    outside_path = str(Path(workspace).resolve().parent / "outside-workspace.py")
+    # 调用方显式给了 `outside` 就用它（此前这个形参被整个忽略：调用方以为自己在指定
+    # "越界目标"，渲染出来的却是另一个路径——"这个场景测的是哪个越界目标"就不可读了）。
+    outside_path = outside or str(
+        Path(workspace).resolve().parent / "outside-workspace.py"
+    )
     path = (
         None
         if scenario.path is None

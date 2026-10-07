@@ -368,6 +368,33 @@ def test_normalize_event_path_rejects_relative_escape() -> None:
     assert "越界" in str(error.value) or "逃出" in str(error.value)
 
 
+def test_render_event_uses_the_callers_outside_path() -> None:
+    """`outside` 形参此前被整个忽略：调用方指定的越界目标必须真的出现在渲染结果里。
+
+    形参没接进渲染逻辑时，「这个场景测的是哪个越界目标」只能靠读 `render_event` 的实现才知道，
+    而调用方（契约测试 / 安全用例）传的正是它自己要测的那个路径。
+    """
+
+    from adapters.conformance import SCENARIOS, render_event
+    from adapters.loader import load_adapter
+
+    adapter = load_adapter("generic-json", root=REPO_ROOT)
+    workspace = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
+    scenario = next(item for item in SCENARIOS if item.path and "{outside}" in item.path)
+
+    raw = render_event(
+        adapter,
+        scenario,
+        index=0,
+        workspace=workspace,
+        outside=str(REPO_ROOT.parent / "outside.py"),
+    )
+    dumped = json.dumps(raw, ensure_ascii=False)
+
+    assert "outside.py" in dumped
+    assert "outside-workspace.py" not in dumped
+
+
 def test_normalize_event_path_rejects_absolute_escape() -> None:
     workspace = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
     outside = REPO_ROOT.parent / "outside-workspace.py"
