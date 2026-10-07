@@ -47,6 +47,19 @@ python -m policy_api.cli clients          # 列出客户端（只显示摘要前
 十六进制的明文"在形状上不可区分，再加一条启发式判据只会让同一个语义有两处表达
 （AGENTS 第 50 条：同名两义）。
 
+## 部署形态（单进程单事件循环）
+
+`create_app` 的处理器是 `async def`，但里面直接调用同步的 `ApiRuntime.handle`（判定 + 台账/日志
+IO + `run_with_budget` 的线程 join）。因此**一个进程里同一时刻只有一个请求在真正跑**：并发靠
+uvicorn 的多 worker 或多个副本，**不是**靠单进程内的并行——单进程的阻塞是**已知且被接受**的
+设计边界，不是"忘了 await"。
+
+- 需要更高吞吐：横向扩（`--workers N` / 多副本）。每个 worker 各自装配一份运行时；
+- 每个 worker 有自己的指标、限流桶与幂等台账锁，聚合读数时按实例分；
+- 把 `handle` 挪进线程池**不是一行的事**：它会同时改变 `limits.max_concurrency` 的语义、预算
+  计时的基线，以及"一个请求一份观测记录"的口径。要做就作为独立设计决定（登记进
+  `docs/project/engineering-policy-platform/04-open-work.md`），别顺手改。
+
 ## 本地怎么跑
 
 ```powershell
