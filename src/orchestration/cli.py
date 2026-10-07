@@ -46,6 +46,33 @@ def _load_document(path: Path | str) -> Mapping[str, Any]:
     return document
 
 
+def _optional_int(source: Mapping[str, Any], key: str, *, default: int = 0) -> int:
+    """载荷里的可选整数：形状不对是**用法错误**（ValueError），不是 TypeError。
+
+    为什么不能让它抛 TypeError：main() 的退出码契约是"配置或用法错误 → 2、编排自身损坏 → 1"，
+    而 `int({...})` 抛的 TypeError 会穿透那一层 except——用户看到的是一段栈回溯 + 退出码 1，
+    与"编排坏了"同码，且没人告诉他坏的是哪个字段。
+    """
+
+    value = source.get(key, default)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"changes[].{key} 必须是整数，得到 {type(value).__name__}")
+    return value
+
+
+def _text_items(source: Mapping[str, Any], key: str) -> tuple[str, ...]:
+    """载荷里的字符串列表：给了就必须是列表（字符串本身不算列表——它会被逐字符展开）。"""
+
+    value = source.get(key)
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(f"{key} 必须是字符串列表，得到 {type(value).__name__}")
+    return tuple(str(item) for item in value)
+
+
 def task_from_document(document: Mapping[str, Any]) -> tuple[TaskSpec, ScriptedAuthor]:
     """任务文件 → (TaskSpec, 作者)。作者是**可替换端口**：这里用声明式的脚本作者。"""
 
@@ -63,8 +90,8 @@ def task_from_document(document: Mapping[str, Any]) -> tuple[TaskSpec, ScriptedA
                 old=None if item.get("old") is None else str(item["old"]),
                 replacement=None if item.get("replacement") is None else str(item["replacement"]),
                 content=None if item.get("content") is None else str(item["content"]),
-                tokens=int(item.get("tokens", 0) or 0),
-                cost_units=int(item.get("cost_units", 0) or 0),
+                tokens=_optional_int(item, "tokens"),
+                cost_units=_optional_int(item, "cost_units"),
             )
         )
     task = TaskSpec(
@@ -75,13 +102,22 @@ def task_from_document(document: Mapping[str, Any]) -> tuple[TaskSpec, ScriptedA
         language=str(document.get("language", "python")),
         module=None if document.get("module") is None else str(document["module"]),
         query=str(document.get("query", "")),
-        principal=dict(
-            document.get("principal") or {"subject": "orchestrator", "roles": ["developer"]}
-        ),
-        acceptance=tuple(str(item) for item in document.get("acceptance", []) or []),
+        principal=_principal(document),
+        acceptance=_text_items(document, "acceptance"),
         trace_id=None if document.get("trace_id") is None else str(document["trace_id"]),
     )
     return task, parsed  # type: ignore[return-value]
+
+
+def _principal(document: Mapping[str, Any]) -> dict[str, Any]:
+    """主体声明：缺省是一份显式的最小声明；给了就必须是对象（列表 / 标量是用法错误）。"""
+
+    value = document.get("principal")
+    if value is None:
+        return {"subject": "orchestrator", "roles": ["developer"]}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"principal 必须是对象，得到 {type(value).__name__}")
+    return dict(value)
 
 
 def build_config(args: argparse.Namespace, document: Mapping[str, Any]) -> OrchestrationConfig:
