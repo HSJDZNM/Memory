@@ -904,11 +904,11 @@ def check_declared_versions(
     compared = tuple(
         item.agent_id for item in findings if item.status in compared_statuses
     )
-    covered = sum(
-        1
-        for item in findings
-        if item.status in (HostVersionStatus.MATCH, HostVersionStatus.DRIFT)
-    )
+    # RECORDING_STALE 也算「真的比对过」：活体探测成功、版本与声明一致，只是提交进仓库的
+    # 观测记录过期了——它确实参与了与宿主的比对。此前把它排除在 covered 之外，于是一次全是
+    # stale 的运行会同时打印「本次没有任何 Adapter 真正参与比对（covered 0/N）」与
+    # 「观测记录…参与了比对」两句互相打脸的话，覆盖数也低估了实际比过的条数。
+    covered = len(compared)
     if failures:
         result = "fail"
     elif unavailable:
