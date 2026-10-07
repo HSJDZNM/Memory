@@ -695,6 +695,42 @@ def test_retrieve_reports_real_corpus_hash_drift(tmp_root: Path) -> None:
     assert response.json()["index"]["hash_drift"] == ["guides:index.md"]
 
 
+def test_decision_ref_is_scoped_to_the_client_that_computed_it(tmp_root: Path) -> None:
+    """同一个租户里的**另一个客户端**不能引用别人算过的决策。
+
+    历史缺陷（medium 台账 M1，runtime.py:721，security）：`decision_ref` 只按
+    `(tenant, request_id)` 解析，而 `request_id` 由调用方提供——同租户的另一个客户端只要
+    复用/猜中这个 id，就能引用别人的决策：`_policy_facts` 会把别人的违规与规则集事实
+    组装进检索结果（同租户内的越权读取）。
+
+    本用例的通道没有配索引：决策引用**先**被判（授权先于可用性），因此 403 与 503 正好
+    区分"引用被拒"与"引用通过、只是检索不可用"。
+    """
+
+    runtime, client, _ = build_api(tmp_root)
+    owner = client.post(
+        "/v1/policy/evaluate", headers=auth(), json=envelope("it-ref-owner", context=BAD_CONTEXT)
+    )
+    assert owner.status_code == 200
+
+    stolen = client.post(
+        "/v1/knowledge/retrieve",
+        headers={"Authorization": f"Bearer {TOKEN2}"},  # 同租户的另一个客户端
+        json={
+            "api_version": "1.0",
+            "request_id": "it-ref-thief",
+            "tenant": "alpha",
+            "principal": {"subject": "bob", "roles": ["developer"]},
+            "context": dict(GOOD_CONTEXT),
+            "query": "代码评审",
+            "decision_ref": "it-ref-owner",
+        },
+    )
+
+    assert stolen.status_code == 403, stolen.json()
+    assert error_code(stolen) == "forbidden"
+
+
 def test_retrieve_rejects_a_decision_ref_the_service_never_computed(tmp_root: Path) -> None:
     """`decision_ref` 只能指向**本服务算过的** request_id：客户端不能自带决策给自己扩权。"""
 

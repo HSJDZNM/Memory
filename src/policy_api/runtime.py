@@ -554,7 +554,9 @@ class ApiRuntime:
                 f"策略判定超出预算 {budget_ms}ms；未给出结论（不伪造 allow）",
                 retryable=True,
             )
-        self._remember_decision(_decision_key(auth.tenant, request.request_id), result)
+        self._remember_decision(
+            _decision_key(auth.tenant, auth.client_id, request.request_id), result
+        )
         body: dict[str, Any] = {
             "api_version": API_SCHEMA_VERSION,
             "tenant": auth.tenant,
@@ -753,7 +755,9 @@ class ApiRuntime:
             return ()
         now = self.clock()
         with self._decisions_lock:
-            entry = self._decisions.get(_decision_key(auth.tenant, decision_ref))
+            entry = self._decisions.get(
+                _decision_key(auth.tenant, auth.client_id, decision_ref)
+            )
             if entry is not None and not self._decision_fresh(entry[0], now=now):
                 entry = None
         if entry is None:  # noqa: SIM108 - 保持显式分支，便于阅读状态机
@@ -1000,8 +1004,16 @@ def _canonical_body(body: Mapping[str, Any]) -> Mapping[str, Any]:
     return json.loads(json.dumps(dict(body), ensure_ascii=False, sort_keys=True))
 
 
-def _decision_key(tenant: str, request_id: str) -> str:
-    return f"{tenant}:{request_id}"
+def _decision_key(tenant: str, client_id: str, request_id: str) -> str:
+    """决策引用的键：**租户 + 客户端 + request_id**。
+
+    只看 `(tenant, request_id)` 不够：`request_id` 由调用方提供，同一个租户里的另一个客户端
+    只要猜中/复用这个 id，就能用 `decision_ref` 引用别人算过的决策——检索的 policy_facts 会
+    因此把别人的违规与规则集事实读出来（同租户内的越权读取）。把客户端并入键，
+    引用就只对"算这次决策的那个客户端"成立。
+    """
+
+    return f"{tenant}:{client_id}:{request_id}"
 
 
 def _recordable(status: int, facts: Mapping[str, Any]) -> bool:
