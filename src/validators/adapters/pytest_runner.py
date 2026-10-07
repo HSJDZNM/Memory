@@ -269,8 +269,13 @@ def run_pytest(
         # "没有验证器为它提供证据"以 critical 阻断（AGENTS 第 20 条）。
         # 反例（不许这么修）：给它起个"显式 no_subject"的新名字再记成通过——那只是把
         # "没查过"换个名字，R-f 明确关掉了这条逃生门。
+        # `evidence` **照常返回**：退出码 5 抹掉的是**执行**证据，选择阶段算出的
+        # missing_tests 证据（selection.missing）与"pytest 收集到没有"无关。整份丢掉它
+        # 会把一条真的 missing_tests 违规洗成"查过了、没问题"——而 select_tests 完全
+        # 可能同时给出 nodeids 与 missing（一次变更里有的文件有测试、有的没有）。
         return AdapterResult(
-            status=ValidatorStatus.OK,
+            status=ValidatorStatus.FINDINGS if evidence else ValidatorStatus.OK,
+            evidence=tuple(sorted(evidence, key=lambda item: item.sort_key)),
             served=(MISSING_TESTS_CHECKER,),
             tool=invocation,
             reason=(
