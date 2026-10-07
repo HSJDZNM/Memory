@@ -192,6 +192,24 @@ def test_agent_identity_is_fixed_and_version_is_recorded_separately(dsh_config_p
     assert decision.event.kind == "tool.pre_execute"
 
 
+def test_post_tool_use_is_not_labelled_as_a_pre_execute_proposal(dsh_config_path, dsh_project):
+    """PostToolUse 载荷不得被标成 `tool.pre_execute`：它描述的是已经发生的执行。
+
+    `read_payload` 明确支持 PostToolUse（还要求 tool_response 在场），而两者的
+    event_id / request_id 完全相同（`{session}:{tool_use_id}`）——kind 是消费方唯一
+    能区分「提议」与「已执行」的字段，写死就等于让审计与下游把执行后事件当成
+    尚未执行的提议。
+    """
+
+    config = load_config(dsh_config_path)
+    post = map_event(event_for("post-tool-use-edit.json", dsh_project), config)
+    pre = map_event(event_for("pre-tool-use-edit-block.json", dsh_project), config)
+
+    assert post.event is not None and pre.event is not None
+    assert post.event.kind == "tool.post_execute"
+    assert pre.event.kind == "tool.pre_execute"
+
+
 def test_request_trace_and_principal_are_preserved(dsh_config_path, dsh_project):
     config = load_config(dsh_config_path)
     context = context_of(event_for("pre-tool-use-edit-block.json", dsh_project), config)

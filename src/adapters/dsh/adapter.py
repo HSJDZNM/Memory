@@ -1272,7 +1272,16 @@ def to_policy_event(raw: Any, *, config: AdapterConfig) -> AdapterDecision:
     event = PolicyEvent(
         event_id=f"{session_id}:{tool_use_id}",
         request_id=f"{session_id}:{tool_use_id}",
-        kind="tool.pre_execute",
+        # kind 由 hook 事件推出，不能写死：read_payload 明确支持 PostToolUse（还要求
+        # tool_response 在场），把它标成 pre_execute 会让「提议的改动」与「已经执行完的
+        # 改动」在审计里同名——两者的 event_id / request_id 本来就相同，消费方分不开。
+        # 真实钩子入口把 PostToolUse 直接交给 post_execute_outcome；这里只保证
+        # 从这个导出函数走出来的事件不撒谎。未知事件名在 read_payload 就已经拒绝了。
+        kind=(
+            "tool.pre_execute"
+            if payload["hook_event_name"] == HOOK_EVENT_PRE_TOOL_USE
+            else "tool.post_execute"
+        ),
         agent=DSH_AGENT_ID,
         agent_version=config.agent_version,
         tool=tool_name,
