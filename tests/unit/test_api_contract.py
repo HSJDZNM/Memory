@@ -1117,6 +1117,42 @@ def test_probe_unavailable_payload_is_a_consumable_decision_payload() -> None:
 # --------------------------------------------------------------------------- 冒烟
 
 
+def test_audit_log_probe_uses_a_unique_filename(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """audit_log 探针的文件名必须唯一，且用完必删。
+
+    历史缺陷（medium 台账 M1，ops.py:122）：固定 `<log>.probe` 在两个探针重叠时（常驻服务 +
+    CLI self-check，或多 worker）会互相删对方的文件——先完成的 unlink 掉，后一个的 unlink 抛
+    FileNotFoundError，被 `except OSError` 记成"观测日志不可写"，健康进程翻成 503。
+    """
+
+    from policy_api.ops import readiness_report
+
+    config_path, anchor = isolated_api(tmp_root)
+    runtime = ApiRuntime(load_api_config(config_path, root=anchor), root=anchor)
+
+    seen: list[str] = []
+    real_write_text = Path.write_text
+
+    def recording_write_text(self: Path, *args: object, **kwargs: object) -> int:
+        seen.append(self.name)
+        return real_write_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", recording_write_text)
+    first = readiness_report(runtime)
+    second = readiness_report(runtime)
+
+    assert first["state"] == "ready" and second["state"] == "ready"
+    probes = [name for name in seen if ".probe" in name]
+    # 每个租户一次探针 × 两次 readiness：名字必须两两不同（固定名字时它们全部相同）
+    assert len(probes) >= 2, seen
+    assert len(set(probes)) == len(probes), "两次探针用了同一个文件名：" + repr(probes)
+    # 用完必删：目录里不该留下探针残骸
+    leftovers = sorted(item.name for item in (tmp_root / "audit").glob("*.probe*"))
+    assert leftovers == []
+
+
 def test_smoke_reports_the_live_endpoints_actual_payload(tmp_root: Path) -> None:
     """冒烟的 `live` 那一腿必须来自**端点本身**，不是一个字面量。
 
