@@ -73,6 +73,10 @@ def main(argv: list[str] | None = None) -> int:
         SCRIPT.format(python=_venv_python(), script=(ROOT / "tools" / "ci_local.py").as_posix()),
         encoding="utf-8", newline="\n",
     )
+    # git 只执行带可执行位的钩子（find_hook 会做 access(X_OK)）：write_text 默认 0644，
+    # 在 POSIX 上新建的 pre-push 会被**静默忽略**，推送一个检查都不跑，而脚本还打印"已安装"。
+    # Windows 没有可执行位，chmod 在这里是 no-op（只影响只读标志）。
+    HOOK.chmod(0o755)
     print("已安装 pre-push -> " + HOOK.as_posix())
     print("跳过单次：git push --no-verify")
     return 0
