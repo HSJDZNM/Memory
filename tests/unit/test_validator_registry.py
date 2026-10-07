@@ -263,6 +263,31 @@ def test_builtin_validator_must_not_declare_a_tool() -> None:
     assert "不能声明 tool" in str(error.value)
 
 
+def test_tool_config_rejects_windows_absolute_and_drive_relative_paths() -> None:
+    """tool.config 的路径校验必须与消费方同口径（复核发现：盘符/UNC 漏过）。"""
+
+    for bad in (
+        "C:/tools/ruff.toml",
+        "C:../outside/ruff.toml",
+        "C:\\tools\\ruff.toml",
+        "//server/share/ruff.toml",
+        "\\\\server\\share\\ruff.toml",
+        "../outside/ruff.toml",
+        "/etc/ruff.toml",
+    ):
+        with pytest.raises(Exception) as error:
+            ToolSpec(command=("ruff",), config=bad)
+        assert "tool.config" in str(error.value), bad
+
+    # 合法的仓库相对路径照常，并归一掉 "./" 与反斜杠。
+    assert ToolSpec(command=("ruff",), config="validation/ruff.toml").config == (
+        "validation/ruff.toml"
+    )
+    assert ToolSpec(command=("ruff",), config=".\\validation\\ruff.toml").config == (
+        "validation/ruff.toml"
+    )
+
+
 def test_version_pattern_must_capture_a_version() -> None:
     with pytest.raises(Exception) as error:
         ToolSpec(command=("ruff",), version_pattern=r"ruff [0-9.]+")

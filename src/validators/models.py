@@ -13,7 +13,12 @@ from typing import Literal, Mapping, Optional, Tuple
 from pydantic import Field, field_validator, model_validator
 
 from policy.evidence import ValidatorKind
-from policy.models import StrictModel, canonical_identifier
+from policy.models import (
+    PolicyContextError,
+    StrictModel,
+    canonical_identifier,
+    normalize_repo_path,
+)
 
 __all__ = [
     "KNOWN_FACTS",
@@ -138,10 +143,15 @@ class ToolSpec(StrictModel):
     def _check_config(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
-        normalized = value.strip().replace("\\", "/")
-        if not normalized or normalized.startswith("/") or ".." in normalized.split("/"):
-            raise ValueError(f"tool.config 必须是仓库内的相对路径，得到 {value!r}")
-        return normalized
+        # 与消费方同一条口径（policy.models.normalize_repo_path）：反斜杠 / 盘符 / UNC /
+        # ".." / 路径元字符都在这里被拒，返回的也是归一化之后的形态——校验看到的路径必须与
+        # 后面交给外部工具的那一个逐字节相同。旧实现只查前导 "/" 与精确的 ".." 段：
+        # C:/tools/ruff.toml 与 C:../x.toml（"C:.." 不是一个 ".." 段）都被当成仓库相对路径，
+        # 随后作为**工具配置**交给外部工具，等于让仓库外的文件当受控配置。
+        try:
+            return normalize_repo_path(value)
+        except PolicyContextError as error:
+            raise ValueError(f"tool.config 必须是仓库内的相对路径：{error}") from error
 
 
 class ValidatorSpec(StrictModel):
