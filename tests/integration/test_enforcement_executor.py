@@ -19,6 +19,7 @@ from enforcement.drivers import DriverKind, DriverResult, ToolDriver, drivers_fo
 from enforcement.executor import ControlledExecutor, summarise_chain
 from enforcement.ledger import EnforcementLedger
 from enforcement.models import (
+    AuditStage,
     Decision,
     ExecutionStatus,
     FinalOutcome,
@@ -31,6 +32,7 @@ from enforcement.models import (
 )
 from enforcement.postcheck import baseline_files, collect_evidence, validate
 from enforcement.precheck import pre_execute
+from enforcement.trace import load_trace
 
 from enforcement_support import (
     SHELL_COMMAND,
@@ -240,6 +242,49 @@ def test_driver_unavailable_does_not_burn_the_single_use_grant(enforcement_paths
     )
     assert retry.record.status is ExecutionStatus.EXECUTED
     assert spies["fs.edit"].calls == 1
+
+
+def test_refusal_paths_also_write_a_final_decision_record(enforcement_paths):
+    """被拒绝的动作也要留下终态记录：trace 校验把"没有 FINAL_DECISION"读成链不完整。
+
+    三条早退路径（策略拒绝 / 驱动不可用 / 授权已用或不可用）过去只写 EXECUTION 一段，
+    于是每次被拒绝的动作都留下一条不可重放的 trace，与模块文档"三段都写进审计链"矛盾。
+    """
+
+    seed(enforcement_paths)
+    registry, sink, ledger, executor, spies = build(enforcement_paths)
+    request = make_action(registry, enforcement_paths, "fs.edit", edit_params())
+    pre = pre_execute(request, registry=registry, ledger=ledger, sink=sink)
+    spec = registry.tool("fs.edit")
+
+    # 1) 策略拒绝
+    blocked = pre.decision.model_copy(
+        update={"decision": Decision.BLOCK, "grant": None, "reason_code": ReasonCode.POLICY_BLOCK}
+    )
+    executor.execute(request, spec=spec, pre=blocked, workspace=enforcement_paths.workspace)
+
+    # 2) 驱动不可用
+    without_driver = ControlledExecutor(
+        ledger=ledger,
+        drivers={},
+        sink=sink,
+        max_grant_ttl_seconds=registry.max_grant_ttl_seconds,
+    )
+    without_driver.execute(
+        request, spec=spec, pre=pre.decision, workspace=enforcement_paths.workspace
+    )
+
+    # 3) 授权已经用过（单次凭据不得重复消费）
+    grant = pre.decision.grant
+    assert grant is not None
+    ledger.consume_grant(grant)
+    executor.execute(request, spec=spec, pre=pre.decision, workspace=enforcement_paths.workspace)
+
+    report = load_trace(enforcement_paths.audit, action_id=request.action_id)
+    finals = [entry for entry in report.entries if entry.stage is AuditStage.FINAL_DECISION]
+
+    assert len(finals) == 3, "三条拒绝路径各应留下一条终态记录"
+    assert not any("终态" in issue for issue in report.issues), report.issues
 
 
 def test_executor_refuses_a_pre_decision_without_a_grant(enforcement_paths):
