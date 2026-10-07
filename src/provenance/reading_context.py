@@ -178,6 +178,9 @@ DECLARATIONS = (
 OUTSIDE_WORKSPACE = "<outside-workspace>"
 UNSET = "<unset>"
 
+# host_block 自己产出的三个键：extra 不许覆盖它们（覆盖 = 绕过枚举校验与真实读数）。
+_HOST_BLOCK_KEYS = frozenset({"platform", "python", "sandbox"})
+
 _REVISION = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 
@@ -348,6 +351,12 @@ def host_block(*, sandbox: str = SANDBOX_UNKNOWN, extra: Mapping[str, Any] | Non
     端到端读数按"本次是否发生过工作区之外的操作被拒"判；其余读数不探测沙箱（探测要有副作用），
     一律 unknown。extra 放该读数专有的宿主事实（例如端到端的
     isolated_home / dsh_home / temp_roots）。
+
+    **extra 不许改 host_block 自己的三个字段**（platform / python / sandbox）：它们是真实
+    读数与受校验的枚举，合并在校验之后做就等于把 SANDBOX_VALUES 与平台读数一起绕过去。
+    同名字段只要**取值不同**就报错——与 build 对"include_run=False 却给了 run"的处置同一
+    口径：自相矛盾的调用不静默丢值，也不静默覆盖。（同一个取值重复一遍是无害的：现有调用
+    点里就有这种写法，它不改变任何读数；真正危险的是"改值"。）
     """
 
     if sandbox not in SANDBOX_VALUES:
@@ -360,6 +369,16 @@ def host_block(*, sandbox: str = SANDBOX_UNKNOWN, extra: Mapping[str, Any] | Non
         "sandbox": sandbox,
     }
     if extra:
+        conflicts = sorted(
+            key for key in _HOST_BLOCK_KEYS if key in extra and extra[key] != block[key]
+        )
+        if conflicts:
+            raise ValueError(
+                "extra 不许覆盖 host_block 自己的字段 "
+                + " / ".join(conflicts)
+                + "（platform / python / sandbox 是校验过的真实读数）；"
+                "要在读数里改它们就改调用点，别从旁注覆盖"
+            )
         block.update(dict(extra))
     return block
 
