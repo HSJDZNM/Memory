@@ -44,6 +44,24 @@ def test_malformed_task_values_are_usage_errors(patch: Mapping[str, Any], field:
     assert field in str(error.value)
 
 
+def test_json_flag_works_on_both_sides_of_the_subcommand(capsys) -> None:
+    """`--json` 放在子命令**前面**也要生效。
+
+    argparse 解析完子解析器后会把整个命名空间拷回父级——包括子解析器自己的默认值 False，
+    于是父级设好的 True 被悄悄盖掉，用户拿到的是人读文本（而脚本按 JSON 解析会炸）。
+    """
+
+    assert main(["--json", "graph"]) == 0
+    assert capsys.readouterr().out.lstrip().startswith("{")
+
+    assert main(["graph", "--json"]) == 0
+    assert capsys.readouterr().out.lstrip().startswith("{")
+
+    # 反向：不给 --json 时仍然是人读文本（SUPPRESS 不能把默认值也吞掉）
+    assert main(["graph"]) == 0
+    assert not capsys.readouterr().out.lstrip().startswith("{")
+
+
 def test_cli_exits_two_and_names_the_broken_field(tmp_root, capsys) -> None:
     """端到端：坏任务文件 → 退出码 2 + 一行理由（不是栈回溯，也不是 1）。"""
 

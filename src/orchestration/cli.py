@@ -370,8 +370,15 @@ def run_command(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="orchestration", description="Phase 8 编排层 CLI")
     # `--json` 在子命令前后都能用：脚本里更常见的写法是放在子命令后面。
+    #
+    # 为什么子解析器那份要 SUPPRESS：argparse 解析完子解析器后会把**整个**命名空间拷回父命名空间，
+    # 包括它自己的默认值——于是 `orchestration --json self-check` 里父级设好的 True
+    # 会被子级的默认 False 悄悄盖掉，用户拿到的仍是人读文本。SUPPRESS = "没传就什么都不贡献"，
+    # 只有真的传了才写进命名空间；父解析器仍然持有这个开关的默认值。
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--json", action="store_true", help="输出机器可读载荷")
+    common.add_argument(
+        "--json", action="store_true", default=argparse.SUPPRESS, help="输出机器可读载荷"
+    )
     parser.add_argument("--json", action="store_true", help="输出机器可读载荷")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
