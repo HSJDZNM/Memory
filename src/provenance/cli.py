@@ -10,8 +10,9 @@
 退出码（方案 §5.3，**不与 Hook 的 exit 2 复用**）：
 
     0 = 判据 pass 且封条一致
-    1 = 判据 fail（子进程非 0、或边界声明不合法）
-    2 = 用法错误
+    1 = 判据 fail（子进程非 0；或 wiring-scope 的边界声明**内容**不合法）
+    2 = 用法错误：参数不可用——声明文件 / --platform 读不到、判据命令起不来；
+        digest 与 seal 对同一种参数不可用必须给同一个码
     3 = 封条失效：external_write（pre != post）或 unprovable（读不到声明的东西）
         —— 「本轮结论全部作废」，不许当成 pass
 
@@ -107,15 +108,21 @@ def _emit(payload: Dict[str, Any], *, as_json: bool) -> None:
 
 def _run_digest(args: argparse.Namespace) -> int:
     root = Path(args.root)
+    # 声明文件本身不可用 = 用法错误（与 seal 同一口径）：调用方按退出码分流时，
+    # 同一个失败模式不许在这里是 3、在那里是 2。
     try:
         declaration = worktree.load_declaration(args.declaration)
-        referenced = worktree.referenced_inputs_digest(root, declaration)
-        workspace = worktree.workspace_tree_digest(root)
         platform_declaration = (
             worktree.load_declaration(args.platform)
             if args.platform
             else declaration
         )
+    except worktree.UnprovableError as error:
+        print(f"用法错误：{error}", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        referenced = worktree.referenced_inputs_digest(root, declaration)
+        workspace = worktree.workspace_tree_digest(root)
         platform = worktree.platform_revision(root, platform_declaration)
     except worktree.UnprovableError as error:
         print(f"unprovable: {error}", file=sys.stderr)

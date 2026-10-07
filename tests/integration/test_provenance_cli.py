@@ -140,3 +140,58 @@ def test_an_unprovable_declaration_still_exits_3_with_a_receipt(
     assert second.returncode == 3, second.stderr
     assert "seal state: unprovable" in second.stderr
     assert json.loads(receipt.read_text(encoding="utf-8"))["state"] == "unprovable"
+
+def test_digest_and_seal_agree_on_the_same_declaration_failure(
+    tmp_root: Path, sealed_project: Path
+) -> None:
+    """同一种"声明文件读不到"必须给出同一个退出码（复核发现：digest 是 3、seal 是 2）。"""
+
+    project = tmp_root / "project"
+    missing = tmp_root / "missing-declaration.txt"
+
+    digested = run_cli("digest", "--root", str(project), "--declaration", str(missing))
+    sealed = run_cli(
+        "seal", "--root", str(project), "--declaration", str(missing),
+        "--", sys.executable, "-c", "pass",
+    )
+    assert digested.returncode == 2, digested.stderr
+    assert sealed.returncode == 2, sealed.stderr
+    for completed in (digested, sealed):
+        assert "Traceback" not in completed.stderr
+        assert "用法错误" in completed.stderr
+
+
+def test_platform_declaration_failure_is_a_usage_error_in_both_subcommands(
+    tmp_root: Path, sealed_project: Path
+) -> None:
+    """--platform 读不到在 digest 与 seal 里同样是用法错误（2），不是 unprovable（3）。"""
+
+    project = tmp_root / "project"
+    missing = tmp_root / "missing-platform.txt"
+
+    digested = run_cli(
+        "digest", "--root", str(project), "--declaration", str(sealed_project),
+        "--platform", str(missing),
+    )
+    sealed = run_cli(
+        "seal", "--root", str(project), "--declaration", str(sealed_project),
+        "--platform", str(missing), "--", sys.executable, "-c", "pass",
+    )
+    assert digested.returncode == 2, digested.stderr
+    assert sealed.returncode == 2, sealed.stderr
+
+
+def test_digest_still_reports_content_level_unprovable_as_seal_failure(
+    tmp_root: Path, sealed_project: Path
+) -> None:
+    """对照：声明**内容**证明不了（命中不到文件）仍然是 3，不是用法错误。"""
+
+    project = tmp_root / "project"
+    (project / "declared" / "a.txt").unlink()
+    (project / "declared").rmdir()
+
+    completed = run_cli("digest", "--root", str(project), "--declaration", str(sealed_project))
+    assert completed.returncode == 3
+    assert "unprovable" in completed.stderr
+    assert "Traceback" not in completed.stderr
+
