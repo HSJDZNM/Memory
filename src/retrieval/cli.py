@@ -362,7 +362,13 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
         return EXIT_ERROR
 
     try:
-        return _dispatch(args, loaded=loaded, store=store, anchor=anchor, as_json=as_json)
+        try:
+            return _dispatch(args, loaded=loaded, store=store, anchor=anchor, as_json=as_json)
+        except (CorpusError, ProtocolError, StoreError, RetrievalError) as error:
+            # 清单 / 索引库 / 决策协议类失败一律是"配置或执行错误"（退出码 2）。
+            # 模块约定里没有"裸 traceback"这一档：调用方要能区分"检索不可用"与"进程崩了"。
+            print(f"config error: {error}", file=sys.stderr)
+            return EXIT_ERROR
     finally:
         store.close()
 

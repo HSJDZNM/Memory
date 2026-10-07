@@ -288,6 +288,43 @@ def test_corrupted_index_reports_config_error_not_traceback(tmp_root: Path, cli_
     assert completed.stdout == ""
 
 
+def test_missing_expansion_lexicon_exits_2_without_traceback(tmp_root: Path) -> None:
+    """清单声明的术语表不存在：_dispatch 的失败必须映射成退出码 2 + config error。"""
+
+    corpus = write_fixture_corpus(tmp_root, policy={"expansion": "knowledge/nope.yaml"})
+    completed = run_cli(
+        "--root", str(tmp_root), "--corpus", str(corpus),
+        "--db", str(tmp_root / "cli-index.sqlite3"), "index",
+    )
+    assert completed.returncode == 2
+    assert "config error" in completed.stderr
+    assert "Traceback" not in completed.stderr
+
+
+def test_ingest_failure_exits_2_without_traceback(tmp_root: Path) -> None:
+    """摄取失败（隔离清单的哈希与当前 chunk 不一致）同样不能以 traceback 结束。"""
+
+    corpus = write_fixture_corpus(tmp_root)
+    args = base_args(tmp_root, corpus)
+    assert run_cli(*args, "index").returncode == 0
+    found = json.loads(run_cli(*args, "query", "review checklist", "--json").stdout)
+    target = found["results"][0]["chunk_id"]
+
+    stale = write_fixture_corpus(
+        tmp_root,
+        quarantine=[
+            {"chunk_id": target, "text_hash": "sha256:" + "0" * 64, "reason": "旧哈希"}
+        ],
+    )
+    completed = run_cli(
+        "--root", str(tmp_root), "--corpus", str(stale),
+        "--db", str(tmp_root / "cli-index.sqlite3"), "index",
+    )
+    assert completed.returncode == 2
+    assert "config error" in completed.stderr
+    assert "Traceback" not in completed.stderr
+
+
 def test_index_budget_too_small_exits_2(tmp_root: Path) -> None:
     """Context 预算放不下必需内容时是配置错误（退出码 2），而不是"没有命中"（退出码 1）。"""
 
