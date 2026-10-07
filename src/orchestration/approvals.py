@@ -77,10 +77,14 @@ class ApprovalGate:
         `action_id` 匹配的记录。按 action_id 而不是 action_hash 挑选，是为了让
         "主体不符 / 参数漂移 / 已过期"能给出**具体**的失败码，而不是笼统的"没有审批"。
 
-        没有任何记录的 action_id 匹配时，只允许 `binding=pattern` 的记录当兜底：pattern 档按
-        契约**没有** action_id，它本来就是为"将来的某次调用"签的。action 档绑定的是**某一次**
-        调用，action_id 对不上就是另一件事的条子——把它当兜底返回，会让 `resolve()` 把错的文件
-        交给 Phase 4、也会让"另一条 action 的条子"看起来像是这次的依据。
+        没有记录的 action_id 匹配时，按下面的顺序兜底——两档都不改变安全性，它们回答的是
+        "该去修哪一份记录"：
+
+        1. `binding=pattern` 的记录：它按契约**没有** action_id，本来就是为"将来的某次调用"签的；
+        2. 否则取收件箱里第一条 action 档记录：它**不可能**通过 verify（action_id 与 action_hash
+           必须逐位一致），放在这里只为了让拒绝理由说得出"你签的是另一个动作"
+           （tests/security 的 forged-action-id 用例钉住这个具体失败码：退化成"没有审批"，
+           人就不知道要去改哪一份记录）。
 
         返回文件路径是必要的：这份审批随后要**原样**交给 Phase 4 的 pre-check
         （判定权在平台，编排层只负责找到它）。
@@ -95,7 +99,8 @@ class ApprovalGate:
                 return None
         if not self.path.is_dir():
             return None
-        fallback: Optional[Tuple[Path, ApprovalRecord]] = None
+        fallback: Optional[Tuple[Path, ApprovalRecord]] = None  # pattern 档
+        unrelated: Optional[Tuple[Path, ApprovalRecord]] = None  # action 档（只为具体失败码）
         for candidate in sorted(self.path.glob("*.json")):
             try:
                 record = load_approval(candidate)
@@ -103,10 +108,13 @@ class ApprovalGate:
                 continue
             if action_id is not None and record.action_id == action_id:
                 return candidate, record
-            # 只有 pattern 档能兜底（见 locate 的 docstring）：action 档对不上就是另一件事。
-            if fallback is None and record.binding is ApprovalBinding.PATTERN:
-                fallback = (candidate, record)
-        return fallback
+            if record.binding is ApprovalBinding.PATTERN:
+                if fallback is None:
+                    fallback = (candidate, record)
+            elif unrelated is None:
+                unrelated = (candidate, record)
+        # pattern 档优先：它是唯一"合法地适用于未匹配调用"的绑定。两档都没有就是真的没有审批。
+        return fallback if fallback is not None else unrelated
 
     def _record(self, action_id: Optional[str] = None) -> Optional[ApprovalRecord]:
         located = self.locate(action_id)

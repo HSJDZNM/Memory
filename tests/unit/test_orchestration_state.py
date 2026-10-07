@@ -772,18 +772,15 @@ def test_directory_inbox_picks_the_record_whose_action_id_matches(tmp_root) -> N
     assert gate.resolve(ACTION_HASH).name == "b-requested.json"
 
 
-def test_directory_inbox_falls_back_to_a_pattern_approval_only(tmp_root) -> None:
-    """没有 action_id 匹配时：只有 pattern 档能兜底，无关的 action 档必须返回 None。
+def test_directory_inbox_prefers_a_pattern_approval_over_an_unrelated_record(tmp_root) -> None:
+    """没有 action_id 匹配时的兜底顺序：pattern 档优先，其次是无关的 action 档。
 
-    action 档绑定的是某一次调用，action_id 对不上就是另一件事的条子——把它当兜底返回，
-    resolve() 会把**错的文件**交给 Phase 4（判定落在错的对象上）。宁可说"没有审批"。
+    两档都不改变安全性（都不可能通过 verify：action_id / action_hash 必须逐位一致），
+    它们回答的是"该去修哪一份记录"：
+      - pattern 档是唯一**合法地**适用于"未匹配调用"的绑定（它按契约没有 action_id）；
+      - 无关的 action 档照样返回，是为了让拒绝理由说得出"你签的是另一个动作"，
+        而不是退化成笼统的"没有审批"——tests/security 的 forged-action-id 钉住这一点。
     """
-
-    only_action = tmp_root / "only-action"
-    approval_file(
-        only_action / "a-unrelated.json", action_hash="sha256:" + "a" * 64, action_id="other:0:xyz"
-    )
-    assert ApprovalGate(only_action, approval_roles=("reviewer",)).resolve(ACTION_HASH) is None
 
     with_pattern = tmp_root / "with-pattern"
     approval_file(
@@ -791,9 +788,15 @@ def test_directory_inbox_falls_back_to_a_pattern_approval_only(tmp_root) -> None
     )
     pattern = _pattern_approval(with_pattern / "b-pattern.json")
 
-    gate = ApprovalGate(with_pattern, approval_roles=("reviewer",))
+    assert ApprovalGate(with_pattern, approval_roles=("reviewer",)).resolve(ACTION_HASH) == pattern
 
-    assert gate.resolve(ACTION_HASH) == pattern
+    only_action = tmp_root / "only-action"
+    unrelated = approval_file(
+        only_action / "a-unrelated.json", action_hash="sha256:" + "a" * 64, action_id="other:0:xyz"
+    )
+
+    # 返回它**不等于**授权：verify 会按 action_id / action_hash 逐位比对后拒绝（见 security 套件）。
+    assert ApprovalGate(only_action, approval_roles=("reviewer",)).resolve(ACTION_HASH) == unrelated
 
 
 def test_approval_use_is_bounded_by_max_approval_uses(tmp_root) -> None:
