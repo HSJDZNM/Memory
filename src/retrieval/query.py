@@ -67,10 +67,23 @@ def normalize_query_text(raw: Optional[str], *, max_chars: int) -> Tuple[str, bo
 def tokenize(text: str) -> Tuple[str, ...]:
     """把文本切成受控词项：ASCII 词 + 中日韩词组（词组按整段保留，索引侧逐字切分）。"""
 
+    return _tokenize_with_stats(text)[0]
+
+
+def _tokenize_with_stats(text: str) -> Tuple[Tuple[str, ...], bool]:
+    """分词并报告有没有丢东西：有超长词项被丢弃时返回 dropped=True。
+
+    这个信号必须能传到 QueryPlan.truncated：一段没有空格的中文粘贴在 FTS 侧就是一个
+    超长 token，整条查询可能因此**一个词都不剩**；此时 truncated=False 会让调用方以为
+    "这条查询被完整地搜过了"，而实际上它什么都没搜。
+    """
+
     terms: list[str] = []
+    dropped = False
     for match in _TOKEN_RE.finditer(text):
         token = match.group(0)
         if len(token) > MAX_TOKEN_CHARS:
+            dropped = True
             continue
         if token.isascii():
             token = token.lower()
@@ -79,7 +92,7 @@ def tokenize(text: str) -> Tuple[str, ...]:
                 continue
         if token not in terms:
             terms.append(token)
-    return tuple(terms)
+    return tuple(terms), dropped
 
 
 def fts_phrase(term: str) -> str:
@@ -135,7 +148,7 @@ def build_plan(
     raw_text = query.text if text is None else text
     normalized, text_truncated = normalize_query_text(raw_text, max_chars=policy.max_query_chars)
 
-    text_terms = tokenize(normalized)
+    text_terms, text_dropped = _tokenize_with_stats(normalized)
     expanded = lexicon.expand(normalized) if lexicon is not None else ()
     structural = _structural_terms(query)
 
@@ -143,7 +156,8 @@ def build_plan(
     for term in (*text_terms, *expanded, *structural):
         if term and term not in ordered:
             ordered.append(term)
-    truncated = text_truncated
+    # 字符截断、超长词项被丢弃、词项数超上限——三种"这次搜索比原始请求窄"都要记 truncated。
+    truncated = text_truncated or text_dropped
     if len(ordered) > policy.max_query_terms:
         ordered = ordered[: policy.max_query_terms]
         truncated = True
