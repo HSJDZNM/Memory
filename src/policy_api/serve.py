@@ -80,6 +80,11 @@ def serve(
             for item in tenant.get("checks", ()):
                 if not item.get("ok"):
                     print(f"  - {tenant.get('tenant')} / {item.get('check')}: {item.get('detail')}")
+        # **装配失败**的租户不在 `tenants` 里（那份列表只含装配成功的），它们的失败原因住在
+        # `assembly_errors`：不打印出来，运维只看到"部分租户不可服务：beta"却查不到原因
+        # （而"某个租户装不上"正是必须被看见的事实——readiness 的 docstring 就是这么写的）。
+        for tenant_id, reason in sorted(report.get("assembly_errors", {}).items()):
+            print(f"  - {tenant_id} / assembly: {reason}")
         return 3
     try:
         # 用 **instance 自己的 config**：注入了 runtime 时，真正在服务的是它，

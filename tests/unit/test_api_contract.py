@@ -1202,6 +1202,27 @@ def test_endpoint_parses_the_documented_forms() -> None:
     assert endpoint(SimpleNamespace(base_url="http://[::1]")) == ("::1", 8088)
 
 
+def test_serve_prints_assembly_failures(tmp_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """装配失败的租户也要被打印出来：只报"未通过"而不给原因是查不下去的。
+
+    历史缺陷（medium 台账 M1，serve.py:56）：打印循环只遍历 `tenants`，而那份列表只含
+    **装配成功**的租户——装配失败的租户只进了 `assembly_errors`，运维看到 detail 里的租户名
+    却在下面找不到任何一行原因。
+    """
+
+    import shutil
+
+    config_path, anchor = isolated_api(tmp_root)
+    shutil.rmtree(tmp_root / "project")  # 让两个租户都在装配期失败（project_root 不存在）
+
+    assert serve(config_path, root=anchor) == 3
+
+    printed = capsys.readouterr().out
+    assert "readiness 未通过" in printed
+    assert "/ assembly:" in printed, "装配失败的原因没有被打印：" + printed
+    assert "project_root" in printed
+
+
 def test_serve_binds_the_address_of_the_runtime_it_was_given(
     tmp_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
