@@ -2335,8 +2335,16 @@ def origin_line(origin: Origin, *, project_root: Optional[Path] = None) -> str:
     绝对路径不开例外（AGENTS 第 16 条，2026-09-29 裁定）：observation.result / object.value /
     object.source 里的真机原文可能带绝对路径（实测：`--config <绝对路径>` 会整串出现在
     object.source 与 observation.result 里）。**脱敏在 json.dumps 之前**做，载荷的键集合因此
-    一字不变（跨语言`payload_is_well_formed` 只校验形状与取值闭集）。
-    脱敏只处理字符串，不引入新的失败模式：它不改变 reason_code / exit_code。
+    一字不变：跨语言的 `provenance.origin.payload_is_well_formed` 要求键集合**恰好**是契约
+    形状，并且 owner / object.value / object.source / observation.result /
+    observation.verified_at 都是**非空字符串**——这一条后来收紧成与 `Origin.__post_init__`
+    同口径（此前它只看形状与取值闭集）。
+    脱敏只替换字符串里的片段（绝对路径 → `<abs>` / `<repo>`、凭据 → `<redacted>`、超长截断），
+    不删键、也不把非空字符串变成空串；JS 侧 `buildOrigin` 对这几个字段各有非空兜底
+    （`platform.attribution` / `unknown` / `没有可读的取证结果` / `new Date().toISOString()`），
+    两侧在"空值 / null"上同结论——由 tests/contract/test_policy_hook_chain.py 的跨语言用例
+    （真 node 驱动真插件 + 真 Python 校验器）钉住。
+    脱敏不引入新的失败模式：它不改变 reason_code / exit_code。
     """
 
     payload = _sanitized(origin.to_payload(), project_root=project_root)
