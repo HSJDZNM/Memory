@@ -482,8 +482,17 @@ def load_declaration(path: Path | str) -> Tuple[str, ...]:
     target = Path(path)
     if not target.is_file():
         raise UnprovableError(f"声明文件不存在：{target}")
+    try:
+        text = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        # is_file() 与 read 之间文件可能被删 / 改权限，也可能不是 UTF-8：这些都必须落
+        # UnprovableError——调用方按文档只认它（"证明不了"，退出码 3），裸 OSError /
+        # UnicodeDecodeError 会被当成别的东西，而这条路径正是"读不到声明"的那一条。
+        raise UnprovableError(
+            f"声明文件读不出来：{target}（{type(error).__name__}: {error}）"
+        ) from error
     entries: list[str] = []
-    for raw in target.read_text(encoding="utf-8").splitlines():
+    for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue

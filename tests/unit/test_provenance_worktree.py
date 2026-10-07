@@ -97,6 +97,32 @@ def test_referenced_inputs_digest_refuses_empty_and_unmatched(tmp_root: Path) ->
         worktree.referenced_inputs_digest(tree, ["missing/**/*.py"])
 
 
+def test_load_declaration_wraps_read_failures(tmp_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """is_file() 之后的读失败必须落 UnprovableError，而不是裸 OSError/UnicodeDecodeError。"""
+
+    bad_encoding = tmp_root / "not-utf8.txt"
+    bad_encoding.write_bytes(b"\xff\xfe\x00 not utf-8")
+    with pytest.raises(worktree.UnprovableError):
+        worktree.load_declaration(bad_encoding)
+
+    unreadable = tmp_root / "declaration.txt"
+    unreadable.write_text("pkg/*.py" + chr(10), encoding="utf-8")
+    real_read = Path.read_text
+
+    def denied(self, *args, **kwargs):
+        if self.name == "declaration.txt":
+            raise PermissionError(13, "Permission denied")
+        return real_read(self, *args, **kwargs)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(Path, "read_text", denied)
+        with pytest.raises(worktree.UnprovableError):
+            worktree.load_declaration(unreadable)
+
+    # 对照：正常文件照常解析。
+    assert worktree.load_declaration(unreadable) == ("pkg/*.py",)
+
+
 def test_a_declaration_matching_only_excluded_files_is_unprovable(tmp_root: Path) -> None:
     """声明只命中被排除的文件时必须 unprovable，而不是"覆盖 0 个文件"的封条（复核发现）。
 
