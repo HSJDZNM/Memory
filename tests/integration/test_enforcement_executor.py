@@ -20,13 +20,17 @@ from enforcement.executor import ControlledExecutor, summarise_chain
 from enforcement.ledger import EnforcementLedger
 from enforcement.models import (
     AuditStage,
+    CheckStatus,
     Decision,
+    DriverKind,
+    ExecutionRecord,
     GrantError,
     ExecutionStatus,
     FinalOutcome,
     LedgerError,
     PostStatus,
     ReasonCode,
+    RiskLevel,
     RollbackMode,
     RollbackOutcome,
     utc_now,
@@ -212,6 +216,60 @@ def test_block_never_calls_the_driver(enforcement_paths):
     assert outcome.record.status is ExecutionStatus.REFUSED
     assert outcome.final.outcome is FinalOutcome.BLOCKED
     assert spies["exec.process"].calls == 0
+
+
+def test_a_target_outside_the_workspace_is_recorded_as_missing_evidence(enforcement_paths):
+    """路径逃出工作区时取证拒绝，但异常不能抛穿事后链路。
+
+    _file_effect 对越界目标抛 ValueError，而 collect_evidence 的两个调用方（executor 与
+    dsh 适配器）都没有包装：一次"已经执行过"的动作会连 PostDecision 与审计记录都不剩。
+    现在它记成"没有收集到文件证据"，由 validate 判成非 VALIDATED。
+    """
+
+    registry = enforcement_paths.registry_object()
+    spec = registry.tool("fs.edit")
+    request = make_action(registry, enforcement_paths, "fs.edit", edit_params())
+    # 等价于"绕过归一化的外部请求"：把 file_path 改成逃出工作区的相对路径。
+    tampered = request.model_copy(
+        update={
+            "params": tuple(
+                item.model_copy(update={"value": "../outside.py"})
+                if item.name == "file_path"
+                else item
+                for item in request.params
+            )
+        }
+    )
+    record = ExecutionRecord(
+        action_id=tampered.action_id,
+        request_id=tampered.request_id,
+        trace_id=tampered.trace_id,
+        action_hash=tampered.action_hash,
+        tool_id=tampered.tool_id,
+        risk=RiskLevel.REVERSIBLE_WRITE,
+        status=ExecutionStatus.EXECUTED,
+        reason_code=ReasonCode.ALLOW,
+        driver=DriverKind.FILE_EDIT,
+        duration_ms=1,
+        started_at=utc_now(),
+        finished_at=utc_now(),
+    )
+
+    baselines = baseline_files(tampered, spec, workspace=enforcement_paths.workspace)
+    evidence = collect_evidence(
+        tampered, spec, record, workspace=enforcement_paths.workspace, baselines=baselines
+    )
+    post, evidence = validate(
+        tampered, spec, record, evidence, workspace=enforcement_paths.workspace
+    )
+
+    assert evidence.files == (), "工作区外的目标不该被取证"
+    assert post.status is not PostStatus.VALIDATED
+    missing = [item for item in post.checks if item.status is CheckStatus.FAILED]
+    assert missing, post.checks
+    assert any("没有收集到文件证据" in item.detail for item in missing), [
+        item.detail for item in missing
+    ]
 
 
 def test_unknown_protocol_version_is_refused_on_every_envelope(enforcement_paths):

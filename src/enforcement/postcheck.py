@@ -186,9 +186,18 @@ def collect_evidence(
             if snapshot is not None and snapshot.path == relative and snapshot.existed:
                 # 平台自己执行时，变更前文本来自执行器保存的快照（永远不会是编造的）。
                 before_text = snapshot.content.decode("utf-8", "replace")
-            files.append(
-                _file_effect(relative, baseline, workspace=workspace, before_text=before_text)
-            )
+            try:
+                effect = _file_effect(
+                    relative, baseline, workspace=workspace, before_text=before_text
+                )
+            except ValueError:
+                # 目标逃出工作区：取证**拒绝**去 stat 工作区外的路径（_file_effect 的判据），
+                # 但异常不能抛穿事后链路——本函数的契约是"只记录、不判断"，抛出去会让
+                # 已经执行过的动作连 PostDecision 与审计记录都不剩。这里记成"没有收集到
+                # 文件证据"，由 validate 判成需要修复（确定性失败），失败关闭且结构化。
+                pass
+            else:
+                files.append(effect)
 
     process = None
     if spec.effect.value == "process" or record.exit_code is not None or record.timed_out:
@@ -347,7 +356,11 @@ def _run_post_check(
         target = file_target(request)
         effect = evidence.file(target) if target else None
         if effect is None:
-            return _outcome(name, False, "没有收集到文件证据：目标路径缺失或工作区未声明")
+            return _outcome(
+                name,
+                False,
+                "没有收集到文件证据：目标路径缺失 / 工作区未声明 / 目标逃出工作区被拒绝取证",
+            )
         if not effect.baseline_recorded:
             # 没有执行前基线时的"变了"是猜测，不是证据：宁可判需要修复。
             return _outcome(name, False, "缺少执行前基线：无法证明这次动作产生了什么效果")
