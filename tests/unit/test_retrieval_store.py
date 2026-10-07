@@ -67,6 +67,51 @@ def seeded_store() -> ChunkStore:
     return store
 
 
+def test_store_mutations_bump_the_generation_by_themselves() -> None:
+    """改变可检索内容的操作必须自己递增 generation（缓存键随之失效）（复核发现）。"""
+
+    store = seeded_store()
+    try:
+        chunk = store.chunk("chunk_a")
+        assert chunk is not None
+
+        before = store.index_version
+        store.quarantine(
+            "chunk_a",
+            reason="测试隔离",
+            text_hash=chunk.text_hash,
+            quarantined_at="2026-01-01T00:00:00Z",
+            document_id="doc_a",
+            origin=QuarantineOrigin.RUNTIME,
+        )
+        quarantined = store.index_version
+        assert quarantined != before
+
+        assert store.release_quarantine("chunk_a") is True
+        released = store.index_version
+        assert released != quarantined
+
+        store.replace_chunks("doc_a", (make_draft("chunk_c", "gamma body"),))
+        replaced = store.index_version
+        assert replaced != released
+
+        # 内容真的没变（同一批 chunk 再写一次）：可检索内容不变，键也不必换。
+        store.replace_chunks("doc_a", (make_draft("chunk_c", "gamma body"),))
+        assert store.index_version == replaced
+
+        store.store_embedding(
+            chunk_id="chunk_c", model="m", vector=b"\x00\x00\x00\x00", dim=1,
+            embedded_at="2026-01-01T00:00:00Z",
+        )
+        embedded = store.index_version
+        assert embedded != replaced
+
+        assert store.delete_document("doc_a") == 1
+        assert store.index_version != embedded
+    finally:
+        store.close()
+
+
 def test_transaction_control_statements_follow_the_store_error_contract(monkeypatch) -> None:
     """BEGIN / COMMIT / ROLLBACK 失败必须落 StoreError，且不许盖掉原始异常（复核发现）。"""
 

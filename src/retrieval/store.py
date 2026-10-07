@@ -503,7 +503,9 @@ class ChunkStore:
                 document_id = str(row["document_id"])
                 self._delete_document(document_id)
                 removed.append(document_id)
-            return tuple(sorted(removed))
+        if removed:
+            self.bump_generation()
+        return tuple(sorted(removed))
 
     def delete_document(self, document_id: str) -> int:
         document = self.document(document_id)
@@ -511,6 +513,7 @@ class ChunkStore:
             return 0
         count = len(self.chunks(document_id))
         self._delete_document(document_id)
+        self.bump_generation()
         return count
 
     def _delete_document(self, document_id: str) -> None:
@@ -588,12 +591,17 @@ class ChunkStore:
                     self._delete_chunk(chunk_id)
                     removed.append(chunk_id)
 
-            return ChunkChange(
+            change = ChunkChange(
                 created=tuple(sorted(created)),
                 updated=tuple(sorted(updated)),
                 unchanged=tuple(sorted(unchanged)),
                 removed=tuple(sorted(removed)),
             )
+        if change.changed or change.removed:
+            # 改变可检索内容的操作自己递增 generation：不能指望每个调用方记得
+            # （缓存键 = schema + generation + 输入指纹，漏掉一次就会回放旧视图）。
+            self.bump_generation()
+        return change
 
     def _update_ordinal(self, chunk_id: str, ordinal: int) -> None:
         self._execute("UPDATE chunks SET ordinal = ? WHERE chunk_id = ?", (ordinal, chunk_id))
@@ -792,6 +800,7 @@ class ChunkStore:
             )
             self._execute("DELETE FROM chunks_fts WHERE chunk_id = ?", (chunk_id,))
             self._execute("UPDATE chunks SET quarantined = 1 WHERE chunk_id = ?", (chunk_id,))
+        self.bump_generation()
         return QuarantinedChunk(
             chunk_id=chunk_id,
             document_id=document_id,
@@ -815,7 +824,8 @@ class ChunkStore:
             if chunk is not None:
                 self._execute("UPDATE chunks SET quarantined = 0 WHERE chunk_id = ?", (chunk_id,))
                 self._index_chunk_fts(chunk_id, chunk.text, chunk.heading_path)
-            return True
+        self.bump_generation()
+        return True
 
     def quarantined(self) -> Tuple[QuarantinedChunk, ...]:
         rows = self._execute(
@@ -1042,6 +1052,7 @@ class ChunkStore:
 
     def store_embedding(self, *, chunk_id: str, model: str, vector: bytes, dim: int,
                         embedded_at: str) -> None:
+        # 向量也改变"可检索内容"（向量检索的结果会变）：写入后递增 generation。
         self._execute(
             "INSERT INTO chunk_embeddings(chunk_id, model, dim, vector, embedded_at) "
             "VALUES (?,?,?,?,?) ON CONFLICT(chunk_id) DO UPDATE SET "
@@ -1049,6 +1060,7 @@ class ChunkStore:
             "embedded_at=excluded.embedded_at",
             (chunk_id, model, dim, vector, embedded_at),
         )
+        self.bump_generation()
 
     def embeddings(self, *, model: str) -> Tuple[Tuple[str, Tuple[float, ...]], ...]:
         stored = self._execute(
