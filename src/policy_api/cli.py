@@ -97,6 +97,12 @@ def _load(args: argparse.Namespace) -> tuple[Path, Path, ApiConfig]:
 def run(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "clients" and args.hash:
+        # 这条路径只读 stdin 算 sha256（见 _clients_hash 的 docstring），与部署配置无关。
+        # 以前它在 _load 之后才被分派：配置缺失、不可读或**配置里写了明文令牌**时都以
+        # 退出码 2 失败——而 config.py 拒绝明文令牌时给出的补救指引恰恰就是这条命令，
+        # 等于把唯一的补救路径堵死（用户被指向一个同样跑不起来的入口）。
+        return _clients_hash(args)
     try:
         root, path, config = _load(args)
     except ConfigError as error:
@@ -123,18 +129,22 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     return _self_check(args, config, root)
 
 
+def _clients_hash(args: argparse.Namespace) -> int:
+    """从 stdin 读一个令牌并输出 sha256（**不碰部署配置**：见 run() 里的说明）。"""
+
+    token = sys.stdin.readline().strip()
+    if not token:
+        print("policy-api: 需要从 stdin 读到一个非空令牌", file=sys.stderr)
+        return EXIT_ERROR
+    digest = hash_token(token)
+    if args.json:
+        print(json.dumps({"token_sha256": digest}, ensure_ascii=False))
+    else:
+        print(digest)
+    return EXIT_OK
+
+
 def _clients(args: argparse.Namespace, config: ApiConfig) -> int:
-    if args.hash:
-        token = sys.stdin.readline().strip()
-        if not token:
-            print("policy-api: 需要从 stdin 读到一个非空令牌", file=sys.stderr)
-            return EXIT_ERROR
-        digest = hash_token(token)
-        if args.json:
-            print(json.dumps({"token_sha256": digest}, ensure_ascii=False))
-        else:
-            print(digest)
-        return EXIT_OK
     rows = [
         {
             "client_id": client.client_id,

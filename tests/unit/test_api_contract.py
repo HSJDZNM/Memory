@@ -16,6 +16,7 @@ import http.client
 import io
 import json
 import os
+import sys
 import time
 import urllib.error
 from pathlib import Path
@@ -776,6 +777,30 @@ def test_a_missing_raw_body_on_a_body_route_is_rejected_not_substituted() -> Non
 
 
 # --------------------------------------------------------------------------- CLI 用法
+
+
+def test_clients_hash_runs_without_a_usable_config(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`clients --hash` 只读 stdin：不该要求部署配置存在或合法。
+
+    历史缺陷（medium 台账 M1，cli.py:100）：`run()` 在分派任何子命令之前无条件 `_load`，
+    于是"给令牌算 sha256"这个与部署无关的小工具在配置缺失 / 不可读 / **配置里写了明文
+    令牌**时都以退出码 2 失败——而 config.py 拒绝明文令牌时给出的补救指引恰恰就是这条
+    命令，唯一的补救路径被自己堵死。
+    """
+
+    from policy_api import cli
+    from policy_api.config import hash_token
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO("alpha-secret-token" + chr(10)))
+    missing = tmp_root / "definitely-absent.yaml"
+
+    assert cli.run(["--config", str(missing), "clients", "--hash"]) == cli.EXIT_OK
+    assert capsys.readouterr().out.strip() == hash_token("alpha-secret-token")
+
+    # 对照：同一份缺失配置下，**需要配置**的子命令仍然是退出码 2（这条路径没有被放宽）
+    assert cli.run(["--config", str(missing), "clients"]) == cli.EXIT_ERROR
 
 
 def test_openapi_write_and_check_together_are_refused_without_touching_the_snapshot() -> None:
