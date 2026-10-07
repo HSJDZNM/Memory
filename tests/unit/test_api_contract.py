@@ -400,6 +400,36 @@ def test_load_api_config_requires_an_explicit_root(tmp_root: Path) -> None:
     assert config.service_root == str(REPO_ROOT)
 
 
+def test_a_timeout_is_counted_once(tmp_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """超时只许计一次：raise 点与错误码出口各计一次 = 真实值的两倍。
+
+    历史缺陷（medium 台账 M1，runtime.py:390）：三条路由预算耗尽时都先
+    `self.metrics.count_timeout()` 再抛 `*_TIMEOUT`，而 `handle` 的 `except ApiError`
+    又按错误码计一次——`metrics.timeouts` 因此是真实值的两倍。
+    """
+
+    from policy_api.errors import ApiError, ErrorCode
+
+    config_path, anchor = isolated_api(tmp_root)
+    runtime = ApiRuntime(load_api_config(config_path, root=anchor), root=anchor)
+
+    def timing_out(*args: object, **kwargs: object) -> object:
+        raise ApiError(ErrorCode.EVALUATE_TIMEOUT, "预算耗尽（用例构造）", retryable=True)
+
+    monkeypatch.setattr(runtime, "_dispatch", timing_out)
+    payload = {
+        "api_version": "1.0",
+        "request_id": "it-timeout-1",
+        "tenant": "alpha",
+        "principal": {"subject": "alice", "roles": ["developer"]},
+        "context": {"file": "src/shop/order_service.py", "layer": "service", "language": "python"},
+    }
+    response = runtime.handle("evaluate", payload, authorization=f"Bearer {TOKEN}")
+
+    assert response.status == 504
+    assert runtime.metrics.to_payload()["timeouts"] == 1
+
+
 def test_duplicate_client_id_is_rejected(tmp_root: Path) -> None:
     """两个客户端共用一个 `client_id` 必须在加载期拒绝。
 

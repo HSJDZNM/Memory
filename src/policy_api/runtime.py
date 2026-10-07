@@ -390,6 +390,9 @@ class ApiRuntime:
                 ErrorCode.RETRIEVE_TIMEOUT,
                 ErrorCode.VALIDATE_TIMEOUT,
             ):
+                # **超时只在这里计一次**：三条路由的预算耗尽时都在这里以错误码收敛，
+                # 在 raise 点再计一遍就是同一件事两处表达——实测每个超时被记了 2 次，
+                # 指标里的 timeouts 因此是真实值的两倍。
                 self.metrics.count_timeout()
             if error.code is ErrorCode.REQUEST_BUDGET_EXCEEDED:
                 self.metrics.count_budget_exceeded()
@@ -539,7 +542,6 @@ class ApiRuntime:
 
         result, elapsed = run_with_budget(work, budget_ms=budget_ms, clock=self.clock)
         if result is None:
-            self.metrics.count_timeout()
             raise ApiError(
                 ErrorCode.EVALUATE_TIMEOUT,
                 f"策略判定超出预算 {budget_ms}ms；未给出结论（不伪造 allow）",
@@ -660,7 +662,6 @@ class ApiRuntime:
 
         outcome, elapsed = run_with_budget(work, budget_ms=budget_ms, clock=self.clock)
         if outcome is None:
-            self.metrics.count_timeout()
             raise ApiError(
                 ErrorCode.RETRIEVE_TIMEOUT,
                 f"检索超出预算 {budget_ms}ms；未返回片段（不回退到模型记忆）",
@@ -781,7 +782,6 @@ class ApiRuntime:
 
         report, elapsed = run_with_budget(work, budget_ms=budget_ms, clock=self.clock)
         if report is None:
-            self.metrics.count_timeout()
             raise ApiError(
                 ErrorCode.VALIDATE_TIMEOUT,
                 f"验证器流水线超出预算 {budget_ms}ms；未产出证据（不把缺失当通过）",
