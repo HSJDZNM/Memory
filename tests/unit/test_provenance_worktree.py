@@ -31,6 +31,22 @@ def _fail_reading(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     monkeypatch.setattr(worktree, "_read_bytes", reader)
 
 
+def test_glob_compilation_is_cached() -> None:
+    """glob→正则的构造必须缓存：它是遍历与命中判据的主路径（复核发现）。"""
+
+    worktree._compile.cache_clear()
+    worktree._compile("**/*.py")
+    assert worktree._compile.cache_info().misses == 1
+    worktree._compile("**/*.py")
+    info = worktree._compile.cache_info()
+    assert (info.misses, info.hits) == (1, 1)
+
+    # 行为不变：同一套 glob 语义照常生效。
+    assert worktree._matches("**/*.py", "pkg/one.py")
+    assert worktree._matches("**/*.py", "one.py")
+    assert not worktree._matches("pkg/*.py", "top.py")
+
+
 def test_tree_digest_is_stable_and_content_sensitive(tmp_root: Path) -> None:
     tree = _tree(tmp_root)
     first = worktree.tree_digest(tree)

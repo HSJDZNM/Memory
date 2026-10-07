@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import os
 import re
@@ -110,6 +111,10 @@ class Digest:
         return {"name": self.name, "sha256": self.sha256, "files": self.files, "bytes": self.bytes}
 
 
+# glob→正则的构造是纯函数、返回值不可变：按 pattern 缓存。`re` 只缓存 compile 之后的
+# pattern，**不缓存这一步的逐字符字符串构造**，而它是遍历与命中判据的主路径（每个目录、
+# 每个文件、每条声明都要走一遍，同一批 pattern 反复重建）。
+@functools.lru_cache(maxsize=None)
 def _compile(pattern: str) -> "re.Pattern[str]":
     """glob → 正则：`**/` 匹配零个或多个目录，`**` 跨目录，`*` 只在单段内，`?` 单字符。"""
 
