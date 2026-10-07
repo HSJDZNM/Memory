@@ -773,3 +773,38 @@ def test_the_wiring_scope_tree_ref_is_a_pointer_not_a_glob() -> None:
             assert not ref.startswith("/") and ".." not in ref.split("/"), (entry["id"], ref)
         # governs_tree=self 时不写指针（合约：只放指针）
         assert entry.get("governs_tree") == "other", (entry["id"], ref)
+
+
+# --------------------------------------------------------------------------- 公共装配
+
+
+def test_a_genuine_typeerror_is_not_read_as_a_missing_workspace_parameter() -> None:
+    """`_build_event` 是否支持 workspace 按**签名**判断，不按异常文案。
+
+    旧写法 catch TypeError 之后判 `"workspace" in str(error)`：一个恰好提到 workspace 的
+    真 TypeError 会被当成「子类不支持该参数」，事件被**丢掉工作区重建一次**（路径改按配置
+    默认值归一化——正是那段注释警告的降级），而且 `_build_event` 会被跑第二遍。
+    """
+
+    from adapters.loader import load_adapter
+
+    base_adapter = load_adapter("generic-json", root=REPO_ROOT)
+    calls: list[int] = []
+
+    class Boom(type(base_adapter)):
+        def _build_event(self, raw_event):  # 不接收 workspace：签名是唯一判据
+            calls.append(len(calls) + 1)
+            raise TypeError("workspace 解析失败：这条文案不该被当成能力判据")
+
+    boom = Boom(
+        manifest=base_adapter.manifest,
+        config=base_adapter.config,
+        config_path="<memory>",
+        base_dir=REPO_ROOT,
+    )
+
+    with pytest.raises(TypeError) as error:
+        boom.to_policy_event({"schema_version": "1.0"}, workspace=REPO_ROOT)
+
+    assert "workspace 解析失败" in str(error.value)
+    assert calls == [1], "同一个异常不许触发第二次 _build_event（副作用会重复）"

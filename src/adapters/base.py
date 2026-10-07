@@ -22,6 +22,7 @@ Phase 6 的统一接口（计划 §统一接口）：
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import re
 from dataclasses import dataclass
@@ -466,11 +467,18 @@ class Adapter:
         # 子类可以选择接收 workspace：钩子类 Agent 的原始路径需要在构造事件时
         # 就按"本次判定的工作区"解析（否则一条路径会先按配置默认值被规范化，
         # 逃逸就变成了静默的"相对路径"）。不支持该参数的子类保持原签名。
-        try:
-            event = self._build_event(raw_event, workspace=workspace)  # type: ignore[call-arg]
-        except TypeError as error:
-            if "workspace" not in str(error):
-                raise
+        #
+        # 支持与否看**签名**，不看异常文案：旧写法 catch TypeError 之后判 "workspace" in str(error)，
+        # 于是一个恰好提到 workspace 的真 TypeError 会被当成"子类不支持该参数"——事件被**丢掉
+        # 工作区重建一次**（路径改按配置默认值归一化，正是上面警告的那种降级），而且 _build_event
+        # 被跑第二遍（副作用重复）。`**kwargs` 的签名同样算支持。
+        parameters = inspect.signature(self._build_event).parameters
+        accepts_workspace = "workspace" in parameters or any(
+            item.kind is inspect.Parameter.VAR_KEYWORD for item in parameters.values()
+        )
+        if accepts_workspace:
+            event = self._build_event(raw_event, workspace=workspace)
+        else:
             event = self._build_event(raw_event)
         if not isinstance(event, AgentEvent):
             raise AdapterEventError(
