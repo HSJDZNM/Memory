@@ -69,6 +69,7 @@ from orchestration.models import (
     canonical_digest,
     empty_state,
 )
+from orchestration.client import _is_relative
 from orchestration.nodes import Change
 
 from orchestration_support import (
@@ -698,6 +699,39 @@ def test_ordinary_free_text_still_enters_the_state() -> None:
     assert ViolationRef(
         rule_id="ARCH-001", rule_version=1, severity="error", message="Controller 不得直接访问 Repository。"
     ).message.startswith("Controller")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "/abs/x.py",
+        "~/x.py",
+        "..\\x.py",
+        "C:\\x.py",
+        "\\\\server\\share\\x.py",
+        "src/%2e%2e/secret.py",
+        "src//x.py",
+        "../x.py",
+        "src/../../x.py",
+    ],
+)
+def test_client_rejects_anything_that_is_not_a_state_relative_path(value: str) -> None:
+    """进状态的外部路径只收"状态模型也认"的仓库相对路径（两套口径必然漂移）。
+
+    旧判据只看前导 / 与 ~、再按 / 切一层 ..：Windows 形态（反斜杠、盘符、UNC）与百分号编码的
+    穿越都能进状态，而同一个值交给状态模型就会被拒——客户端的"挑得进来"与模型的"收得下来"
+    是两条规则，于是坏值在中间那一段里活着。
+    """
+
+    assert _is_relative(value) is False
+
+
+@pytest.mark.parametrize("value", ["src/order/controller.py", "docs/x.md", "src/a%20b.py", "a.b"])
+def test_client_accepts_plain_relative_paths(value: str) -> None:
+    """反向不变量：普通相对路径照旧收（带一个百分号编码的空格不该被误伤）。"""
+
+    assert _is_relative(value) is True
 
 
 def test_distinct_task_ids_never_share_a_checkpoint_file(tmp_root) -> None:

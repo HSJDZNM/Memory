@@ -58,6 +58,7 @@ from .models import (
     ValidationSummary,
     ViolationRef,
     decision_reason,
+    is_relative_state_path,
 )
 
 __all__ = [
@@ -418,9 +419,19 @@ def _parse_validation(payload: Mapping[str, Any]) -> ValidationResult:
 
 
 def _is_relative(value: str) -> bool:
-    """状态里只允许仓库相对路径：绝对路径、`~` 与 `..` 一律不进状态。"""
+    """状态里只允许仓库相对路径——按**状态模型自己的口径**判，不另写一套。
 
-    return bool(value) and not value.startswith(("/", "~")) and ".." not in value.split("/")
+    旧实现只看前导 `/`、`~` 与按 `/` 切的 `..`：Windows 形态（反斜杠分隔的 `..`、盘符 `C:`、UNC）
+    与百分号编码的 `%2e%2e` 都能进状态，而同一个值一旦交给状态模型就会被拒——两套口径必然漂移。
+    现在直接问 is_relative_state_path（与 ContextRef.source_path 的校验逐条同源）；
+    百分号编码另外再判一次**解码后**的形态：下游消费方会不会解码不由我们决定，
+    两种形态都合法才收。
+    """
+
+    if not value or not is_relative_state_path(value):
+        return False
+    decoded = urllib.parse.unquote(value)
+    return decoded == value or is_relative_state_path(decoded)
 
 
 def _check_trace(expected: Optional[str], received: Optional[str]) -> Optional[str]:
@@ -645,7 +656,8 @@ class ApiPolicyClient:
         contexts: list[ContextRef] = []
         for item in snippets:
             source = str(item.get("source_path", ""))
-            if not source or source.startswith(("/", "~")) or ".." in source.split("/"):
+            # 与 _violations_from 同一判据（同一条"什么能进状态"的规则，不各写一份）。
+            if not _is_relative(source):
                 continue
             contexts.append(
                 ContextRef(

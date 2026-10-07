@@ -47,6 +47,7 @@ __all__ = [
     "ValidationSummary",
     "ViolationRef",
     "canonical_digest",
+    "is_relative_state_path",
     "empty_state",
 ]
 
@@ -90,6 +91,22 @@ def _relative_path(value: str) -> str:
     if any(part in ("", ".", "..") for part in parts):
         raise ValueError("路径不得包含空段、. 或 ..")
     return value
+
+
+def is_relative_state_path(value: Any) -> bool:
+    """这个值能不能作为**状态里的**仓库相对路径（与 _relative_path 逐条同口径）。
+
+    给"过滤外部载荷"的地方用（例如编排客户端从平台响应里挑 source_path）：
+    它们需要的是"能不能进状态"这一个判断，而不是自己再写一套更松的规则——
+    两套口径必然漂移（实测过：松的那套放 Windows 形态与百分号编码进状态，
+    而同一个值交给状态模型就会被拒）。
+    """
+
+    try:
+        _relative_path(value)
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _short_text(value: str, *, limit: int = _MAX_TEXT) -> str:
