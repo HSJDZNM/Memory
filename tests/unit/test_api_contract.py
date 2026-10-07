@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import os
@@ -440,6 +441,33 @@ def test_idempotency_ledger_with_zero_ttl_never_expires(tmp_root: Path) -> None:
     hit = ledger.lookup(**lookup, digest="d1")
     assert hit is not None and hit.body == {"decision": "allow"}
     assert IdempotencyLedger(path, ttl_seconds=900).lookup(**lookup, digest="d1") is None
+
+
+def test_idempotency_expiry_always_carries_microseconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """过期时间**总是**带小数秒：整秒写入的条目不能被自己判成过期。
+
+    历史缺陷（OCR 全量审查 L10）：`isoformat()` 在微秒恰为 0 时省略小数部分
+    （真实时钟每天都会经过这种时刻），而 `_fresh` 按 "%Y-%m-%dT%H:%M:%S.%fZ" 解析——
+    于是这个条目被判成"读不懂 = 已过期"、删掉、重新判定一次，幂等保证失效
+    （修复前实测：expires_at='2026-10-08T00:15:00Z'、_fresh=False、lookup=None、台账剩 0 条）。
+    """
+
+    from policy_api import idempotency
+
+    fixed = datetime.datetime(2026, 10, 8, 0, 0, 0, 0, tzinfo=datetime.timezone.utc)
+    monkeypatch.setattr(idempotency, "_utc_now", lambda: fixed)
+
+    ledger = IdempotencyLedger(None, ttl_seconds=900)
+    lookup = dict(client_id="alpha-client", api_version="1.0", route="evaluate", key="k1")
+    ledger.record(**lookup, digest="d1", status=200, body={"decision": "allow"})
+
+    stored = ledger.entries()["alpha-client|1.0|evaluate|k1"]
+    assert stored["expires_at"] == "2026-10-08T00:15:00.000000Z"
+    hit = ledger.lookup(**lookup, digest="d1")
+    assert hit is not None, "TTL 内的条目被判成过期：幂等保证失效"
+    assert hit.body == {"decision": "allow"}
 
 
 def test_idempotency_ledger_fails_closed_on_corrupted_file(tmp_root: Path) -> None:

@@ -285,8 +285,11 @@ class IdempotencyLedger:
             "status": int(status),
             "body": stored_body,
             "recorded_at": _utc_now().isoformat().replace("+00:00", "Z"),
+            # timespec 必须写死：`isoformat()` 在微秒恰为 0 时**省略小数部分**，
+            # 而 `_fresh` 按 "%Y-%m-%dT%H:%M:%S.%fZ" 解析——整秒写入的条目会被判成
+            # "读不懂 = 已过期"，于是同一个 key 重新判定一次，幂等保证在那一刻失效。
             "expires_at": (_utc_now() + datetime.timedelta(seconds=self.ttl_seconds))
-            .isoformat()
+            .isoformat(timespec="microseconds")
             .replace("+00:00", "Z"),
         }
         with self._guard():
