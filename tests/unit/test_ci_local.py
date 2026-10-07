@@ -22,6 +22,63 @@ def _load_ci_local():
     return module
 
 
+def _git_repo(tmp_root: Path) -> Path:
+    """一个真的 git 仓库：重命名与非 ASCII 路径的 porcelain 形态只有 git 说了算。"""
+
+    import subprocess as _subprocess
+
+    repo = tmp_root / "repo"
+    repo.mkdir()
+
+    def git(*arguments: str) -> None:
+        _subprocess.run(
+            ["git", *arguments], cwd=repo, capture_output=True, text=True,
+            encoding="utf-8", check=True,
+        )
+
+    git("init", "-q")
+    git("config", "user.email", "probe@example.invalid")
+    git("config", "user.name", "probe")
+    (repo / "移动我.md").write_text("x" + chr(10), encoding="utf-8", newline=chr(10))
+    git("add", "-A")
+    git("commit", "-qm", "init")
+    (repo / "src").mkdir()
+    git("mv", "移动我.md", "src/移动我.md")
+    return repo
+
+
+def test_a_rename_into_a_watched_prefix_is_seen_as_a_change(tmp_root, monkeypatch):
+    """git mv 进 src/ 的条目在 porcelain 里是 old -> new：必须取新路径。
+
+    旧实现直接取 line[3:]，拿到的是那串 old -> new，匹配不上任何前缀——按改动范围
+    选步会静默少跑（CODE_STEPS 不选），而文件明明已经在 src/ 里。
+    """
+
+    ci_local = _load_ci_local()
+    repo = _git_repo(tmp_root)
+    monkeypatch.setattr(ci_local, "ROOT", repo)
+
+    changed = ci_local._changed_paths()
+
+    assert "src/移动我.md" in changed, changed
+    assert all("->" not in item for item in changed), changed
+    assert ci_local._touched(changed, ("src/",)) is True
+
+
+def test_non_ascii_paths_are_not_c_quoted(tmp_root, monkeypatch):
+    """中文 / 带空格的文件名必须原样读出：porcelain 默认会转义成八进制加引号。"""
+
+    ci_local = _load_ci_local()
+    repo = _git_repo(tmp_root)
+    (repo / "新 文件.txt").write_text("z" + chr(10), encoding="utf-8", newline=chr(10))
+    monkeypatch.setattr(ci_local, "ROOT", repo)
+
+    changed = ci_local._changed_paths()
+
+    assert "新 文件.txt" in changed, changed
+    assert all(chr(34) not in item for item in changed), changed
+
+
 def test_python_override_runs_modules_from_repo_src_and_preserves_environment(
     monkeypatch,
     tmp_root,

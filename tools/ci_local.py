@@ -326,20 +326,41 @@ def _steps() -> list[tuple[str, str]]:
 def _changed_paths() -> list[str]:
     """相对 origin/main（取不到就相对 HEAD~1）的改动文件。"""
 
+    # 两条来源（diff 与 status）必须同一口径：**-z + 显式 UTF-8**。
+    # 默认的 porcelain / name-only 会把非 ASCII 路径按 C 字符串转义加引号
+    # （"docs/\346\226\260.md"），那种字面量匹配不上任何 *_PREFIXES；而 -z 之后
+    # 输出的是原始字节，必须显式按 UTF-8 解码，否则在 GBK 代码页上直接解码失败。
     for base in ("origin/main...HEAD", "HEAD~1"):
         completed = subprocess.run(
-            ["git", "diff", "--name-only", base],
-            cwd=str(ROOT), capture_output=True, text=True,
+            ["git", "diff", "--name-only", "-z", base],
+            cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8",
         )
         if completed.returncode == 0:
-            tracked = [line for line in completed.stdout.splitlines() if line.strip()]
+            tracked = [item for item in completed.stdout.split(chr(0)) if item.strip()]
             break
     else:
         tracked = []
+    # 必须用 -z（NUL 分隔）：porcelain 默认会把非 ASCII 路径按 C 字符串转义加引号，
+    # 也会把重命名写成 "old -> new" 一条 —— 两种形态都匹配不上任何 *_PREFIXES，
+    # 于是"git mv 一个文件进 src/""中文文件名改动"都会从按改动范围选步里消失
+    # （门禁少跑步骤却不报错，正是本脚本存在的意义所在）。
     status = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=str(ROOT), capture_output=True, text=True,
+        ["git", "status", "--porcelain", "-z"],
+        cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8",
     )
-    dirty = [line[3:].strip() for line in status.stdout.splitlines() if len(line) > 3]
+    fields = status.stdout.split(chr(0))
+    dirty: list[str] = []
+    index = 0
+    while index < len(fields):
+        entry = fields[index]
+        index += 1
+        if len(entry) <= 3:
+            continue
+        dirty.append(entry[3:])
+        if entry[0] in ("R", "C"):
+            # 重命名 / 复制：-z 的形状是「XY <目标路径>\0<源路径>\0」，
+            # 目标路径才是工作树里现存的那个（源路径单独一个字段，跳过）。
+            index += 1
     return sorted(set(tracked) | set(dirty))
 
 
