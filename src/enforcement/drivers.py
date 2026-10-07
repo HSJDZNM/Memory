@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import subprocess
 import sys
 import threading
@@ -130,14 +131,93 @@ def _clean(text: str, limit: int = _MAX_OUTPUT_CHARS) -> str:
     return text
 
 
-def _resolve(workspace: Optional[Path], relative: str) -> Path:
+def _workspace_root(workspace: Optional[Path]) -> Path:
     if workspace is None:
         raise DriverError("执行文件类动作必须声明受控工作区（workspace）")
-    root = Path(workspace).resolve()
+    return Path(workspace).resolve()
+
+
+def _inside(root: Path, candidate: Path) -> bool:
+    return root == candidate or root in candidate.parents
+
+
+def _resolve(workspace: Optional[Path], relative: str) -> Path:
+    root = _workspace_root(workspace)
     target = (root / relative).resolve()
-    if root != target and root not in target.parents:
+    if not _inside(root, target):
         raise DriverError(f"目标路径 {relative!r} 逃出工作区，拒绝执行")
     return target
+
+
+def _is_link_like(path: Path, info: os.stat_result) -> bool:
+    """符号链接与目录联接（junction）都算"落点可被改写"。
+
+    Windows 上 junction 不是 symlink（`os.path.islink` 为 False），但同样会把写入重定向到
+    别处：3.12+ 用 `os.path.isjunction`，更早的版本看 `st_reparse_tag`。
+    """
+
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    isjunction = getattr(os.path, "isjunction", None)
+    if isjunction is not None:
+        return bool(isjunction(path))
+    return getattr(info, "st_reparse_tag", 0) == 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT
+
+
+def _assert_no_link_components(root: Path, relative: str) -> None:
+    """逐段 lstat：路径上任何**已存在**的组件是链接就拒绝。
+
+    链接会让"resolved 之后在工作区内"这个结论在写到磁盘时失效——目标或它的父目录被换成
+    指向工作区外的链接，mkdir/write_text 会照写（TOCTOU）。
+    """
+
+    current = root
+    for part in Path(relative).parts:
+        current = current / part
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            raise DriverError(
+                f"无法确认目标 {relative!r} 的落点（{error}）：证明不了就不写"
+            ) from error
+        if _is_link_like(current, info):
+            raise DriverError(
+                f"目标 {relative!r} 的路径组件 {current.name!r} 是符号链接 / 目录联接："
+                "链接会改写落点，证明不了写入还在工作区内，拒绝执行"
+            )
+
+
+def _write_confined(text: str, *, workspace: Optional[Path], relative: str) -> None:
+    """写文件之前**再证明一次**落点，并用 O_NOFOLLOW 打开。
+
+    `_resolve()` 与真正写盘之间隔着参数处理与内容计算，这期间并发方可以把目标或它的父目录
+    换成链接，把写入重定向到工作区之外。所以这里：重新解析并复核范围 → 逐段拒绝链接组件 →
+    用 `O_NOFOLLOW`（平台支持时）打开。证明不了就 DriverError，绝不写。
+    """
+
+    root = _workspace_root(workspace)
+    fresh = (root / relative).resolve()
+    if not _inside(root, fresh):
+        raise DriverError(f"目标路径 {relative!r} 逃出工作区，拒绝执行")
+    _assert_no_link_components(root, relative)
+    try:
+        fresh.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise DriverError(f"{relative} 的父目录创建失败：{error}") from error
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    handle: Optional[int] = None
+    try:
+        handle = os.open(str(fresh), flags, 0o644)
+        with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
+            handle = None  # 交给 with 关
+            stream.write(text)
+    except OSError as error:
+        raise DriverError(f"{relative} 写入失败：{error}") from error
+    finally:
+        if handle is not None:
+            os.close(handle)
 
 
 def snapshot_of(path: Path, *, relative: str) -> FileSnapshot:
@@ -214,8 +294,7 @@ class FileDriver:
                     f"{relative} 里匹配到 {occurrences} 处原文，replace_all=false 时替换有歧义"
                 )
             updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(updated, encoding="utf-8", newline="")
+            _write_confined(updated, workspace=workspace, relative=relative)
             structured = {
                 "path": relative,
                 "occurrences": occurrences,
@@ -230,8 +309,7 @@ class FileDriver:
                     "把缺省当空内容会把已存在的文件截成 0 字节，而且仍然报 executed"
                 )
             content = content_value
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8", newline="")
+            _write_confined(content, workspace=workspace, relative=relative)
             structured = {
                 "path": relative,
                 "bytes_before": snapshot.size,

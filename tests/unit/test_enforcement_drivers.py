@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import time
 from pathlib import Path
 
@@ -333,6 +335,63 @@ def without_param(request: ActionRequest, name: str) -> ActionRequest:
     payload["params"] = [item for item in payload["params"] if item["name"] != name]
     payload["action_hash"] = ""
     return ActionRequest.model_validate(payload)
+
+
+def _make_directory_link(link: Path, target: Path) -> bool:
+    """创建目录链接：Windows 用 mklink /J（junction，免管理员），POSIX 用 symlink_to。"""
+
+    if os.name == "nt":
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0 and link.exists()
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        return False
+    return link.exists()
+
+
+def test_a_parent_swapped_to_a_link_after_the_check_is_refused(enforcement_paths, monkeypatch):
+    """_resolve() 与写盘之间是 TOCTOU 窗口：窗口里出现的链接会把写入重定向到工作区外。
+
+    旧实现先 resolve、之后才 write_text，检查早已通过；这里在"检查已通过、尚未写盘"的
+    那一刻把父目录换成指向工作区外的目录链接，写入必须被拒绝，且工作区外不能出现文件。
+    """
+
+    from enforcement import drivers as drivers_module
+
+    registry = enforcement_paths.registry_object()
+    spec = registry.tool("fs.write")
+    outside = enforcement_paths.root / "outside"
+    outside.mkdir()
+    request = make_action(
+        registry,
+        enforcement_paths,
+        "fs.write",
+        {"file_path": "swapped/payload.py", "content": "escaped\n"},
+    )
+
+    original = drivers_module.snapshot_of
+
+    def racing(path, *, relative):  # type: ignore[no-untyped-def]
+        snapshot = original(path, relative=relative)
+        # 范围检查已经过了，此刻才把父目录换成链接。
+        if not _make_directory_link(enforcement_paths.workspace / "swapped", outside):
+            pytest.skip("本环境不支持创建目录链接（Windows junction / POSIX symlink）")
+        return snapshot
+
+    monkeypatch.setattr(drivers_module, "snapshot_of", racing)
+
+    with pytest.raises(DriverError) as error:
+        FileDriver(DriverKind.FILE_WRITE).execute(
+            request, spec, workspace=enforcement_paths.workspace
+        )
+
+    assert "工作区" in str(error.value)
+    assert not (outside / "payload.py").exists(), "写入跟着链接跑到工作区外了"
 
 
 def test_file_write_without_content_refuses_instead_of_truncating(enforcement_paths):
