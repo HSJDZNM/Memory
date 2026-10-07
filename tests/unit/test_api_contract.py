@@ -779,6 +779,25 @@ def test_a_missing_raw_body_on_a_body_route_is_rejected_not_substituted() -> Non
 # --------------------------------------------------------------------------- CLI 用法
 
 
+@pytest.mark.parametrize("content", ["{not json", "[1, 2]", ""])
+def test_seal_verify_rejects_an_unreadable_or_malformed_anchor(
+    tmp_root: Path, content: str
+) -> None:
+    """锚是外部输入：损坏 / 非对象时必须给退出码 2 与说明，而不是裸 traceback。
+
+    历史缺陷（medium 台账 M1，cli.py:229）：`read_text()` + `json.loads()` 没有任何保护，
+    截断的 JSON 抛 JSONDecodeError、非对象顶层让 `verify_seal` 抛 AttributeError，
+    两者都逃出 `main()` 的 `except ApiError`（调用方看到 traceback，退出码也不是 2）。
+    """
+
+    from policy_api import cli
+
+    anchor = tmp_root / "anchor.json"
+    anchor.write_text(content, encoding="utf-8", newline="\n")
+
+    assert cli.run(["seal", "--verify", str(anchor)]) == cli.EXIT_ERROR
+
+
 def test_clients_hash_runs_without_a_usable_config(
     tmp_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

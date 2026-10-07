@@ -247,7 +247,24 @@ def _seal(args: argparse.Namespace, config: ApiConfig, root: Path) -> int:
         if not target.is_file():
             print(f"policy-api: 锚定文件不存在：{target.name}", file=sys.stderr)
             return EXIT_ERROR
-        seal = json.loads(target.read_text(encoding="utf-8"))
+        # 锚是**外部输入**（可能在工单/对象存储里被截断、被换编码、被改成数组）：
+        # 读不出来必须是这个命令自己的退出码语义，而不是一串 traceback；非对象顶层
+        # 也不能进 verify_seal（它按 Mapping 读，.get 会炸成 AttributeError）。
+        try:
+            seal = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            print(
+                f"policy-api: 锚定文件不可读或不是合法 JSON：{target.name}"
+                f"（{type(error).__name__}）",
+                file=sys.stderr,
+            )
+            return EXIT_ERROR
+        if not isinstance(seal, Mapping):
+            print(
+                f"policy-api: 锚定文件顶层必须是对象：{target.name}",
+                file=sys.stderr,
+            )
+            return EXIT_ERROR
         issues = verify_seal(log, seal)
         if args.json:
             print(json.dumps({"ok": not issues, "issues": list(issues), "seal": seal}, ensure_ascii=False, indent=2))
