@@ -511,10 +511,17 @@ def run_oracle(instance_id: str, *, root: Path, phase: str, python: str = DEFAUL
     argv = _pytest_isolation(argv, cwd=directory, task_dir=Path(root) / instance_id)
     result = _run(argv, cwd=directory, timeout=payload["test_command"]["timeout_s"],
                   env=payload["test_command"]["env"])
-    tail = result["stdout"] + result["stderr"]
+    # 逐用例结果从 -rA 摘要解析（_outcomes）：pytest 的摘要行是**行首**的
+    # "PASSED/FAILED/ERROR <node id>"，旧写法 count(" PASSED")（带前导空格）几乎恒为 0，
+    # 于是 run_oracle 的三个计数在真实运行里永远是 0，读的人会以为一条都没跑。
+    outcomes = _outcomes(result["stdout"])
+    decided = {"PASSED": 0, "FAILED": 0, "ERROR": 0}
+    for verdict in outcomes.values():
+        if verdict in decided:
+            decided[verdict] += 1
     return {"instance_id": instance_id, "phase": phase, "argv": argv, "exit_code": result["exit_code"],
             "seconds": result["seconds"], "timed_out": result["timed_out"],
-            "passed": tail.count(" PASSED"), "failed": tail.count(" FAILED"), "errors": tail.count(" ERROR"),
+            "passed": decided["PASSED"], "failed": decided["FAILED"], "errors": decided["ERROR"],
             "stdout_tail": result["stdout_tail"][-3000:], "stderr_tail": result["stderr_tail"][-1000:]}
 
 

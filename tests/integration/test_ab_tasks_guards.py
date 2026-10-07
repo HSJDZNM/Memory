@@ -369,3 +369,20 @@ def test_verify_oracle_accepts_a_task_without_config(tmp_root: Path) -> None:
     assert payload["reject"] == {"rejected": False, "reason": ""}
     assert payload["measured"]["fail_to_pass_all_red"] is True
     assert payload["measured"]["pass_to_pass_all_green"] is True
+
+def test_run_oracle_counts_match_the_per_test_summary(tmp_root: Path) -> None:
+    """真实跑一次：计数必须来自逐用例摘要（旧写法 count(" PASSED") 恒为 0）。"""
+
+    root, _baseline = _task_root(
+        tmp_root,
+        test_source=DECIDED_SOURCE,
+        fail_to_pass=("tests/test_demo.py::test_f2p",),
+        pass_to_pass=("tests/test_demo.py::test_p2p",),
+    )
+
+    reading = ab_tasks.run_oracle(INSTANCE, root=root, phase="baseline", python=sys.executable)
+
+    assert reading["exit_code"] == 1, reading["stdout_tail"]
+    assert reading["passed"] == 1
+    assert reading["failed"] == 1
+    assert reading["errors"] == 0
