@@ -29,9 +29,10 @@ from conftest import REPO_ROOT
 from policy import models as policy_models
 
 from orchestration import models as orchestration_models
-from orchestration.checkpoint import CHECKPOINT_SCHEMA_VERSION
+from orchestration.checkpoint import CHECKPOINT_SCHEMA_VERSION, JsonCheckpointStore
 from orchestration.client import API_SCHEMA_VERSION, EvaluateCall, RetrieveCall, ValidateCall
-from orchestration.errors import NodeContractError
+from orchestration.engines import ReferenceEngine
+from orchestration.errors import CheckpointError, NodeContractError
 from orchestration.graph import (
     DEFAULT_SPEC,
     END,
@@ -46,6 +47,7 @@ from orchestration.models import (
     SUPPORTED_STATE_SCHEMA_VERSIONS,
     Decision,
     FailureCode,
+    GraphState,
     NodeId,
     PlatformSnapshot,
     RunLimits,
@@ -59,6 +61,8 @@ from orchestration.nodes import NODES, Change
 from orchestration_support import (
     ExecutingToolRunner,
     allow_outcome,
+    build_assembly,
+    graph_config,
     retrieval_ok,
     run_graph,
     scripted_client,
@@ -271,6 +275,52 @@ def test_graph_problems_reject_contradictory_routers() -> None:
 
     # 正例一条都不误报：默认图定义没有任何矛盾
     assert DEFAULT_SPEC.problems() == ()
+
+
+def test_engine_level_failure_keeps_progress_and_persists_it(tmp_root) -> None:
+    """引擎级失败：失败状态长在"最后一步的状态"上，而且必须落盘。
+
+    用入口状态收尾会同时丢掉两样东西：本轮的执行记录（steps 里看不到走过哪些节点、
+    failure.node 指向入口阶段），以及 checkpoint 里的失败标记——下一次 prepare 会把
+    那份状态读成 RUNNING 接着跑，已经产生副作用的节点会被重放。
+    """
+
+    scenario = SCENARIOS[0]
+    task = task_spec("engine-failure")
+    config = graph_config(tmp_root, name="engine-failure")
+    assembly = build_assembly(
+        config,
+        task=task,
+        author=scenario.author(),
+        client=scenario.client(),
+        tool_runner=scenario.runner(),
+    )
+
+    class ExplodingEngine(ReferenceEngine):
+        """先真的走一步（执行器会把进度写进 checkpoint），再抛一个编排错误。"""
+
+        def _drive(self, state: GraphState) -> GraphState:
+            self.stepped = self.executor.step(state).state
+            raise CheckpointError("注入的引擎级失败：用来验证收尾状态取自哪一份")
+
+    engine = ExplodingEngine(executor=assembly.engine.executor)
+    report = engine.run(
+        task_id=task.task_id, state=empty_state(task.task_id, limits=config.limits)
+    )
+
+    # 1) 本轮的执行记录一条都不许丢
+    assert engine.stepped.runs, "第一步应当已经写进 runs"
+    assert report.steps, "引擎级失败也必须带上本轮走过的节点"
+    # 2) failure.node 是"失败发生在哪个阶段"，不是入口阶段
+    assert report.failure is not None
+    assert report.failure.node == engine.stepped.stage
+    assert report.failure.node != NodeId.REQUIREMENT_ANALYSIS
+    # 3) 失败状态真的落盘：重新读 checkpoint 看得见失败
+    record = JsonCheckpointStore(config.checkpoint_dir).load(task.task_id)
+    persisted = GraphState.model_validate(dict(record.state))
+    assert persisted.failure is not None
+    assert persisted.failure.code is report.failure.code
+    assert persisted.stage is report.failure.node
 
 
 def test_unknown_router_label_is_a_contract_error(tmp_root) -> None:
