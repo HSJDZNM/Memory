@@ -75,6 +75,23 @@ def _truncate_at_line(text: str, limit: int) -> Tuple[str, bool]:
     return clipped.rstrip(), True
 
 
+# 信封标识里的控制字符（含 CR/LF）：它们能造出新的头部行。
+_ENVELOPE_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _envelope_id(value: Optional[str]) -> str:
+    """请求/追踪标识：只当数据渲染——去掉控制字符（含换行）并中和参考区边界标记。
+
+    它们是**客户端给的信封字段**（上游只做 strip + 长度上限，不限字符集）：不过这一关，
+    一个 request_id 就能在头部伪造行、甚至插进一对边界标记，而"参考区不可伪造"正是本模块
+    存在的理由。
+    """
+
+    if not value:
+        return "<none>"
+    return neutralize(_ENVELOPE_CONTROL_RE.sub("", value))
+
+
 def _render_header(
     *,
     query: str,
@@ -84,7 +101,7 @@ def _render_header(
     method: RetrievalMethod,
 ) -> str:
     lines = ["[Engineering Context]"]
-    lines.append("request: " + (request_id or "<none>") + " | trace: " + (trace_id or "<none>"))
+    lines.append("request: " + _envelope_id(request_id) + " | trace: " + _envelope_id(trace_id))
     lines.append("index: " + (index_version or "<none>") + " | method: " + method.value)
     if query:
         lines.append("query: " + neutralize(query))
