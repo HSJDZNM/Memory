@@ -15,13 +15,14 @@
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import re
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple
 
 import yaml
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 
 from policy.models import RuleValidationError, StrictModel
 
@@ -40,6 +41,7 @@ __all__ = [
     "TokenInvalid",
     "hash_token",
     "load_api_config",
+    "parse_expires_at",
     "protected_hashes",
 ]
 
@@ -50,6 +52,30 @@ SUPPORTED_API_CONFIG_VERSIONS = frozenset({API_CONFIG_SCHEMA_VERSION})
 _PLAINTEXT_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]{16,}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _TENANT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+# 客户端 `expires_at` 接受的形态：秒级可带 Z、可带 UTC 偏移、可带微秒。
+_EXPIRY_FORMATS = ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def parse_expires_at(value: str) -> datetime.datetime:
+    """把配置里的 `expires_at` 解析成带时区的 UTC 时间；看不懂就抛 ValueError。
+
+    放在 config 一侧，是因为它校验的是**配置数据**（加载期就要拒绝）；运行期的
+    `auth.parse_expiry` 只是把同一个实现翻译成 ApiError，两处不会各自维护一份格式表。
+    """
+
+    text = str(value).strip()
+    for pattern in _EXPIRY_FORMATS:
+        try:
+            parsed = datetime.datetime.strptime(text, pattern)
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+        return parsed.astimezone(datetime.timezone.utc)
+    raise ValueError(
+        "不是可识别的 ISO-8601 时间（接受 " + " / ".join(_EXPIRY_FORMATS) + "）"
+    )
 
 
 class ConfigError(Exception):
@@ -125,6 +151,24 @@ class ClientSpec(StrictModel):
         raise ValueError(
             f"client {self.client_id!r} 的 token_sha256 不是 64 位十六进制摘要"
         )
+
+    @model_validator(mode="after")
+    def _expiry_is_readable(self) -> "ClientSpec":
+        """`expires_at` 是**部署配置**的一部分：格式非法必须在加载期报错。
+
+        以前它只在请求期被 `auth.parse_expiry` 解析，于是配置写错的表现是"这个客户端的
+        每次调用都 401 unauthenticated"，还把配置原文回显进错误 detail——部署错误被伪装成
+        凭据错误，运维看到的理由也是错的（AGENTS 第 52 条）。
+        """
+
+        if self.expires_at is not None:
+            try:
+                parse_expires_at(self.expires_at)
+            except ValueError as error:
+                raise ValueError(
+                    f"client {self.client_id!r} 的 expires_at 不合法：{error}"
+                ) from error
+        return self
 
     @model_validator(mode="after")
     def _check_tenant_ids(self) -> "ClientSpec":

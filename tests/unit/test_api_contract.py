@@ -178,6 +178,59 @@ def test_load_api_config_rejects_unknown_schema_version(tmp_root: Path) -> None:
     assert "未知部署配置版本" in str(info.value) and "9.9" in str(info.value)
 
 
+def _config_with_expiry(expires_at: str) -> str:
+    """一份最小合法配置 + 一个客户端，`expires_at` 用调用方给的值（YAML 里显式加引号）。"""
+
+    return (
+        'schema_version: "1.0"' + chr(10)
+        + "tenants:" + chr(10)
+        + "  - tenant_id: alpha" + chr(10)
+        + "    project_root: project" + chr(10)
+        + "    rules: [rules]" + chr(10)
+        + "clients:" + chr(10)
+        + "  - client_id: alpha-client" + chr(10)
+        + '    token_sha256: "' + "0" * 64 + '"' + chr(10)
+        + "    tenants: [alpha]" + chr(10)
+        + "    expires_at: " + expires_at + chr(10)
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["2026-12-31T00:00:00Z", "2026-12-31T00:00:00+08:00", "2026-12-31T00:00:00.500000Z"],
+)
+def test_client_expires_at_accepts_the_documented_iso_forms(tmp_root: Path, value: str) -> None:
+    """三种形态都要能加载：把校验提到加载期，不能顺手收窄可接受的写法。"""
+
+    config = load_api_config(write_config(tmp_root, _config_with_expiry('"' + value + '"')))
+    assert config.clients[0].expires_at == value
+
+
+def test_client_expires_at_is_rejected_at_load_time(tmp_root: Path) -> None:
+    """坏 `expires_at` 是**加载期**的配置错误，不是请求期的 401。
+
+    历史缺陷（medium 台账 M1，auth.py:85）：格式从不校验，坏值只在请求时被
+    `auth.parse_expiry` 解析，于是表现成"这个客户端的每次调用都 401 unauthenticated"，
+    还把配置原文回显进错误 detail——部署错误被伪装成凭据错误（AGENTS 第 52 条）。
+    """
+
+    with pytest.raises(ConfigError) as error:
+        load_api_config(write_config(tmp_root, _config_with_expiry('"昨天"'))),
+    assert "expires_at" in str(error.value)
+    assert "alpha-client" in str(error.value)
+
+
+def test_parse_expiry_failure_does_not_echo_the_configured_value() -> None:
+    """运行期的翻译层不再复述配置原文：detail 会进 HTTP 响应。"""
+
+    from policy_api.auth import parse_expiry
+
+    with pytest.raises(ApiError) as info:
+        parse_expiry("昨天")
+    assert info.value.code is ErrorCode.UNAUTHENTICATED
+    assert "昨天" not in info.value.detail
+
+
 def test_load_api_config_rejects_plaintext_token(tmp_root: Path) -> None:
     """令牌只允许以 sha256 出现：写明文就等于把凭据散进配置与备份。
 
