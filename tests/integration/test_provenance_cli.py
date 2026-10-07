@@ -194,4 +194,3 @@ def test_digest_still_reports_content_level_unprovable_as_seal_failure(
     assert completed.returncode == 3
     assert "unprovable" in completed.stderr
     assert "Traceback" not in completed.stderr
-
