@@ -18,7 +18,7 @@ budget 语义）已经在 `policy_api.models` / `runtime` 里固定，并能脱�
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Optional
+from typing import Annotated, Any, Mapping, Optional
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -76,11 +76,20 @@ def _handshake(name: str, source: Any) -> Any:
 
     校验锚点只有一个（运行时的 DTO）。这里放宽是为了让框架的 pre-validation
     不会用"另一套错误形状"抢先回答，同时 OpenAPI 仍然如实描述协议。
+
+    **约束要带进文档**：`field.metadata` 里的 Ge/Le/MinLen/MaxLen 原样放进 `Annotated`——
+    它们是契约的一部分（`budget_ms` 的 1..600000、`limit` 的 1..50、`subject` 的 1..200）。
+    丢掉的话文档比实现**宽**：照文档写的客户端会在服务端撞上 400，而它没有任何办法从
+    契约里知道边界。这些约束不参与框架的请求校验——请求体是 `openapi_extra` 里的 $ref，
+    处理器签名里没有这个模型，框架只把它当 schema 用。
     """
 
-    fields = {
-        key: (Optional[field.annotation], None) for key, field in source.model_fields.items()
-    }
+    fields: dict[str, Any] = {}
+    for key, field in source.model_fields.items():
+        annotation: Any = field.annotation
+        if field.metadata:
+            annotation = Annotated[annotation, *field.metadata]
+        fields[key] = (Optional[annotation], None)
     return create_model(name, __config__=_PERMISSIVE, **fields)  # type: ignore[call-overload]
 
 
