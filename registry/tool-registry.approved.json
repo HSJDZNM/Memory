@@ -1,17 +1,17 @@
 {
-  "approved_at": "2026-10-07T23:14:57.813046Z",
+  "approved_at": "2026-10-07T23:21:30.436424Z",
   "approved_schema_version": "1.1",
   "governance_digest": "sha256:2e23208554ec392b109d196eb3ee848d3c96d6e80e7baf131b6ae7adbc1eafe0",
-  "registry_digest": "sha256:3b4e0980aedeb4c17e9887b2307d365ac20ece32cfc521e9839a42240872d5c2",
+  "registry_digest": "sha256:51582a032e248cbf1457cbb86d82473ad130cd970b6e7063e6f93be2eede4012",
   "registry_version": 1,
-  "reviewed_by": "fix-adapters",
+  "reviewed_by": "enforcement-availability",
   "tools": {
     "exec.bash": {
-      "schema_hash": "sha256:0217684493cf6d43f200b73675e299a82b94a170ba91b4336a75223a2ef3954f",
+      "schema_hash": "sha256:25225cd31a71e72a215b192711e5736a6a66c5312a6abcf677378a3a3f5d92ed",
       "schema_version": "1.0"
     },
     "exec.pwsh": {
-      "schema_hash": "sha256:564cf332dedef51808b13f17e6af209071e06f0e0b4844a125b030ead246e654",
+      "schema_hash": "sha256:591ba5c99ff77ab3b240f5e0d8a6a47129c1fae78c0c8bb3d39d7cec27c76daf",
       "schema_version": "1.0"
     },
     "exec.run_code": {

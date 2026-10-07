@@ -238,10 +238,12 @@ class ProcessDriver:
                 argv = [single]
         if not isinstance(argv, list) or not argv or not all(isinstance(item, str) for item in argv):
             raise DriverError("process 驱动需要非空的 argv 字符串列表")
+        _refuse_background(request)
         return _run_process(
             [str(item) for item in argv],
-            timeout_ms=spec.timeout_ms + self.timeout_grace_ms,
+            timeout_ms=_requested_timeout_ms(request, spec) + self.timeout_grace_ms,
             workspace=workspace,
+            cwd=_requested_workdir(request, workspace=workspace),
         )
 
 
@@ -283,21 +285,86 @@ class ShellCommandDriver:
                 f"命令包含被禁片段 {blocked}（路径穿越 / 会写文件的选项 / 外部 diff）："
                 "驱动层的第二道防线，拒绝执行"
             )
+        _refuse_background(request)
         return _run_process(
             [*self.shell, text],
-            timeout_ms=spec.timeout_ms,
+            timeout_ms=_requested_timeout_ms(request, spec),
             workspace=workspace,
+            cwd=_requested_workdir(request, workspace=workspace),
         )
 
 
+
+
+def _requested_workdir(request: ActionRequest, *, workspace: Optional[Path]) -> Optional[Path]:
+    """注册表声明的 workdir 参数 → 受控工作区里的绝对目录；没声明就不改 cwd。
+
+    "参数在数据里声明了、驱动却不看"等于静默忽略：命令会在工作区根跑，而调用方
+    （模型 / 用户）以为自己指定了目录。归一化与范围校验在 action.normalize_params /
+    pre-check 已经做过一遍，这里是驱动层的第二道：证明不了就拒绝，绝不回落到默认 cwd。
+    """
+
+    raw = request.value_of("workdir")
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise DriverError("workdir 必须是非空字符串（受控工作区相对路径）")
+    if workspace is None:
+        raise DriverError("请求声明了 workdir，却没有受控工作区锚点：拒绝执行")
+    root = Path(workspace).resolve()
+    target = (root / raw.strip()).resolve()
+    if root != target and root not in target.parents:
+        raise DriverError(f"workdir {raw!r} 不在受控工作区内：拒绝在证明不了的位置执行")
+    if not target.is_dir():
+        raise DriverError(f"workdir {raw!r} 不是已存在的目录：拒绝执行")
+    return target
+
+
+def _requested_timeout_ms(request: ActionRequest, spec: ToolSpec) -> int:
+    """注册表声明的 timeoutMs 参数 → 本次调用的超时预算；缺省用注册表的 timeout_ms。
+
+    预算是授权面的一部分：请求**超过**注册表声明的上限时拒绝，而不是悄悄按上限跑——
+    "悄悄改小"与"悄悄改大"都是在执行一个和批准内容不同的动作。
+    """
+
+    raw = request.value_of("timeoutMs")
+    if raw is None:
+        return spec.timeout_ms
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        raise DriverError("timeoutMs 必须是正整数毫秒")
+    if raw > spec.timeout_ms:
+        raise DriverError(
+            f"请求的超时 {raw}ms 超过注册表声明的 {spec.timeout_ms}ms："
+            "要更长预算请改注册表并重新审核，驱动层不放宽"
+        )
+    return raw
+
+
+def _refuse_background(request: ActionRequest) -> None:
+    """run_in_background=true 显式拒绝（不是静默忽略）。
+
+    平台拿不到后台进程的退出码：post_checks 里的 exit_code_zero 会必然退化成
+    repair_required（§5.35），平台也没有进程树回收与回滚语义——声明不了就不假装支持。
+    """
+
+    value = request.value_of("run_in_background")
+    if value not in (None, False):
+        raise DriverError(
+            "run_in_background=true 本平台显式拒绝：后台进程没有退出码，"
+            "exit_code_zero 事后核对必然退化成 repair_required，也没有进程树回收与回滚语义。"
+            "需要后台执行请另立工具，并在注册表里写清事后核对与回滚方式"
+        )
+
 def _run_process(
-    argv: Sequence[str], *, timeout_ms: int, workspace: Optional[Path]
+    argv: Sequence[str], *, timeout_ms: int, workspace: Optional[Path],
+    cwd: Optional[Path] = None,
 ) -> DriverResult:
     started = time.monotonic()
+    working_directory = cwd if cwd is not None else workspace
     try:
         completed = subprocess.run(
             list(argv),
-            cwd=None if workspace is None else str(workspace),
+            cwd=None if working_directory is None else str(working_directory),
             capture_output=True,
             text=True,
             encoding="utf-8",

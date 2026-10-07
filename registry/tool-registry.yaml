@@ -170,13 +170,13 @@ tools:
       # —— 下面三个是 dsh 侧真实存在的调用参数，**授权面**上是必需的：参数白名单要放行它们，
       #    审批模式（binding=pattern）也必须逐参数覆盖它们（只覆盖 command 等于放行它们的任意
       #    取值：改 workdir 就是改这次调用干什么，见 tests/contract/test_approval_binding_modes.py）。
-      #    **驱动层今天不消费它们**：exec.pwsh / exec.bash 的 shell_command 驱动只读 command 与
-      #    注册表级 timeout_ms，命令始终在受控工作区根下、按 timeout_ms 执行。所以它们是
-      #    「被接受、被授权、被审计，但不改变执行」——要真正生效必须先改 src/enforcement/drivers.py
-      #    并重新审核；在那之前审计记录里的取值**不代表**执行时用过它。
+      #    驱动层**真的消费**它们（src/enforcement/drivers.py）：timeoutMs 定本次预算、
+      #    workdir 定进程 cwd；run_in_background=true 一律**显式拒绝**（不是静默忽略）——
+      #    后台进程没有退出码，exit_code_zero 事后核对必然退化成 repair_required（§5.35），
+      #    平台也没有进程树回收与回滚语义；要后台执行必须另立工具并写清事后核对与回滚方式。
       - name: timeoutMs
         type: integer
-        description: 调用方声明的超时（毫秒）：**驱动层不消费**，实际预算始终是注册表 timeout_ms
+        description: 本次调用的超时预算（毫秒）：缺省用注册表 timeout_ms，**超过它一律拒绝**（驱动层消费）
       # path_kind 是**数据**，不是代码里的特判：workdir 指向目录，
       # 因此"工作目录 = 项目根"归一化为 "." 并通过校验（G5）；
       # 而写文件类参数保留默认 path_kind=file，传 "." 仍被拒（它不是文件）。
@@ -184,10 +184,10 @@ tools:
         type: path
         path_scope: workspace
         path_kind: directory
-        description: 调用方声明的工作目录（受控工作区内，越界拒绝）：**驱动层不消费**，命令仍在工作区根下执行
+        description: 命令的工作目录（受控工作区内、必须是已存在的目录，越界或不存在的目录都拒绝）：驱动层作为进程 cwd 使用
       - name: run_in_background
         type: boolean
-        description: 调用方声明的后台执行：**驱动层不消费**（执行是同步的），前台执行
+        description: 后台执行：true 一律**显式拒绝**（后台进程没有退出码，事后核对会退化成修复，也没有进程树回收与回滚）——不是静默忽略
       - name: sandbox_permissions
         type: string
         enum: [workspace-write, danger-full-access]
@@ -240,15 +240,19 @@ tools:
         type: string
         required: true
         max_chars: 400
+      # 三个参数由驱动层消费：语义与 exec.pwsh 完全一致（预算 / cwd / 后台显式拒绝）。
       - name: timeoutMs
         type: integer
+        description: 本次调用的超时预算（毫秒）：缺省用注册表 timeout_ms，超过它一律拒绝
       # path_kind 是数据，不是代码里的特判（同 exec.pwsh）
       - name: workdir
         type: path
         path_scope: workspace
         path_kind: directory
+        description: 命令的工作目录（受控工作区内、必须是已存在的目录）：驱动层作为进程 cwd 使用
       - name: run_in_background
         type: boolean
+        description: 后台执行：true 一律显式拒绝（后台进程没有退出码，事后核对会退化成修复）
       - name: sandbox_permissions
         type: string
         enum: [workspace-write, danger-full-access]
