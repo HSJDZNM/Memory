@@ -276,6 +276,26 @@ def test_budget_too_small_for_policy_facts_raises() -> None:
         )
 
 
+def test_all_candidates_dropped_by_budget_downgrades_the_status() -> None:
+    """检索成功但预算把候选全丢掉时，status / reason 与渲染必须一致（复核发现）。"""
+
+    builder = ContextBuilder(budget_chars=420, max_snippet_chars=300, max_snippets=4)
+    context = builder.build(retrieval=make_result(make_chunk(1, text="x" * 400)))
+    # 不能停在 status=ok：那会让 is_available=True 而渲染却说"知识不可用（reason=unknown）"。
+    assert context.status is ContextStatus.KNOWLEDGE_UNAVAILABLE
+    assert context.is_available is False
+    assert context.reason is UnavailableReason.NO_RESULTS
+    assert context.snippets == ()
+    assert [item.reason for item in context.dropped] == ["budget"]
+    rendered = render_context(context)
+    assert f"reason={UnavailableReason.NO_RESULTS.value}" in rendered
+    assert "reason=unknown" not in rendered
+    assert REFERENCE_BEGIN not in rendered
+    # 受控预算仍然成立：降级后的渲染同样不许超预算。
+    assert len(rendered) <= context.budget_chars
+    assert context.used_chars == len(rendered)
+
+
 def test_oversized_flag_is_preserved_in_snippets() -> None:
     builder = ContextBuilder.from_policy(POLICY)
     chunk = make_chunk(1, text="big code block").model_copy(update={"oversized": True})
