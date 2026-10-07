@@ -162,11 +162,17 @@ except Exception as error:  # pydantic 的校验错误：字段校验失败会�
     detail = error.errors()[0]["msg"] if hasattr(error, "errors") else str(error)
     assert "source.kind 必须是本地来源" in detail, detail
     print("× kind 写成共享对话 →", detail.split("；")[0][:96])
+else:
+    # **断言不能只写在 except 里**：模型哪天不再拒绝 kind="conversation"，这里会一路走到
+    # else——没有这行的话整个单元照样绿，"边界拦得住"就成了一句没人检查的话。
+    raise AssertionError("SourceRef 接受了 kind='conversation'：本地来源的边界破了")
 try:
     SourceRef(kind="standard", path="../../etc/passwd")
 except Exception as error:  # 域异常 PolicyContextError 会被 pydantic 包成 ValidationError
     assert "路径逃出仓库根目录" in str(error), error
     print("× path 用 .. 逃出仓库 → 路径逃出仓库根目录，拒绝处理（来自 normalize_repo_path）")
+else:
+    raise AssertionError("SourceRef 接受了 ../../etc/passwd：越界路径没有被拒绝")
 
 # 而"指向一个不存在的文件"——模型不拦，加载器也不拦，这正是上面说的落差。
 ghost = SourceRef(kind="standard", path="docs/mirrors/does-not-exist/index.md")
