@@ -11,7 +11,7 @@ from datetime import timedelta
 
 import pytest
 
-from enforcement.approvals import ApprovalError, verify_approval
+from enforcement.approvals import ApprovalError, ApprovalRecord, load_approval, verify_approval
 from enforcement.audit import FileAuditSink, NullAuditSink
 from enforcement.ledger import EnforcementLedger
 from enforcement.models import (
@@ -510,6 +510,39 @@ def test_verify_approval_directly_covers_the_edge_cases(enforcement_paths):
         verify_approval(approval, **{**arguments, "tool_id": "exec.shell"})
     with pytest.raises(ApprovalError):
         verify_approval(approval, **{**arguments, "action_id": "other"})
+
+
+def test_naive_approval_timestamps_are_rejected_as_the_documented_error(tmp_root):
+    """无时区的审批时间必须在加载期报 ApprovalError，不能等到校验路径抛 TypeError。
+
+    取证：把 granted_at / expires_at 写成不带时区的 RFC3339，旧的 _check_shape 只在
+    两者时区**不一致**时报错，两者都 naive 时照样通过；随后 verify_approval 用 aware 的
+    utc_now() 比较，抛 "can't compare offset-naive and offset-aware datetimes"——
+    只 catch ApprovalError 的调用方（失败关闭路径）接不住它。
+    """
+
+    payload = {
+        "approval_id": "a-naive",
+        "binding": "action",
+        "action_hash": "sha256:h",
+        "action_id": "act-1",
+        "tool_id": "exec.process",
+        "subject": "local-user",
+        "granted_by": "alice",
+        "granted_by_roles": ["reviewer"],
+        "granted_at": "2026-10-08T06:00:00",
+        "expires_at": "2026-10-08T07:00:00",
+    }
+    path = tmp_root / "approval-naive.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8", newline="\n")
+
+    with pytest.raises(ApprovalError) as error:
+        load_approval(path)
+    assert "时区" in str(error.value)
+
+    # 构造期就是最后一道闸：直接构造同样拒绝，不给"绕过加载器"留口子。
+    with pytest.raises(ApprovalError):
+        ApprovalRecord(**payload)
 
 
 # --------------------------------------------------------------------------- 策略引擎

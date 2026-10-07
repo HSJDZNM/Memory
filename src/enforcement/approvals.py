@@ -127,6 +127,16 @@ class ApprovalRecord(StrictModel):
             normalized[name] = pattern
         return normalized
 
+    @field_validator("granted_at", "expires_at")
+    @classmethod
+    def _check_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ApprovalError(
+                "审批时间必须带时区：无时区的时间会让时效判断随机器漂移，"
+                "而且与 utc_now() 比较时抛的是未处理的 TypeError，不是这条审批错误"
+            )
+        return value
+
     @model_validator(mode="after")
     def _check_shape(self) -> "ApprovalRecord":
         if self.expires_at <= self.granted_at:
