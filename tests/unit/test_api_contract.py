@@ -644,6 +644,41 @@ def test_probe_unavailable_payload_reads_a_non_mapping_body_without_raising() ->
     assert payload["violations"][0]["evidence"]["value"] == "policy_unavailable"
 
 
+def test_a_missing_raw_body_on_a_body_route_is_rejected_not_substituted() -> None:
+    """请求体依赖没生效时，POST 路由必须显式失败关闭，而不是把空载荷当成请求体。
+
+    历史缺陷（medium 台账 M1，app.py:188）：注释写的是"按协议错误拒绝"，代码却
+    `raw = b""`——"服务端没读到请求体"被翻译成一个看不懂的 400（缺 request_id），
+    而 AGENTS 第 52 条要求的正是"拦住之外还要给出对的原因"。运维路由（metrics）按协议
+    没有请求体，那条路仍按空载荷继续（否则等于把指标端点改成不可用）。
+    """
+
+    import asyncio
+
+    from starlette.requests import Request
+
+    from policy_api.testing import make_client
+
+    runtime = ApiRuntime(repo_config(), root=REPO_ROOT)
+    app = make_client(runtime).app
+    evaluate = next(route for route in app.routes if getattr(route, "name", None) == "evaluate")
+    # 直接调用端点：不经过 FastAPI 的依赖解析，于是 raw_body 缺席——这正是"依赖被静默
+    # 丢掉"时的形态（真机形态见 app.py 里 _guard 注解的注释）。
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/policy/evaluate",
+            "headers": [],
+            "query_string": b"",
+        }
+    )
+    with pytest.raises(ApiError) as info:
+        asyncio.run(evaluate.endpoint(request))
+    assert info.value.code is ErrorCode.INTERNAL_ERROR
+    assert "请求体" in info.value.detail
+
+
 # --------------------------------------------------------------------------- 监听地址
 
 
