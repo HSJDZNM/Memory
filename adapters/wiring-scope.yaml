@@ -47,10 +47,17 @@ scope:
     # 2026-10-03 裁定①：第 26 轮并入的三条（verify-bc / verify-gov / verify-manual）已撤回——
     # 它们是验证轮的实验 profile，不是受控会话。
     covers: ["dsh:governed", "dsh:governed-*"]
-    # 证据（hooks_config / audit_path / bridge.entry 渲染成 <external>/…）说它治理的是
-    # **另一棵树**：声明侧现在承认这件事；tree_ref 只放指针，不放正文、不放绝对路径。
+    # 证据（hooks_config / audit_path / bridge.entry 渲染成 <external>/…；实测 dsh:governed
+    # 系列的留痕目标是 <external>/audit.jsonl）说它治理的是**另一棵树**：声明侧现在承认
+    # 这件事；tree_ref 只放指针，不放正文、不放绝对路径。
     governs_tree: other
-    tree_ref: .tmp/governance-capability-*
+    # 指针只能是「仓库相对路径」或 <outside-workspace>（合约见文件头）。受控会话的家目录在
+    # **宿主侧**（本机 profiles 根下），不在本仓库内；绝对路径一律不许写，所以写哨兵值。
+    # 旧值 `.tmp/governance-capability-*` 两条都违了：它是 glob 不是路径，而且落在工作区内，
+    # 与 governs_tree: other 自相矛盾；读者也按它找不到任何一棵树（本机 .tmp 下是
+    # governance-capability / governance-eval / governance-full / governance-multirule，
+    # 带 `-*` 的那条通配符一个都匹配不到）。
+    tree_ref: <outside-workspace>
     reason: >-
       受控会话（hooks 配置指向 adapters.dsh.hooks）由本仓库治理：判定、阻断、审计与
       受控执行都是平台代码，接线失效必须失败关闭。2026-10-03 评审二次更正：上次并入的

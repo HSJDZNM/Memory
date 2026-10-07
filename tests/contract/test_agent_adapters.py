@@ -741,3 +741,35 @@ def test_generic_json_response_still_rejects_unknown_decision_field() -> None:
     with pytest.raises(AdapterEventError) as error:
         agent_response_from_decision(payload)
     assert "未知字段" in str(error.value)
+
+# --------------------------------------------------------------------------- 边界声明（§3.5）
+
+
+WIRING_SCOPE = ADAPTERS_ROOT / "wiring-scope.yaml"
+
+
+def test_the_wiring_scope_tree_ref_is_a_pointer_not_a_glob() -> None:
+    """schema "2" 的 `tree_ref` 只能是「仓库相对路径」或 `<outside-workspace>`。
+
+    加载器今天不给 tree_ref 加格式校验（`src/provenance/wiring_scope.py` 只声明字段），
+    于是 `.tmp/governance-capability-*` 这种 **glob** 能静默加载：它既是 glob 不是路径、
+    又落在工作区内，和同一条声明的 `governs_tree: other` 互相矛盾——读者按它找不到任何
+    一棵树（实测本机带 `-*` 的那条通配符一个目录都匹配不到）。
+    """
+
+    document = yaml.safe_load(WIRING_SCOPE.read_text(encoding="utf-8"))
+    entries = document["scope"]
+    refs = {item["id"]: item.get("tree_ref") for item in entries}
+    assert refs.get("governed-session-hook") == "<outside-workspace>", refs
+
+    for entry in entries:
+        ref = entry.get("tree_ref")
+        if ref is None:
+            continue
+        assert isinstance(ref, str) and ref.strip(), entry["id"]
+        if ref != "<outside-workspace>":
+            # 指针：仓库相对路径，不许是 glob、不许绝对、不许 .. 逃逸
+            assert not any(char in ref for char in "*?["), (entry["id"], ref)
+            assert not ref.startswith("/") and ".." not in ref.split("/"), (entry["id"], ref)
+        # governs_tree=self 时不写指针（合约：只放指针）
+        assert entry.get("governs_tree") == "other", (entry["id"], ref)
