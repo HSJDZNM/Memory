@@ -772,7 +772,10 @@ class ChunkStore:
         row = self._execute(
             "SELECT text_hash FROM quarantined_chunks WHERE chunk_id = ?", (chunk_id,)
         ).fetchone()
-        # 源文一变，旧隔离自动失效（保留记录由 reconcile_quarantine 负责清理）。
+        # 源文一变，旧隔离自动失效。**收敛点在 indexer._apply_quarantine**（本仓库没有
+        # reconcile_quarantine 这个函数，旧注释点了一个不存在的名字）：记录会留到下一次
+        # ingest 才被释放，因此"记录表里有行"与"这个 chunk 现在真的被隔离"是两件事——
+        # 后者以 chunks.quarantined 为准（检索过滤用的就是它），stats 也按它计数。
         return row is not None and str(row["text_hash"]) == text_hash
 
     def quarantine(self, chunk_id: str, *, reason: str, text_hash: str, quarantined_at: str,
@@ -828,6 +831,12 @@ class ChunkStore:
         return True
 
     def quarantined(self) -> Tuple[QuarantinedChunk, ...]:
+        """隔离**记录**（含尚未收敛的过期记录：正文变了、但还没跑下一次 ingest）。
+
+        要问"现在有多少 chunk 被隔离"请用 stats().quarantined 或 integrity()['quarantined']
+        ——它们数的是 chunks.quarantined，也就是检索过滤真正用的那一份状态。
+        """
+
         rows = self._execute(
             "SELECT * FROM quarantined_chunks ORDER BY quarantined_at, chunk_id"
         ).fetchall()
@@ -965,8 +974,11 @@ class ChunkStore:
     def stats(self) -> IndexStats:
         documents = int(self._execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"])
         chunks = int(self._execute("SELECT COUNT(*) AS n FROM chunks").fetchone()["n"])
+        # 与 integrity()['quarantined'] 同一口径："隔离了多少片段"问的是生效状态
+        # （chunks.quarantined，检索过滤用的那一份），不是记录表里还剩几行——
+        # 正文变化后记录会留到下一次 ingest 才被释放，两份读数不能在那段时间里打架。
         quarantined = int(
-            self._execute("SELECT COUNT(*) AS n FROM quarantined_chunks").fetchone()["n"]
+            self._execute("SELECT COUNT(*) AS n FROM chunks WHERE quarantined = 1").fetchone()["n"]
         )
         truncated = int(
             self._execute("SELECT COUNT(*) AS n FROM chunks WHERE truncated = 1").fetchone()["n"]

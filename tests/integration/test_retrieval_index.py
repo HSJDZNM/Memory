@@ -272,6 +272,44 @@ def test_quarantine_with_stale_hash_fails_closed(tmp_root) -> None:
         store.close()
 
 
+def test_quarantine_readings_share_one_source_of_truth(tmp_root) -> None:
+    """"隔离了多少"必须只有一个口径：生效标记，而不是记录表行数（复核发现）。"""
+
+    loaded = load_fixture_corpus(tmp_root)
+    store = open_store(tmp_root)
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        document_id = loaded.entry("guides", INDEX_DOCUMENT).document_id
+        original = (tmp_root / GUIDE_MIRROR / INDEX_DOCUMENT).read_text(encoding="utf-8")
+        target = store.chunks(document_id)[0]
+        quarantine_chunk(
+            store,
+            chunk_id=target.chunk_id,
+            reason="运行期隔离",
+            quarantined_at="2026-01-01T00:00:00Z",
+        )
+        assert store.stats().quarantined == store.integrity()["quarantined"] == 1
+
+        # 直接改库（不经过 indexer 的收敛）：生效标记清零，记录留在表里等下一次 ingest。
+        head = target.text.split(chr(10))[0]
+        changed = original.replace(head, head + " (revised)", 1)
+        _, drafts = chunk_document(
+            changed,
+            document_id=document_id,
+            max_chars=loaded.policy.max_chunk_chars,
+            hard_max_chars=loaded.policy.hard_max_chunk_chars,
+        )
+        store.replace_chunks(document_id, drafts)
+
+        assert store.chunk(target.chunk_id).quarantined is False
+        assert [item.chunk_id for item in store.quarantined()] == [target.chunk_id]
+        assert store.stats().quarantined == store.integrity()["quarantined"] == 0, (
+            "两份读数必须同口径：生效状态，而不是记录表行数"
+        )
+    finally:
+        store.close()
+
+
 def test_runtime_quarantine_survives_the_next_ingest(tmp_root) -> None:
     """运行期隔离不是"清单的缺失项"：下一次 ingest 不许把它放回索引（复核发现）。
 
