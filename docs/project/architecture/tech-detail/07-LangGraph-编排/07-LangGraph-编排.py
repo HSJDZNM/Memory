@@ -681,9 +681,16 @@ def run_mini(task_id, *, client, runner, name, approvals=None):
 
 
 BROKEN = support.write_change(summary="第 0 轮：会被验证挡住的改动")
+# **替换的针必须与默认正文逐字相同**：`support.write_change()` 里那句话是
+# "处理创建请求（编排层改写过的版本）。"，而这里原来找的是 "处理创建请求。"——replace 静默
+# 不生效，两轮的 content 逐字节相同（只有 summary 不同）；`Change.digest` 覆盖 summary，
+# 于是两轮连 action_id 都不一样，更掩盖了"修复轮其实什么都没改"。
+# 下面那条断言让这种"夹具其实是空操作"再也不可能悄悄通过。
 FIXED = support.write_change(
     summary="第 1 轮：按结构化 violation 修复",
-    content=support.write_change().content.replace("处理创建请求。", "处理创建请求（修复版）。"))
+    content=support.write_change().content.replace(
+        "处理创建请求（编排层改写过的版本）。", "处理创建请求（修复版）。"))
+assert FIXED.content != BROKEN.content, "修复夹具与初始改动逐字节相同：第 1 轮什么都没改"
 repair_client = support.scripted_client(
     evaluate=(support.allow_outcome(), support.allow_outcome()),
     retrieve=(support.retrieval_ok(),),
