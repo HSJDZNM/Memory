@@ -181,6 +181,12 @@ def build_request_document(
         raise CliError("roles 必须是字符串列表")
     permissions = registry.permissions_for([str(role) for role in roles])
 
+    # sources 与 roles 同一口径：字符串会被逐字符展开成 ['a','b','c']，那不是"一个来源"。
+    # 它是唯一此前没做类型检查的列表字段，静默展开会把上下文摘要算在一个不存在的来源集合上。
+    sources = document.get("sources", [])
+    if isinstance(sources, str) or not isinstance(sources, (list, tuple)):
+        raise CliError("sources 必须是字符串列表")
+
     return action_module.build_action_request(
         spec,
         params,
@@ -193,7 +199,7 @@ def build_request_document(
         roles=[str(role) for role in roles],
         permissions=permissions,
         context=context,
-        sources=[str(item) for item in document.get("sources", [])],
+        sources=[str(item) for item in sources],
         workspace=workspace,
         ttl_seconds=registry.grant_ttl_seconds,
         now=now or utc_now(),

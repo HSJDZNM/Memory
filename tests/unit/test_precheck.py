@@ -1099,6 +1099,40 @@ def test_check_list_is_complete_for_governed_actions(enforcement_paths):
     assert spec is not None and warnings == ()
 
 
+def test_a_string_sources_field_is_a_usage_error(enforcement_paths):
+    """请求文档的 sources 写成字符串必须报错：它唯一没做类型检查的列表字段。
+
+    旧口径直接 [str(item) for item in document.get("sources", [])]：一个字符串会被
+    **逐字符**展开成 ["d","o","c","s","/","a",".","m","d"]，上下文摘要于是算在一个
+    根本不存在的来源集合上（roles/params 都查了类型，只有它漏了）。
+    """
+
+    from enforcement.cli import CliError, build_request_document
+
+    registry = enforcement_paths.registry_object()
+    document = {
+        "action_id": "sources-1",
+        "request_id": "sources-1",
+        "agent": "dsh",
+        "tool_id": "fs.edit",
+        "subject": "local-user",
+        "roles": ["developer"],
+        "sources": "docs/a.md",
+        "params": {
+            "file_path": "src/a.py",
+            "old_string": "x",
+            "new_string": "y",
+            "replace_all": False,
+        },
+    }
+
+    with pytest.raises(CliError) as error:
+        build_request_document(
+            document, registry=registry, workspace=enforcement_paths.workspace
+        )
+    assert "sources" in str(error.value)
+
+
 def test_authorization_grant_requires_a_ttl_within_the_cap(enforcement_paths):
     from enforcement.action import build_action_request
 
