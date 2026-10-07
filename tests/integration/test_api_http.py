@@ -410,6 +410,36 @@ def test_unknown_route_and_method_have_explicit_codes(tmp_root: Path) -> None:
     assert error_code(wrong_method) == "method_not_allowed"
 
 
+def test_query_string_cannot_rewrite_which_route_handles_the_request(tmp_root: Path) -> None:
+    """走哪条路由由 URL 决定：`?_route=validate` 不能把 evaluate 的请求转给 validate。
+
+    历史缺陷（OCR 全量审查 L09 / L31）：处理器签名里 `_route: str = route` 被 FastAPI
+    当成 query 参数，调用方于是能用它改写分派——而运行时的预算、幂等键、指标与审计口径
+    全部按被改写的路由名取（`runtime.handle` 按这个字符串分派）。
+    这里用**响应形状**判分派：evaluate 给 decision/rule_set，validate 给 report/blockers，
+    两者都是 200，状态码分辨不出来。
+    """
+
+    runtime, client, _ = build_api(tmp_root)
+    plain = client.post(
+        "/v1/policy/evaluate", headers=auth(), json=envelope("it-route-plain", context=GOOD_CONTEXT)
+    )
+    spoofed = client.post(
+        "/v1/policy/evaluate?_route=validate",
+        headers=auth(),
+        json=envelope("it-route-spoofed", context=GOOD_CONTEXT),
+    )
+    assert plain.status_code == 200 and spoofed.status_code == 200
+    assert "rule_set" in plain.json() and "report" not in plain.json()
+    # 同一个 URL、同一个请求体：加一个 query 参数不能让响应换成另一条路由的形状。
+    assert set(spoofed.json()) == set(plain.json())
+    assert "report" not in spoofed.json()
+
+    # 台账 / 指标 / 日志的键也是同一条口径：记录里的 route 必须是 evaluate。
+    rows = runtime.request_log.read_back()
+    assert [row["route"] for row in rows] == ["evaluate", "evaluate"]
+
+
 # --------------------------------------------------------------------------- 限流与幂等
 
 

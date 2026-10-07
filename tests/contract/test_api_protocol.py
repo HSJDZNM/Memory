@@ -190,6 +190,32 @@ def test_app_routes_match_contract_endpoints(runtime: ApiRuntime) -> None:
         assert methods[path] == {"GET"}
 
 
+def test_no_route_exposes_a_bindable_parameter_from_the_handler_signature(
+    runtime: ApiRuntime,
+) -> None:
+    """处理器签名里的参数一个都不许变成公开契约里的可绑定参数。
+
+    历史缺陷（OCR 全量审查 L31）：`_route: str = route` 作为默认值是为了绑定循环变量
+    （闭包共享 cell，三条路由会全变最后一个值），但 FastAPI 把这个签名参数当成
+    **query 参数**写进文档——调用方于是能用 `?_route=validate` 自己挑一条路由，
+    预算 / 幂等键 / 审计口径跟着切换。绑定改由 `make_handler` 的闭包提供之后，
+    文档里必须一个 parameter 都不多：这六条路由的输入只有 URL、请求头与请求体。
+
+    断言写成"整份文档里没有任何 parameter"，而不是只查 `_route` 这个名字：
+    换成别的名字、或在别的路由上重新泄漏，同样会让这条用例变红。
+    """
+
+    document = openapi_document(runtime)
+    leaked = [
+        f"{path} {method} -> {item.get('name')}"
+        for path, item in (document.get("paths") or {}).items()
+        for method, operation in item.items()
+        if isinstance(operation, dict)
+        for item in (operation.get("parameters") or ())
+    ]
+    assert leaked == [], "契约里出现了可绑定的路由参数（服务端装配的路由不该由请求改写）：" + repr(leaked)
+
+
 def test_health_live_payload_has_fixed_top_level_keys(runtime: ApiRuntime) -> None:
     """存活探针的形状固定：编排系统与监控都按这几个键写表达式。
 

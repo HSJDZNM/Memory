@@ -803,18 +803,6 @@
       "post": {
         "description": "检索离线规范并组装带来源的 Engineering Context。",
         "operationId": "knowledgeRetrieve",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "_route",
-            "required": false,
-            "schema": {
-              "default": "retrieve",
-              "title": " Route",
-              "type": "string"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -986,18 +974,6 @@
       "post": {
         "description": "对固定上下文给出 allow / allow_with_warnings / block。",
         "operationId": "policyEvaluate",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "_route",
-            "required": false,
-            "schema": {
-              "default": "evaluate",
-              "title": " Route",
-              "type": "string"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1138,18 +1114,6 @@
       "post": {
         "description": "产出验证器证据（可选顺带判定）。",
         "operationId": "validationEvaluate",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "_route",
-            "required": false,
-            "schema": {
-              "default": "validate",
-              "title": " Route",
-              "type": "string"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
