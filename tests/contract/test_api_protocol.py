@@ -144,6 +144,31 @@ def test_openapi_info_pins_the_three_versions(runtime: ApiRuntime) -> None:
     assert info["x-policy-generation"] == policy_models.POLICY_VERSION
 
 
+def test_metrics_success_response_is_not_declared_as_an_error_envelope(
+    runtime: ApiRuntime,
+) -> None:
+    """`/v1/ops/metrics` 的 200 是**成功**响应，不是错误信封。
+
+    历史缺陷（OCR 全量审查 L31）：`_METRICS_STATUS_CODES = (200, 403)` 被整组丢进
+    `_error_response_doc`，于是 200 的 schema 引用 ErrorResponse、描述写成"结构化错误"。
+    按这份契约生成的客户端会把一次成功的指标读成错误对象。403（无运维权限）才是错误，
+    删掉 200 的错误声明不能顺手把 403 也改掉：两条路径的形状都要被钉住。
+    """
+
+    document = openapi_document(runtime)
+    responses = document["paths"]["/v1/ops/metrics"]["get"]["responses"]
+
+    success = responses["200"]
+    assert success["description"] == "进程内指标（路由计数、延迟分位、限流与超时计数）"
+    # 成功载荷是受控 JSON，但没有固定 schema（与另外三条路由的 200 同形）。
+    assert success["content"]["application/json"]["schema"] == {}
+    assert "ErrorResponse" not in json.dumps(success, ensure_ascii=False)
+
+    forbidden = responses["403"]
+    assert forbidden["content"]["application/json"]["schema"]["$ref"].endswith("/ErrorResponse")
+    assert "结构化错误" in forbidden["description"]
+
+
 @pytest.mark.parametrize("layer", CORE_LAYERS)
 def test_core_layers_do_not_import_web_frameworks(layer: str) -> None:
     """核心层（规则 / 检索 / 验证器 / 受控执行）不得依赖 Web 框架。

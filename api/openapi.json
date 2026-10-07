@@ -946,12 +946,10 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
+                "schema": {}
               }
             },
-            "description": "200：结构化错误（见 ErrorResponse）"
+            "description": "进程内指标（路由计数、延迟分位、限流与超时计数）"
           },
           "403": {
             "content": {

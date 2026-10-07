@@ -57,7 +57,10 @@ _ROUTE_STATUS_CODES: Mapping[str, tuple[int, ...]] = {
     "validate": (400, 401, 403, 404, 409, 413, 415, 429, 500, 503, 504),
 }
 _READINESS_STATUS_CODES = (200, 503)
-_METRICS_STATUS_CODES = (200, 403)
+# 指标端点的状态码要**分开**：403 是结构化错误（无运维权限），200 是成功响应
+# （进程内指标载荷）。把 200 也丢进错误信封会让按这份契约生成的客户端把一次成功的
+# 指标读成错误对象——成功路径的形状必须由成功路径描述。
+_METRICS_ERROR_STATUS_CODES = (403,)
 
 # 路由 → OpenAPI operationId / tag（URL 与运行时路由名分开：改 URL 不该改台账语义）。
 _OPERATION_IDS = {
@@ -293,7 +296,9 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
         tags=["ops"],
         responses={200: {"description": "进程内指标（路由计数、延迟分位、限流与超时计数）"}},
         openapi_extra={
-            "responses": {str(code): _error_response_doc(code) for code in _METRICS_STATUS_CODES}
+            "responses": {
+                str(code): _error_response_doc(code) for code in _METRICS_ERROR_STATUS_CODES
+            }
         },
     )
 
