@@ -16,12 +16,12 @@ from __future__ import annotations
 import json
 import os
 import re
-import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional, Protocol, Sequence
 
+from .locking import LockError, file_lock
 from .models import (
     AuditError,
     AuditRecord,
@@ -56,69 +56,17 @@ _LOCK_TIMEOUT_SECONDS = 5.0
 
 @contextmanager
 def _audit_lock(path: Path, *, timeout_seconds: float = _LOCK_TIMEOUT_SECONDS) -> Iterator[None]:
-    """审计文件的跨进程互斥：Windows 用 msvcrt，POSIX 用 flock。
-
-    **锁的是独立的 `.lock` 文件，不是审计文件本身**：Windows 上给数据文件加字节锁会让
-    同一进程里的 `read_text()` 吃 `PermissionError`（这条坑 Phase 6/Phase 7 都踩过，
-    见 `adapters.runtime._process_file_lock` 与 `policy_api.idempotency._file_lock`）。
-    enforcement 是它们两者的下层，不能反向导入，所以这里保留一份最小实现。
+    """审计文件的跨进程互斥（实现见 `locking.file_lock`）。
 
     抢不到锁**不写**：审计是摘要链，"两个写入方各自算出同一个 sequence/prev_digest"
     会让链静默分叉，事后只能靠 verify() 发现。
     """
 
-    lock_path = path.with_name(path.name + ".lock")
     try:
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        handle = lock_path.open("a+b")
-        if handle.seek(0, 2) == 0:
-            handle.write(b"\0")
-            handle.flush()
-        handle.seek(0)
-    except OSError as error:
-        raise AuditError(f"审计日志锁不可用: {lock_path.name}（{error}）") from error
-
-    held = False
-    try:
-        deadline = time.monotonic() + timeout_seconds
-        while True:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-
-                    # 非阻塞抢锁 + 自己的截止时间：POSIX 的 LOCK_EX 会一直等下去，
-                    # 那会把"另一个写入方卡住"变成这里卡住（失败关闭要先能失败）。
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError as error:
-                if time.monotonic() >= deadline:
-                    raise AuditError(
-                        f"审计日志锁超时: {path.name}（有另一个写入方持锁）："
-                        "拿不到锁就不写，宁可失败关闭"
-                    ) from error
-                time.sleep(0.01)
-        held = True
-        yield
-    finally:
-        try:
-            if held:
-                # 只解自己真的拿到的锁：对未持有的区间解锁会从 finally 抛 PermissionError，
-                # 把在途的"锁超时"这个真正的原因替换掉。
-                handle.seek(0)
-                if os.name == "nt":
-                    import msvcrt
-
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        finally:
-            handle.close()
+        with file_lock(path.with_name(path.name + ".lock"), timeout_seconds=timeout_seconds):
+            yield
+    except LockError as error:
+        raise AuditError(f"审计日志锁不可用: {path.name}（{error}）：拿不到锁就不写，宁可失败关闭") from error
 
 # 绝对路径与密钥样式：审计里出现它们就等于把环境信息或凭据写进了日志。
 _ABS_PATH_RE = re.compile(

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -677,6 +678,90 @@ def _is_corrected_pre_decision(payload: Mapping[str, Any]) -> bool:
         for item in checks
     )
 
+def _limit_key_of(
+    spec: Optional[ToolSpec], request: ActionRequest, *, dry_run: bool
+) -> Optional[str]:
+    """本次判定要不要按限流键串行化；不需要就返回 None（不取锁）。
+
+    计数在第 7 项检查里读，而 +1 的那条 pre_decision 直到 pre_execute 末尾才落盘，中间还
+    夹着认领、审批占用、授权签发与审计写入：N 个并发请求会同时看到 calls < max_calls，
+    然后**全部**放行——注册表里配置的窗口上限形同虚设（熔断计数同源，同样失效）。
+
+    台账自己的原子性原语是"先追加再复核"，但它只覆盖单条记录；这里是"读一个数 + 写一条
+    记录"两步，所以用同一个限流键上的跨进程互斥把两步圈在一起。粒度按 (subject|tool)：
+    不同键不互相阻塞。不需要限流的工具与 dry-run（不写计数行）都不取锁。
+    """
+
+    if spec is None or spec.rate_limit is None or request.subject is None or dry_run:
+        return None
+    return f"{request.subject}|{request.tool_id}"
+
+
+def _unavailable_outcome(
+    request: ActionRequest,
+    *,
+    spec: Optional[ToolSpec],
+    error: str,
+    moment: datetime,
+    sink: Optional[AuditSink],
+) -> PrecheckOutcome:
+    """限流临界区不可用：按失败关闭拒绝，并写清理由。
+
+    **不退化成"读旧计数照样判"**：读不到一致的窗口计数，就证明不了这次调用在预算之内。
+    """
+
+    checks = [
+        _check(
+            "rate_limit_lock",
+            CheckStatus.FAILED,
+            ReasonCode.LEDGER_UNAVAILABLE,
+            f"限流临界区不可用：{error}；"
+            "证明不了本次调用在窗口预算内，按失败关闭拒绝（不是放行）",
+        )
+    ]
+    try:
+        if sink is not None:
+            sink.append(
+                AuditStage.PRE_DECISION,
+                payload={
+                    "decision": Decision.BLOCK.value,
+                    "reason_code": ReasonCode.LEDGER_UNAVAILABLE.value,
+                    "action_hash": request.action_hash,
+                    "risk": request.risk.value,
+                    "subject": request.subject,
+                    "checks": [item.model_dump(mode="json") for item in checks],
+                    "dry_run": False,
+                },
+                trace_id=request.trace_id,
+                action_id=request.action_id,
+                request_id=request.request_id,
+                tool_id=request.tool_id,
+                now=moment,
+            )
+    except AuditError:
+        # 审计写不进去不改变结论：这是一次拒绝，不是放行。
+        pass
+    return PrecheckOutcome(
+        decision=PreDecision(
+            decision=Decision.BLOCK,
+            reason_code=ReasonCode.LEDGER_UNAVAILABLE,
+            action_id=request.action_id,
+            request_id=request.request_id,
+            trace_id=request.trace_id,
+            action_hash=request.action_hash,
+            tool_id=request.tool_id,
+            tool_name=request.tool_name,
+            risk=request.risk,
+            checks=tuple(checks),
+            grant=None,
+            evaluated_at=moment,
+        ),
+        checks=list(checks),
+        spec=spec,
+        claim_id=None,
+    )
+
+
 def pre_execute(
     request: ActionRequest,
     *,
@@ -699,6 +784,54 @@ def pre_execute(
     不写限流台账，审计记录上标注 dry_run。CLI 的 precheck 子命令用的就是这个语义——
     否则"先 precheck 再 execute"会因为 action_id 被占用而变成重放。
     """
+
+    spec = registry.tool(request.tool_id)
+    moment = now or utc_now()
+    limit_key = _limit_key_of(spec, request, dry_run=dry_run)
+    # **锁序固定为 rate-lock → audit-lock**（判定里唯一另一把锁是审计追加用的；
+    # 台账文件本身不加锁）。任何新增取锁点都必须沿用这条顺序，反向顺序就是死锁配方。
+    with ExitStack() as stack:
+        if limit_key is not None:
+            try:
+                stack.enter_context(ledger.limit_lock(limit_key))
+            except LedgerError as error:
+                return _unavailable_outcome(
+                    request, spec=spec, error=str(error), moment=moment, sink=sink
+                )
+        return _pre_execute_locked(
+            request,
+            registry=registry,
+            ledger=ledger,
+            sink=sink,
+            approval=approval,
+            policy_decision=policy_decision,
+            policy_error=policy_error,
+            policy_detail=policy_detail,
+            policy_skipped_reason=policy_skipped_reason,
+            now=moment,
+            workspace=workspace,
+            grant_ttl_seconds=grant_ttl_seconds,
+            dry_run=dry_run,
+        )
+
+
+def _pre_execute_locked(
+    request: ActionRequest,
+    *,
+    registry: ToolRegistry,
+    ledger: EnforcementLedger,
+    sink: Optional[AuditSink] = None,
+    approval: Optional[ApprovalRecord] = None,
+    policy_decision: Optional[ValidationResult] = None,
+    policy_error: Optional[ReasonCode] = None,
+    policy_detail: str = "",
+    policy_skipped_reason: str = "",
+    now: Optional[datetime] = None,
+    workspace: Optional[Path | str] = None,
+    grant_ttl_seconds: Optional[int] = None,
+    dry_run: bool = False,
+) -> PrecheckOutcome:
+    """执行前决策的实现：调用方 pre_execute 已按限流键把这一段串行化。"""
 
     moment = now or utc_now()
     checks, spec, warnings = check_list(

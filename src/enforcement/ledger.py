@@ -37,13 +37,16 @@ execution / approval_used）、各条记录自己的标识（`action_id` / `clai
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Iterator, Mapping, Optional, Sequence
 
+from .locking import DEFAULT_LOCK_TIMEOUT_SECONDS, LockError, file_lock
 from .models import (
     AuthorizationGrant,
     GrantError,
@@ -169,6 +172,35 @@ class EnforcementLedger:
 
         source = self.records() if records is None else records
         return tuple(item for item in source if item.get("kind") == kind)
+
+    @contextmanager
+    def limit_lock(
+        self, limit_key: str, *, timeout_seconds: Optional[float] = None
+    ) -> Iterator[None]:
+        """同一个限流键上的跨进程互斥（锁文件与台账同目录，按 limit_key 哈希分片）。
+
+        限流的 +1 是"判定末尾写一条 pre_decision"，而计数在判定开头读；两步之间夹着认领、
+        审批占用、授权签发与审计写入。把这两步圈进同一把锁，注册表配置的窗口上限才真的
+        成立。**粒度按限流键**：不同 (subject|tool) 的锁文件不同，互不阻塞。
+        拿不到锁抛 LedgerError——调用方必须按失败关闭拒绝，不许"读旧计数照样判"。
+
+        **锁序**：调用方（precheck.pre_execute）按 rate-lock → audit-lock 的固定顺序取锁；
+        本方法只取前者，台账文件自身不加字节锁（Windows 上那样会让同进程的 read_text()
+        直接吃 PermissionError）。任何新增的取锁点都必须遵守同一条顺序，否则两个相反的
+        顺序就是死锁配方。
+        """
+
+        timeout = DEFAULT_LOCK_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        token = hashlib.sha256(limit_key.encode("utf-8")).hexdigest()[:16]
+        lock_path = self.path.with_name(self.path.name + f".limit-{token}.lock")
+        try:
+            with file_lock(lock_path, timeout_seconds=timeout):
+                yield
+        except LockError as error:
+            raise LedgerError(
+                f"限流键 {limit_key!r} 的互斥锁不可用（{error}）："
+                "拿不到锁就不判定，宁可失败关闭"
+            ) from error
 
     # ------------------------------------------------------------------ 写
     def append(self, record: Mapping[str, Any]) -> None:

@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from datetime import timedelta
 
 import pytest
@@ -106,6 +108,91 @@ def reason_of(outcome) -> ReasonCode:
 
 
 # --------------------------------------------------------------------------- 注册表与参数
+
+
+def test_rate_limit_holds_under_concurrent_requests(enforcement_paths, monkeypatch):
+    """并发请求不能一起看到 calls < max_calls：读计数与写计数必须原子。
+
+    测试注册表里 fs.edit 是 max_calls=3 / 60s。旧实现把计数放在第 7 项检查里读、把 +1
+    的那条 pre_decision 留到 pre_execute 末尾才写，中间夹着认领、审批占用与审计写入，
+    4 个并发请求会全部读到 0 并全部放行。这里把"读 → 写"之间的窗口拉大（读完之后
+    sleep 0.2s），让竞态确定复现：修复后恰好 3 个放行、第 4 个按 RATE_LIMITED 拒绝。
+    """
+
+    paths = enforcement_paths
+    registry = paths.registry_object()
+    paths.file("src/shop/order_controller.py", "from service import OrderService\n")
+
+    original = EnforcementLedger.count_since
+
+    def slow_count(self, **kwargs):  # type: ignore[no-untyped-def]
+        value = original(self, **kwargs)
+        time.sleep(0.2)
+        return value
+
+    monkeypatch.setattr(EnforcementLedger, "count_since", slow_count)
+
+    results: list[Decision] = []
+    guard = threading.Lock()
+
+    def worker(index: int) -> None:
+        request = make_action(
+            registry, paths, "fs.edit", edit_params(), action_id=f"act-{index}"
+        )
+        outcome = pre_execute(
+            request,
+            registry=registry,
+            ledger=EnforcementLedger(paths.ledger),
+            sink=FileAuditSink(paths.audit, workspace=paths.workspace),
+        )
+        with guard:
+            results.append(outcome.decision.decision)
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+
+    assert len(results) == 4, results
+    allowed = [item for item in results if item is not Decision.BLOCK]
+    assert len(allowed) == 3, f"并发下放行了 {len(allowed)} 次，超过窗口上限 3：{results}"
+
+
+def test_a_contended_limit_lock_refuses_instead_of_reading_a_stale_count(
+    enforcement_paths, monkeypatch
+):
+    """抢不到限流锁 → 按失败关闭拒绝（LEDGER_UNAVAILABLE），绝不"读旧计数照样判"。"""
+
+    from enforcement import ledger as ledger_module
+
+    paths = enforcement_paths
+    registry = paths.registry_object()
+    monkeypatch.setattr(ledger_module, "DEFAULT_LOCK_TIMEOUT_SECONDS", 0.2)
+
+    holder = EnforcementLedger(paths.ledger)
+    with holder.limit_lock("local-user|fs.edit"):  # 另一个进程（这里是另一个句柄）持锁
+        outcome = pre_execute(
+            make_action(registry, paths, "fs.edit", edit_params(), action_id="act-locked"),
+            registry=registry,
+            ledger=EnforcementLedger(paths.ledger),
+            sink=FileAuditSink(paths.audit, workspace=paths.workspace),
+        )
+
+    assert outcome.decision.decision is Decision.BLOCK
+    assert outcome.decision.reason_code is ReasonCode.LEDGER_UNAVAILABLE
+    lock_check = outcome.decision.check("rate_limit_lock")
+    assert lock_check is not None and lock_check.status is CheckStatus.FAILED
+    assert "拿不到锁就不判定" in lock_check.detail
+
+    # 反真空：锁释放之后同一个请求照常判定（失败关闭没有把工具永久锁死）。
+    released = pre_execute(
+        make_action(registry, paths, "fs.edit", edit_params(), action_id="act-locked"),
+        registry=registry,
+        ledger=EnforcementLedger(paths.ledger),
+        sink=FileAuditSink(paths.audit, workspace=paths.workspace),
+    )
+    assert released.decision.decision is not Decision.BLOCK
 
 
 def test_unregistered_tool_is_blocked(enforcement_paths):
