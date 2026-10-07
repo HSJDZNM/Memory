@@ -148,9 +148,16 @@ def _run_seal(args: argparse.Namespace) -> int:
     except worktree.UnprovableError as error:
         print(f"用法错误：{error}", file=sys.stderr)
         return EXIT_USAGE
-    platform_declaration = (
-        worktree.load_declaration(args.platform) if args.platform else declaration
-    )
+    try:
+        # --platform 与 --declaration 是同一类输入（都是命令行给的声明文件）：它读不到
+        # 同样是用法错误。不接住的话，裸 traceback 会让进程用解释器的默认退出码 1 结束——
+        # 而 1 的含义是"判据跑完且是红的"，这里连判据都还没跑。
+        platform_declaration = (
+            worktree.load_declaration(args.platform) if args.platform else declaration
+        )
+    except worktree.UnprovableError as error:
+        print(f"用法错误：{error}", file=sys.stderr)
+        return EXIT_USAGE
 
     peer_evidence: Optional[Dict[str, Any]] = None
     if args.peer_evidence:
@@ -183,7 +190,23 @@ def _run_seal(args: argparse.Namespace) -> int:
         receipt.update({"state": "unprovable", "error": str(error)})
         return _finish_seal(args, receipt, EXIT_SEAL)
 
-    completed = subprocess.run(argv, cwd=str(root), check=False)
+    try:
+        completed = subprocess.run(argv, cwd=str(root), check=False)
+    except OSError as error:
+        # 判据命令根本没跑起来（命令拼错 / 不可执行 / 工作目录在 pre 与 spawn 之间消失）。
+        # 这不是"判据 fail"——退出码 1 的含义是"跑完了、是红的"；也不能让 Python 的默认
+        # 退出码替我们回答（§52：异常路径要归因到真正的那一侧）。
+        if not Path(root).is_dir():
+            receipt.update(
+                {"state": "unprovable", "error": f"判据命令的工作目录不见了：{root}"}
+            )
+            return _finish_seal(args, receipt, EXIT_SEAL)
+        print(
+            f"用法错误：判据命令无法启动（{type(error).__name__}: {error}）；"
+            "判据没有运行，本轮没有结论",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
     receipt["command"] = {"argv": _argv_display(argv), "exit_code": completed.returncode}
 
     try:
