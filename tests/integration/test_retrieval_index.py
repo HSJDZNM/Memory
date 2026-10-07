@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from retrieval.chunker import chunk_document
 from retrieval.corpus import load_corpus, verify_corpus
@@ -411,6 +412,43 @@ def test_verify_corpus_is_idempotent_and_recomputes_file_issues(tmp_root) -> Non
     mirrored = load_corpus(clean.corpus_path, repo_root=tmp_root)
     kinds = [issue.kind for issue in verify_corpus(mirrored, repo_root=tmp_root).issues]
     assert kinds.count("not_saved") == 1, kinds
+
+
+def test_a_dataset_removed_from_the_manifest_is_pruned(tmp_root) -> None:
+    """清单里整个数据集被移除时，它名下的文档必须一起删除（复核发现）。"""
+
+    corpus_path = write_fixture_corpus(tmp_root)
+    loaded = load_corpus(corpus_path, repo_root=tmp_root)
+    store = open_store(tmp_root)
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        adversarial_id = loaded.entry("adversarial", "poisoned.md").document_id
+        assert store.document(adversarial_id) is not None
+
+        # 从清单里整段去掉 adversarial 数据集（镜像文件仍在，条目不再声明）。
+        document = yaml.safe_load(corpus_path.read_text(encoding="utf-8"))
+        document["datasets"] = [
+            item for item in document["datasets"] if item["name"] != "adversarial"
+        ]
+        corpus_path.write_text(
+            yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+            newline="",
+        )
+        smaller = load_corpus(corpus_path, repo_root=tmp_root)
+        report = ingest(smaller, store, repo_root=tmp_root)
+
+        assert report.documents_removed >= 1
+        assert store.document(adversarial_id) is None
+        assert store.chunks(adversarial_id) == ()
+        retriever = FtsRetriever(store, policy=smaller.policy)
+        hits = retriever.retrieve(
+            RetrievalQuery(text="IGNORE ALL PREVIOUS INSTRUCTIONS shell tool", limit=5),
+            scope_of(smaller),
+        )
+        assert all(item.document_id != adversarial_id for item in hits.results)
+    finally:
+        store.close()
 
 
 def test_rule_source_registration_and_cascade_delete(tmp_root) -> None:

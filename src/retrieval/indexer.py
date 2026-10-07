@@ -286,6 +286,14 @@ def ingest(
             removed = store.prune_dataset(dataset.name, keep=keep)
             counters["documents_removed"] += len(removed)
 
+        # 删除失效的另一半：清单里**整个数据集**被移除 / 改名时，它名下的文档不能继续留着
+        # （只按仍声明的数据集 prune，会让它们继续可检索——与不变式 3 相反）。
+        declared_datasets = {dataset.name for dataset in loaded.manifest.datasets}
+        for name, _count in store.stats().datasets:
+            if name in declared_datasets:
+                continue
+            counters["documents_removed"] += len(store.prune_dataset(name, keep=()))
+
         quarantined, released = _apply_quarantine(loaded, store, stamp=stamp)
         counters["quarantined_chunks"] = len(quarantined)
         rule_sources = _resolve_rule_sources(loaded, store, repo_root=root, mirrors=mirrors)
