@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -99,9 +100,19 @@ class AbTaskError(RuntimeError):
 
 
 def _get(url: str, timeout: int = 120) -> bytes:
+    """取一个 URL。**网络失败一律翻成 AbTaskError**：
+
+    main 只认 (AbTaskError, KeyError)，URLError / HTTPError / socket.timeout / IncompleteRead
+    逃出去就是一段栈回溯，而"网不通 / 上游 5xx / 传到一半断了"恰恰是本模块最常见的失败形态，
+    它们必须和"本地没有语料"一样，逐条带 reason 写出来。
+    """
+
     request = urllib.request.Request(url, headers={"User-Agent": "ab-tasks/1"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read()
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as error:
+        raise AbTaskError("取 %s 失败：%s: %s" % (url, type(error).__name__, error)) from error
 
 
 def dataset_dir(dataset_id: str, root: Path) -> Path:
