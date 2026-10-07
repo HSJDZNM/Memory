@@ -344,7 +344,8 @@ def write_change(
         path=path,
         summary=summary,
         content=content
-        or '''"""接口层：Controller 只依赖 Service。"""
+        if content is not None
+        else '''"""接口层：Controller 只依赖 Service。"""
 
 from shop.order_service import OrderService
 
@@ -645,7 +646,9 @@ def tool_request(
         tool_id=tool_id,
         action_id=action_id,
         request_id=request_id,
-        params=dict(params or {"file_path": TARGET_PATH, "content": "# 写入\n"}),
+        params=dict(
+            {"file_path": TARGET_PATH, "content": "# 写入\n"} if params is None else params
+        ),
         subject=subject,
         roles=roles,
         trace_id=trace_id,

@@ -221,7 +221,11 @@ def registry_document(
             "owner": ["repo.read", "repo.write", "repo.approve", "shell.exec", "sandbox.escalate"],
         },
         "approvals": {"require_role": "reviewer"},
-        "tools": [_with_python(item) for item in (tools or TEST_REGISTRY_TOOLS)],
+        # `tools or TEST_REGISTRY_TOOLS` 会把 `tools=()` 也换成默认表：调用方要的是
+        # "空工具表"，拿到的是六件套。分支只能判 `is None`（`write_registry` 继承同一语义）。
+        "tools": [
+            _with_python(item) for item in (TEST_REGISTRY_TOOLS if tools is None else tools)
+        ],
     }
     document.update(overrides)
     return document
@@ -367,13 +371,23 @@ def approval_for(
     from enforcement.approvals import ApprovalRecord
     from enforcement.models import utc_now
 
+    # 只在**真的省略**时回落到请求的主体：`or` 会把显式给的空串也当成"没给"。
+    if subject is None:
+        subject = request.subject
+    if subject is None:
+        raise ValueError(
+            "审批必须绑定与请求相同的主体：这个请求的 subject 是 None。"
+            "在这里伪造一个 'local-user' 只会让 verify_approval 在更晚的地方以"
+            "『主体不一致』失败——报出来的不是真正的原因（请求根本没有主体）。"
+        )
+
     now = utc_now()
     return ApprovalRecord(
         approval_id=approval_id,
         action_hash=action_hash or request.action_hash,
         action_id=request.action_id,
         tool_id=request.tool_id,
-        subject=subject or request.subject or "local-user",
+        subject=subject,
         granted_by=granted_by,
         granted_by_roles=tuple(roles),
         granted_at=now - timedelta(seconds=1),
