@@ -22,14 +22,30 @@ def check(path: Path) -> list[str]:
     except (OSError, json.JSONDecodeError) as error:
         return [f"{path}: 不是合法 JSON（{error}）"]
 
+    # JSON 合法不等于形状正确：json.loads 可以返回 [] / "x" / 42 / null，
+    # 直接对它们做成员测试或 .get() 会抛 TypeError / AttributeError —— 那是把
+    # "这份 notebook 畸形"变成一次 traceback，还会中断后面所有目标的检查。
+    if not isinstance(notebook, dict):
+        return [f"{path}: 顶层必须是 JSON 对象，得到 {type(notebook).__name__}"]
+
     for key in REQUIRED_TOP:
         if key not in notebook:
             problems.append(f"{path}: 缺少顶层键 {key}")
     if notebook.get("nbformat") != 4:
         problems.append(f"{path}: 只支持 nbformat 4，得到 {notebook.get('nbformat')!r}")
 
-    for index, cell in enumerate(notebook.get("cells", [])):
+    cells = notebook.get("cells")
+    if not isinstance(cells, list):
+        # 缺键已经在上面报过；这里只报"形状不对"，没有可迭代的单元就不再往下走。
+        if "cells" in notebook:
+            problems.append(f"{path}: cells 必须是数组，得到 {type(cells).__name__}")
+        return problems
+
+    for index, cell in enumerate(cells):
         location = f"单元 {index}"
+        if not isinstance(cell, dict):
+            problems.append(f"{location}: 单元必须是 JSON 对象，得到 {type(cell).__name__}")
+            continue
         for key in REQUIRED_CELL:
             if key not in cell:
                 problems.append(f"{location}: 缺少键 {key}")
