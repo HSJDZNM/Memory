@@ -589,6 +589,58 @@ def test_approval_quota_race_loser_returns_its_own_slot(tmp_root):
     assert len(EnforcementLedger(ledger.path).approval_uses("approval-1")) == 1
 
 
+def test_release_claim_requires_a_matching_live_claim(tmp_root):
+    """按 claim_id 释放必须证明它存在、仍生效、且属于同一个动作。
+
+    旧实现只按 id 追加一行 claim_released：写错 id、拿别处的 id、或重复释放都会静默
+    放开另一条认领的幂等保护。
+    """
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    claimed = ledger.claim(
+        action_id="a-1", tool_id="fs.edit", action_hash="sha256:h", claim_id="c-1"
+    )
+    assert claimed.claimed is True
+
+    with pytest.raises(LedgerError):
+        ledger.release_claim(
+            action_id="a-1", tool_id="fs.edit", claim_id="c-typo", reason="审计不可写"
+        )
+    with pytest.raises(LedgerError):
+        ledger.release_claim(
+            action_id="a-2", tool_id="fs.edit", claim_id="c-1", reason="另一个动作"
+        )
+    assert len(ledger.active_claims(action_id="a-1", tool_id="fs.edit")) == 1
+
+    # 反真空：正确的释放照常生效，而且不能释放第二次。
+    ledger.release_claim(
+        action_id="a-1", tool_id="fs.edit", claim_id="c-1", reason="审计不可写"
+    )
+    assert ledger.active_claims(action_id="a-1", tool_id="fs.edit") == ()
+    with pytest.raises(LedgerError):
+        ledger.release_claim(
+            action_id="a-1", tool_id="fs.edit", claim_id="c-1", reason="重复释放"
+        )
+
+
+def test_release_approval_use_requires_a_matching_live_use(tmp_root):
+    """归还审批额度同样要证明那次消费存在、仍生效、且属于这张审批。"""
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    use_id = ledger.record_approval_use("approval-1", action_hash="sha256:h")
+
+    with pytest.raises(LedgerError):
+        ledger.release_approval_use(approval_id="approval-1", use_id="use-typo", reason="x")
+    with pytest.raises(LedgerError):
+        ledger.release_approval_use(approval_id="approval-2", use_id=use_id, reason="x")
+    assert ledger.approval_use_count("approval-1") == 1
+
+    ledger.release_approval_use(approval_id="approval-1", use_id=use_id, reason="x")
+    assert ledger.approval_use_count("approval-1") == 0
+    with pytest.raises(LedgerError):
+        ledger.release_approval_use(approval_id="approval-1", use_id=use_id, reason="重复归还")
+
+
 def test_rate_limit_windows_count_only_recent_records(tmp_root):
     ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
     ledger.append({"kind": "pre_decision", "limit_key": "local-user|fs.edit"})

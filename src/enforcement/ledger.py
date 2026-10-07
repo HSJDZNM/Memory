@@ -231,12 +231,29 @@ class EnforcementLedger:
         return LedgerClaim(claimed=True, claim_id=claim_id)
 
     def release_claim(self, *, action_id: str, tool_id: str, claim_id: str, reason: str) -> None:
-        """释放一次认领（只用于"还没执行就失败"的路径，例如审计不可写导致阻断）。"""
+        """释放一次认领（只用于"还没执行就失败"的路径，例如审计不可写导致阻断）。
 
+        **先证明这条认领真的存在、仍然生效、而且属于同一个动作**：幂等保证不能被一个
+        字符串解除——写错 id、拿别处的 id 来释放、或重复释放，都会静默放开另一条认领的
+        保护（active_claims 只按 id 比对，released 是全局 id 集合）。证明不了就
+        LedgerError（失败关闭），不写释放行。
+        """
+
+        key = f"{tool_id}:{action_id}"
+        live = [
+            item
+            for item in self.active_claims(action_id=action_id, tool_id=tool_id)
+            if item.get("claim_id") == claim_id
+        ]
+        if not live:
+            raise LedgerError(
+                f"释放认领被拒绝：{key} 下没有仍然生效的认领 {claim_id!r}"
+                "（写错 id / 已经释放过 / 不属于这个动作，都不许静默解除幂等保护）"
+            )
         self.append(
             {
                 "kind": "claim_released",
-                "action_key": f"{tool_id}:{action_id}",
+                "action_key": key,
                 "claim_id": claim_id,
                 "reason": reason,
             }
@@ -393,8 +410,19 @@ class EnforcementLedger:
         return ApprovalUseClaim(claimed=True, uses=index + 1, use_id=token)
 
     def release_approval_use(self, *, approval_id: str, use_id: str, reason: str) -> None:
-        """归还一次审批额度（只用于"还没执行就失败"的路径，例如审计不可写导致阻断）。"""
+        """归还一次审批额度（只用于"还没执行就失败"的路径，例如审计不可写导致阻断）。
 
+        与 release_claim 同一口径：只归还**确实存在、仍然生效、且属于这张审批**的那次
+        消费；否则写错 use_id 或重复归还会静默把额度还回去（等于凭空多出一次执行机会）。
+        """
+
+        live = [
+            item for item in self.approval_uses(approval_id) if item.get("use_id") == use_id
+        ]
+        if not live:
+            raise LedgerError(
+                f"归还审批额度被拒绝：{approval_id!r} 下没有仍然生效的消费 {use_id!r}"
+            )
         self.append(
             {
                 "kind": "approval_use_released",
