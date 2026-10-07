@@ -154,27 +154,17 @@ class FtsRetriever:
             raise QueryError(f"retrieve 只接受 AccessScope，得到 {type(scope).__name__}")
 
         plan = build_plan(query, scope=scope, policy=self.policy, lexicon=self.lexicon)
-        try:
-            index_version = self.store.index_version
-        except StoreError as error:
-            return RetrievalResult(
-                status=RetrievalStatus.UNAVAILABLE,
-                query=plan.text,
-                plan=plan,
-                method=self.method,
-                reason=UnavailableReason.INDEX_MISSING,
-                detail=str(error),
-                request_id=query.request_id,
-                trace_id=query.trace_id,
-            )
 
+        # 这两条是**查询自身**的结论（空查询、没有授权），必须先判：它们不需要索引，
+        # 也不该因为索引读不到而变成 unavailable——否则文档写明的 EMPTY/EMPTY_QUERY 与
+        # EMPTY/ACCESS_DENIED 在库缺失/损坏时永远到不了，未授权调用还会白白去碰索引库。
+        # index_version 留空（字段默认 ""）：这两个结论与索引版本无关。
         if plan.is_empty:
             return RetrievalResult(
                 status=RetrievalStatus.EMPTY,
                 query=plan.text,
                 plan=plan,
                 method=self.method,
-                index_version=index_version,
                 reason=UnavailableReason.EMPTY_QUERY,
                 detail="查询规范化后没有可用词项",
                 request_id=query.request_id,
@@ -186,9 +176,22 @@ class FtsRetriever:
                 query=plan.text,
                 plan=plan,
                 method=self.method,
-                index_version=index_version,
                 reason=UnavailableReason.ACCESS_DENIED,
                 detail="AccessScope 没有授予任何数据集；授权只来自显式声明",
+                request_id=query.request_id,
+                trace_id=query.trace_id,
+            )
+
+        try:
+            index_version = self.store.index_version
+        except StoreError as error:
+            return RetrievalResult(
+                status=RetrievalStatus.UNAVAILABLE,
+                query=plan.text,
+                plan=plan,
+                method=self.method,
+                reason=UnavailableReason.INDEX_MISSING,
+                detail=str(error),
                 request_id=query.request_id,
                 trace_id=query.trace_id,
             )

@@ -13,6 +13,7 @@ from retrieval.corpus import load_expansion
 from retrieval.indexer import ingest
 from retrieval.models import (
     AccessScope,
+    CorpusPolicy,
     RetrievalMethod,
     RetrievalQuery,
     RetrievalResult,
@@ -273,6 +274,31 @@ def test_result_cache_tolerates_disabled_and_refreshes_without_evicting() -> Non
     assert cache.get("b") is None
     assert cache.get("a").query == "A2"
     assert cache.get("c").query == "C"
+
+
+def test_empty_query_and_missing_grant_do_not_need_the_index() -> None:
+    """空查询 / 无授权是查询自身的结论：库坏了也必须给 EMPTY，不是 UNAVAILABLE（复核发现）。"""
+
+    store = ChunkStore(":memory:")
+    retriever = FtsRetriever(store, policy=CorpusPolicy())
+    scope = AccessScope(subject="u", datasets=frozenset({"guides"}))
+    store.close()  # 之后任何库读都抛 StoreError——模拟"索引库打不开"
+
+    empty = retriever.retrieve(RetrievalQuery(text="   "), scope)
+    assert empty.status is RetrievalStatus.EMPTY
+    assert empty.reason is UnavailableReason.EMPTY_QUERY
+
+    denied = retriever.retrieve(
+        RetrievalQuery(text="review checklist"),
+        AccessScope(subject="u", datasets=frozenset()),
+    )
+    assert denied.status is RetrievalStatus.EMPTY
+    assert denied.reason is UnavailableReason.ACCESS_DENIED
+
+    # 对照：真的需要索引的查询在同一个坏库上仍然是 UNAVAILABLE/INDEX_MISSING。
+    broken = retriever.retrieve(RetrievalQuery(text="review checklist"), scope)
+    assert broken.status is RetrievalStatus.UNAVAILABLE
+    assert broken.reason is UnavailableReason.INDEX_MISSING
 
 
 def test_result_cache_key_covers_subject_permissions_index_and_plan(indexed) -> None:
