@@ -708,6 +708,41 @@ def test_request_log_disabled_fails_closed(tmp_root: Path) -> None:
     assert memory_only.read_back() == ()
 
 
+def test_request_log_buffers_only_the_path_that_never_hits_the_disk(tmp_root: Path) -> None:
+    """内存缓冲只服务"不落盘"的路径；落盘路径的"记下来了"由 read_back 回答。
+
+    历史缺陷（OCR 全量审查 L10）：`append` 无条件把每一条 payload 追加进 `_written`
+    （长跑服务因此永久保留每个请求的记录，单条上限 16KB），而且是在落盘**之前**追加——
+    写盘抛 OSError 的那条记录仍留在 `entries()` 里、却永远不会出现在 `read_back()`：
+    拿 entries() 当证据的检查会在一条根本没写进日志的记录上通过。
+    """
+
+    path = tmp_root / "audit" / "service.jsonl"
+    log = RequestLog(path)
+    log.append(make_entry(request_id="req-active-1"))
+    log.append(make_entry(request_id="req-active-2"))
+    assert [row["request_id"] for row in log.read_back()] == [
+        "req-active-1",
+        "req-active-2",
+    ]
+    assert log.entries() == (), "落盘路径仍在内存里留副本"
+
+    # 写盘失败：必须显式失败关闭，且这条记录不能出现在内存读数里。
+    broken = tmp_root / "audit" / "a-directory.jsonl"
+    broken.mkdir(parents=True)
+    failing = RequestLog(broken)
+    with pytest.raises(ApiError) as info:
+        failing.append(make_entry(request_id="req-write-failed"))
+    assert info.value.code is ErrorCode.AUDIT_UNAVAILABLE
+    assert failing.entries() == (), "写盘失败的记录被内存读数当成'记下来了'"
+
+    # 不落盘的路径（--dry-run / 测试）保留缓冲，这是它存在的唯一理由。
+    memory_only = RequestLog(None)
+    memory_only.append(make_entry(request_id="req-memory"))
+    assert [row["request_id"] for row in memory_only.entries()] == ["req-memory"]
+    assert memory_only.read_back() == ()
+
+
 def test_request_log_appends_redacted_records(tmp_root: Path) -> None:
     """落盘记录必须可读回、可追溯，且**不含令牌明文与绝对路径**。"""
 

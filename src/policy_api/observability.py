@@ -173,14 +173,18 @@ class RequestLog:
                 "请求日志记录超过单条上限；拒绝写入半截证据",
             )
         with self._lock:
-            self._written.append(payload)
             if not self.active:
                 if not self.enabled:
                     raise ApiError(
                         ErrorCode.AUDIT_UNAVAILABLE,
                         "请求日志被显式禁用；按失败策略拒绝返回决定",
                     )
-                return  # 只保留在内存里：仅用于测试与 --dry-run
+                # 只有"不落盘"的路径才需要内存缓冲（测试与 --dry-run）。落盘路径**不留副本**：
+                # 它既不是证据（证据在盘上，只有 read_back 读得到），留着的唯一效果是长跑服务
+                # 永久保留每个请求的记录；而且原来是在写盘**之前**追加，写盘抛 OSError 的
+                # 那条记录仍留在 entries() 里、却永远不会出现在 read_back()，两个读数静默分叉。
+                self._written.append(payload)
+                return
             assert self.path is not None
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
