@@ -281,7 +281,15 @@ def _declared_digest(
             "声明是空的：给不出 " + name + "。判据里不许把「给不出」当成 pass（方案 §5.3）"
         )
     relative_root = Path(root)
-    available = list(_walk(relative_root, strict=True, excludes=excludes))
+    # 排除项要在**候选集**里就过滤掉：_walk 只剪掉被排除的目录，被排除的**文件**
+    # （`**/*.pyc` 这类）照样会被列出来。声明若只命中这些文件，它们会在 _fingerprint
+    # 里被静默丢掉，得到的是一份覆盖 0 个文件的指纹（空串的 sha256）——那正是本模块
+    # 承诺要防的"静默少算"：这样的声明会变得可以被封条、也可以被复核。
+    available = [
+        (relative, path)
+        for relative, path in _walk(relative_root, strict=True, excludes=excludes)
+        if not _excluded(relative, excludes)
+    ]
     resolved: Dict[str, Path] = {}
     unmatched: list[str] = []
     for pattern in entries:

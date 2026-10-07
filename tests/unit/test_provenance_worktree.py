@@ -97,6 +97,26 @@ def test_referenced_inputs_digest_refuses_empty_and_unmatched(tmp_root: Path) ->
         worktree.referenced_inputs_digest(tree, ["missing/**/*.py"])
 
 
+def test_a_declaration_matching_only_excluded_files_is_unprovable(tmp_root: Path) -> None:
+    """声明只命中被排除的文件时必须 unprovable，而不是"覆盖 0 个文件"的封条（复核发现）。
+
+    排除项是声明的，不是看不见的默认值；但它必须同时约束"命中判据"——否则一份
+    只声明 pkg/one.pyc 的声明会拿到空串的 sha256，看起来像一次可复核的封条。
+    """
+
+    tree = _tree(tmp_root)
+    (tree / "pkg" / "one.pyc").write_text("bytecode", encoding="utf-8")
+
+    # 对照：同一声明里的 .py 照常命中，被排除的 .pyc 不参与指纹。
+    assert worktree.referenced_inputs_digest(tree, ["pkg/*"]).files == 1
+
+    for declaration in (["pkg/one.pyc"], ["**/*.pyc"]):
+        with pytest.raises(worktree.UnprovableError):
+            worktree.referenced_inputs_digest(tree, declaration)
+    with pytest.raises(worktree.UnprovableError):
+        worktree.platform_revision(tree, ["**/*.pyc"])
+
+
 def test_platform_revision_scope_comes_from_the_declaration(tmp_root: Path) -> None:
     tree = _tree(tmp_root)
     before = worktree.platform_revision(tree, ["pkg/*.py"])
