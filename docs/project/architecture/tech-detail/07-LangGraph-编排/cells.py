@@ -90,6 +90,7 @@ import orchestration_support as support  # noqa: E402
 from orchestration import langgraph_engine  # noqa: E402
 from orchestration.approvals import ApprovalGate  # noqa: E402
 from orchestration.checkpoint import JsonCheckpointStore, build_record, plan_resume  # noqa: E402
+from orchestration.errors import ResumeError  # noqa: E402
 from orchestration.client import (  # noqa: E402
     DecisionOutcome,
     PlatformReadiness,
@@ -463,13 +464,23 @@ base = build_record(fresh, engine="reference", sequence=9, compatibility=current
 rows = []
 
 
-def judge(name, record, snapshot):
-    """跑一次 plan_resume，把结论、改变的维度与恢复后的状态记成一行。"""
+def judge(name, record, snapshot, *, expect_error=None):
+    """跑一次 plan_resume，把结论、改变的维度与恢复后的状态记成一行。
+
+    `expect_error` 给出这一行**期望被拒绝**的异常类型。拒绝也是一种结论，但"被哪种错误拒绝"
+    同样是要验证的规格：`judge` 原来把任何异常都记成一行"拒绝（类型）"，于是 plan_resume 里
+    哪怕是个 TypeError（在真正的比对之前就炸）也会打印出与"拒绝恢复"一模一样的一行。
+    """
 
     try:
         plan = plan_resume(record, snapshot, fresh_state=fresh)
     except Exception as error:  # noqa: BLE001 - 拒绝恢复也是一种结论
         rows.append((name, f"拒绝（{type(error).__name__}）", "-", "不沿用任何旧结论"))
+        if expect_error is not None and not isinstance(error, expect_error):
+            raise AssertionError(
+                f"{name}：期望被 {expect_error.__name__} 拒绝，实际是 "
+                f"{type(error).__name__}：{error}"
+            ) from error
         return None
     state = plan.state
     kept = []
@@ -502,7 +513,11 @@ reapprove = judge("工具 schema 变了",
 assert reapprove.mode.value == "reapprove" and reapprove.state.approvals == ()
 
 generation = current.model_copy(update={"decision_schema_version": "9.9"})
-judge("协议世代变了", base, generation)
+# 这一行以前**没有断言**：协议世代变了要求"直接拒绝恢复"，但打印出来的"拒绝（…）"也可能是
+# 任何别的异常（比如在真正的比对之前就抛的 TypeError）。`expect_error` 把"被拒绝"升级成
+# "被**哪一种**错误拒绝"——它盯的是 plan_resume 里那条显式的 ResumeError。
+protocol = judge("协议世代变了", base, generation, expect_error=ResumeError)
+assert protocol is None, "协议世代变了却正常给出了恢复计划：" + repr(protocol)
 
 unknown = PlatformSnapshot(rule_set_hash=None, index_version=None, tool_schema_hash=None)
 blinded = judge("凭据拿不到（None）", base, unknown)
