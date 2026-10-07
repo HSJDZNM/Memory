@@ -24,6 +24,7 @@ from enforcement.registry import (
     APPROVED_SCHEMA_VERSION,
     approve_registry,
     load_registry,
+    load_registry_document,
     registry_document_from_mapping,
     write_approved,
 )
@@ -147,6 +148,40 @@ def test_registry_rejects_duplicate_tool_ids_and_names(tmp_root):
     with pytest.raises(RegistryError) as error:
         load_registry(tmp_root / "registry" / "tool-registry.yaml", approved_path=None)
     assert "已被占用" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("document", "needle"),
+    [
+        # 不可哈希的键：PyYAML 自己的 construct_mapping 会拦，这里也必须拦
+        ("? [a, b]\n: x\n", "不可哈希"),
+        # 未知字段的键混了数字与字符串：sorted() 会抛 TypeError
+        ("1: x\nzzz: y\n", "未知字段"),
+        (
+            'registry_schema_version: "1.0"\nversion: 1\ndefaults:\n  1: 5\n  zzz: 1\n',
+            "defaults 出现未知字段",
+        ),
+        (
+            'registry_schema_version: "1.0"\nversion: 1\napprovals:\n  1: x\n  zzz: y\n',
+            "approvals 出现未知字段",
+        ),
+    ],
+)
+def test_structural_registry_errors_are_registry_errors(tmp_root, document, needle):
+    """YAML 结构错误与混合类型键都必须报 RegistryError，不能抛裸 TypeError。
+
+    文档承诺"语法、重复键、类型错误一律抛 RegistryError"，而 load_registry_document 只兜
+    yaml.YAMLError：不可哈希的键让成员测试抛 TypeError，未知字段里的数字键与字符串键
+    混在一起让 sorted() 抛 TypeError——两种都从契约外面漏出去。
+    """
+
+    path = tmp_root / "bad.yaml"
+    path.write_text(document, encoding="utf-8", newline="")
+
+    with pytest.raises(RegistryError) as error:
+        registry_document_from_mapping(load_registry_document(path))
+
+    assert needle in str(error.value), error.value
 
 
 def _retype_command_param(tool: dict, type_name: str) -> None:
