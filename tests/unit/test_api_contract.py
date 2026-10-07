@@ -900,6 +900,59 @@ def test_core_framework_check_can_fail_and_is_not_vacuous(
     assert contract._core_is_framework_free() is True
 
 
+@pytest.mark.parametrize("subject", [" ", "   ", chr(9)])
+def test_blank_subject_is_rejected(subject: str) -> None:
+    """空白不是主体：`" "` 满足 min_length=1，落到日志与证据里却对不上任何真实调用者。
+
+    历史缺陷（medium 台账 M1，models.py:79）：本模块的字段没有 strip 校验，
+    `subject=" "` 被当成合法主体。
+    """
+
+    from pydantic import ValidationError
+
+    from policy_api.models import PrincipalDTO
+
+    with pytest.raises(ValidationError):
+        PrincipalDTO(subject=subject)
+
+
+def test_blank_task_is_rejected_but_padded_task_is_normalized() -> None:
+    """空白 task 不是"有查询"：它会让检索返回 empty，被读成"查过了、没有规范"。
+
+    历史缺陷（medium 台账 M1，models.py:79）：`RetrieveRequest._query_or_task` 用真值判断，
+    而 `ContextDTO.task` 没有任何 trim 校验，`task="   "` 因此既满足了"至少有一个查询来源"，
+    又把一片空白交给了检索层。
+    """
+
+    from pydantic import ValidationError
+
+    from policy_api.models import ContextDTO
+
+    with pytest.raises(ValidationError):
+        ContextDTO(file="src/a.py", layer="service", task="   ")
+    # 去空白而不是"拒绝一切带空白的值"
+    assert ContextDTO(file="src/a.py", layer="service", task=" 代码评审 ").task == "代码评审"
+
+
+@pytest.mark.parametrize("field", ["tenant", "trace_id", "idempotency_key"])
+def test_blank_optional_envelope_fields_are_rejected(field: str) -> None:
+    """信封上的可选文本字段（含 tenant）：空白与 null 不是一个意思。"""
+
+    from pydantic import ValidationError
+
+    from policy_api.models import EvaluateRequest
+
+    payload = {
+        "api_version": "1.0",
+        "request_id": "r-1",
+        "principal": {"subject": "alice"},
+        "context": {"file": "src/a.py", "layer": "service"},
+        field: "   ",
+    }
+    with pytest.raises(ValidationError):
+        EvaluateRequest.model_validate(payload)
+
+
 # --------------------------------------------------------------------------- 公开面
 
 # 逐条登记的公开面检查：新增一个 policy_api 模块就把名字加进来。

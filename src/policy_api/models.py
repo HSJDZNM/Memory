@@ -82,6 +82,18 @@ class PrincipalDTO(StrictModel):
     def to_domain(self) -> Principal:
         return Principal(subject=self.subject, roles=frozenset(self.roles))
 
+    @field_validator("subject")
+    @classmethod
+    def _subject_is_meaningful(cls, value: str) -> str:
+        """空白不是主体：`" "` 满足 min_length=1，但它不是"谁在调用"——它会进日志与证据，
+        却永远对不上任何一个真实调用者。去空白后仍为空即拒绝。
+        """
+
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("subject 不能是空白")
+        return normalized
+
     @field_validator("roles", mode="before")
     @classmethod
     def _normalize_roles(cls, value: Any) -> Any:
@@ -129,6 +141,21 @@ class ContextDTO(StrictModel):
         normalized = canonical_identifier(value)
         if not normalized:
             raise ValueError("layer 不能为空；安全关键维度不允许猜测")
+        return normalized
+
+    @field_validator("task")
+    @classmethod
+    def _check_task(cls, value: Optional[str]) -> Optional[str]:
+        """任务描述是检索的查询来源之一（RetrieveRequest 的守卫按它判"至少有一个来源"）：
+        一片空白既不是"有查询"、也不是"没查询"。它会被当成有效查询传给检索层，返回一个
+        empty 结果——那会被读成"查过了、没有规范"，正是那条守卫要挡的形态。
+        """
+
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("context.task 不能是空白；没有任务描述就写 null")
         return normalized
 
     @field_validator("dependencies", mode="before")
@@ -219,7 +246,7 @@ class ApiEnvelope(StrictModel):
             raise ValueError("request_id 不能为空")
         return normalized
 
-    @field_validator("trace_id", "idempotency_key")
+    @field_validator("tenant", "trace_id", "idempotency_key")
     @classmethod
     def _optional_text(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
