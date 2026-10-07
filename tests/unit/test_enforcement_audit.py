@@ -191,6 +191,44 @@ def test_deleting_a_record_breaks_the_chain(tmp_root):
     assert any("序号" in issue for issue in issues)
 
 
+def test_mid_file_damage_is_reported_as_an_issue(tmp_root):
+    """只有**末行**撕裂是可容忍的；中间行读不出来说明链被截断或改写过。
+
+    旧行为把两类坏行一律降级成 `{"raw": line}`，只让 foreign_records() 的计数变大——
+    而那个计数器同样把合法的 Phase 2 外来行算进去，于是"中间被人动过"没有任何读数。
+    """
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.REQUEST, payload={"a": 1})
+    sink.append(AuditStage.PRE_DECISION, payload={"b": 2})
+    sink.append(AuditStage.FINAL_DECISION, payload={"c": 3})
+
+    path = tmp_root / "audit.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines[1] = lines[1][: len(lines[1]) // 2]  # 中间那条被截断
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    issues = sink.verify()
+    assert any("第 2 行损坏" in issue for issue in issues), issues
+
+
+def test_a_torn_tail_line_is_tolerated_but_counted(tmp_root):
+    """末行撕裂是"进程被杀"的正常形态：链完整性不报问题，但它仍以 raw 行计入外来行。"""
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.REQUEST, payload={"a": 1})
+
+    path = tmp_root / "audit.jsonl"
+    path.write_text(
+        path.read_text(encoding="utf-8") + '{"schema_version": "1.0", "sequence": 2, "st',
+        encoding="utf-8",
+    )
+
+    assert sink.verify() == ()
+    assert len(sink.chain_records()) == 1
+    assert sink.foreign_records() == 1
+
+
 def test_unknown_protocol_version_is_rejected():
     with pytest.raises(AuditError):
         parse_audit_record({"schema_version": "9.9", "sequence": 1, "stage": "request"})

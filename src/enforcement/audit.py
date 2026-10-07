@@ -229,6 +229,25 @@ class AuditChain:
         return tuple(issues)
 
 
+@dataclass(frozen=True)
+class _ScanResult:
+    """一次文件扫描的结果：行 + 坏行诊断。
+
+    `rows` 里的每一项是 `(记录, 是否本层链式记录)`；无法解析的行以 `{"raw": line}`
+    的形式留在 rows 里（照旧计入外来行），但同时被归类：
+
+    - `torn_lines`：**最后一条非空行**——进程在写一半时被杀留下的撕裂尾巴；
+    - `damaged_lines`：文件**中间**无法解析的行——它证明链被截断或改写，必须报成 issue。
+
+    两类分得开是这条注释原本的承诺（"只有最后一行可能被写坏"）；不分开就等于把
+    "中间被人动过"混进一个连合法历史行都算的外来行计数器里。
+    """
+
+    rows: tuple[tuple[Mapping[str, Any], bool], ...]
+    torn_lines: tuple[int, ...]
+    damaged_lines: tuple[int, ...]
+
+
 class FileAuditSink:
     """JSONL 审计端口。
 
@@ -250,38 +269,65 @@ class FileAuditSink:
 
     # ------------------------------------------------------------------ 读
     def records(self) -> tuple[Mapping[str, Any], ...]:
-        return tuple(item for item, _ in self._scan())
+        return tuple(item for item, _ in self._scan().rows)
 
-    def _scan(self) -> list[tuple[Mapping[str, Any], bool]]:
+    def _scan(self) -> _ScanResult:
         if not self.path.is_file():
-            return []
+            return _ScanResult(rows=(), torn_lines=(), damaged_lines=())
         try:
             text = self.path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as error:
             raise AuditError(f"审计日志不可读: {self.path.name}（{error}）") from error
+        lines = [
+            (number, line)
+            for number, line in enumerate(text.splitlines(), start=1)
+            if line.strip()
+        ]
+        tail_number = lines[-1][0] if lines else None
         rows: list[tuple[Mapping[str, Any], bool]] = []
-        for line in text.splitlines():
-            if not line.strip():
-                continue
+        torn: list[int] = []
+        damaged: list[int] = []
+        for number, line in lines:
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
-                # 只有最后一行可能被写坏（进程被杀）；中间行损坏视为审计不可信。
+                # 只有最后一行可能被写坏（进程被杀）——那是可容忍的撕裂尾巴；
+                # 中间行损坏是另一回事：它证明链的中间被截断或改写过，审计不可信，
+                # 必须由 verify() 报成 issue，而不是混进"外来行"计数里。
+                if number == tail_number:
+                    torn.append(number)
+                else:
+                    damaged.append(number)
                 rows.append(({"raw": line}, False))
                 continue
             if isinstance(record, Mapping):
                 rows.append((record, record.get("schema_version") is not None))
             else:
                 rows.append(({"raw": line}, False))
-        return rows
+        return _ScanResult(
+            rows=tuple(rows), torn_lines=tuple(torn), damaged_lines=tuple(damaged)
+        )
 
     def chain_records(self) -> tuple[Mapping[str, Any], ...]:
         """只返回本层的链式记录（用于续链与校验）。"""
 
-        return tuple(item for item, chained in self._scan() if chained)
+        return tuple(item for item, chained in self._scan().rows if chained)
 
     def foreign_records(self) -> int:
-        return sum(1 for _, chained in self._scan() if not chained)
+        return sum(1 for _, chained in self._scan().rows if not chained)
+
+    def _scan_issues(self, scan: _ScanResult) -> tuple[str, ...]:
+        """把一次扫描读成问题列表：链完整性 + 中间行损坏。"""
+
+        issues = list(
+            AuditChain.verify(tuple(item for item, chained in scan.rows if chained))
+        )
+        issues.extend(
+            f"第 {number} 行损坏：审计链中途出现无法解析的行（被截断或被改写）。"
+            "中间行损坏无法与合法历史区分，本层链已不可信"
+            for number in scan.damaged_lines
+        )
+        return tuple(issues)
 
     def verify(self) -> tuple[str, ...]:
         """校验本层摘要链；**产物不存在时不能返回"没有问题"**。
@@ -301,7 +347,7 @@ class FileAuditSink:
                 f"审计日志不存在: {self.path.name}："
                 "没有产物不能被读成链完整（缺证据按失败关闭处理）",
             )
-        return AuditChain.verify(self.chain_records())
+        return self._scan_issues(self._scan())
 
     # ------------------------------------------------------------------ 写
     def append(
