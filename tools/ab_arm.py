@@ -740,7 +740,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="外部任务树的基线。**平台仓库自己不是受支持的基线**（clean 判据问的是这棵臂树能不能"
              "读到平台自己的规则集与产物，而平台仓库必然在追溯语料里引用规则 ID）——检出这种输入"
              "直接按用法错误拒绝（exit 2）；平台自测用 --baseline-fixture。不给基线且不用夹具时"
-             "同样是用法错误，没有"默认仓库自己"这回事",
+             "同样是用法错误，没有「默认仓库自己」这回事",
     )
     parser.add_argument(
         "--baseline-fixture",
