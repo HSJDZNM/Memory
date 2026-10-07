@@ -63,6 +63,11 @@ class TaskSource:
     gated: bool
     expected_rows: int
     note: str
+    # hf-rows 专用：datasets-server 的三段坐标。dataset 名从 url 里取（见 _hf_dataset_id），
+    # 这里只声明 config / split——曾经它们在请求里写死成 SWE-bench 的值，而目录、锁记录、
+    # rows_path 都按 dataset_id 键控：再加一个 hf-rows 源就会静默取错数据集。
+    hf_config: str = "default"
+    hf_split: str = "test"
 
 
 SOURCES: dict[str, TaskSource] = {
@@ -80,6 +85,8 @@ SOURCES: dict[str, TaskSource] = {
         gated=False,
         expected_rows=500,
         note="500 条人核验子集；12 个仓库；字段含 base_commit / patch / test_patch / FAIL_TO_PASS / PASS_TO_PASS",
+        hf_config="default",
+        hf_split="test",
     ),
     "bugs-in-py": TaskSource(
         id="bugs-in-py",
@@ -113,6 +120,22 @@ def _get(url: str, timeout: int = 120) -> bytes:
             return response.read()
     except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as error:
         raise AbTaskError("取 %s 失败：%s: %s" % (url, type(error).__name__, error)) from error
+
+
+def _hf_dataset_id(source: TaskSource) -> str:
+    """HF datasets-server 的 dataset 名：**从登记的源 URL 里取**，不在请求里另写一份。
+
+    目录、rows_path、锁记录都按 dataset_id 键控；请求里写死一个数据集名，会让第二个
+    hf-rows 源把数据取到自己的目录名下——错得静默。
+    """
+
+    marker = "/datasets/"
+    if marker not in source.url:
+        raise AbTaskError("源 %s 的 URL 里没有 %s，取不出 HF dataset 名：%s" % (source.id, marker, source.url))
+    dataset = source.url.split(marker, 1)[1].strip("/")
+    if not dataset or "/" not in dataset:
+        raise AbTaskError("源 %s 的 URL 取出的 dataset 名不合法：%r" % (source.id, dataset))
+    return dataset
 
 
 def dataset_dir(dataset_id: str, root: Path) -> Path:
@@ -149,11 +172,12 @@ def fetch(dataset_id: str, *, root: Path, offline: bool = False) -> dict:
     if offline:
         raise AbTaskError("offline=True 但本地没有 %s" % target)
     started = time.time()
+    hf_dataset = _hf_dataset_id(source)
     rows: list[dict] = []
     offset = 0
     while True:
         query = urllib.parse.urlencode(
-            {"dataset": "princeton-nlp/SWE-bench_Verified", "config": "default", "split": "test",
+            {"dataset": hf_dataset, "config": source.hf_config, "split": source.hf_split,
              "offset": offset, "length": PAGE_SIZE}
         )
         page = json.loads(_get("%s?%s" % (ROWS_ENDPOINT, query)).decode("utf-8"))
