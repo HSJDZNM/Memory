@@ -33,6 +33,7 @@ from .runtime import ROUTES, ApiRuntime
 __all__ = [
     "BUDGET_ROUTES",
     "SNAPSHOT_SCHEMA_VERSION",
+    "live_payload",
     "openapi_document",
     "self_check",
     "smoke",
@@ -276,12 +277,40 @@ def _tenant_for_token(config: ApiConfig, token: str) -> str:
     raise ApiError(ErrorCode.UNAUTHENTICATED, "冒烟用的令牌不在配置里")
 
 
+def live_payload(runtime: ApiRuntime) -> Mapping[str, Any]:
+    """真正**调用一次** `/v1/health/live` 的处理器，把它的载荷读回来。
+
+    为什么不是字面量 `{"status": "live"}`：smoke 的结论会被当成"这条链路跑过一遍"的证据，
+    而字面量只能证明"我知道它应该长什么样"。这里走的是注册表里那个端点本身
+    （FastAPI 的 `APIRoute.endpoint`），因此"路由没注册 / 处理器抛异常 / 载荷形状变了"
+    都会在这里变成失败，而不是一个恒真的读数。刻意不用 `testing.make_client`：它是测试
+    助手（依赖 httpx），生产环境的 smoke 不该为一次进程内探针引入那个依赖。
+    """
+
+    import asyncio
+    import json as _json
+
+    from .app import create_app
+
+    app = create_app(runtime)
+    route = next(
+        (item for item in app.routes if getattr(item, "name", None) == "live"), None
+    )
+    if route is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "存活探针没有注册：smoke 证明不了服务可用")
+    response = asyncio.run(route.endpoint())  # type: ignore[attr-defined]
+    payload = _json.loads(bytes(response.body).decode("utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ApiError(ErrorCode.INTERNAL_ERROR, "存活探针返回的不是对象")
+    return payload
+
+
 def smoke(runtime: ApiRuntime, *, token: str) -> Mapping[str, Any]:
     """最小链路：live → ready → evaluate → retrieve（全部进程内，不开端口）。"""
 
     from .testing import call
 
-    live = {"status": "live"}
+    live = live_payload(runtime)
     ready = runtime.readiness(force=True)
     tenant = _tenant_for_token(runtime.config, token)
     evaluate_payload = {

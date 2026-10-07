@@ -49,7 +49,7 @@ from policy_api.serve import endpoint, serve
 from policy_api.services import signature_of
 from policy_api.timeout import Budget, BudgetExceeded, run_with_budget
 
-from api_support import TOKEN_SHA, isolated_api
+from api_support import TOKEN, TOKEN_SHA, isolated_api
 
 # --------------------------------------------------------------------------- 工具
 
@@ -988,6 +988,29 @@ def test_probe_unavailable_payload_is_a_consumable_decision_payload() -> None:
 
 
 # --------------------------------------------------------------------------- 冒烟
+
+
+def test_smoke_reports_the_live_endpoints_actual_payload(tmp_root: Path) -> None:
+    """冒烟的 `live` 那一腿必须来自**端点本身**，不是一个字面量。
+
+    历史缺陷（medium 台账 M1，contract.py:269）：docstring 承诺 live → ready → evaluate →
+    retrieve，但 live 是写死的 `{"status": "live"}`——端点从没被调用过，读数却能"报平安"
+    （路由没注册、处理器炸了、载荷形状变了，它都照样说 live）。
+    """
+
+    from policy_api.contract import smoke
+    from policy_api.models import API_SCHEMA_VERSION
+
+    config_path, anchor = isolated_api(tmp_root)
+    runtime = ApiRuntime(load_api_config(config_path, root=anchor), root=anchor)
+
+    report = smoke(runtime, token=TOKEN)
+
+    assert report["live"]["status"] == "live"
+    # 这三个字段只有真读回端点的载荷才会有（字面量那份只有一个 status）
+    assert report["live"]["service"] == runtime.config.service_name
+    assert report["live"]["deployment"] == runtime.config.deployment
+    assert report["live"]["api_version"] == API_SCHEMA_VERSION
 
 
 def test_smoke_with_an_unconfigured_token_is_a_structured_401_not_a_name_error(
