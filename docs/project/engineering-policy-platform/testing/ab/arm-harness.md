@@ -39,6 +39,15 @@ validation/validators.yaml 消失而在**收集期**失败；同一棵树上仍*
 在本仓副本（自举路线）上仍然能跑，但读数里 route = bootstrap_repo_copy，
 且 vcs_dir_absent 那条断言按「自举路线的证伪断言」判——**不要用它当通用净化结论**。
 
+**边界（lead 2026-10-08 裁定，写成结论而不是缺口）**：`--baseline` 的输入是**外部任务树**，
+「拿平台仓库自己当基线」**不是一个受支持的用法**。clean 判据问的是「这棵臂树里能不能读到
+平台自己的规则集与产物」，而平台仓库必然在自己的**追溯语料**里引用规则 ID
+（`docs/project/rule-effects/**` 逐条点评规则、`docs/project/reviews/**` 是审查报告）。
+因此 `--self-proof --baseline .` 的 clean 段报红**说明的是你在问一个不该问的问题**，
+既不是扫描器误报，也不是净化清单漏了东西（清单**不为此改动**：改清单等于改 treatment 定义）。
+修复后实测：模式收窄到本平台规则 ID 之后，平台副本路线仍命中 920 行 / 113 文件，
+绝大多数来自上面两条路径；文档命令 `--self-proof --baseline-fixture shop` 一直是 pass。
+
 ## 3 净化清单（14 条，每条带理由）
 
     policies/**                              规则本体（43 条规则 YAML，含码与严重级别）
@@ -251,8 +260,10 @@ dsh home，或换一台干净的实验机。**未解决，见第 10 节。**
 3. **block_class 未分列**（r3 第 5 条）：infrastructure_failure 与 policy_violation 目前只在
    exit_code 与 audit 里可分辨，没有独立键。
 4. **content 扫描是兜底不是证明**：中文意译、改名后的 YAML、编码过的规则它抓不到（payload 里写死了 limits）。
-5. **自举路线（本仓副本）的读数不可用**：内容扫描 1089 命中、oracle 会被打坏；
-   route=bootstrap_repo_copy 时不要把 clean 当结论。
+5. **自举路线（本仓副本）的读数不可用**：内容扫描 920 命中 / 113 文件（收窄到本平台规则 ID 之后；
+   旧形态串口径是 1162 命中 / 150 文件，其中含 UTF-8 / AB-5 这类误报）、oracle 会被打坏；
+   route=bootstrap_repo_copy 时不要把 clean 当结论。这条路线**不是受支持的用法**（见第 2 节的边界），
+   拿平台仓库当基线时 clean 段报红是预期结果。
 6. **P4/P6/P7 只做到一部分**：进程级隔离、每 (task, replicate) 全新会话、模型 revision_id 记录
    属于协议/编排层，本工具只保证每臂一棵新树。
 7. **未跑**：tools/ci_local.py、任何 *_loop.py（按任务约束不跑）。

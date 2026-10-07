@@ -3,7 +3,7 @@
 # 用法::
 #
 #     python tools/ab_arm.py --list-sanitization            # 净化面（每条带理由）
-#     python tools/ab_arm.py --materialize --baseline . --out .tmp/ab-arms
+#     python tools/ab_arm.py --materialize --baseline-fixture shop --out .tmp/ab-arms
 #     python tools/ab_arm.py --assert-clean --run-dir .tmp/ab-arms/<run>
 #     python tools/ab_arm.py --self-proof                   # 变异自证：故意留规则 -> 断言必须红 -> 撤回 -> 绿
 #     python tools/ab_arm.py --run --task demo-1 --path src/shop/order_controller.py \
@@ -47,10 +47,21 @@
 #   所以 --assert-clean 同时要求：清单路径不存在、内容扫描零命中、rules_root 在臂树之外。
 #   清单与理由见 SANITIZATION；自证见 --self-proof（AGENTS 第 45 条：仪器必须证明自己会红）。
 #
+# 基线从哪来（`--baseline` 只收**外部任务树**）
+# ==========================================
+#
+#   --baseline-fixture shop   生成固定夹具项目（最小三层树 + 一个自带测试）；
+#   --baseline <dir>          任意外部 checkout（任务树）。
+#
+#   **平台仓库自己不是受支持的基线。** clean 判据问的是"这棵臂树里能不能读到平台自己的规则集
+#   与产物"，而平台仓库必然在自己的**追溯语料**里引用规则 ID（docs/project/rule-effects/**、
+#   docs/project/reviews/** 就是逐条点评规则的报告）。拿它当基线时 clean 段报红，说明的是
+#   **你在问一个不该问的问题**——不是扫描器误报，也不是净化清单漏了东西。平台自测请用
+#   --baseline-fixture；外部任务树的判定才是这套读数的适用范围。
+#
 # 不承诺什么
 # ==========
-#
-#   - 净化不覆盖 .git 历史：本工具复制时就**不带 .git**（复制忽略项里有它），
+##   - 净化不覆盖 .git 历史：本工具复制时就**不带 .git**（复制忽略项里有它），
 #     但基线树里若已有别的历史副本（例如打包好的 zip），它管不着；这一点写在 --list-sanitization 的 note 里；
 #   - 内容扫描只认"规则身份形态"的正则，认不出的复述（中文意译、改名后的 YAML）它抓不到——
 #     所以清单以**路径**为主、正则为辅，抓不到的部分如实写成缺口；
@@ -680,7 +691,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="正向对照：探针**故意**把平台挂上 PYTHONPATH——断言此时必须红（证明探针真的在探）",
     )
-    parser.add_argument("--baseline", default=".", help="基线树（默认仓库自己；**平台自身当基线是结构性不可比的**，见 --baseline-fixture）")
+    parser.add_argument(
+        "--baseline",
+        default=".",
+        help="外部任务树的基线（**平台仓库自己不是受支持的基线**：clean 判据问的是这棵臂树能不能"
+             "读到平台自己的规则集与产物，而平台仓库必然在追溯语料里引用规则 ID；平台自测用 "
+             "--baseline-fixture）",
+    )
     parser.add_argument(
         "--baseline-fixture",
         default=None,
