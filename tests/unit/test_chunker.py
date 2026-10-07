@@ -276,6 +276,45 @@ def test_chunk_ids_and_hashes_are_stable_and_content_bound() -> None:
             assert item.text_hash == other.text_hash
 
 
+def test_fence_is_closed_only_by_the_same_marker_and_not_shorter() -> None:
+    """闭合围栏必须同种字符、且不短于起始标记（复核发现）。
+
+    旧实现把起始标记折叠成 3 个字符，又只判"≥3 且全同"：任何 ``` 行都能关掉 ~~~ 块，
+    四反引号块会被内部的普通三反引号提前关掉（文档里嵌示例的标准写法）。
+    """
+
+    four = FENCE * 2
+    text = (
+        "# Title" + chr(10) + chr(10)
+        + four + "markdown" + chr(10)
+        + FENCE + "python" + chr(10)
+        + "# NOT-A-HEADING" + chr(10)
+        + FENCE + chr(10)
+        + four + chr(10) + chr(10)
+        + "## After" + chr(10) + chr(10) + "tail" + chr(10)
+    )
+    sections = find_sections(text)
+    assert [section.anchor for section in sections] == ["title", "title/after"]
+    code = [block for section in sections for block in section.blocks if block.kind is ChunkKind.CODE]
+    assert len(code) == 1
+    assert "# NOT-A-HEADING" in code[0].text
+
+    tilde = (
+        "# Title" + chr(10) + chr(10)
+        + "~~~text" + chr(10) + FENCE + chr(10) + "# STILL-CODE" + chr(10) + "~~~" + chr(10)
+        + chr(10) + "## After" + chr(10) + chr(10) + "tail" + chr(10)
+    )
+    tilde_sections = find_sections(tilde)
+    assert [section.anchor for section in tilde_sections] == ["title", "title/after"]
+    tilde_code = [
+        block
+        for section in tilde_sections
+        for block in section.blocks
+        if block.kind is ChunkKind.CODE
+    ]
+    assert len(tilde_code) == 1 and "# STILL-CODE" in tilde_code[0].text
+
+
 def test_unterminated_fence_is_stable_and_preserves_text() -> None:
     text = f"# Title\n\n{FENCE}python\nprint('no closing fence')\n\nmore code\n"
     _, chunks = chunk(text)

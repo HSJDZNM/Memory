@@ -356,7 +356,8 @@ def iter_blocks(body: str, *, line_start: int = 1) -> Tuple[Block, ...]:
         match = fence_match(line)
         if match:
             flush_prose()
-            fence = match.group(1)[0] * 3
+            # 保留**完整**起始标记：关闭标记不短于它（四反引号块不被内部三反引号关掉）。
+            fence = match.group(1)
             fence_info = match.group(2)
             fence_start = number
             fence_lines = [line]
@@ -386,13 +387,20 @@ def iter_blocks(body: str, *, line_start: int = 1) -> Tuple[Block, ...]:
 
 
 def _closes_fence(line: str, fence: str) -> bool:
+    """闭合围栏：必须与起始标记**同一种字符**，且不短于起始标记（CommonMark）。
+
+    旧实现把起始标记折叠成 3 个字符、又只比"≥3 且全同一种字符"，于是任何 ``` 行都能
+    关掉 ~~~ 块、四反引号块会被内部的普通三反引号提前关掉（文档里嵌示例的标准写法），
+    其后的内容被重新当正文解析、代码里的 # 注释被提升成标题。
+    """
+
     stripped = line.strip()
-    if not stripped:
+    if not stripped or len(stripped) < len(fence):
         return False
-    marker = stripped[0]
+    marker = fence[0]
     if marker not in (chr(96), "~"):
         return False
-    return len(stripped) >= 3 and set(stripped) == {marker}
+    return stripped[0] == marker and set(stripped) == {marker}
 
 
 def find_sections(body: str, *, line_start: int = 1) -> Tuple[Section, ...]:
@@ -438,7 +446,7 @@ def find_sections(body: str, *, line_start: int = 1) -> Tuple[Section, ...]:
             continue
         opening = fence_match(line)
         if opening:
-            fence = opening.group(1)[0] * 3
+            fence = opening.group(1)
             buffer.append(line)
             continue
         heading = HEADING_RE.match(line)
