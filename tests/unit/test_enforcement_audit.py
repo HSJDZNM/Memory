@@ -619,6 +619,30 @@ def test_rate_limit_windows_count_only_recent_records(tmp_root):
     )
 
 
+def test_a_torn_ledger_tail_is_skipped_and_reported(tmp_root):
+    """一行写一半（进程被杀）不能把台账变成永久只读：跳过它并报出行号。
+
+    旧行为是"任何一行读不出来 → LedgerError"，于是一次崩溃就让所有受治理动作
+    永久锁死，且没有任何修复路径。写坏的**尾行**对应的那条记录没有落盘成功，
+    跳过它等于回到写入之前；中间行损坏仍然失败关闭（下一条用例）。
+    """
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    ledger.append({"kind": "claim", "action_key": "fs.edit:a-1", "claim_id": "c-1"})
+
+    path = tmp_root / "ledger.jsonl"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + '{"ledger_schema_version": "1.0", "kind": "gra',
+        encoding="utf-8",
+    )
+
+    assert [item["kind"] for item in ledger.records()] == ["claim"]
+    assert ledger.torn_tail() == (2,)
+    # 反真空：跳过尾行之后，幂等判据照常可算（认领仍然生效）。
+    assert len(ledger.active_claims(action_id="a-1", tool_id="fs.edit")) == 1
+
+
 def test_ledger_records_reject_malformed_or_foreign_lines(tmp_root):
     path = tmp_root / "ledger.jsonl"
     path.write_text("not json\n" + json.dumps({"kind": "other"}) + "\n", encoding="utf-8")

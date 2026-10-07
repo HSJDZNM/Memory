@@ -110,20 +110,47 @@ class EnforcementLedger:
 
     # ------------------------------------------------------------------ 读
     def records(self) -> tuple[Mapping[str, Any], ...]:
+        return self._read()[0]
+
+    def torn_tail(self) -> tuple[int, ...]:
+        """被跳过的**尾部残行**行号（1-based）。
+
+        一行写不完整只可能是"进程在 append 途中被杀"（append 只 flush，不做原子替换）：
+        它对应的那条记录没有落盘成功，跳过它等于回到那次写入之前——这是唯一可修复且
+        不放松语义的读法。调用方据此把"台账被撕开过"记成异常，而不是当成"没有这条记录"。
+        """
+
+        return self._read()[1]
+
+    def _read(self) -> tuple[tuple[Mapping[str, Any], ...], tuple[int, ...]]:
+        """读台账，返回（记录, 尾部残行行号）。
+
+        只有**最后一条非空行**可以被容忍（写一半被杀）；中间行损坏仍然抛 LedgerError——
+        那证明不了幂等状态，而"一条坏行让所有受治理动作永久锁死且没有修复路径"同样是
+        失败关闭的反面：它把可修复的产物损坏变成了不可恢复的死锁。
+        """
+
         if not self.path.is_file():
-            return ()
+            return (), ()
         try:
             text = self.path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as error:
             raise LedgerError(f"台账不可读: {self.path.name}（{error}）") from error
+        lines = [
+            (number, line.strip())
+            for number, line in enumerate(text.splitlines(), start=1)
+            if line.strip()
+        ]
+        tail_number = lines[-1][0] if lines else None
         rows: list[Mapping[str, Any]] = []
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
+        torn: list[int] = []
+        for number, line in lines:
             try:
                 item = json.loads(line)
             except json.JSONDecodeError as error:
+                if number == tail_number:
+                    torn.append(number)
+                    continue
                 raise LedgerError("台账包含损坏的 JSON 记录，无法证明幂等状态") from error
             if not isinstance(item, Mapping):
                 raise LedgerError("台账记录必须是 JSON 对象")
@@ -133,7 +160,7 @@ class EnforcementLedger:
                     f"台账协议版本 {version!r} 不受支持；不能忽略未知记录继续执行"
                 )
             rows.append(item)
-        return tuple(rows)
+        return tuple(rows), tuple(torn)
 
     def of_kind(self, kind: str) -> tuple[Mapping[str, Any], ...]:
         return tuple(item for item in self.records() if item.get("kind") == kind)
