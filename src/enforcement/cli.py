@@ -729,7 +729,6 @@ def _verify(args: argparse.Namespace, repo: Path) -> int:
     payload: dict[str, Any] = {
         "audit": str(args.audit),
         **described,
-        "ok": not issues,
     }
     if getattr(args, "verify_registry", False):
         loaded = load_registry(args.registry, approved_path=args.approved)
@@ -741,6 +740,9 @@ def _verify(args: argparse.Namespace, repo: Path) -> int:
         payload["unapproved_tools"] = unapproved
         if unapproved:
             issues.append(f"未审核的工具：{unapproved}")
+    # ok 必须在**所有** issue 都产生之后才推导：--check-registry 的"未审核工具"也是 issue，
+    # 先算 ok 会让 --json 在门禁红着的时候报 "ok": true（同一份载荷自相矛盾）。
+    payload["ok"] = not issues
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:

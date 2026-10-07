@@ -134,6 +134,37 @@ def test_verify_refuses_a_missing_or_evidence_less_audit_artifact(tmp_root):
     assert "没有本层" in foreign_only.stdout
 
 
+def test_verify_json_ok_reflects_the_registry_check(tmp_root):
+    """--check-registry --json 的 ok 必须把"未审核工具"算进去（同一份载荷不许自相矛盾）。"""
+
+    paths = EnforcementPaths(tmp_root)
+    document = json.loads(
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys,yaml,json;print(json.dumps(yaml.safe_load("
+                "open(sys.argv[1],encoding='utf-8'))))",
+                str(paths.registry),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        ).stdout
+    )
+    document["tools"][0]["parameters"][1]["max_chars"] = 1  # 审核之后被改动
+    paths.registry.write_text(json.dumps(document), encoding="utf-8")
+
+    completed = run_cli("verify", "--json", "--check-registry", *paths_args(paths))
+
+    assert completed.returncode == 2, completed.stdout
+    payload = json.loads(completed.stdout)
+    assert payload["unapproved_tools"], payload
+    assert payload["ok"] is False, "有未审核工具时 ok 不能是 true"
+    assert any("未审核的工具" in issue for issue in payload["issues"])
+
+
 def test_tampered_registry_is_reported(tmp_root):
     paths = EnforcementPaths(tmp_root)
     document = json.loads(
