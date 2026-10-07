@@ -98,7 +98,9 @@ class ToolSpec(StrictModel):
     @field_validator("command")
     @classmethod
     def _check_command(cls, values: Tuple[str, ...]) -> Tuple[str, ...]:
-        if not any(values):
+        # all 而不是 any：any 只要有一个非空就放行，于是 ("ruff", "") 这种带空元素的 argv
+        # 能过检查——而错误信息说的正是"不能有空元素"（复核发现）。空白串同样算空。
+        if not all(item.strip() for item in values):
             raise ValueError("tool.command 不能有空元素")
         _check_placeholders(values, field="tool.command", allow=("{python}",))
         return values

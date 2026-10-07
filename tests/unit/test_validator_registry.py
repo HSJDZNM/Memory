@@ -269,6 +269,17 @@ def test_builtin_validator_must_not_declare_a_tool() -> None:
     assert "不能声明 tool" in str(error.value)
 
 
+def test_tool_command_rejects_empty_elements_in_any_position() -> None:
+    """空（或全空白）元素在任何位置都要拒（复核发现：any() 只要有一个非空就放行）。"""
+
+    for values in (("ruff", ""), ("", "ruff"), ("ruff", "   "), ("",)):
+        with pytest.raises(Exception) as error:
+            ToolSpec(command=values)
+        assert "不能有空元素" in str(error.value), values
+
+    assert ToolSpec(command=("ruff", "--fix")).command == ("ruff", "--fix")
+
+
 def test_tool_config_rejects_windows_absolute_and_drive_relative_paths() -> None:
     """tool.config 的路径校验必须与消费方同口径（复核发现：盘符/UNC 漏过）。"""
 
