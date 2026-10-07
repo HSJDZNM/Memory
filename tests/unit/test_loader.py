@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,31 @@ def test_missing_directory_is_a_loader_error(tmp_root: Path) -> None:
         load_rule_set([tmp_root / "nope"], repo_root=tmp_root)
 
     assert "规则目录不存在" in str(error.value)
+
+
+def test_rule_directory_that_cannot_be_walked_fails_closed(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """规则目录读不全必须失败关闭（M2）。
+
+    os.walk 的 onerror 默认是 None：底层 scandir 失败（无权限、目录刚被删）会被**静默忽略**，
+    于是"少读了几条规则"和"规则集本来就只有这几条"长得一模一样——而规则集是判定的唯一依据。
+    """
+
+    root = tmp_root / "policies"
+    root.mkdir()
+
+    def fake_walk(_path: object, onerror: object = None, **_kwargs: object) -> object:
+        assert callable(onerror), "收集规则文件必须给 os.walk 一个 onerror，不能静默跳过读不到的目录"
+        onerror(PermissionError("拒绝访问"))
+        return iter(())
+
+    monkeypatch.setattr(os, "walk", fake_walk)
+
+    with pytest.raises(LoaderError) as error:
+        collect_rule_files(root)
+
+    assert "规则目录不可读" in str(error.value)
 
 
 def test_rule_file_with_wrong_suffix_is_ignored(tmp_root: Path) -> None:
