@@ -1305,6 +1305,33 @@ def test_request_log_disabled_fails_closed(tmp_root: Path) -> None:
     assert memory_only.read_back() == ()
 
 
+def test_summary_derives_every_reading_from_one_snapshot(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """记录数与链末值必须来自**同一份** rows。
+
+    历史缺陷（medium 台账 M1，observability.py:240）：`summary()` 读了两次文件（自己的
+    `read_back()` + `chain_digest()` 内部的又一次），中间任何一次 append 都能让"记录数"与
+    "链末值"来自两个快照——锚自相矛盾，而且没有任何地方会报出来。
+    """
+
+    log = RequestLog(tmp_root / "audit" / "service.jsonl")
+    rows = (dict(make_entry(request_id="req-1").to_payload()),)
+    calls = {"n": 0}
+
+    def counting_read_back():
+        calls["n"] += 1
+        return rows if calls["n"] == 1 else rows * 3  # 第二次给一份"中间被 append 过"的读数
+
+    monkeypatch.setattr(log, "read_back", counting_read_back)
+    report = log.summary()
+
+    assert calls["n"] == 1, "summary 又读了不止一次文件"
+    assert report["records"] == 1
+    assert report["chain_digest"] == RequestLog._chain_digest(rows)
+    assert report["first_request_id"] == "req-1"
+
+
 def test_read_back_fails_closed_on_a_torn_line(tmp_root: Path) -> None:
     """半截写入的行必须报错，不能被跳过（跳过 = 用剩下的部分冒充整份日志）。
 

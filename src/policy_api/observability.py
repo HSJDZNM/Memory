@@ -257,7 +257,12 @@ class RequestLog:
         Phase 7 提供的正是"把末值发布到外部"这件事所需的那一个值。
         """
 
-        rows = self.read_back()
+        return self._chain_digest(self.read_back())
+
+    @staticmethod
+    def _chain_digest(rows: Sequence[Mapping[str, Any]]) -> Optional[str]:
+        """从**一份**记录快照算链末值：`chain_digest()` 与 `summary()` 共用这一处定义。"""
+
         if not rows:
             return None
         digest = ""
@@ -269,13 +274,21 @@ class RequestLog:
         return "sha256:" + digest
 
     def summary(self) -> Mapping[str, Any]:
-        rows = self.read_back()
-        return {
-            "records": len(rows),
-            "chain_digest": self.chain_digest(),
-            "first_request_id": str(rows[0].get("request_id") or "") if rows else "",
-            "last_request_id": str(rows[-1].get("request_id") or "") if rows else "",
-        }
+        """一次快照出全部读数：记录数、链末值、首尾 request_id 必须来自**同一份** rows。
+
+        以前它读了两次文件（自己的 `read_back()` + `chain_digest()` 内部的又一次），中间任何
+        一次 append 就能让"记录数"与"链末值"来自两个不同的快照——锚因此自相矛盾，而且这种
+        不一致没有任何地方会报出来（`verify_seal` 只会说"与锚不符"）。
+        """
+
+        with self._lock:
+            rows = self.read_back()
+            return {
+                "records": len(rows),
+                "chain_digest": self._chain_digest(rows),
+                "first_request_id": str(rows[0].get("request_id") or "") if rows else "",
+                "last_request_id": str(rows[-1].get("request_id") or "") if rows else "",
+            }
 
 
 @dataclass
