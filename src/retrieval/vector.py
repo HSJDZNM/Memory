@@ -10,6 +10,7 @@ Phase 3 的立场：**先有可解释的 FTS5 基线，再有向量**。这里�
 
 from __future__ import annotations
 
+import array
 import datetime as clock
 import math
 import re
@@ -122,10 +123,11 @@ class VectorRetriever:
         scope = AccessScope(subject="indexer", datasets=frozenset(datasets), allow_restricted=True)
         # 只有"维度与当前 embedding 一致"的行才算已存在：同模型名下的旧维度行
         # （换过 dim 的自定义实现）必须重算，否则它们永远不会被修好。
+        # 只需要 (id, dim)：整表解码向量在这条路径上是纯浪费（O(corpus) 次解码只为拿 id）。
         existing = {
             chunk_id
-            for chunk_id, vector in self.store.embeddings(model=self.model_name)
-            if len(vector) == self.embedder.dim
+            for chunk_id, dim in self.store.embedding_index(model=self.model_name)
+            if dim == self.embedder.dim
         }
         pending = [hit for hit in self.store.candidates(scope=scope) if hit.chunk_id not in existing]
         if not pending:
@@ -139,8 +141,6 @@ class VectorRetriever:
                 raise QueryError(
                     f"embedding 维度与声明不一致：{len(vector)} != {self.embedder.dim}"
                 )
-            import array
-
             payload = array.array("f", vector)
             self.store.store_embedding(
                 chunk_id=hit.chunk_id,
@@ -196,8 +196,9 @@ class VectorRetriever:
                     update={"request_id": query.request_id, "trace_id": query.trace_id}
                 )
 
-        stored = dict(self.store.embeddings(model=self.model_name))
-        if not stored:
+        # "有没有这个模型的向量"用 id 清单判（不解码整表）；真正要用的向量在候选集确定后
+        # 再按 id 取（见下）——与整表读取逐值一致，只是不再读与本次权限/过滤无关的行。
+        if not self.store.embedding_index(model=self.model_name):
             return RetrievalResult(
                 status=RetrievalStatus.UNAVAILABLE,
                 query=plan.text,
@@ -229,6 +230,11 @@ class VectorRetriever:
                 request_id=query.request_id,
                 trace_id=query.trace_id,
             )
+
+        # 只取候选集的向量：整表解码会把与本次权限 / 过滤无关的向量也读出来。
+        stored = self.store.embeddings_for(
+            [hit.chunk_id for hit in candidates], model=self.model_name
+        )
 
         query_vector = self.embedder.embed((" ".join(plan.terms),))[0]
         if len(query_vector) != self.embedder.dim:

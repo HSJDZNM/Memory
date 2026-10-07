@@ -67,6 +67,38 @@ def seeded_store() -> ChunkStore:
     return store
 
 
+def test_embedding_helpers_match_the_full_read() -> None:
+    """embedding_index / embeddings_for 与整表读取逐值一致（性能修复不许改语义）（复核发现）。"""
+
+    import array
+
+    from retrieval import store as store_module
+
+    store = seeded_store()
+    try:
+        store.store_embedding(
+            chunk_id="chunk_a", model="m", vector=array.array("f", [1.0, 2.0]).tobytes(),
+            dim=2, embedded_at="2026-01-01T00:00:00Z",
+        )
+        store.store_embedding(
+            chunk_id="chunk_b", model="m", vector=array.array("f", [3.0]).tobytes(),
+            dim=1, embedded_at="2026-01-01T00:00:00Z",
+        )
+        full = dict(store.embeddings(model="m"))
+        assert store.embedding_index(model="m") == (("chunk_a", 2), ("chunk_b", 1))
+        assert store.embeddings_for(["chunk_a", "chunk_b"], model="m") == full
+        assert store.embeddings_for(["chunk_a"], model="m") == {"chunk_a": full["chunk_a"]}
+        assert store.embeddings_for([], model="m") == {}
+        assert store.embeddings_for(["nope"], model="m") == {}
+
+        # 分批路径（把批大小压到 1）与整表逐值一致。
+        with pytest.MonkeyPatch.context() as patcher:
+            patcher.setattr(store_module, "_EMBEDDING_BATCH", 1)
+            assert store.embeddings_for(["chunk_a", "chunk_b"], model="m") == full
+    finally:
+        store.close()
+
+
 def test_store_mutations_bump_the_generation_by_themselves() -> None:
     """改变可检索内容的操作必须自己递增 generation（缓存键随之失效）（复核发现）。"""
 

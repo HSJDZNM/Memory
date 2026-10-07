@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import array
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -52,6 +53,17 @@ __all__ = [
 ]
 
 DEFAULT_DB_PATH = ".tmp/retrieval/index.sqlite3"
+
+# embeddings_for 的 IN 批大小：SQLite 的历史参数上限是 999。
+_EMBEDDING_BATCH = 900
+
+
+def _decode_vector(payload: bytes) -> Tuple[float, ...]:
+    """float32 小端字节 -> 浮点元组（向量列的唯二读取点共用同一份解码）。"""
+
+    values = array.array("f")
+    values.frombytes(payload)
+    return tuple(float(item) for item in values)
 
 SCHEMA_STATEMENTS: Tuple[str, ...] = (
     """
@@ -1076,17 +1088,45 @@ class ChunkStore:
 
     def embeddings(self, *, model: str) -> Tuple[Tuple[str, Tuple[float, ...]], ...]:
         stored = self._execute(
-            "SELECT chunk_id, dim, vector FROM chunk_embeddings WHERE model = ? ORDER BY chunk_id",
+            "SELECT chunk_id, vector FROM chunk_embeddings WHERE model = ? ORDER BY chunk_id",
             (model,),
         ).fetchall()
-        import array
+        return tuple((str(row["chunk_id"]), _decode_vector(row["vector"])) for row in stored)
 
-        result: list[Tuple[str, Tuple[float, ...]]] = []
-        for row in stored:
-            values = array.array("f")
-            values.frombytes(row["vector"])
-            result.append((str(row["chunk_id"]), tuple(float(item) for item in values)))
-        return tuple(result)
+    def embedding_index(self, *, model: str) -> Tuple[Tuple[str, int], ...]:
+        """已写入向量的 (chunk_id, dim) 清单——**不解码向量**。
+
+        build() 只需要知道"哪些 chunk 已经有当前维度的向量"：解码整表在那是纯浪费
+        （O(corpus) 次 array + tuple 构造，只为拿 id）。
+        """
+
+        rows = self._execute(
+            "SELECT chunk_id, dim FROM chunk_embeddings WHERE model = ? ORDER BY chunk_id",
+            (model,),
+        ).fetchall()
+        return tuple((str(row["chunk_id"]), int(row["dim"])) for row in rows)
+
+    def embeddings_for(
+        self, chunk_ids: Sequence[str], *, model: str
+    ) -> Mapping[str, Tuple[float, ...]]:
+        """只取这些 chunk 的向量（分批 IN 查询，值语义与 embeddings() 逐值一致）。
+
+        retrieve() 只关心候选集：整表解码会把与本次权限/过滤无关的向量也读出来。
+        SQLite 的参数上限（历史默认 999）按批切；空输入不查库。
+        """
+
+        wanted = [str(item) for item in chunk_ids]
+        result: dict[str, Tuple[float, ...]] = {}
+        for start in range(0, len(wanted), _EMBEDDING_BATCH):
+            batch = wanted[start : start + _EMBEDDING_BATCH]
+            rows = self._execute(
+                "SELECT chunk_id, vector FROM chunk_embeddings "
+                "WHERE model = ? AND chunk_id IN (" + ",".join("?" for _ in batch) + ")",
+                (model, *batch),
+            ).fetchall()
+            for row in rows:
+                result[str(row["chunk_id"])] = _decode_vector(row["vector"])
+        return result
 
     def embedding_metadata(self) -> Mapping[str, Any]:
         row = self._execute(
