@@ -505,7 +505,8 @@ BAD_TIMEOUT = write_hooks(BAD_TIMEOUT_HOOKS, 3, "python -m adapters.dsh.hooks --
 NO_COMMAND = write_hooks(NO_COMMAND_HOOKS, 30, "python -c pass")
 
 wiring_cases = (
-    ("hooks.json 正常", GOOD, ""),
+    # 健康行的期望不是"某个子串"，而是"**没有问题**"（None 只是占位，下面走另一条分支）。
+    ("hooks.json 正常", GOOD, None),
     ("timeout 只有 3s", BAD_TIMEOUT, "不大于内部预算"),
     ("命令没指向本 Hook", NO_COMMAND, "没有指向 adapters.dsh.hooks"),
     ("hooks.json 不存在", TEMP / "nope.json", "不存在"),
@@ -515,7 +516,12 @@ print("-" * 108)
 for label, path, expected in wiring_cases:
     report = check_wiring(CONFIG, hooks_config_path=path)
     print(pad(label, 24) + (report[:76] if report else "通过（运行期接线正常）"))
-    assert expected in report, (label, report)
+    if expected is None:
+        # **健康行要断言"没有问题"**：原来这里写的是 `expected = ""` + `assert "" in report`，
+        # 而空串是任何字符串的子串——`check_wiring` 就算报出一堆问题，这一行也照样通过。
+        assert not report, (label, report)
+    else:
+        assert expected in report, (label, report)
 
 # 接线坏了连"本来会放行"的事件也要阻断：配置事故不得降级成放行。
 bad_wired = run_hook(
