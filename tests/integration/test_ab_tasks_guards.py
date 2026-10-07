@@ -31,7 +31,15 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
-def _task_root(tmp_root: Path, *, tests: int = 200) -> tuple[Path, Path]:
+def _task_root(
+    tmp_root: Path,
+    *,
+    tests: int = 200,
+    test_source: str | None = None,
+    fail_to_pass: tuple[str, ...] = ("tests/test_demo.py::test_000",),
+    pass_to_pass: tuple[str, ...] = ("tests/test_demo.py::test_001",),
+    source_record: bool = False,
+) -> tuple[Path, Path]:
     """合成一个任务：rows.jsonl + baseline 树（自带空 pytest.ini），返回 (root, baseline)。"""
 
     root = tmp_root / "ab-tasks"
@@ -44,8 +52,8 @@ def _task_root(tmp_root: Path, *, tests: int = 200) -> tuple[Path, Path]:
         "environment_setup_commit": "0" * 40,
         "version": "1.0",
         "difficulty": "easy",
-        "FAIL_TO_PASS": json.dumps(["tests/test_demo.py::test_000"]),
-        "PASS_TO_PASS": json.dumps(["tests/test_demo.py::test_001"]),
+        "FAIL_TO_PASS": json.dumps(list(fail_to_pass)),
+        "PASS_TO_PASS": json.dumps(list(pass_to_pass)),
         "test_patch": "--- a/tests/test_demo.py\n+++ b/tests/test_demo.py\n",
         "patch": "",
         "problem_statement": "演示任务",
@@ -53,10 +61,25 @@ def _task_root(tmp_root: Path, *, tests: int = 200) -> tuple[Path, Path]:
     _write(dataset / "rows.jsonl", json.dumps(row, ensure_ascii=False) + "\n")
     baseline = root / INSTANCE / "baseline"
     _write(baseline / "pytest.ini", "[pytest]\n")
-    test_source = "\n".join(
-        "def test_%03d():\n    assert True" % index for index in range(tests)
-    ) + "\n"
+    if test_source is None:
+        test_source = "\n".join(
+            "def test_%03d():\n    assert True" % index for index in range(tests)
+        ) + "\n"
     _write(baseline / "tests" / "test_demo.py", test_source)
+    if source_record:
+        _write(
+            root / INSTANCE / "source.json",
+            json.dumps(
+                {
+                    "url": ab_tasks.tarball_url("demo/demo", "0" * 40),
+                    "sha256": "0" * 64,
+                    "bytes": 1,
+                    "seconds": 0.1,
+                    "baseline_source": "fresh_extract",
+                }
+            )
+            + "\n",
+        )
     return root, baseline
 
 
@@ -94,3 +117,70 @@ def test_collect_sees_every_node_id_when_stdout_exceeds_the_tail(tmp_root: Path)
     assert len(collected["node_ids"]) == 200
     # 读数里仍然只带截断尾：完整串只用在解析上，不让载荷跟着膨胀
     assert len(collected["stdout_tail"]) <= 2500
+
+SKIPPED_SOURCE = "\n".join(
+    [
+        "import pytest",
+        "",
+        "",
+        "def test_f2p():",
+        "    pytest.skip(\"本机跑不了\")",
+        "",
+        "",
+        "def test_p2p():",
+        "    pytest.skip(\"本机跑不了\")",
+        "",
+    ]
+)
+
+DECIDED_SOURCE = "\n".join(
+    [
+        "def test_f2p():",
+        "    assert False",
+        "",
+        "",
+        "def test_p2p():",
+        "    assert True",
+        "",
+    ]
+)
+
+
+def _verify(tmp_root: Path, **options: Any) -> dict:
+    root, _baseline = _task_root(tmp_root, source_record=True, **options)
+    return ab_tasks.verify_oracle(INSTANCE, root=root, python=sys.executable)
+
+
+def test_skipped_nodes_are_not_counted_as_measured(tmp_root: Path) -> None:
+    """F2P / P2P 全被跳过时：拒收，且两个"全红 / 全绿"读数都必须为 False。"""
+
+    payload = _verify(
+        tmp_root,
+        test_source=SKIPPED_SOURCE,
+        fail_to_pass=("tests/test_demo.py::test_f2p",),
+        pass_to_pass=("tests/test_demo.py::test_p2p",),
+    )
+
+    measured = payload["measured"]
+    assert payload["reject"]["rejected"] is True
+    assert payload["reject"]["reason"] == "unrunnable_local"
+    assert measured["fail_to_pass_all_red"] is False
+    assert measured["pass_to_pass_all_green"] is False
+    assert any("没有决定性结果" in item for item in measured["problems"])
+
+
+def test_fully_measured_task_is_still_accepted(tmp_root: Path) -> None:
+    """F2P 全红 + P2P 全绿的任务不受这次收紧影响：不拒收、两个读数都为 True。"""
+
+    payload = _verify(
+        tmp_root,
+        test_source=DECIDED_SOURCE,
+        fail_to_pass=("tests/test_demo.py::test_f2p",),
+        pass_to_pass=("tests/test_demo.py::test_p2p",),
+    )
+
+    measured = payload["measured"]
+    assert payload["reject"] == {"rejected": False, "reason": ""}
+    assert measured["fail_to_pass_all_red"] is True
+    assert measured["pass_to_pass_all_green"] is True
+    assert measured["problems"] == []

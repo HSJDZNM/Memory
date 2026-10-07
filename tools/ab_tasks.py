@@ -507,6 +507,13 @@ def verify_oracle(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON)
     f2p_red = [node for node in f2p if f2p_run["outcomes"].get(node) in ("FAILED", "ERROR")]
     p2p_green = [node for node in p2p if p2p_run["outcomes"].get(node) == "PASSED"]
     p2p_red = [node for node in p2p if p2p_run["outcomes"].get(node) in ("FAILED", "ERROR")]
+    # 每条解析出来的 node 都要有**决定性结果**：SKIPPED / XFAIL 与"根本没出现在摘要里"同样
+    # 只是"没测到"，既不算红也不算绿。旧口径只看 f2p_green / p2p_red，于是"全部被跳过"这类
+    # 任务 rejected=False 而 measured.fail_to_pass_all_red=False——同一份载荷自相矛盾，
+    # 且一个从未被验证过的任务被静默放行。
+    decisive = ("PASSED", "FAILED", "ERROR")
+    f2p_undecided = [node for node in f2p if f2p_run["outcomes"].get(node) not in decisive]
+    p2p_undecided = [node for node in p2p if p2p_run["outcomes"].get(node) not in decisive]
     problems: list[str] = []
     if collected["needs_deps"]:
         problems.append("needs_deps=%s" % collected["needs_deps"])
@@ -518,8 +525,12 @@ def verify_oracle(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON)
         problems.append("fail_to_pass 解析后为空")
     if f2p_green:
         problems.append("基线树上 fail_to_pass 有 %d 条已经绿（任务无效）" % len(f2p_green))
+    if f2p_undecided:
+        problems.append("fail_to_pass 有 %d 条没有决定性结果（被跳过 / 没跑到 / 不在摘要里）" % len(f2p_undecided))
     if p2p_red:
         problems.append("基线树上 pass_to_pass 有 %d 条红" % len(p2p_red))
+    if p2p_undecided:
+        problems.append("pass_to_pass 有 %d 条没有决定性结果（被跳过 / 没跑到 / 不在摘要里）" % len(p2p_undecided))
     rejected = bool(problems)
     if collected["needs_deps"]:
         reason = "unrunnable_local"
@@ -527,7 +538,7 @@ def verify_oracle(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON)
         reason = "no_oracle"
     elif f2p_green:
         reason = "other"
-    elif p2p_red or collected["exit_code"] != 0:
+    elif p2p_red or f2p_undecided or p2p_undecided or collected["exit_code"] != 0:
         reason = "unrunnable_local"
     else:
         reason = ""
@@ -550,7 +561,7 @@ def verify_oracle(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON)
         "reject": {"rejected": rejected, "reason": reason},
         "measured": {
             "fail_to_pass_all_red": bool(f2p) and not f2p_green and len(f2p_red) == len(f2p),
-            "pass_to_pass_all_green": bool(p2p) and not p2p_red,
+            "pass_to_pass_all_green": bool(p2p) and not p2p_red and len(p2p_green) == len(p2p),
             "fail_to_pass_total": len(f2p), "fail_to_pass_red": len(f2p_red), "fail_to_pass_green": len(f2p_green),
             "pass_to_pass_total": len(p2p), "pass_to_pass_green": len(p2p_green), "pass_to_pass_red": len(p2p_red),
             "collected_on_base": collected["collected"], "collection_exit_code": collected["exit_code"],
