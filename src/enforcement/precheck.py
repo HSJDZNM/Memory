@@ -224,6 +224,11 @@ def check_list(
         _check("registry", CheckStatus.PASSED, ReasonCode.ALLOW, f"{spec.id} 已注册且已审核")
     )
 
+    # 本函数只读台账：一次快照供下面所有检查共用。旧实现每问一个问题就重读并重解析
+    # 整份台账（追加写、只会变长的文件），单次 pre-check 要读七八遍；
+    # 权威的一致性点在 pre_execute 的 claim（那里追加后必须重新读）。
+    ledger_records = ledger.records()
+
     # 2) 动作自身的时效：过期请求不得执行。
     if request.expires_at is not None and moment >= request.expires_at:
         checks.append(
@@ -446,13 +451,17 @@ def check_list(
                 tool_id=request.tool_id,
                 subject=request.subject,
                 approval_roles=registry.approval_role_members(),
-                used=False if approval is None else ledger.approval_used(approval.approval_id),
+                used=False
+                if approval is None
+                else ledger.approval_used(approval.approval_id, records=ledger_records),
                 params=(
                     None
                     if approval is None
                     else {item.name: item.value for item in request.params}
                 ),
-                uses=0 if approval is None else ledger.approval_use_count(approval.approval_id),
+                uses=0
+                if approval is None
+                else ledger.approval_use_count(approval.approval_id, records=ledger_records),
                 now=moment,
             )
         except ApprovalError as error:
@@ -477,7 +486,7 @@ def check_list(
             if approval.binding is ApprovalBinding.PATTERN:
                 detail += (
                     f" max_uses={approval.max_uses}"
-                    f" used={ledger.approval_use_count(approval.approval_id)}"
+                    f" used={ledger.approval_use_count(approval.approval_id, records=ledger_records)}"
                     f" patterns={sorted(approval.param_patterns)}"
                 )
             checks.append(_check("approval", CheckStatus.PASSED, ReasonCode.ALLOW, detail))
@@ -525,6 +534,7 @@ def check_list(
             key_value=limit_key,
             window_seconds=spec.rate_limit.window_seconds,
             now=moment,
+            records=ledger_records,
         )
         if calls >= spec.rate_limit.max_calls:
             checks.append(
@@ -551,6 +561,7 @@ def check_list(
                 key_value=limit_key,
                 window_seconds=spec.rate_limit.breaker_seconds or spec.rate_limit.window_seconds,
                 now=moment,
+                records=ledger_records,
             )
             if failures >= spec.rate_limit.max_failures:
                 checks.append(
@@ -584,7 +595,11 @@ def check_list(
     # 8) 重放 / 复用：台账 + 审计链两处都要看。
     #    只看台账的话，删掉台账文件就能让同一个 action 再执行一次；审计链是追加写的独立证据，
     #    因此两份记录里任何一份说"这个 action 已经发生过"，都必须阻断。
-    claims = list(ledger.active_claims(action_id=request.action_id, tool_id=request.tool_id))
+    claims = list(
+        ledger.active_claims(
+            action_id=request.action_id, tool_id=request.tool_id, records=ledger_records
+        )
+    )
     prior_hashes: list[object] = [item.get("action_hash") for item in claims]
     if sink is not None and hasattr(sink, "chain_records"):
         occupants: list[object] = []

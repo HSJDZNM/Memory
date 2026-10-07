@@ -589,6 +589,51 @@ def test_approval_quota_race_loser_returns_its_own_slot(tmp_root):
     assert len(EnforcementLedger(ledger.path).approval_uses("approval-1")) == 1
 
 
+def test_claim_reads_the_ledger_a_bounded_number_of_times(tmp_root, monkeypatch):
+    """一次认领只读两遍台账：认领前一遍、追加后复核一遍（旧实现四遍）。"""
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    ledger.append({"kind": "pre_decision", "limit_key": "local-user|fs.edit"})
+    calls: list[int] = []
+    original = ledger._read
+
+    def counted():  # type: ignore[no-untyped-def]
+        calls.append(1)
+        return original()
+
+    monkeypatch.setattr(ledger, "_read", counted)
+    claimed = ledger.claim(
+        action_id="a-1", tool_id="fs.edit", action_hash="sha256:h", claim_id="c-1"
+    )
+
+    assert claimed.claimed is True
+    assert len(calls) == 2, f"claim() 读了 {len(calls)} 遍台账"
+
+
+def test_claim_approval_use_reads_the_ledger_a_bounded_number_of_times(tmp_root, monkeypatch):
+    """占用审批额度同样只读两遍（旧实现四遍：approval_used 与 released 各扫两轮）。"""
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    calls: list[int] = []
+    original = ledger._read
+
+    def counted():  # type: ignore[no-untyped-def]
+        calls.append(1)
+        return original()
+
+    monkeypatch.setattr(ledger, "_read", counted)
+    claim = ledger.claim_approval_use(
+        approval_id="approval-1",
+        action_id="a-1",
+        tool_id="fs.edit",
+        action_hash="sha256:h",
+        max_uses=3,
+    )
+
+    assert claim.claimed is True
+    assert len(calls) == 2, f"claim_approval_use() 读了 {len(calls)} 遍台账"
+
+
 def test_release_claim_requires_a_matching_live_claim(tmp_root):
     """按 claim_id 释放必须证明它存在、仍生效、且属于同一个动作。
 

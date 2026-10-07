@@ -162,8 +162,13 @@ class EnforcementLedger:
             rows.append(item)
         return tuple(rows), tuple(torn)
 
-    def of_kind(self, kind: str) -> tuple[Mapping[str, Any], ...]:
-        return tuple(item for item in self.records() if item.get("kind") == kind)
+    def of_kind(
+        self, kind: str, *, records: Optional[Sequence[Mapping[str, Any]]] = None
+    ) -> tuple[Mapping[str, Any], ...]:
+        """某个 kind 的记录；`records` 给定时不再重读文件（调用方已经读过一次）。"""
+
+        source = self.records() if records is None else records
+        return tuple(item for item in source if item.get("kind") == kind)
 
     # ------------------------------------------------------------------ 写
     def append(self, record: Mapping[str, Any]) -> None:
@@ -182,14 +187,26 @@ class EnforcementLedger:
             raise LedgerError(f"台账不可写: {self.path.name}（{error}）") from error
 
     # ------------------------------------------------------------------ 幂等
-    def active_claims(self, *, action_id: str, tool_id: str) -> tuple[Mapping[str, Any], ...]:
-        """仍然生效的认领（被 release_claim 释放过的不算）。"""
+    def active_claims(
+        self,
+        *,
+        action_id: str,
+        tool_id: str,
+        records: Optional[Sequence[Mapping[str, Any]]] = None,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """仍然生效的认领（被 release_claim 释放过的不算）。
+
+        `records` 给定时用它当快照：一次操作里连着问几个问题只读一遍文件即可。
+        """
 
         key = f"{tool_id}:{action_id}"
-        released = {item.get("claim_id") for item in self.of_kind("claim_released")}
+        source = self.records() if records is None else records
+        released = {
+            item.get("claim_id") for item in self.of_kind("claim_released", records=source)
+        }
         return tuple(
             item
-            for item in self.of_kind("claim")
+            for item in self.of_kind("claim", records=source)
             if item.get("action_key") == key and item.get("claim_id") not in released
         )
 
@@ -199,7 +216,12 @@ class EnforcementLedger:
         """认领一次 action。已经认领过的 action 不再认领（调用方据此拒绝重复执行）。"""
 
         key = f"{tool_id}:{action_id}"
-        claims = list(self.active_claims(action_id=action_id, tool_id=tool_id))
+        # 认领前的读取只做一次：active_claims 内部要问 claim 与 claim_released 两件事，
+        # 各自重读一遍文件是纯粹的重复 IO（台账是追加写、只会变长的文件）。
+        snapshot = self.records()
+        claims = list(
+            self.active_claims(action_id=action_id, tool_id=tool_id, records=snapshot)
+        )
         if claims:
             existing = claims[0]
             if existing.get("action_hash") == action_hash:
@@ -223,7 +245,10 @@ class EnforcementLedger:
                 "claim_id": claim_id,
             }
         )
-        winner = self.active_claims(action_id=action_id, tool_id=tool_id)[0]
+        # 追加之后的复核必须**重新读**（并发方的行也要看见），但同样只读一次。
+        winner = self.active_claims(
+            action_id=action_id, tool_id=tool_id, records=self.records()
+        )[0]
         if winner.get("claim_id") != claim_id:
             return LedgerClaim(
                 claimed=False, claim_id=str(winner.get("claim_id", "")), reason="action_replay"
@@ -336,25 +361,35 @@ class EnforcementLedger:
         )
         return token
 
-    def approval_uses(self, approval_id: str) -> tuple[Mapping[str, Any], ...]:
+    def approval_uses(
+        self, approval_id: str, *, records: Optional[Sequence[Mapping[str, Any]]] = None
+    ) -> tuple[Mapping[str, Any], ...]:
         """仍然生效的审批消费记录：被 release_approval_use 归还过的不算。
 
         "归还"存在的理由与 claim_released 相同：失败关闭不能变成死锁。审计不可写导致
         动作没有执行时，额度必须还回去，否则修好审计之后重试会被误判成"次数用尽"。
+        `records` 给定时用它当快照，不再重读文件。
         """
 
-        released = {item.get("use_id") for item in self.of_kind("approval_use_released")}
+        source = self.records() if records is None else records
+        released = {
+            item.get("use_id") for item in self.of_kind("approval_use_released", records=source)
+        }
         return tuple(
             item
-            for item in self.of_kind("approval_used")
+            for item in self.of_kind("approval_used", records=source)
             if item.get("approval_id") == approval_id and item.get("use_id") not in released
         )
 
-    def approval_use_count(self, approval_id: str) -> int:
-        return len(self.approval_uses(approval_id))
+    def approval_use_count(
+        self, approval_id: str, *, records: Optional[Sequence[Mapping[str, Any]]] = None
+    ) -> int:
+        return len(self.approval_uses(approval_id, records=records))
 
-    def approval_used(self, approval_id: str) -> bool:
-        return bool(self.approval_uses(approval_id))
+    def approval_used(
+        self, approval_id: str, *, records: Optional[Sequence[Mapping[str, Any]]] = None
+    ) -> bool:
+        return bool(self.approval_uses(approval_id, records=records))
 
     def claim_approval_use(
         self,
@@ -373,7 +408,7 @@ class EnforcementLedger:
 
         if max_uses < 1:
             raise LedgerError(f"审批次数上限必须是正整数，得到 {max_uses}")
-        existing = self.approval_uses(approval_id)
+        existing = self.approval_uses(approval_id, records=self.records())
         if len(existing) >= max_uses:
             return ApprovalUseClaim(
                 claimed=False,
@@ -388,7 +423,7 @@ class EnforcementLedger:
             tool_id=tool_id,
             max_uses=max_uses,
         )
-        rows = self.approval_uses(approval_id)
+        rows = self.approval_uses(approval_id, records=self.records())
         index = next(
             (position for position, item in enumerate(rows) if item.get("use_id") == token), None
         )
@@ -441,11 +476,12 @@ class EnforcementLedger:
         key_value: str,
         window_seconds: int,
         now: Optional[datetime] = None,
+        records: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> int:
         moment = now or utc_now()
         cutoff = moment - timedelta(seconds=window_seconds)
         total = 0
-        for item in self.of_kind(kind):
+        for item in self.of_kind(kind, records=records):
             if str(item.get(key_field)) != key_value:
                 continue
             when = _recorded_at(item.get("recorded_at"))
@@ -486,13 +522,14 @@ class EnforcementLedger:
         key_value: str,
         window_seconds: int,
         now: Optional[datetime] = None,
+        records: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> int:
         """窗口内的失败次数（执行失败、验证要求修复、证据不一致）。"""
 
         moment = now or utc_now()
         cutoff = moment - timedelta(seconds=window_seconds)
         total = 0
-        for item in self.of_kind("execution"):
+        for item in self.of_kind("execution", records=records):
             if str(item.get(key_field)) != key_value:
                 continue
             if item.get("ok") is not False:
