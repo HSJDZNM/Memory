@@ -31,7 +31,8 @@ jobs:
       # 依赖锁定以 requirements.lock 为准：仓库没有 uv.lock，uv sync 会重新解析，不是锁定安装。
       - name: Install pinned dependencies
         run: |
-          uv venv
+          # job 名写着 python 3.13：解释器必须真的按 3.13 解析（uv 取不到就红，不退到默认版本）。
+          uv venv --python 3.13
           uv pip install -r requirements.lock
 
       # Phase 5 的外部 Linter 是本项目的"外部工具"而不是 Python 依赖：
