@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from policy.context import (
@@ -404,3 +406,36 @@ def test_blank_paths_stay_rejected_with_or_without_allow_root(raw: str) -> None:
             repo_relative_path(raw, allow_root=allow_root)
         with pytest.raises(PolicyContextError):
             normalize_repo_path(raw, allow_root=allow_root)
+
+
+# --------- 绝对路径的前缀比较：大小写口径由**路径风格**决定，不是自己 lower()
+
+
+CASE_FLIPPED_ROOT = str(REPO_ROOT).swapcase()
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or CASE_FLIPPED_ROOT == str(REPO_ROOT),
+    reason="大小写是否敏感由文件系统决定：Windows 不区分；没有字母的路径也构造不出对照",
+)
+def test_case_differing_absolute_path_is_out_of_scope_on_case_sensitive_filesystems() -> None:
+    """POSIX：只差大小写的兄弟目录**不是**仓库内的路径，必须拒绝。
+
+    自己 `[item.lower() ...]` 会把 /srv/Repo/src/x.py 判成 repo_root=/srv/repo 之内的路径，
+    于是"仓库外的文件当仓库内的文件处理"在大小写敏感的文件系统上悄悄成立；
+    而 Windows 上 Path 的比较本来就不区分大小写——哪一端区分是路径风格说了算。
+    """
+
+    outside = CASE_FLIPPED_ROOT + "/src/order/controller.py"
+
+    with pytest.raises(PolicyContextError):
+        repo_relative_path(outside, repo_root=REPO_ROOT)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows 路径比较本来就不区分大小写")
+def test_case_differing_absolute_path_stays_in_scope_on_windows() -> None:
+    """Windows：大小写不同仍是同一个目录——修复不放宽、也不新增拒绝。"""
+
+    outside = str(REPO_ROOT).upper() + chr(92) + "src" + chr(92) + "order" + chr(92) + "controller.py"
+
+    assert repo_relative_path(outside, repo_root=REPO_ROOT) == "src/order/controller.py"
