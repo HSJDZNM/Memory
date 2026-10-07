@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 from enum import Enum
 from typing import Any, FrozenSet, Mapping, Optional, Tuple
 
@@ -481,17 +482,17 @@ class EvidenceBundle(StrictModel):
         return self.model_copy(
             update={
                 "dependencies": tuple(
-                    sorted(_unique(self.dependencies, key=_dependency_key), key=lambda item: item.sort_key)
+                    sorted(_unique(self.dependencies, key=_payload_key), key=lambda item: item.sort_key)
                 ),
                 "evidence": tuple(
-                    sorted(_unique(self.evidence, key=_evidence_key), key=lambda item: item.sort_key)
+                    sorted(_unique(self.evidence, key=_payload_key), key=lambda item: item.sort_key)
                 ),
                 "validators": tuple(sorted(self.validators, key=lambda item: item.validator)),
                 "blockers": tuple(sorted(self.blockers, key=lambda item: (item.validator, item.reason))),
                 "served_checkers": tuple(sorted(set(self.served_checkers))),
                 "pending_implementation": tuple(
                     sorted(
-                        _unique(self.pending_implementation, key=lambda item: item.sort_key),
+                        _unique(self.pending_implementation, key=_payload_key),
                         key=lambda item: item.sort_key,
                     )
                 ),
@@ -536,18 +537,20 @@ def _tool_payload(tool: ToolInvocation) -> Mapping[str, Any]:
     }
 
 
-def _dependency_key(fact: DependencyFact) -> Tuple[str, str, str, str, int]:
-    return (
-        fact.name,
-        fact.kind.value,
-        fact.resolution.value,
-        fact.file or "",
-        0 if fact.line is None else fact.line,
-    )
+def _payload_key(item: Any) -> str:
+    """去重键 = 这条记录的**完整载荷**（规范化 JSON），不是 sort_key。
 
+    为什么不能用 sort_key：它是**排序**键，故意粗——ValidationEvidence 只取
+    validator/rule/file/line/column/message，DependencyFact 连 module / column / validator /
+    detail 都不取。用它去重会把"只差 severity / value / fix / detail / tool"或"只差 module /
+    column"的两条记录当成同一条丢掉，而被留下的那一条还取决于适配器的输出顺序：于是
+    "同一份验证器输出 ⇒ 逐字节相同的证据"这条承诺并不成立，事实被静默吞掉
+    （同一行的第二个 import、同一位置不同 severity 的两条诊断都会消失）。
 
-def _evidence_key(item: ValidationEvidence) -> Tuple[str, str, str, int, int, str]:
-    return item.sort_key
+    用完整载荷当键：只有真正逐字段相同的记录才合并；将来给载荷加字段，去重判据自动跟上。
+    """
+
+    return json.dumps(item.to_payload(), ensure_ascii=False, sort_keys=True)
 
 
 def _unique(items: Any, *, key: Any) -> list:

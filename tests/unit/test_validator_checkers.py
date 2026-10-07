@@ -458,6 +458,93 @@ def test_bundle_normalisation_deduplicates_and_sorts() -> None:
     assert normalised == raw.normalize()
 
 
+def test_dedup_keys_cover_the_whole_payload_not_just_the_sort_key() -> None:
+    """去重只许合并**逐字段相同**的记录。
+
+    sort_key 是排序键、故意粗：DependencyFact 不看 module/column/validator/detail，
+    ValidationEvidence 不看 severity/value/fix/detail/tool，PendingImplementation 不看 checkers。
+    用它去重会把这些"只差一个载荷字段"的事实静默吞掉，而幸存的那一条还取决于适配器输出顺序——
+    "同一份验证器输出 ⇒ 逐字节相同的证据"于是并不成立。
+    """
+
+    shared = dict(
+        validator_id="py.docstring",
+        validator_version="1.0",
+        checker="missing_docstring",
+        rule_id="DOC-001",
+        rule_version=1,
+        message="缺少 docstring",
+    )
+    raw = EvidenceBundle(
+        target=None,
+        dependencies=(
+            DependencyFact(
+                name="os",
+                kind=DependencyKind.IMPORT,
+                resolution=DependencyResolution.STDLIB,
+                file="src/a.py",
+                line=1,
+                column=0,
+                validator="py.depgraph@1.0",
+            ),
+            DependencyFact(
+                name="os",
+                kind=DependencyKind.IMPORT,
+                resolution=DependencyResolution.STDLIB,
+                file="src/a.py",
+                line=1,
+                column=12,
+                validator="py.depgraph@1.0",
+            ),
+        ),
+        evidence=(
+            ValidationEvidence(**shared, severity=Severity.ERROR, value="a"),
+            ValidationEvidence(**shared, severity=Severity.WARNING, value="a"),
+        ),
+        pending_implementation=(
+            PendingImplementation(
+                validator_id="tool.pytest",
+                validator_version="1.0",
+                checkers=("failing_tests",),
+                test_modules=("tests/test_a.py",),
+                missing_targets=("shop.order_service",),
+                reason="收集期缺目标",
+                fix="补上实现",
+            ),
+            PendingImplementation(
+                validator_id="tool.pytest",
+                validator_version="1.0",
+                checkers=("missing_tests",),
+                test_modules=("tests/test_a.py",),
+                missing_targets=("shop.order_service",),
+                reason="收集期缺目标",
+                fix="补上实现",
+            ),
+        ),
+    )
+
+    normalised = raw.normalize()
+
+    assert len(normalised.dependencies) == 2, "只差 column 的两条依赖事实不是同一条"
+    assert len(normalised.evidence) == 2, "只差 severity 的两条证据不是同一条"
+    assert len(normalised.pending_implementation) == 2, "只差 checkers 的两条待实现不是同一条"
+
+
+def test_byte_identical_records_still_collapse() -> None:
+    """真正逐字段相同的记录仍然合并——不然 normalize() 就不叫稳定化了。"""
+
+    fact = DependencyFact(
+        name="os",
+        kind=DependencyKind.IMPORT,
+        resolution=DependencyResolution.STDLIB,
+        file="src/a.py",
+        line=1,
+        validator="py.depgraph@1.0",
+    )
+
+    assert len(EvidenceBundle(target=None, dependencies=(fact, fact)).normalize().dependencies) == 1
+
+
 def test_source_digest_and_unknown_schema_are_rejected() -> None:
     digest = SourceDigest(file="a.py", language="python", sha256="sha256:" + "0" * 64, bytes=1, lines=1)
     assert digest.file == "a.py"
