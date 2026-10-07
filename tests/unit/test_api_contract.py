@@ -41,7 +41,7 @@ from policy_api.runtime import ApiRuntime, RateLimiter, budget_for
 from policy_api.services import signature_of
 from policy_api.timeout import Budget, BudgetExceeded, run_with_budget
 
-from api_support import TOKEN_SHA
+from api_support import TOKEN_SHA, isolated_api
 
 # --------------------------------------------------------------------------- 工具
 
@@ -464,6 +464,30 @@ def test_idempotency_ledger_fails_closed_on_corrupted_file(tmp_root: Path) -> No
         IdempotencyLedger(wrong_version).lookup(**lookup)
     assert info.value.code is ErrorCode.IDEMPOTENCY_UNAVAILABLE
     assert "协议版本" in info.value.detail
+
+
+# --------------------------------------------------------------------------- 冒烟
+
+
+def test_smoke_with_an_unconfigured_token_is_a_structured_401_not_a_name_error(
+    tmp_root: Path,
+) -> None:
+    """冒烟令牌不在配置里：必须是结构化 401 `unauthenticated`，不是 NameError。
+
+    历史缺陷（OCR 全量审查 L10）：contract.py 只用到了 `ApiError` 却从未导入它，
+    这一行因此抛 NameError——`python -m policy_api.cli smoke --token <错令牌>` 以未处理
+    异常与 traceback 结束（退出码退化成 1），本应得到的错误分类（401 unauthenticated）
+    被吃掉。**这条路径只有 smoke 会走**，所以必须在这里钉住它。
+    """
+
+    from policy_api.contract import smoke
+
+    config_path, anchor = isolated_api(tmp_root)
+    runtime = ApiRuntime(load_api_config(config_path, root=anchor), root=anchor)
+    with pytest.raises(ApiError) as info:
+        smoke(runtime, token="definitely-not-a-configured-token")
+    assert info.value.code is ErrorCode.UNAUTHENTICATED
+    assert info.value.status == 401
 
 
 # --------------------------------------------------------------------------- 指标
