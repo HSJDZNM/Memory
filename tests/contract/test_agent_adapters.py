@@ -808,3 +808,57 @@ def test_a_genuine_typeerror_is_not_read_as_a_missing_workspace_parameter() -> N
 
     assert "workspace 解析失败" in str(error.value)
     assert calls == [1], "同一个异常不许触发第二次 _build_event（副作用会重复）"
+
+
+def test_a_malformed_approved_entry_is_a_named_registry_error(tmp_root: Path) -> None:
+    """形状不对的已审核条目必须是一条**点名的** RegistryError，不是 AttributeError。
+
+    旧实现只校验 `adapters` 是非空映射：`"dsh": "sha256:…"` 会在 descriptors() 里以
+    `AttributeError: 'str' object has no attribute 'get'` 逃出 RegistryError 契约——
+    调用方按 RegistryError 兜底，于是它变成未处理崩溃，而且不说是哪一条坏了。
+    """
+
+    from adapters.base import AdapterRegistry, RegistryError
+
+    approved = json.loads(APPROVED_PATH.read_text(encoding="utf-8"))
+    approved["adapters"]["dsh"] = "sha256:" + "0" * 64
+    malformed = tmp_root / "approved-malformed.json"
+    malformed.write_text(
+        json.dumps(approved, ensure_ascii=False, indent=2) + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    with pytest.raises(RegistryError) as error:
+        AdapterRegistry.load(ADAPTERS_ROOT, approved_path=malformed)
+    assert "dsh" in str(error.value)
+
+
+def test_a_directly_built_registry_reads_a_malformed_entry_as_unapproved() -> None:
+    """直接构造（approved=…）也不许抛 AttributeError：形状不对读成「未审核」，失败关闭。
+
+    这条路径绕过 `_load_approved`（测试与工具会这样构造），所以形状保护必须在读取侧也有
+    一份：未审核的后果由 `check_approved()` 承担——一条点名的 RegistryError。
+    """
+
+    from adapters.base import AdapterRegistry, RegistryError
+
+    verified = AdapterRegistry.load(ADAPTERS_ROOT, approved_path=APPROVED_PATH)
+    manifest = verified.manifest("dsh")
+
+    # ① 顶层 adapters 是字符串；② 单条条目是列表
+    broken = AdapterRegistry(
+        [manifest], approved={"adapters": "nope"}, approved_path=None
+    )
+    assert broken.as_list().get("dsh").approved is False
+    with pytest.raises(RegistryError):
+        broken.check_approved()
+
+    mixed = AdapterRegistry(
+        [manifest],
+        approved={"adapters": {"dsh": ["not", "a", "mapping"]}},
+        approved_path=APPROVED_PATH,
+    )
+    assert mixed.as_list().get("dsh").approved is False
+    with pytest.raises(RegistryError):
+        mixed.check_approved()
