@@ -410,6 +410,9 @@ print()
 # 直接读源码核对"表达式是参数，不是拼进 SQL 的字符串"。
 search_source = inspect.getsource(ChunkStore.search)
 sql_block = search_source.partition("sql = (")[2]
+# 先证明**锚点真的在**：`partition` 找不到分隔符时返回的尾巴是空串，下面那条断言会因此
+# 空过——单元照样绿、还照样打印"源码核对"的结论（一条不可能失败的规格等于没有规格）。
+assert sql_block, "在 ChunkStore.search 里没找到 `sql = (`：源码核对的锚点没了，拒绝空过"
 assert "chunks_fts MATCH ?" in search_source
 assert "expression" not in sql_block, "表达式变量不得出现在 SQL 拼接块里"
 print("源码核对：ChunkStore.search 的 SQL 里写的是 chunks_fts MATCH ?，")
