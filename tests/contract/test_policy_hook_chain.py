@@ -142,6 +142,9 @@ observations.post_allow = await drivePost({
   ],
 });
 observations.post_allow_string = await drivePost('plain text result');
+// 形状漂移：结果是个对象但没有 content——旧写法（blocksToText(裸对象)）会把它变成空串，
+// 事后核对因此分不出「工具什么都没输出」与「形状我们不认识」。
+observations.post_object_without_content = await drivePost({ isError: false, note: 'shape drift' });
 observations.post_truncated = await drivePost({
   content: [{ type: 'text', text: 'x'.repeat(9000) }],
 });
@@ -1498,6 +1501,21 @@ def _assert_origin_shape(origin: dict) -> None:
     assert isinstance(origin["fix"], str) and origin["fix"].strip() != "", origin
     assert "联系管理员" not in origin["fix"]
     assert origin["causal_link"] in {"proven", "unproven"}
+
+
+def test_an_unrecognised_result_shape_is_forwarded_not_dropped(tmp_root) -> None:
+    """结果对象没有 content 时，工具输出必须**原样转发**，不能静默变成空串。
+
+    注释写着「拿不到 content 时退回结果本身，避免把结果形状变了静默变成空结果」，但
+    `blocksToText` 对裸对象返回空串，而「结果对象没有 content」正好是这种形状：post_checks
+    看到的是一份「什么都没输出」的答复，`exit_code_zero` 之类的核对因此建立在错误的前提上。
+    """
+
+    observed = run_harness(tmp_root)
+    payload = observed["post_object_without_content"]["payload"]
+
+    assert payload["hook_event_name"] == "PostToolUse"
+    assert "shape drift" in payload["tool_response"], payload["tool_response"]
 
 
 def test_a_malformed_hook_result_is_refused_not_thrown(tmp_root) -> None:

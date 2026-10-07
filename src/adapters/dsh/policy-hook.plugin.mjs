@@ -615,7 +615,17 @@ export function apply(ctx, config) {
     // 避免把"结果形状变了"静默变成"空结果"（事后核对会因此看不到任何偏差）。
     // 只算一次并复用：转发给 Hook 与（阻断时）附回模型的是同一份截断结果，
     // 不存在第二条无上限的路径。
-    const toolResponse = truncate(blocksToText(result?.content ?? result), MAX_TOOL_RESPONSE_CHARS);
+    //
+    // 「退回结果本身」必须真的退得回去：`blocksToText` 对**裸对象**返回空串，而「结果对象
+    // 没有 content」正好是这种形状——工具输出于是静默变成空串，事后核对分不出「工具什么都
+    // 没输出」与「形状我们不认识」。非数组的对象一律 JSON 序列化后转发（仍走同一个截断上限）。
+    const rawResult = result?.content ?? result;
+    const toolResponse = truncate(
+      rawResult !== null && typeof rawResult === 'object' && !Array.isArray(rawResult)
+        ? JSON.stringify(rawResult)
+        : blocksToText(rawResult),
+      MAX_TOOL_RESPONSE_CHARS,
+    );
     const outcome = await runHook(exec, {
       hookEvent: 'PostToolUse',
       fields: {
