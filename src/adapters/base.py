@@ -68,7 +68,6 @@ __all__ = [
     "AdapterList",
     "AdapterRegistry",
     "AdapterSpec",
-    "EventAdapter",
     "PathRule",
     "RegistryError",
     "SupportCeiling",
@@ -276,18 +275,10 @@ def ceiling_from_capabilities(manifest: AdapterManifest) -> SupportCeiling:
     return SupportCeiling(level=level, requested=requested, reasons=tuple(reasons))
 
 
-class EventAdapter(Protocol):
-    """每个具体 Adapter 必须实现的端口。
-
-    只做协议转换：把 Agent Runtime 的原始事件映射成规范事件，
-    再把决策翻译回该 Runtime 能理解的响应形态。
-    """
-
-    manifest: AdapterManifest
-
-    @property
-    def agent_id(self) -> str:
-        ...
+# 这里曾有一个 `EventAdapter(Protocol)` 的「端口」声明：全仓只有声明处与 `__all__` 提到它，
+# 真正被装配、被导入、被类型检查用的是 `Adapter`（本模块的抽象基类）与 `event_adapter.py` 里的
+# 具体 `EventAdapter`。它与包级同名导出撞名（`adapters.EventAdapter` 指的是另一个东西），
+# 读的人要在两个同名类型之间猜——死声明 + 同名两义，按第 50 条删除。
 
     def to_policy_event(
         self, raw_event: Any, *, workspace: Optional[Path] = None
