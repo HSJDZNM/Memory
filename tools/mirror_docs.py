@@ -1007,12 +1007,20 @@ def role_of(relpath, spec, guide):
 
 
 def parent_of(relpath, spec, guide):
+    """一页在镜像层级里的父节点（镜像内相对路径；站点根用空串表示）。
+
+    不变量：**父路径不能等于自身**。`review/index.md` 既是共享层的父、自己也属于共享层，
+    照直写就会自引用成环——沿 parent 走面包屑 / 导航树的消费方要么死循环，要么放不下这个节点。
+    自引用时回落到站点根 `index.md`，与根自己的 `""` 一起构成一条有终点的链。
+    """
     if relpath == "index.md":
         return ""
     if guide == "shared":
-        return "review/index.md"
-    groot = [g[3] for g in spec["groups"] if g[0] == guide][0]
-    return "review/index.md" if relpath == groot else groot
+        parent = "review/index.md"
+    else:
+        groot = [g[3] for g in spec["groups"] if g[0] == guide][0]
+        parent = "review/index.md" if relpath == groot else groot
+    return "index.md" if parent == relpath else parent
 
 
 # --------------------------------------------------------------------------

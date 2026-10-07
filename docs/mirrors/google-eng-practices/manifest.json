@@ -93,7 +93,7 @@
       "guide": "shared",
       "guide_name": "",
       "role": "section-index",
-      "parent": "review/index.md",
+      "parent": "index.md",
       "source_url": "https://google.github.io/eng-practices/review/",
       "title": "Introduction {#intro}",
       "source_repo_path": "master/review/index.md",
