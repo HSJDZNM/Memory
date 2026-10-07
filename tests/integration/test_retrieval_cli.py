@@ -344,6 +344,28 @@ def test_index_budget_too_small_exits_2(tmp_root: Path) -> None:
     assert "Traceback" not in completed.stderr
 
 
+def test_out_of_range_limit_is_a_usage_error_not_a_traceback(
+    tmp_root: Path, cli_project: Path
+) -> None:
+    """--limit 越界必须是退出码 2 的用法错误（复核发现：pydantic ValidationError 逃逸成 traceback）。"""
+
+    args = base_args(tmp_root, cli_project)
+    run_cli(*args, "index")
+    for value in ("0", "51", "-3"):
+        completed = run_cli(*args, "query", "review checklist", "--limit", value)
+        assert completed.returncode == 2, (value, completed.stderr)
+        assert "Traceback" not in completed.stderr, value
+        assert "limit" in completed.stderr, value
+
+    # 边界内的取值照常工作（1 与 50 都合法）。
+    for value in ("1", "50"):
+        completed = run_cli(*args, "query", "review checklist", "--limit", value, "--json")
+        assert completed.returncode == 0, (value, completed.stderr)
+        payload = json.loads(completed.stdout)
+        assert len(payload["results"]) <= int(value)
+    assert run_cli(*args, "query", "review checklist", "--limit", "abc").returncode == 2
+
+
 def test_fixture_corpus_loads_without_expansion(tmp_root: Path, cli_project: Path) -> None:
     loaded = load_fixture_corpus(tmp_root)
     assert loaded.policy.expansion is None

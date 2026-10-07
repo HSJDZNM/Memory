@@ -155,6 +155,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _limit(value: str) -> int:
+    """--limit 的取值域与 RetrievalQuery.limit 一致（1..50）。
+
+    不在这里挡住的话，越界值会一路走到 RetrievalQuery(...) 才由 pydantic 抛
+    ValidationError——它不是 RetrievalError/JSONDecodeError 的子类，_dispatch 的
+    except 接不住，CLI 以裸 traceback 结束（而文档说这类用法错误是退出码 2）。
+    argparse 自己就会以退出码 2 报出这条用法错误，report 也说得清是哪个参数。
+    """
+
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"limit 必须是整数，得到 {value!r}") from error
+    if not 1 <= parsed <= 50:
+        raise argparse.ArgumentTypeError(
+            f"limit 必须在 1..50 之间（RetrievalQuery 的取值域），得到 {parsed}"
+        )
+    return parsed
+
+
 def _add_query_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dataset", action="append", default=[], help="限定数据集，可重复")
     parser.add_argument("--tier", action="append", default=[], choices=[item.value for item in Tier])
@@ -167,7 +187,7 @@ def _add_query_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--subject", default="local-user", help="请求主体（只用于缓存键与审计，不改变权限集合）"
     )
-    parser.add_argument("--limit", type=int, default=None, help="返回片段数上限")
+    parser.add_argument("--limit", type=_limit, default=None, help="返回片段数上限（1..50）")
     parser.add_argument(
         "--allow-restricted",
         action="store_true",
