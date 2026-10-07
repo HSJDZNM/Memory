@@ -1403,6 +1403,10 @@ observations.wire_allow_post = await mountForWorkdir(
   existingWorkdir,
 ).drivePost({ content: [{ type: 'text', text: 'ok' }] });
 
+// ⑧ 空串 projectDir 与「没写」同义：应当回落到会话 cwd 并照常 spawn（而不是把 "" 当成
+//    声明过的目录，落进 inspectWorkdir 的 unknown_origin 且 spawn 0 次）。
+observations.origin_blank_project_dir = await mountForWorkdir('', existingWorkdir).driveHook();
+
 process.stdout.write(JSON.stringify(observations));
 '''
 
@@ -1482,6 +1486,23 @@ def _assert_origin_shape(origin: dict) -> None:
     assert isinstance(origin["fix"], str) and origin["fix"].strip() != "", origin
     assert "联系管理员" not in origin["fix"]
     assert origin["causal_link"] in {"proven", "unproven"}
+
+
+def test_a_blank_project_dir_behaves_like_an_undeclared_one(tmp_root) -> None:
+    """`projectDir: ""`（或非字符串）与「没写」同义：回落到会话 cwd，而不是声明了一个空目录。
+
+    头部文档写的是「不填则用会话工作目录」，而 `config.projectDir ?? cwd` 只兜 null/undefined：
+    空串会被当成「声明过了」——会话 cwd 永不被采纳、cwdSource 谎报成 config.projectDir、
+    `workdir: ""` 一路传给 spawn，最后连"这次在哪个目录启动"都归因不出来。
+    """
+
+    observed = run_origin_harness(tmp_root)
+    outcome = observed["origin_blank_project_dir"]
+
+    # 回落成功：真的 spawn 了一次、决策是放行，而且**没有**给它编一条归因
+    assert outcome["spawnAttempts"] == 1, outcome
+    assert outcome["outcome"]["allowed"] is True, outcome
+    assert set(outcome["outcome"]) == {"allowed", "reason"}, outcome
 
 
 def test_every_workdir_denial_carries_a_verified_origin_from_the_closed_set(tmp_root):

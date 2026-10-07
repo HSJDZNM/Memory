@@ -509,8 +509,16 @@ export function createRunHook(ctx, config) {
    * 放行路径**不产出**任何归因（不许给放行的调用编造一个"为什么"）。
    */
   const runHook = async (exec, { hookEvent, fields }) => {
-    const hasProjectDir = config.projectDir !== undefined && config.projectDir !== null;
-    const cwd = config.projectDir ?? exec.agent?.session?.header?.cwd;
+    // 空串 / 非字符串的 projectDir 与「没写」同义（头部文档：「不填则用会话工作目录」）：
+    // `??` 只兜 null/undefined，于是 `projectDir: ""` 会被当成「声明过了」——会话 cwd 永远
+    // 不被采纳、cwdSource 谎报成 config.projectDir，`workdir: ""` 还会一路传给 spawn，
+    // 之后连"这次在哪个目录启动"都归因不出来（inspectWorkdir 只能落 unknown_origin）。
+    const declaredProjectDir =
+      typeof config.projectDir === 'string' && config.projectDir.trim() !== ''
+        ? config.projectDir
+        : undefined;
+    const hasProjectDir = declaredProjectDir !== undefined;
+    const cwd = hasProjectDir ? declaredProjectDir : exec.agent?.session?.header?.cwd;
     const cwdSource = hasProjectDir ? 'config.projectDir' : '会话 cwd（config.projectDir 未声明）';
     // spawn 之前先看工作目录：能证明它不可用时直接失败关闭，理由点名那个目录。
     const workdir = inspectWorkdir(cwd, cwdSource);
