@@ -215,6 +215,37 @@ def test_ast_collects_imports_aliases_and_relative_imports() -> None:
     assert "repo" in imported_names(facts)
 
 
+def test_bound_name_is_the_name_the_import_actually_binds() -> None:
+    """绑定名以 `bindings` 为准：`from os import path` 绑定的是 path，不是 os。
+
+    历史缺陷（OCR 全量审查 L13）：bound_name 从 alias / module 的段里推断，四种形态都错
+    ——`from os import path` 给出从未绑定的 "os"、`from . import x` 给出 None、
+    多名字 from-import 只能给一个、动态 import 什么都没绑定却给出一段模块名。
+    消费方（depgraph 的调用边、imported_names）因此把调用链挂在不存在的根上。
+    """
+
+    facts = parse_module(
+        "from os import path" + chr(10)
+        + "from . import order_service" + chr(10)
+        + "from shop.order_service import OrderService" + chr(10)
+        + "import os.path" + chr(10)
+        + "import importlib" + chr(10)
+        + "m = importlib.import_module('os.path')" + chr(10)
+    )
+    bound = [(item.kind, item.module, item.bound_name) for item in facts.imports]
+    assert ("from_import", "os", "path") in bound
+    assert ("from_import", "", "order_service") in bound
+    assert ("from_import", "shop.order_service", "OrderService") in bound
+    assert ("import", "os.path", "os") in bound
+    # 动态 import 什么都没绑定：bound_name 必须是 None，不是模块名的最后一段
+    dynamic = [(item.module, item.bound_name) for item in facts.imports if item.kind == "dynamic"]
+    assert dynamic == [("os.path", None)]
+
+    # imported_names 展开**全部** bindings：多名字 from-import 不再只给一个
+    multi = parse_module("from shop import order_service, order_repository" + chr(10))
+    assert imported_names(multi) == ("order_repository", "order_service")
+
+
 def test_ast_marks_dynamic_imports_by_constantness() -> None:
     constant = parse_module("import importlib" + chr(10) + "m = importlib.import_module('os.path')")
     variable = parse_module("import importlib" + chr(10) + "m = importlib.import_module(name)")
@@ -439,6 +470,13 @@ def test_graph_edges_cover_calls_bound_to_imports() -> None:
     assert "import" in kinds
     assert "call" in kinds
     assert any(edge.target == "call:service.create" for edge in result.edges)
+
+    # from-import 的名字同样要能绑回调用链。历史缺陷：bound_name 给的是模块名的最后一段
+    # （order_service），于是 OrderService.create(...) 这条边整条消失。
+    direct = dependencies_for(
+        "from shop.order_service import OrderService" + chr(10) + "OrderService.create({})" + chr(10)
+    )
+    assert any(edge.target == "call:OrderService.create" for edge in direct.edges)
 
 
 def test_module_index_skips_ignored_directories(tmp_root: Path) -> None:
