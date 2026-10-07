@@ -54,3 +54,20 @@ def test_main_exits_2_when_a_file_cannot_be_read(
     assert "不等于干净" in captured.err
     assert "没有发现疑似凭据" not in captured.out
 
+
+def test_main_reports_git_failure_as_environment_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """git 起不来 / 不在仓库里：同样是环境错误（2），不是"发现凭据"（1）。"""
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise subprocess.CalledProcessError(128, "git")
+
+    monkeypatch.setattr(secret_scan.subprocess, "run", boom)
+
+    code = secret_scan.main(["secret_scan.py"])
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "环境不可用" in captured.err
+

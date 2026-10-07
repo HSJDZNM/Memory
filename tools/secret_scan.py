@@ -130,7 +130,13 @@ def main(argv: list[str]) -> int:
     patterns = secret_patterns()
     findings: list[str] = []
     unreadable: list[str] = []
-    files = tracked_files(include_mirrors=include_mirrors)
+    try:
+        files = tracked_files(include_mirrors=include_mirrors)
+    except (OSError, subprocess.SubprocessError, ImportError) as error:
+        # git 缺失 / 不在仓库里 / enforcement.audit 导不进来：都是**环境错误**（退出码 2）。
+        # 让解释器用退出码 1 收场就与"发现凭据"同码，CI 分不清两者。
+        print("secret scan: 扫描环境不可用（%s: %s）" % (type(error).__name__, error), file=sys.stderr)
+        return 2
     for name in files:
         try:
             findings.extend(scan(name, patterns))
