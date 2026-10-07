@@ -597,3 +597,36 @@ def test_include_venv_is_the_explicit_escape_hatch(monkeypatch, capsys, tmp_root
 
     assert cleanup.main(["--dry-run", "--include-venv"]) == 0
     assert "将删除: .venv/__pycache__" in capsys.readouterr().out
+
+def test_nested_candidates_are_dropped_to_the_top_most() -> None:
+    """只留最外层，且成员判定不依赖"排好序的列表"这个实现细节。"""
+
+    module = _load_cleanup()
+    paths = [
+        Path(".venv") / "pkg" / "__pycache__",
+        Path(".venv") / "pkg",
+        Path(".venv") / "pkg" / "__pycache__" / "m.pyc",
+        Path("pkg"),
+        Path("pkg") / "__pycache__",
+    ]
+
+    assert module._drop_nested(paths) == [Path("pkg"), Path(".venv") / "pkg"]
+
+
+def test_dedup_scales_with_the_candidate_count() -> None:
+    """3000 条嵌套候选：集合判定下必须远快于线性扫描（宽松上界，抓的是 O(n²) 回归）。"""
+
+    import time
+
+    module = _load_cleanup()
+    paths = []
+    for index in range(1000):
+        base = Path(".venv") / ("pkg%04d" % index)
+        paths.extend([base, base / "__pycache__", base / "__pycache__" / ("m%04d.pyc" % index)])
+
+    started = time.perf_counter()
+    kept = module._drop_nested(paths)
+    elapsed = time.perf_counter() - started
+
+    assert len(kept) == 1000
+    assert elapsed < 1.0, "3000 条候选不该要一秒以上（旧实现实测 1.9s）"
