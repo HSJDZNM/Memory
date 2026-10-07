@@ -531,8 +531,24 @@ def clean_markdown(md, spec):
     return md.strip() + "\n", upstream
 
 
+def unfenced_lines(body):
+    """只产出**围栏之外**的正文行。
+
+    围栏里的 URL 是代码样例，不是链接：改写它会让镜像里的代码与原文不一致，收进互引/外链台账
+    则是把代码当成了引用关系。headings_outline 与 verify_mirror 本来就跳过围栏，这里对齐口径。
+    """
+
+    inside = False
+    for line in body.split(chr(10)):
+        if line.lstrip().startswith(FENCE):
+            inside = not inside
+            continue
+        if not inside:
+            yield line
+
+
 def rewrite_links(md, cur_url, urlmap, out):
-    """镜像范围内的链接 -> 相对本地路径；范围外链接原样保留。"""
+    """镜像范围内的链接 -> 相对本地路径；范围外链接原样保留。**围栏里的代码一个字都不动。**"""
     if not urlmap:
         return md
     cur_rel = urlmap[cur_url]
@@ -550,7 +566,15 @@ def rewrite_links(md, cur_url, urlmap, out):
         rel = os.path.relpath(out / tgt_rel, cur_dir).replace(os.sep, "/")
         return rel + (("#" + frag) if frag else "")
 
-    return pattern.sub(repl, md)
+    lines, inside = [], False
+    for line in md.split(chr(10)):
+        if line.lstrip().startswith(FENCE):
+            inside = not inside
+            lines.append(line)
+            continue
+        lines.append(line if inside else pattern.sub(repl, line))
+    return chr(10).join(lines)
+
 
 def strip_front(text):
     if text.startswith("---"):
@@ -568,12 +592,13 @@ def compute_edges(out):
     for p in files:
         body = strip_front(p.read_text(encoding="utf-8"))
         seen = []
-        for t in LINK_RE.findall(body):
-            if t.startswith(("http", "#")):
-                continue
-            r = (p.parent / t.split("#", 1)[0]).resolve()
-            if r in rel and rel[r] not in seen:
-                seen.append(rel[r])
+        for line in unfenced_lines(body):
+            for t in LINK_RE.findall(line):
+                if t.startswith(("http", "#")):
+                    continue
+                r = (p.parent / t.split("#", 1)[0]).resolve()
+                if r in rel and rel[r] not in seen:
+                    seen.append(rel[r])
         edges[rel[p.resolve()]] = seen
     return edges
 
@@ -586,7 +611,10 @@ def collect_outbound(out, spec):
         if p.name in ("README.md", "STRUCTURE.md"):
             continue
         body = strip_front(p.read_text(encoding="utf-8"))
-        for target in set(pattern.findall(body)):
+        targets: set = set()
+        for line in unfenced_lines(body):
+            targets.update(pattern.findall(line))
+        for target in targets:
             path = urlparse(urldefrag(target)[0]).path
             if in_scope_path(path, spec):
                 continue
@@ -1011,21 +1039,27 @@ def role_of(relpath, spec, guide):
     return "chapter"
 
 
-def parent_of(relpath, spec, guide):
-    """一页在镜像层级里的父节点（镜像内相对路径；站点根用空串表示）。
+def parent_of(relpath, known):
+    """一页在镜像层级里的父节点：**同一镜像里最近的祖先索引页**；没有就是 ""。
 
-    不变量：**父路径不能等于自身**。`review/index.md` 既是共享层的父、自己也属于共享层，
-    照直写就会自引用成环——沿 parent 走面包屑 / 导航树的消费方要么死循环，要么放不下这个节点。
-    自引用时回落到站点根 `index.md`，与根自己的 `""` 一起构成一条有终点的链。
+    旧实现按站点把"共享层"的父路径写死成 "review/index.md"——那是 google-eng-practices 的
+    结构。对多根镜像（gitlab-code-review 20 篇、python-pep-code-style 11 篇）它指向一个
+    **镜像里根本不存在的文件**：沿 parent 走面包屑 / 导航树的消费方拿到的是悬空引用，
+    而这条引用既不报错、也没有任何读数为证（见各镜像自己的 STRUCTURE.md：专题根互不覆盖）。
+
+    父节点因此只能从**这次真的收了哪些页**（`known` = 本次清单的 local_path 集合）推出：
+    从当前文件所在目录逐级向上，取第一个存在的 index.md，跳过自身。找不到就是 ""——
+    多根镜像的每一根都是没有父页的入口，与站点根 index.md 记 "" 是同一条语义。
+    返回值因此**必然**落在清单内或为空串，不会指到不存在的文件。
     """
     if relpath == "index.md":
         return ""
-    if guide == "shared":
-        parent = "review/index.md"
-    else:
-        groot = [g[3] for g in spec["groups"] if g[0] == guide][0]
-        parent = "review/index.md" if relpath == groot else groot
-    return "index.md" if parent == relpath else parent
+    parts = relpath.split("/")[:-1]
+    for depth in range(len(parts), 0, -1):
+        candidate = "/".join(parts[:depth]) + "/index.md"
+        if candidate != relpath and candidate in known:
+            return candidate
+    return "index.md" if "index.md" in known else ""
 
 
 # --------------------------------------------------------------------------
@@ -1107,7 +1141,9 @@ async def run(site_key):
             "guide": gid,
             "guide_name": GUIDE_ID[spec["out"]].get(gid, ("",))[1] if gid != "shared" else "",
             "role": data.get("role") or role_of(posix_rel, spec, gid),
-            "parent": parent_of(posix_rel, spec, gid),
+            # parent 只能在清单确定之后算（见 parent_of）：先落 None，站点模块自己声明过
+            # parent 的（learn_site / dora_site）保持原样，不在这里覆盖。
+            "parent": None,
             "source_url": url,
             "title": title,
             "source_repo_path": upstream,
@@ -1122,6 +1158,13 @@ async def run(site_key):
             entry.update(mod.manifest_extra(ctx))
         manifest.append(entry)
         print("  [OK] " + posix_rel.ljust(52) + str(len(content.encode("utf-8"))).rjust(7) + " B  " + title)
+
+    # 第二遍：清单到这里才确定，父节点现在可以算了（见 parent_of）。站点模块自己给了
+    # parent 的条目不覆盖——那是该站自己的层级声明，函数只负责"没有声明时不许悬空"。
+    saved_paths = {item["local_path"] for item in manifest if item.get("saved")}
+    for item in manifest:
+        if item.get("saved") and item.get("parent") is None:
+            item["parent"] = parent_of(item["local_path"], saved_paths)
 
     for dest, text in extra.items():
         if text:
