@@ -358,16 +358,24 @@ def build_argv(
 
 
 def _check_repo_relative(value: str) -> str:
-    """路径替换值必须是工作区内的相对路径（拒绝绝对路径、上跳、选项注入）。"""
+    """路径替换值必须是工作区内的相对路径（拒绝绝对路径、上跳、选项注入）。
+
+    校验前先把 \\ 归一成 /：本模块明确支持 Windows（`_run_process` / `_terminate_tree`
+    都有 `os.name == "nt"` 分支），只看 "/" 会让 `..\\..\\secret.txt`、根相对
+    `\\Windows\\...` 与 UNC `\\\\server\\share\\...` 全部通过——外部工具照样按反斜杠
+    解释这些路径，守卫却以为它们是普通相对路径。归一化只用于**判断**，返回值保持原样
+    （工具拿到什么由调用方决定，校验不改变它）。
+    """
 
     if not value or value.startswith("-"):
         raise ToolError("拒绝把可疑路径交给外部工具: " + repr(value))
     for token in ("\x00", chr(10), chr(13)):
         if token in value:
             raise ToolError("路径里出现不允许的字符")
-    if value.startswith("/") or re.match(r"^[A-Za-z]:", value):
+    normalized = value.replace("\\", "/")
+    if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
         raise ToolError("拒绝把绝对路径交给外部工具: " + value)
-    if ".." in value.split("/"):
+    if ".." in normalized.split("/"):
         raise ToolError("拒绝把上跳路径交给外部工具: " + value)
     return value
 

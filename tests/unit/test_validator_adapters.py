@@ -111,7 +111,20 @@ def test_build_argv_rejects_path_traversal_and_option_injection(tmp_root: Path) 
     spec = fake_tool_spec("ruff")
     result = probe(spec, tmp_root)
 
-    for bad in ("../etc/passwd", "/etc/passwd", "C:/Windows/system32", "-rf", "a" + chr(10) + "b"):
+    for bad in (
+        "../etc/passwd",
+        "/etc/passwd",
+        "C:/Windows/system32",
+        "-rf",
+        "a" + chr(10) + "b",
+        # Windows 分隔符形态：外部工具按反斜杠解释路径，校验只看 "/" 时它们全部漏过
+        # （历史缺陷：OCR 全量审查 L12）。C: 形态本来就命中 ^[A-Za-z]:，一并钉住。
+        "..\\..\\secret.txt",
+        "..\\secret.txt",
+        "\\Windows\\System32\\drivers\\etc\\hosts",
+        "\\\\server\\share\\evil.txt",
+        "C:\\Windows\\win.ini",
+    ):
         with pytest.raises(ToolError):
             build_argv(
                 spec.tool,
@@ -121,6 +134,24 @@ def test_build_argv_rejects_path_traversal_and_option_injection(tmp_root: Path) 
                 config=None,
                 paths=(bad,),
             )
+
+
+def test_build_argv_accepts_ordinary_relative_paths_in_either_separator(tmp_root: Path) -> None:
+    """归一化只用于**判断**：普通相对路径（含 Windows 写法）照常通过、原样传给工具。"""
+
+    spec = fake_tool_spec("ruff", "ok", argv=("check", "{paths}"))
+    result = probe(spec, tmp_root)
+
+    for good in ("src/shop/order_service.py", "src\\shop\\order_service.py", "a..b/c.py"):
+        argv = build_argv(
+            spec.tool,
+            result,
+            python=sys.executable,
+            workspace=VALIDATOR_PROJECT,
+            config=None,
+            paths=(good,),
+        )
+        assert argv[-1] == good, "校验不该改写交给工具的路径：" + repr(argv)
 
 
 def test_build_argv_rejects_suspicious_node_ids(tmp_root: Path) -> None:
