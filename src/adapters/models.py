@@ -810,7 +810,10 @@ def parse_canonical_event(document: Mapping[str, Any], *, agent_id: Optional[str
     version = document.get("schema_version")
     if version is None:
         raise AdapterEventError("规范事件缺少 schema_version，拒绝消费")
-    if version not in SUPPORTED_CANONICAL_VERSIONS:
+    # 版本取值来自**不可信的第三方文档**：不可哈希的形态（list / dict）会让成员测试抛
+    # `TypeError: unhashable type` 逃出 AdapterEventError 契约——调用方按后者兜底，
+    # 于是失败关闭变成未处理崩溃。先判类型，再判取值。
+    if not isinstance(version, str) or version not in SUPPORTED_CANONICAL_VERSIONS:
         raise AdapterEventError(
             f"未知规范事件版本 {version!r}；本实现只接受 "
             f"{sorted(SUPPORTED_CANONICAL_VERSIONS)}，拒绝消费"

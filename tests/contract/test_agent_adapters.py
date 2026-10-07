@@ -775,6 +775,19 @@ def test_generic_json_response_accepts_the_pending_findings_channel() -> None:
     assert response["executable"] is True
 
 
+def test_canonical_event_with_an_unhashable_version_is_a_protocol_error() -> None:
+    """不可哈希的 schema_version 必须是一条 AdapterEventError，不是 TypeError。
+
+    版本取值来自不可信的第三方文档：`["1.0"]` 会让 `version not in frozenset(...)` 抛
+    `TypeError: unhashable type`，调用方按 AdapterEventError 兜底，于是失败关闭变成未处理崩溃。
+    """
+
+    for bad in (["1.0"], {"v": "1.0"}, 1.0):
+        with pytest.raises(AdapterEventError) as error:
+            parse_canonical_event(_event_document(schema_version=bad), agent_id="generic-json")
+        assert "未知规范事件版本" in str(error.value)
+
+
 def test_the_payload_digest_only_keeps_type_names_for_unsupported_values(tmp_root) -> None:
     """摘要只由载荷本身决定：不认识的类型只留类型名，不带路径、不带 repr、不受顺序影响。
 
