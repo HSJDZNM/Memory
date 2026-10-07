@@ -1072,6 +1072,32 @@ def _count_outcomes(tests: Mapping[str, Any]) -> dict:
     return counts
 
 
+def _oracle_argv(spec: Mapping[str, Any], python: str, tree: Path) -> list[str]:
+    """把 oracle 的 argv 收敛成一条**完整命令行**。
+
+    冻结契约（docs/project/engineering-policy-platform/testing/ab/task-sets.md §2/§9）：
+    `test_command.argv` 是**解释器之后**的参数，解释器由 `python` 字段单独给出——
+    tools/ab_tasks.py 正是这么写的（["-m", "pytest", ...]）。但 tools/ab_arm.py 的
+    measurement_input.json 把完整命令行（argv 里已含 python）写进同一个字段。
+    判据是 argv[0] 能不能**直接执行**：路径形态看文件在不在（不在就原样交给 run_command
+    如实报 unavailable），裸名字看 PATH 能不能解析，都不是就按契约前置 python。
+
+    旧实现把 argv 当完整命令行直接交给 subprocess：argv[0]="-m" 不是可执行文件，
+    FileNotFoundError → oracle 恒 unavailable，本次读数的 U1 永远是"起不来"。
+    """
+
+    argv = [str(item) for item in (spec.get("argv") or [])]
+    if not argv:
+        target = "tests" if (tree / "tests").is_dir() else "."
+        return [python, "-m", "pytest", "-q", "--tb=no", target]
+    head = argv[0]
+    if os.path.isabs(head) or os.sep in head or (bool(os.altsep) and os.altsep in head):
+        return argv
+    if shutil.which(head):
+        return argv
+    return [python, *argv]
+
+
 def run_pytest_oracle(
     *,
     tree: Path,
@@ -1083,11 +1109,8 @@ def run_pytest_oracle(
     """跑仓库自带测试：外部 oracle（U1，完全独立于策略层与 linter）。"""
 
     spec = oracle.get("test_command") or {}
-    argv = [str(item) for item in (spec.get("argv") or [])]
     python = str(oracle.get("python") or sys.executable)
-    if not argv:
-        target = "tests" if (tree / "tests").is_dir() else "."
-        argv = [python, "-m", "pytest", "-q", "--tb=no", target]
+    argv = _oracle_argv(spec, python, tree)
     cwd = tree / str(spec.get("cwd") or ".")
     if not cwd.is_dir():
         return {
@@ -3039,7 +3062,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="scan,security,usable,blocked,efficiency,automation 或 all")
     parser.add_argument("--baseline-tree", help="基线树：算 new-side 的 + 行集合（不需要 git）")
     parser.add_argument("--diff", help="unified diff 文件：与 --baseline-tree 二选一")
-    parser.add_argument("--oracle", help="oracle JSON（python / test_command / pass_to_pass ...）")
+    parser.add_argument("--oracle", help="oracle JSON（python / test_command / pass_to_pass ...）；"
+                        "test_command.argv 两种形态都接受：解释器之后的参数，或完整命令行")
     parser.add_argument("--test-selection", action="append", default=[],
                         help="label=path：要跑哪些 node id（可重复；JSON 数组或一行一个）")
     parser.add_argument("--test-timeout", type=float, default=900.0, help="pytest 超时（秒）")
