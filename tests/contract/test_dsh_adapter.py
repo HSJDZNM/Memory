@@ -420,6 +420,18 @@ ARCH_BYPASS_TEXTS: dict[str, tuple[str, str]] = {
         "repository",
     ),
     "__import__ 字面量": ('__import__("pkg.repository")\n', "pkg.repository"),
+    # 下面四种是同一个语义的不同**排版**：名单换行 / 括号紧贴 / 反斜杠续行 / 分号连接。
+    # 它们曾经全部漏登记（物理行号与字面量假设），也就是全部结构性放行。
+    "from 括号名单（black/ruff 多行写法）": (
+        "from shop import (\n    order_repository,\n)\n",
+        "shop.order_repository",
+    ),
+    "from 括号紧贴（import(）": ("from shop import(order_repository)\n", "shop.order_repository"),
+    "反斜杠续行的 import": ("import shop, \\\n    order_repository\n", "order_repository"),
+    "分号连接（from 后还有别的语句）": (
+        "from shop import order_repository; x = 1\n",
+        "shop.order_repository",
+    ),
 }
 
 ARCH_GOOD_TEXT = "from shop.order_service import OrderService\n"
