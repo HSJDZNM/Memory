@@ -534,6 +534,9 @@ class AgentRuntime:
         self.enforcers = dict(enforcers or {})
         self.evidence_providers = dict(evidence_providers or {})
         self._memory: list[dict[str, Any]] = []
+        # 台账解析缓存：(文件签名, 记录)。签名 = (mtime_ns, size)，追加写每长一行就变，
+        # 因此它不可能掩盖别的进程刚写入的记录；见 `_read_entries_unlocked`。
+        self._entries_cache: Optional[tuple[tuple[int, int], list[dict[str, Any]]]] = None
         # 被放弃的判定线程（超时后仍在跑的那些）：只用于记账与上限，见 `_evaluate`。
         self._abandoned: list[threading.Thread] = []
         self._lock = threading.RLock()
@@ -551,12 +554,29 @@ class AgentRuntime:
                 yield
 
     def _read_entries_unlocked(self) -> list[dict[str, Any]]:
+        """解析整份台账（调用方必须已持有台账锁）。
+
+        结果按「文件签名（mtime_ns, size）」缓存：追加写台账每长一行签名就变，因此缓存不可能
+        掩盖别的进程刚写进去的记录；而同一次判定里「窗口计数」与「幂等 claim」要读同一份台账，
+        缓存让**每长一条记录只解析一次**（此前每次判定解析两遍，一个会话下来是 O(n²)）。
+        """
+
         if self.ledger_path is None:
             return [dict(item) for item in self._memory]
         if not self.ledger_path.exists():
             return []
         if not self.ledger_path.is_file():
             raise RuntimeLedgerError(f"运行时台账不是文件: {self.ledger_path.name}")
+        try:
+            stat = self.ledger_path.stat()
+        except OSError as error:
+            raise RuntimeLedgerError(
+                f"运行时台账不可读: {self.ledger_path.name}（{error}）"
+            ) from error
+        signature = (stat.st_mtime_ns, stat.st_size)
+        cached = self._entries_cache
+        if cached is not None and cached[0] == signature:
+            return [dict(item) for item in cached[1]]
         try:
             text = self.ledger_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as error:
@@ -580,7 +600,8 @@ class AgentRuntime:
                     f"运行时台账第 {line_number} 行协议版本未知或缺失"
                 )
             records.append(item)
-        return records
+        self._entries_cache = (signature, records)
+        return [dict(item) for item in records]
 
     def _entries(self) -> list[dict[str, Any]]:
         with self._ledger_guard():
@@ -595,6 +616,9 @@ class AgentRuntime:
         if self.ledger_path is None:
             self._memory.append(payload)
             return
+        # 自己写进去的那一行也要让缓存失效：签名比对是主判据，这里顺手清掉是第二道保险
+        # （某些文件系统的 mtime 粒度很粗）。
+        self._entries_cache = None
         try:
             self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
             with self.ledger_path.open("a", encoding="utf-8", newline="\n") as handle:

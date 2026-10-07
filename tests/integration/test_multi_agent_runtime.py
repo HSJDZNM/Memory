@@ -430,6 +430,39 @@ def test_abandoned_evaluation_threads_are_tracked_and_capped(runtime) -> None:
     assert "拒绝继续开新线程" in messages[-1], messages[-1]
 
 
+def test_a_governed_event_reads_the_ledger_once(runtime, monkeypatch) -> None:
+    """一次受治理事件只**解析**一遍台账（此前「窗口计数」与「幂等 claim」各读一整份）。
+
+    追加写台账每长一行，签名（mtime_ns, size）就变，所以缓存不可能掩盖别的进程刚写入的记录；
+    这条用例钉住"读一次"这个事实，同时上面的幂等 / 熔断用例继续钉住语义没变。
+    """
+
+    from pathlib import Path
+
+    reads: list[str] = []
+    real_read_text = Path.read_text
+
+    def counting(self, *args, **kwargs):
+        if runtime.ledger_path is not None and self == runtime.ledger_path:
+            reads.append(str(self))
+        return real_read_text(self, *args, **kwargs)
+
+    # 第一条事件时台账文件还不存在（没有 read_text），先热身一条再数第二条
+    first = runtime.handle(
+        "generic-json", _generic_read("perf-warmup", "call-0"), execute=lambda event: None
+    )
+    assert first.outcome_code == "allow", first.outcome_code
+
+    monkeypatch.setattr(Path, "read_text", counting)
+
+    outcome = runtime.handle(
+        "generic-json", _generic_read("perf-read-once", "call-1"), execute=lambda event: None
+    )
+
+    assert outcome.outcome_code == "allow", outcome.outcome_code
+    assert len(reads) == 1, reads
+
+
 def test_trace_registry_separates_owners(tmp_root: Path) -> None:
     registry = TraceRegistry(tmp_root / "traces.jsonl")
     registry.register(trace_id="t-a", owner_agent="dsh", request_id="r")
