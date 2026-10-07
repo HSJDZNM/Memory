@@ -1865,3 +1865,42 @@ def test_the_js_builder_and_the_python_validator_agree_on_empty_and_null(tmp_roo
     assert observed["non_strings"]["object"]["source"] == "unknown"
     assert observed["invalid_everything"]["origin"] == "unknown_origin"
     assert observed["invalid_everything"]["causal_link"] == "unproven"
+
+
+# ------------------------------------------------------------------- 调用标识（配对键）
+
+
+def test_call_action_id_never_fabricates_a_partial_identifier() -> None:
+    """载荷缺字段时返回 None，不许拼「半个 id」。
+
+    docstring 承诺「载荷缺字段时返回 None：编出来的标识会让事后核对接错动作」。旧实现却把
+    缺了 tool_use_id 的载荷折叠成裸 session_id：同一会话里所有这样的调用共用同一个
+    action_id，pre / post 于是按错误的键配对——正是那句承诺要避免的事。裸 tool_use_id
+    则丢掉会话维度，跨会话撞键。
+    """
+
+    from adapters.dsh.hooks import call_action_id
+
+    assert call_action_id({"session_id": "s", "tool_use_id": "call-1"}) == "s:call-1"
+    assert call_action_id({"session_id": "s"}) is None
+    assert call_action_id({"tool_use_id": "call-1"}) is None
+    assert call_action_id({}) is None
+    assert call_action_id({"session_id": "   ", "tool_use_id": "call-1"}) is None
+    assert call_action_id("not-a-mapping") is None
+
+
+def test_a_payload_without_a_tool_use_id_leaves_the_audit_action_id_unset(
+    dsh_config_path, dsh_project
+) -> None:
+    """审计里读到的必须是「没有标识」，不是编出来的那一个。"""
+
+    audit = dsh_project.parent / "audit.jsonl"
+    document = payload("pre-tool-use-edit-block.json", dsh_project)
+    document.pop("tool_use_id")
+
+    outcome = run_hook(document, config_path=dsh_config_path, audit_path=audit)
+
+    assert outcome.exit_code == EXIT_BLOCK
+    record = load_jsonl(audit)[0]
+    assert record["reason_code"] == "context_error"
+    assert "action_id" not in record

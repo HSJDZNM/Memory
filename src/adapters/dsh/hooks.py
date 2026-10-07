@@ -246,13 +246,15 @@ def call_action_id(raw_payload: Any) -> Optional[str]:
 
     if not isinstance(raw_payload, Mapping):
         return None
-    session_id = str(raw_payload.get("session_id") or "")
-    tool_use_id = str(raw_payload.get("tool_use_id") or "")
-    if session_id and tool_use_id:
-        return f"{session_id}:{tool_use_id}"
-    if tool_use_id or session_id:
-        return tool_use_id or session_id
-    return None
+    session_id = str(raw_payload.get("session_id") or "").strip()
+    tool_use_id = str(raw_payload.get("tool_use_id") or "").strip()
+    if not session_id or not tool_use_id:
+        # 缺任何一个都**不编标识**：拼出来的"半个 id"会让同一会话里所有缺该字段的调用
+        # 共用同一个 action_id（裸 session_id），pre / post 于是按错误的键配对——
+        # 正是 docstring 说的"比没有标识更危险"。调用方拿到 None 时按缺标识处理
+        # （审计记录不带 action_id 键；确实需要占位的地方显式写 "unknown"）。
+        return None
+    return f"{session_id}:{tool_use_id}"
 
 
 class PolicyTimeout(Exception):
