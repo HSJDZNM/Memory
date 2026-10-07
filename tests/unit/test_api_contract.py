@@ -545,6 +545,35 @@ def test_run_with_budget_returns_value_and_reports_timeout() -> None:
     assert elapsed.milliseconds >= 20.0
 
 
+def test_run_with_budget_reports_a_crash_that_lands_after_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """超时路径不许把"刚好崩溃"洗成"超时"：异常才是真正的原因（AGENTS 第 52 条）。
+
+    历史缺陷（medium 台账 M1，timeout.py:85）：`join` 超时后整份 `box` 被丢掉——里面可能
+    已经有工作线程写下的 `error`（它恰好在截止时刻前后结束），调用方于是拿到 504 超时，
+    而不是"这个操作崩了"。
+    """
+
+    import threading
+
+    real_is_alive = threading.Thread.is_alive
+    calls = {"n": 0}
+
+    def flaky_is_alive(self: threading.Thread) -> bool:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return True  # 模拟"join 超时的那一刻看起来还在跑"
+        return real_is_alive(self)
+
+    def boom() -> None:
+        raise ValueError("崩溃在超时窗口内落地")
+
+    monkeypatch.setattr(threading.Thread, "is_alive", flaky_is_alive)
+    with pytest.raises(ValueError):
+        run_with_budget(boom, budget_ms=1000)
+
+
 def test_run_with_budget_propagates_operation_errors() -> None:
     """预算器只负责计时：被调用函数抛的异常原样抛出，由调用方决定翻成哪个错误码。"""
 
