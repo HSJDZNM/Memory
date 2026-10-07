@@ -138,9 +138,16 @@ class FileDriver:
         self, request: ActionRequest, spec: ToolSpec, *, workspace: Optional[Path] = None
     ) -> DriverResult:
         started = time.monotonic()
-        relative = str(request.value_of("file_path") or request.value_of("path") or "")
-        if not relative:
-            raise DriverError("文件类动作缺少 file_path 参数")
+        # 驱动是副作用之前的最后一道闸：缺参数、参数类型不对一律拒绝，
+        # 绝不把 None / 非字符串 str() 成 "" 或别的路径去执行。
+        raw_path = request.value_of("file_path")
+        if raw_path is None:
+            raw_path = request.value_of("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise DriverError(
+                "文件类动作缺少 file_path 参数（非空字符串）：目标证明不了就不执行"
+            )
+        relative = raw_path.strip()
         blocked_path = blocked_path_prefix(spec, request.params)
         if blocked_path is not None:
             parameter, path, prefix = blocked_path
@@ -151,8 +158,20 @@ class FileDriver:
         snapshot = snapshot_of(target, relative=relative)
 
         if self.kind is DriverKind.FILE_EDIT:
-            old = str(request.value_of("old_string", ""))
-            new = str(request.value_of("new_string", ""))
+            old_value = request.value_of("old_string")
+            if not isinstance(old_value, str) or not old_value:
+                raise DriverError(
+                    "file_edit 动作缺少 old_string 参数（非空字符串）："
+                    "缺省的空原文只会得到「没有找到要替换的原文」，"
+                    "把「参数没传」说成「文件里没有」"
+                )
+            new_value = request.value_of("new_string")
+            if not isinstance(new_value, str):
+                raise DriverError(
+                    "file_edit 动作缺少 new_string 参数（字符串）："
+                    "缺省会被当成空串，把一次替换静默变成一次删除"
+                )
+            old, new = old_value, new_value
             replace_all = bool(request.value_of("replace_all", False))
             if not snapshot.existed:
                 raise DriverError(f"{relative} 不存在：edit 只能在已存在的文件上做替换")
@@ -177,7 +196,13 @@ class FileDriver:
                 "bytes_after": len(updated.encode("utf-8")),
             }
         else:
-            content = str(request.value_of("content", ""))
+            content_value = request.value_of("content")
+            if not isinstance(content_value, str):
+                raise DriverError(
+                    "file_write 动作缺少 content 参数（字符串）："
+                    "把缺省当空内容会把已存在的文件截成 0 字节，而且仍然报 executed"
+                )
+            content = content_value
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8", newline="")
             structured = {
