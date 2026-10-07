@@ -762,9 +762,19 @@ class ToolSpec(StrictModel):
         if self.command_param is not None:
             if self.driver is not DriverKind.SHELL_COMMAND:
                 raise ValueError(f"{self.id}: command_param 只适用于 shell_command 驱动")
-            if self.parameter(self.command_param) is None:
+            carrier = self.parameter(self.command_param)
+            if carrier is None:
                 raise ValueError(
                     f"{self.id}: command_param={self.command_param!r} 不是已声明的参数"
+                )
+            if carrier.type is not ParamType.STRING:
+                # 与 code_check.param 同一口径：命令文本是字符串。指向 string_list / integer
+                # 时，pre-check 拿到的不是 str，于是把它当成空串，组合与被禁片段检查直接报
+                # PASSED——注册表里打错一个字，结构性阻断整条失效（失败打开）。
+                raise ValueError(
+                    f"{self.id}: command_param={carrier.name!r} 必须是 string 参数，"
+                    f"得到 {carrier.type.value}：命令文本是字符串，"
+                    "指向别的类型会让组合/被禁片段检查读到非字符串并被静默当成空串"
                 )
         unknown_checks = [item for item in self.post_checks if item not in SUPPORTED_POST_CHECKS]
         if unknown_checks:

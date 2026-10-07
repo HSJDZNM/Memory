@@ -149,6 +149,19 @@ def test_registry_rejects_duplicate_tool_ids_and_names(tmp_root):
     assert "已被占用" in str(error.value)
 
 
+def _retype_command_param(tool: dict, type_name: str) -> None:
+    """把 exec.shell 的 command 参数换成别的类型。
+
+    文本约束（max_chars）只适用于 string 参数：不一起去掉的话，加载期会先命中
+    "integer 参数上挂着文本约束"这条更早的判据，测不到 command_param 的类型判据。
+    """
+
+    for item in tool["parameters"]:
+        if item["name"] == "command":
+            item["type"] = type_name
+            item.pop("max_chars", None)
+
+
 @pytest.mark.parametrize(
     ("index", "mutation", "needle"),
     [
@@ -177,6 +190,11 @@ def test_registry_rejects_duplicate_tool_ids_and_names(tmp_root):
         (4, lambda tool: tool.pop("allowed_commands"), "allowed_commands"),
         (4, lambda tool: tool.pop("shell"), "shell 前缀"),
         (4, lambda tool: tool.pop("command_param"), "command_param"),
+        (
+            4,
+            lambda tool: _retype_command_param(tool, "integer"),
+            "必须是 string 参数",
+        ),
         (
             4,
             lambda tool: tool.update({"allowed_commands": ["("]}),
