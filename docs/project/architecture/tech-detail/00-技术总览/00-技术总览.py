@@ -129,10 +129,59 @@ def from_targets(node, package):
     return [node.module or ""]
 
 
+def _is_type_checking(test):
+    """`if TYPE_CHECKING:` 的判断（含 `typing.TYPE_CHECKING` 形态）。"""
+
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    if isinstance(test, ast.Attribute):
+        return test.attr == "TYPE_CHECKING"
+    return False
+
+
+def module_level_imports(tree):
+    """模块**导入期真的会执行**的 import 节点（返回 id 集合）。
+
+    只看 `tree.body` 的直接子节点，会把 `try: import x / except ImportError: ...`、
+    `if sys.version_info >= ...: import y` 这类整块算成"延迟导入"——它们在导入期就会执行，
+    分量与"函数内真正调用时才导入"**正好相反**（前者是改不掉的硬约束，后者是可以商量的豁免）。
+
+    规则：函数 / 类体不算（那才是延迟导入）；`if TYPE_CHECKING:` 的体在运行时根本不执行，
+    两边都不算；`try` / `with` 的各个分支照算（它们在导入期会走到其中之一）。
+    """
+
+    found: set[int] = set()
+
+    def walk(statements) -> None:
+        for node in statements:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(node, ast.If):
+                if not _is_type_checking(node.test):
+                    walk(node.body)
+                    walk(node.orelse)
+                continue
+            if isinstance(node, ast.Try):
+                walk(node.body)
+                walk(node.orelse)
+                walk(node.finalbody)
+                for handler in node.handlers:
+                    walk(handler.body)
+                continue
+            if isinstance(node, (ast.With, ast.AsyncWith)):
+                walk(node.body)
+                continue
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                found.add(id(node))
+
+    walk(tree.body)
+    return found
+
+
 def file_imports(path):
     """一个文件 import 到的仓库内部顶层包，返回 (模块级目标, 函数内目标)。"""
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    top_level = {id(node) for node in tree.body}
+    top_level = module_level_imports(tree)
     package = path.relative_to(SRC).parts[:-1]  # 本文件所在的包（__init__.py 同理）
     eager, lazy = set(), set()
     for node in ast.walk(tree):
