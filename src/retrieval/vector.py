@@ -39,7 +39,12 @@ _WORD_RE = re.compile(r"[0-9A-Za-z_\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040
 
 
 class EmbeddingPort(Protocol):
-    """Embedding 端口：任何实现都必须给出稳定的向量维度与可复现的向量。"""
+    """Embedding 端口：任何实现都必须给出稳定的向量维度与可复现的向量。
+
+    **归一化不是必须的**：评分侧（_cosine）自己算真余弦，未归一化的实现不会被模长放大
+    分数、也不会悄悄越过后面的 vector_min_similarity；返回全零向量的实现按相似度 0 计
+    （不会得到 NaN）。内置 HashingEmbedding 本来就是 L2 归一化的，因此结果一字不变。
+    """
 
     name: str
     dim: int
@@ -87,9 +92,25 @@ class HashingEmbedding:
 
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
+    """真正的余弦相似度：点积 / 两个模长之积（任一模长为 0 时按 0 计）。
+
+    端口契约不要求实现返回 L2 归一化的向量，所以归一必须在这里做：点积会在未归一的向量上
+    被模长放大——一个正交但"很长"的候选能靠模长越过 vector_min_similarity，分数区间与排序
+    也随之失去意义（复核发现：函数名叫 cosine，算的却是点积）。
+    """
+
     if len(left) != len(right):
         raise ValueError("向量维度不一致")
-    return sum(a * b for a, b in zip(left, right))
+    dot = 0.0
+    left_norm = 0.0
+    right_norm = 0.0
+    for a, b in zip(left, right):
+        dot += a * b
+        left_norm += a * a
+        right_norm += b * b
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    return dot / math.sqrt(left_norm * right_norm)
 
 
 class VectorRetriever:
