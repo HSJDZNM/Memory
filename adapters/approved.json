@@ -2,9 +2,7 @@
   "adapters": {
     "dsh": {
       "agent_version": "0.1.6-alpha.2",
-      "ceiling_reasons": [
-        "manifest 与已审核哈希不一致或尚未审核：改能力声明必须重新审核（python -m adapters.cli approve --reviewer <name>）"
-      ],
+      "ceiling_reasons": [],
       "enforcement": "full",
       "fixtures": [
         "tests/fixtures/agent_events/dsh/pre-tool-use-edit-block.json",
@@ -32,19 +30,20 @@
     "legacy-post-only": {
       "agent_version": "legacy-agent-2.4.7",
       "ceiling_reasons": [
-        "没有声明执行前钩子：无法在工具执行前拒绝"
+        "没有声明执行前钩子：无法在工具执行前拒绝",
+        "manifest 与已审核哈希不一致或尚未审核：改能力声明必须重新审核（python -m adapters.cli approve --reviewer <name>）"
       ],
       "enforcement": "read_only",
       "fixtures": [
         "adapters/legacy-post-only/fixtures/post-tool-use-save.json"
       ],
-      "manifest_digest": "sha256:f5e6d5acffbbbf69bafbb4bf308d6648ce64c9765eb9167c4fd309d08f72d134",
+      "manifest_digest": "sha256:623b84fd7c2f8a22c8e5b1936361ec0359e151c6179a7de78f2ae35fadac4a64",
       "protocol": "hook-command",
       "protocol_version": "legacy-hooks@2.4",
-      "requested_enforcement": null
+      "requested_enforcement": "read_only"
     }
   },
-  "approved_at": "2026-09-27T23:22:35.676378Z",
-  "reviewed_by": "fix-version",
+  "approved_at": "2026-10-07T23:47:23.518705Z",
+  "reviewed_by": "fix-adapters",
   "schema_version": "1.0"
 }

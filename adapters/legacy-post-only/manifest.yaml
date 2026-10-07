@@ -25,6 +25,11 @@ post_hook:
 approval: none
 blocking: post_only    # 只能在动作发生之后把结果标成失败——对写类动作不算阻断
 response_kind: exit_code
+# 显式声明上限（与 dsh 的 full、generic-json 的 read_only 同一处口径）：这个字段有消费方——
+# 支持矩阵与阶段证据都按它读数，`models.py` 的一致性校验也读它（声明 full 却没有执行前阻断能力
+# 即拒绝）。此前它缺席，于是矩阵里这一行是 null：「没声明」与「声明了只读」在读的人眼里一样，
+# 而两者不是一回事（第 50 条）。取值与推导结果相同（post_only ⇒ read_only），不改变任何判定。
+requested_enforcement: read_only
 
 event_types:
   - tool.post_execute
