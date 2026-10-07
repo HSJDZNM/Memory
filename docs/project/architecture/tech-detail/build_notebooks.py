@@ -106,10 +106,24 @@ def chapter_dirs() -> dict[str, Path]:
     看一章只要打开一个目录。目录名与产物名必须逐字相同（load_spec 会核）。
     """
 
-    found = {}
+    found: dict[str, Path] = {}
+    collisions: dict[str, list[str]] = {}
     for path in sorted(HERE.glob("[0-9][0-9]-*")):
-        if path.is_dir() and (path / CELLS_NAME).is_file():
-            found[path.name[:2]] = path
+        if not (path.is_dir() and (path / CELLS_NAME).is_file()):
+            continue
+        number = path.name[:2]
+        if number in found:
+            collisions.setdefault(number, [found[number].name]).append(path.name)
+            continue
+        found[number] = path
+    if collisions:
+        # 编号是这一章的**唯一键**（`--only 03`、产物名、清单都按它找）。两个目录共用一个编号时
+        # "字母序靠后的赢"是静默覆盖：被覆盖的那一章永远生成不出来，也永远进不了 `--check`
+        # ——它的产物与内容源可以随便漂移而没有任何读数会红。这是仓库结构错误，直接拒绝
+        # （与"没有找到仓库根"同一条出口：退出码 2）。
+        for number, names in sorted(collisions.items()):
+            print(f"章节目录编号重复：{number} → {', '.join(names)}", file=sys.stderr)
+        raise SystemExit(2)
     return found
 
 
