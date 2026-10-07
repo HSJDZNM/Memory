@@ -21,9 +21,9 @@ import re
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from hashlib import sha256
-from typing import Any, Mapping, Optional, Tuple, Union
+from typing import Annotated, Any, Mapping, Optional, Tuple, Union
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AfterValidator, Field, field_validator, model_validator
 
 from policy.models import (
     Decision,
@@ -96,6 +96,24 @@ __all__ = [
 
 ENFORCEMENT_SCHEMA_VERSION = "1.0"
 SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS = frozenset({ENFORCEMENT_SCHEMA_VERSION})
+
+
+def _check_protocol_version(value: str) -> str:
+    """第 3 条"协议带版本"：看不懂的版本一律拒收，不做兼容猜测。"""
+
+    if value not in SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS:
+        raise ValueError(
+            f"未知受控执行协议版本 {value!r}；只接受 "
+            f"{sorted(SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS)}，拒绝消费"
+        )
+    return value
+
+
+#: **每一个**信封模型共用的版本字段类型。旧实现只在校验 ActionRequest 与 PreDecision：
+#: 嵌套在里面的凭据（AuthorizationGrant）可以带任意 schema_version 被消费
+#: （grant.verify 不看版本），执行 / 证据 / 终态 / 审计记录同样照单全收——外部或持久化
+#: 载荷于是能从"协议带版本"这条不变式下面溜过去。类型只有一份，就不会再漏。
+EnforcementVersion = Annotated[str, AfterValidator(_check_protocol_version)]
 
 REGISTRY_SCHEMA_VERSION = "1.0"
 SUPPORTED_REGISTRY_SCHEMA_VERSIONS = frozenset({REGISTRY_SCHEMA_VERSION})
@@ -917,7 +935,7 @@ class ActionRequest(StrictModel):
     action_hash 覆盖上述全部内容；任何一处变化都会让旧授权失效。
     """
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     action_id: str = Field(min_length=1, description="幂等键：同一 action 重试必须复用")
     request_id: str = Field(min_length=1)
     trace_id: Optional[str] = None
@@ -940,16 +958,6 @@ class ActionRequest(StrictModel):
     created_at: datetime
     expires_at: Optional[datetime] = None
     action_hash: str = ""
-
-    @field_validator("schema_version")
-    @classmethod
-    def _check_schema_version(cls, value: str) -> str:
-        if value not in SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS:
-            raise ValueError(
-                f"未知受控执行协议版本 {value!r}；只接受 "
-                f"{sorted(SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS)}，拒绝消费"
-            )
-        return value
 
     @field_validator("params")
     @classmethod
@@ -1043,7 +1051,7 @@ class AuthorizationGrant(StrictModel):
     执行器只认这一张凭据：它不解析自然语言批准，也不接受"模型说可以"。
     """
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     grant_id: str = Field(min_length=1)
     action_id: str = Field(min_length=1)
     action_hash: str = Field(min_length=1)
@@ -1125,7 +1133,7 @@ class AuthorizationGrant(StrictModel):
 class PreDecision(StrictModel):
     """执行前决策：决定 + 全部检查项 + （允许时的）授权凭据。"""
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     decision: Decision
     reason_code: ReasonCode
     action_id: str
@@ -1145,13 +1153,6 @@ class PreDecision(StrictModel):
         default=False,
         description="只做决策、不占用 action_id 也不签发可用授权（CLI precheck 的语义）",
     )
-
-    @field_validator("schema_version")
-    @classmethod
-    def _check_schema_version(cls, value: str) -> str:
-        if value not in SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS:
-            raise ValueError(f"未知受控执行协议版本 {value!r}，拒绝消费")
-        return value
 
     @model_validator(mode="after")
     def _grant_matches_decision(self) -> "PreDecision":
@@ -1194,7 +1195,7 @@ class PreDecision(StrictModel):
 class ExecutionRecord(StrictModel):
     """一次执行的完整记录：执行器驱动、退出码、超时、输出摘要。"""
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     action_id: str
     request_id: str
     trace_id: Optional[str] = None
@@ -1301,7 +1302,7 @@ class ValidatorOutcome(StrictModel):
 class PostEvidence(StrictModel):
     """执行后收集到的全部证据。工具返回值里的文本只作为不可信数据保存。"""
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     action_id: str
     request_id: str
     trace_id: Optional[str] = None
@@ -1333,7 +1334,7 @@ class RollbackOutcome(StrictModel):
 class PostDecision(StrictModel):
     """事后验证决策：validated / repair_required / inconsistent / not_required。"""
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     status: PostStatus
     reason_code: ReasonCode
     action_id: str
@@ -1350,7 +1351,7 @@ class PostDecision(StrictModel):
 class FinalDecision(StrictModel):
     """链路终态：把 pre、执行与 post 三段合成一个可重放的结论。"""
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     outcome: FinalOutcome
     reason_code: ReasonCode
     action_id: str
@@ -1388,7 +1389,7 @@ class FinalDecision(StrictModel):
 class AuditRecord(StrictModel):
     """审计链上的一条记录。payload 已经过脱敏与体积限制，且只作为不可信数据保存。"""
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     sequence: int = Field(ge=1)
     stage: AuditStage
     trace_id: Optional[str] = None

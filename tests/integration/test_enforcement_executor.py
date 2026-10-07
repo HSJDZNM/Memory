@@ -214,6 +214,42 @@ def test_block_never_calls_the_driver(enforcement_paths):
     assert spies["exec.process"].calls == 0
 
 
+def test_unknown_protocol_version_is_refused_on_every_envelope(enforcement_paths):
+    """第 3 条"协议带版本"覆盖每一个信封，而不只是请求与决策。
+
+    旧实现只校验 ActionRequest 与 PreDecision：嵌套的授权凭据、执行记录、证据、终态都能
+    带 "2.0" 被消费（grant.verify 根本不看版本）——外部或持久化载荷于是能绕过这条不变式。
+    """
+
+    seed(enforcement_paths)
+    _request, pre, outcome, _spies, _registry = run(enforcement_paths, "fs.edit", edit_params())
+
+    envelopes = [
+        outcome.record,
+        outcome.evidence,
+        outcome.post,
+        outcome.final,
+        pre.decision.grant,
+    ]
+    for envelope in envelopes:
+        assert envelope is not None
+        payload = json.loads(envelope.model_dump_json())
+        payload["schema_version"] = "2.0"
+        with pytest.raises(Exception) as error:
+            type(envelope).model_validate(payload)
+        assert "未知受控执行协议版本" in str(error.value), type(envelope).__name__
+
+    # 外层版本合法、嵌套凭据版本未知：这正是 parse_pre_decision 只看外层时漏掉的那条路。
+    nested = json.loads(pre.decision.model_dump_json())
+    nested["grant"]["schema_version"] = "2.0"
+    with pytest.raises(Exception) as nested_error:
+        type(pre.decision).model_validate(nested)
+    assert "未知受控执行协议版本" in str(nested_error.value)
+
+    # 反真空：版本正确时同一个载荷照常还原（这条闸门没有把正常路径一起关掉）。
+    assert type(pre.decision).model_validate(json.loads(pre.decision.model_dump_json()))
+
+
 def test_driver_unavailable_does_not_burn_the_single_use_grant(enforcement_paths):
     """平台跑不了的动作没有任何副作用，不能因此作废一张仍然有效的单次授权。
 
