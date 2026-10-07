@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 
 @dataclass
@@ -19,7 +20,7 @@ class OrderService:
         self._repository = repository
 
     def create(self, payload: dict) -> Order:
-        return self._repository.save(Order(id="order-1", payload=payload))
+        return self._repository.save(Order(id=uuid4().hex, payload=payload))
 
 
 # 该模块的直接依赖（供 CLI --dependencies 使用）：repository
