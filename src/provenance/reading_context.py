@@ -217,6 +217,27 @@ def display_path(path: object, *, root: Path | str) -> str:
     return relative.as_posix() or "."
 
 
+# 底层异常原文里的绝对路径：边界规则与 adapters 侧的脱敏同一口径——没有边界的 "/"
+# 会把普通相对路径（src/shop/x.py）也当成绝对路径。全角标点同样算边界（中英混排的诊断
+# 原文），但**不吞**标点之后的正文：`（读不到就不算数）` 要留在 reason 里。
+_ABS_PATH_RE = re.compile(
+    r"(?:(?<=[\s'\"(\[=:,（）、，。；：])|^)"
+    r"(?:[A-Za-z]:[\\/]|\\\\|/)"
+    r"[^\s'\"()（）【】、，。；：,;:]*"
+)
+
+
+def _fold_absolute_paths(text: str, *, root: Path | str) -> str:
+    """把一段原文里的绝对路径折叠成 display_path 口径（工作区之内 -> 仓库相对路径）。
+
+    读数**不放绝对路径**（纪律 1），而底层异常原文里带的树根 / os.walk 的
+    error.filename / str(OSError) 都可能带绝对路径。折叠不出来的一律不猜：
+    display_path 认不出的写 <outside-workspace>。
+    """
+
+    return _ABS_PATH_RE.sub(lambda match: display_path(match.group(0), root=root), text)
+
+
 def declaration_digest(path: Path | str | None) -> Optional[str]:
     """配置 / 声明文件的 sha256（sha256: 前缀）；读不到返回 None。
 
@@ -311,13 +332,17 @@ def tree_block(
             return {
                 "status": STATUS_UNAVAILABLE,
                 "scope": scope,
-                "reason": "树摘要读不到：" + type(error).__name__ + ": " + str(error),
+                # 底层原文可能带绝对路径（树根、error.filename、str(OSError)）：折叠后再拼。
+                "reason": "树摘要读不到："
+                + type(error).__name__
+                + ": "
+                + _fold_absolute_paths(str(error), root=root),
             }
     if not str(value).startswith("sha256:"):
         return {
             "status": STATUS_UNAVAILABLE,
             "scope": scope,
-            "reason": "树摘要不可用：" + str(value),
+            "reason": "树摘要不可用：" + _fold_absolute_paths(str(value), root=root),
         }
     block["digest"] = str(value)
 

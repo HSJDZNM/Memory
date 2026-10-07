@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import sys
 import uuid
@@ -91,6 +92,41 @@ def test_tree_block_names_the_tree_and_degrades_instead_of_raising(tmp_root, mon
     gone = reading.tree_block(tmp_root / "missing")
     assert gone["status"] == reading.STATUS_UNAVAILABLE
     assert "树摘要读不到" in gone["reason"]
+
+
+def test_tree_block_reason_never_carries_an_absolute_path(tmp_root):
+    """树读不到时 reason 也要折叠路径（复核发现：底层异常原文带的是绝对路径）。
+
+    tree_block 把 UnprovableError 的 str(error) 直接拼进 reason，而 _walk / _fingerprint
+    的消息里带的是树根与 error.filename 这类绝对路径——它们会跟着读数进报告，
+    与本模块第 1 条纪律（不放绝对路径）冲突。
+    """
+
+    missing = tmp_root / "missing-tree"
+    gone = reading.tree_block(missing)
+    assert gone["status"] == reading.STATUS_UNAVAILABLE
+    assert "树摘要读不到" in gone["reason"]
+    assert str(missing) not in gone["reason"]
+    assert "missing-tree" not in gone["reason"]
+    # 可读的那部分原文留着（折叠的是路径，不是诊断词）。
+    assert "树根不存在" in gone["reason"]
+
+
+def test_fold_absolute_paths_uses_the_display_path_vocabulary(tmp_root):
+    """折叠口径与 display_path 一致：仓库内 -> 相对路径，之外 -> <outside-workspace>。"""
+
+    inside = tmp_root / "nested" / "missing.yaml"
+    folded = reading._fold_absolute_paths(
+        "读不到目录：" + str(inside) + "（Permission denied）", root=REPO_ROOT
+    )
+    assert str(inside) not in folded
+    assert folded.startswith("读不到目录：.tmp/")
+    assert folded.endswith("（Permission denied）")
+
+    outside = "C:/Windows/System32/config" if os.name == "nt" else "/etc/passwd"
+    assert reading.OUTSIDE_WORKSPACE in reading._fold_absolute_paths(
+        "打不开 " + outside, root=REPO_ROOT
+    )
 
 
 def test_host_block_reports_facts_and_rejects_unknown_enum():
