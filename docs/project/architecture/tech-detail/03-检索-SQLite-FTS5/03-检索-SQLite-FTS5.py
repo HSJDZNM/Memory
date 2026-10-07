@@ -435,7 +435,14 @@ print("词项通过 parameters 传参；SQL 拼接块里没有出现 expression 
 # ----------------------------------------------------------------------------
 
 # ---- 6) 检索：参数化查询 + 权限过滤 + 结果带来源 ----
-from retrieval.models import AccessScope, RetrievalQuery, RetrievalResult, RetrievalStatus, UnavailableReason
+from retrieval.models import (
+    AccessScope,
+    RetrievalQuery,
+    RetrievalResult,
+    RetrievalStatus,
+    RetrievedChunk,
+    UnavailableReason,
+)
 from retrieval.retriever import FtsRetriever
 
 retriever = FtsRetriever(store, policy=policy)
@@ -459,8 +466,13 @@ assert result.status is RetrievalStatus.OK and len(result.results) == 1
 assert all(hit.source_path and hit.source_url and hit.license and hit.text_hash for hit in result.results)
 assert [hit.rank for hit in result.results] == list(range(1, len(result.results) + 1))
 # 检索结果里没有任何"授权"字段：分数不可能被当成放行依据。
+# **扫描要覆盖真正给出去的那一层**：上面展示的结果是 `result.results` 里的 `RetrievedChunk`，
+# 只扫信封（`RetrievalResult`）的话，命中模型上新增一个 `allow_restricted` / `granted` 之类的
+# 字段不会被抓到，而打印出来的结论照样是"检索结果里没有任何授权字段"。
 auth_fields = [
-    name for name in RetrievalResult.model_fields
+    f"{model.__name__}.{name}"
+    for model in (RetrievalResult, RetrievedChunk)
+    for name in model.model_fields
     if "author" in name or "grant" in name or name.startswith("allow")
 ]
 assert not auth_fields, auth_fields
