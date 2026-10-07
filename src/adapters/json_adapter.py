@@ -65,6 +65,17 @@ def agent_response_from_decision(
     violations = payload.get("violations") or []
     if not isinstance(violations, (list, tuple)):
         raise AdapterEventError("决策载荷的 violations 必须是列表")
+    # 逐条校验，不静默丢：这个函数的姿态是"未知就拒绝"（未知键拒绝、非列表拒绝），
+    # 而旧写法把不是映射的条目直接过滤掉——一次 block 于是以**空清单**回应 Agent，
+    # 读的人看不出"平台丢了东西"与"本来就没有违规"的区别。
+    projected: list[dict[str, Any]] = []
+    for index, item in enumerate(violations):
+        if not isinstance(item, Mapping):
+            raise AdapterEventError(
+                f"决策载荷的 violations[{index}] 必须是映射，得到 {type(item).__name__}："
+                "丢弃它会让一次阻断以空清单回应 Agent"
+            )
+        projected.append(dict(item))
 
     required = payload.get("required_action")
     if required is not None:
@@ -81,7 +92,7 @@ def agent_response_from_decision(
         "request_id": payload.get("request_id"),
         "trace_id": payload.get("trace_id") or (None if event is None else event.trace_id),
         "matched_rules": list(payload.get("matched_rules") or []),
-        "violations": [dict(item) for item in violations if isinstance(item, Mapping)],
+        "violations": projected,
         "required_action": required,
         "executable": payload.get("decision")
         in (Decision.ALLOW.value, Decision.ALLOW_WITH_WARNINGS.value),

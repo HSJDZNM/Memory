@@ -775,6 +775,34 @@ def test_generic_json_response_accepts_the_pending_findings_channel() -> None:
     assert response["executable"] is True
 
 
+def test_generic_json_response_rejects_a_malformed_violation_entry() -> None:
+    """不是映射的 violations 条目必须拒绝，不能静默丢掉。
+
+    这个函数的姿态是「未知就拒绝」（未知键、非列表都拒绝），而旧写法把非映射条目直接过滤：
+    一次 block 于是以**空清单**回应 Agent，读的人分不出「平台丢了东西」与「本来就没有违规」。
+    """
+
+    from adapters.json_adapter import agent_response_from_decision
+
+    payload = _decision_result(
+        decision="allow_with_warnings",
+        violations=[
+            {
+                "rule_id": "DOC-001@1",
+                "rule_version": 1,
+                "severity": "warning",
+                "message": "缺模块 docstring",
+                "evidence": {"kind": "checker", "subject": "x", "value": "docstring"},
+            },
+        ],
+    ).to_decision_dict()
+    # 协议载荷是外部输入：模型构造得出来，第三方拼出来的却可能带一个不是映射的条目
+    payload["violations"].append("not-a-mapping")
+    with pytest.raises(AdapterEventError) as error:
+        agent_response_from_decision(payload)
+    assert "violations[1]" in str(error.value)
+
+
 def test_generic_json_response_still_rejects_unknown_decision_field() -> None:
     """补全白名单不等于放宽：协议之外的字段仍然拒绝，不得静默丢弃。"""
 
