@@ -70,4 +70,3 @@ def test_main_reports_git_failure_as_environment_error(
     captured = capsys.readouterr()
     assert code == 2
     assert "环境不可用" in captured.err
-
