@@ -58,6 +58,13 @@ tools:
         type: path
         required: true
         path_scope: workspace
+        # 控制面保护：这个工具是 `approval: none` 的自动放行写工具，而 policies/ registry/
+        # adapters/ api/ validation/ 里的数据**定义治理本身**（规则、工具授权、适配器声明、
+        # 已审核哈希）。少了这一行，它们就能被自动放行的写工具改写，篡改要到运行期哈希
+        # 对不上时才被发现；编排层同形的 orc.fs.edit / orc.fs.write 一直是挡着的，
+        # 两侧不对称留下的是一条无门禁的路径。需要改这些文件时走人工审批的工具
+        # （exec.pwsh 等 approval: required 的动作）。
+        blocked_prefixes: [policies, registry, adapters, api, validation]
         description: 目标文件（仓库相对路径；逃出工作区一律拒绝）
       - name: old_string
         type: string
@@ -89,6 +96,9 @@ tools:
         type: path
         required: true
         path_scope: workspace
+        # 与 fs.edit 同一组受保护前缀（理由见那里）：create-or-overwrite 能覆盖任何路径，
+        # 控制面因此同样不能由自动放行的写工具触达。
+        blocked_prefixes: [policies, registry, adapters, api, validation]
       - name: content
         type: string
         required: true

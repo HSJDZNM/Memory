@@ -1,10 +1,10 @@
 {
-  "approved_at": "2026-10-07T22:46:27.537476Z",
+  "approved_at": "2026-10-07T22:51:11.930183Z",
   "approved_schema_version": "1.1",
   "governance_digest": "sha256:2e23208554ec392b109d196eb3ee848d3c96d6e80e7baf131b6ae7adbc1eafe0",
-  "registry_digest": "sha256:803e310f37b553f17efc4a61ca5cb3a9d12e0d55a7a2ab558bd6912e0cf08e9b",
+  "registry_digest": "sha256:af7d5d93e4fc505479ac8677cf7ae477470451cfc272b83cfa0321e9c9240964",
   "registry_version": 1,
-  "reviewed_by": "enforcement-availability",
+  "reviewed_by": "fix-adapters",
   "tools": {
     "exec.bash": {
       "schema_hash": "sha256:0217684493cf6d43f200b73675e299a82b94a170ba91b4336a75223a2ef3954f",
@@ -19,7 +19,7 @@
       "schema_version": "1.0"
     },
     "fs.edit": {
-      "schema_hash": "sha256:6e993069fd47426cf8e67ae20b783fa6f42790627b52ac66a3cf1cae4ad537a5",
+      "schema_hash": "sha256:7da22aae2a8eced1cd673bd106928b562b9a8e1b2f15c8191e458dc9265b43ca",
       "schema_version": "1.0"
     },
     "fs.read": {
@@ -27,7 +27,7 @@
       "schema_version": "1.0"
     },
     "fs.write": {
-      "schema_hash": "sha256:2630ebd012d19b736956900d0425a7ecf30d30dbaf9401c9988b77dbfebe4a86",
+      "schema_hash": "sha256:01335b3d175ad3c0164152101fc77b6fbde5581538e30340201cedd737cda720",
       "schema_version": "1.0"
     },
     "orc.fs.edit": {
