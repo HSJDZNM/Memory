@@ -1001,7 +1001,7 @@ def test_blank_optional_envelope_fields_are_rejected(field: str) -> None:
 # --------------------------------------------------------------------------- 公开面
 
 # 逐条登记的公开面检查：新增一个 policy_api 模块就把名字加进来。
-_PUBLIC_SURFACES = ("policy_api.config",)
+_PUBLIC_SURFACES = ("policy_api.config", "policy_api.services")
 
 
 @pytest.mark.parametrize("module_name", _PUBLIC_SURFACES)

@@ -28,7 +28,7 @@ from policy.models import RuleSet
 from .config import ApiConfig, ConfigError, TenantSpec
 from .errors import ApiError, ErrorCode
 
-__all__ = ["LoadedTenant", "TenantService", "TenantStore", "signature_of"]
+__all__ = ["LoadedTenant", "TenantStore", "signature_of"]
 
 
 def signature_of(paths: Tuple[Path, ...]) -> str:
