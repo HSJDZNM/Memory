@@ -57,6 +57,44 @@ def test_state_boundaries_are_the_only_implementation():
     assert expired["days"] == -1
 
 
+FAKE_CI_LOCAL = '''
+class ReportOnlyStep:
+    def __init__(self, name, expires_at):
+        self.name = name
+        self.expires_at = expires_at
+
+
+REPORT_ONLY_STEPS = (
+    ReportOnlyStep("broken-date", "2026/12/31"),
+    ReportOnlyStep("no-date", None),
+)
+'''
+
+
+def test_a_broken_step_declaration_is_unprovable_not_a_crash(tmp_root, monkeypatch):
+    """步骤的 expires_at 写坏 → 该条记 unprovable，读数照常产出，不抛异常。
+
+    旧实现把 state_for 放在 try/except **之外**：date.fromisoformat("2026/12/31") 抛
+    ValueError 穿过 run()，进程带 traceback 退出，HITS: 那条机器行根本不打印
+    （ci_local 的只报告读数就是按它取命中数的）。
+    """
+
+    fake_repo = tmp_root / "fake-repo"
+    (fake_repo / "tools").mkdir(parents=True)
+    (fake_repo / "tools" / "ci_local.py").write_text(
+        FAKE_CI_LOCAL, encoding="utf-8", newline="\n"
+    )
+    module = _load()
+    monkeypatch.setattr(module, "REPO", fake_repo)
+
+    entries = module.ci_local_entries(today=_datetime.date(2026, 10, 3), lead_days=14)
+
+    assert [item["state"] for item in entries] == ["unprovable", "unprovable"]
+    assert [item["id"] for item in entries] == ["broken-date", "no-date"]
+    assert "ValueError" in entries[0]["detail"]
+    assert "TypeError" in entries[1]["detail"]
+
+
 def test_an_expired_exemption_is_red_but_never_fails(tmp_root, capsys):
     scope = tmp_root / "wiring-scope.yaml"
     scope.write_text(EXPIRED_SCOPE, encoding="utf-8")
