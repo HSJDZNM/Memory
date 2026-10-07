@@ -354,6 +354,51 @@ def test_grant_claim_identity_is_not_derived_from_the_clock(tmp_root, monkeypatc
     assert uses[0]["claim_id"] != uses[1]["claim_id"], "认领身份不得由 now 推导"
 
 
+class _RacingApprovalLedger(EnforcementLedger):
+    """把"两个进程同时抢最后一次审批额度"搬进单进程：对手在本进程追加之前先写一行。"""
+
+    def __init__(self, path) -> None:
+        super().__init__(path)
+        self.raced = False
+
+    def record_approval_use(self, approval_id, **kwargs):  # type: ignore[no-untyped-def]
+        if not self.raced:
+            self.raced = True
+            super().record_approval_use(approval_id, action_hash=kwargs["action_hash"])
+        return super().record_approval_use(approval_id, **kwargs)
+
+
+def test_approval_quota_race_loser_returns_its_own_slot(tmp_root):
+    """抢输的一方不能永久烧掉一格额度：它一个字都没执行。"""
+
+    ledger = _RacingApprovalLedger(tmp_root / "ledger.jsonl")
+    claim = ledger.claim_approval_use(
+        approval_id="approval-1",
+        action_id="act-1",
+        tool_id="exec.shell",
+        action_hash="sha256:h",
+        max_uses=1,
+    )
+
+    assert claim.claimed is False and claim.reason == "approval_quota_exhausted"
+    assert claim.uses == 1  # 归还自己那一行后，生效的消费次数只剩对手那 1 次
+    stored = EnforcementLedger(ledger.path)
+    assert len(stored.approval_uses("approval-1")) == 1
+    released = stored.of_kind("approval_use_released")
+    assert [item["use_id"] for item in released] == [claim.use_id]
+
+    # 反真空：归还的是"自己那一格"，不是把别人的占用清零——额度仍然是用尽的。
+    again = ledger.claim_approval_use(
+        approval_id="approval-1",
+        action_id="act-2",
+        tool_id="exec.shell",
+        action_hash="sha256:h2",
+        max_uses=1,
+    )
+    assert again.claimed is False
+    assert len(EnforcementLedger(ledger.path).approval_uses("approval-1")) == 1
+
+
 def test_rate_limit_windows_count_only_recent_records(tmp_root):
     ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
     ledger.append({"kind": "pre_decision", "limit_key": "local-user|fs.edit"})

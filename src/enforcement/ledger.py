@@ -330,8 +330,15 @@ class EnforcementLedger:
                 "审批消费记录写入后读不回来：台账状态不可信，拒绝继续执行"
             )
         if index >= max_uses:
+            # 抢输的一方必须把自己的那一行还回去：它没有执行任何动作，却已经追加了一条
+            # approval_used。不释放的话这张审批的额度被永久烧掉一格（"已用 N/M" 的读数
+            # 也与真实执行数不符），修好原因后的重试会被误判成 approval_quota_exhausted。
+            # 归还失败会抛 LedgerError —— 那是失败关闭，调用方按台账不可用处理。
+            self.release_approval_use(
+                approval_id=approval_id, use_id=token, reason="approval_race_lost"
+            )
             return ApprovalUseClaim(
-                claimed=False, uses=index + 1, use_id=token, reason="approval_quota_exhausted"
+                claimed=False, uses=index, use_id=token, reason="approval_quota_exhausted"
             )
         return ApprovalUseClaim(claimed=True, uses=index + 1, use_id=token)
 
