@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import http.client
+import importlib
 import io
 import json
 import os
@@ -774,6 +775,25 @@ def test_a_missing_raw_body_on_a_body_route_is_rejected_not_substituted() -> Non
         asyncio.run(evaluate.endpoint(request))
     assert info.value.code is ErrorCode.INTERNAL_ERROR
     assert "请求体" in info.value.detail
+
+
+# --------------------------------------------------------------------------- 公开面
+
+# 逐条登记的公开面检查：新增一个 policy_api 模块就把名字加进来。
+_PUBLIC_SURFACES = ("policy_api.config",)
+
+
+@pytest.mark.parametrize("module_name", _PUBLIC_SURFACES)
+def test_every_name_in_the_declared_public_surface_resolves(module_name: str) -> None:
+    """`__all__` 是模块的公开承诺：写一个不存在的名字，`import *` 直接 AttributeError。
+
+    历史缺陷（medium 台账 M1，config.py:36）：`__all__` 里写着 `Limits`，而本模块的预算
+    模型叫 `LoadConfig`——名字不存在，`from policy_api.config import *` 会炸。
+    """
+
+    module = importlib.import_module(module_name)
+    missing = [name for name in module.__all__ if not hasattr(module, name)]
+    assert missing == [], f"{module_name}.__all__ 里解析不到的名字：{missing}"
 
 
 # --------------------------------------------------------------------------- CLI 用法

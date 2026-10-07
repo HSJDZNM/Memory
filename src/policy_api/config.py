@@ -34,7 +34,6 @@ __all__ = [
     "Budgets",
     "ClientSpec",
     "ConfigError",
-    "Limits",
     "LoadConfig",
     "RetrievalConfig",
     "TenantSpec",
