@@ -151,6 +151,38 @@ def test_a_run_without_execution_does_not_discharge(tmp_root: Path) -> None:
     assert state.last_real_test_run is None
 
 
+@pytest.mark.parametrize("value", ["false", "no", 1, 0.0, ["tests/t.py"], {}])
+def test_python_tests_executed_must_be_a_bool_not_a_truthy_value(tmp_root: Path, value: object) -> None:
+    """解除义务的凭据必须是布尔值**本身**，不接受真值性。
+
+    字符串 "false"、数字 1、非空列表都是真值：按真值性判定，义务会被一条说不清真假的记录解除，
+    而"跳过被读成通过"正是这个模块存在的理由。类型不对 = 账本不可用（失败关闭），
+    不是"这条不算数"——后者会让坏记录悄悄留在账本里继续骗下一个人。
+    """
+
+    ledger = tmp_root / "o.jsonl"
+    pending(ledger)
+    record_test_run(
+        ledger,
+        target="src/shop/order_service.py",
+        selected_tests=("tests/test_order_service.py",),
+        python_tests_executed=True,
+        source="test",
+        at="2026-09-29T01:00:00Z",
+    )
+    # 直接改盘上的那一行（模拟"写记录的人打错字"），再读
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[-1])
+    record["python_tests_executed"] = value
+    lines[-1] = json.dumps(record, ensure_ascii=False, sort_keys=True)
+    ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(ObligationsError) as error:
+        load(ledger)
+
+    assert "不是布尔值" in str(error.value)
+
+
 def test_real_pytest_run_needs_all_three_structural_facts() -> None:
     """三条结构化事实缺一不可（不解析 reasons 文本，AGENTS 第 49 条同一纪律）。"""
 

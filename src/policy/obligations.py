@@ -250,6 +250,18 @@ def _parse_record(text: str, *, path: Path, line_number: int) -> Mapping:
             + repr(missing)
             + "（键集合是协议，改它要按第 55 条递增版本号）"
         )
+    if kind == KIND_TEST_RUN and not isinstance(record.get("python_tests_executed"), bool):
+        # 这个字段是**解除义务的唯一凭据**（J1(d)：解除只由一次真实 pytest 运行判定），
+        # 所以它必须是布尔值本身，不能靠真值性：字符串 "false"、数字 1、非空列表都是真值，
+        # 于是"跑没跑成"由**写记录的人随手打的字**决定——正是本模块要防的"跳过被读成通过"。
+        # 类型不对属于账本不可用（失败关闭），不是"这条不算数"。
+        raise ObligationsError(
+            "义务账本第 "
+            + str(line_number)
+            + " 行的 python_tests_executed="
+            + repr(record.get("python_tests_executed"))
+            + " 不是布尔值；它是解除义务的唯一凭据，不接受真值性判定"
+        )
     return record
 
 
@@ -438,7 +450,9 @@ def load(path) -> LedgerState:
                 )
                 continue
             test_run_records += 1
-            if not record["python_tests_executed"]:
+            # 只有明确的 True 才算"跑过"（而不是真值性）：非布尔值已被 _parse_record 挡在
+            # 账本之外，这里再写死一次，是为了让"解除条件"这一行读起来就是它的定义。
+            if record["python_tests_executed"] is not True:
                 continue
             run = TestRun(
                 at=str(record["at"]),
