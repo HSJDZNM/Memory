@@ -77,6 +77,16 @@ def test_registry_identity_is_order_independent():
 # --------------------------------------------------------------------------- 结构校验
 
 
+def test_every_exported_name_exists():
+    """__all__ 里的名字必须真的存在：导出清单是契约，不是愿望清单。"""
+
+    import enforcement.registry as registry_module
+
+    missing = [name for name in registry_module.__all__ if not hasattr(registry_module, name)]
+
+    assert missing == [], missing
+
+
 def test_registry_rejects_duplicate_yaml_keys(tmp_root):
     path = tmp_root / "dup.yaml"
     path.write_text(

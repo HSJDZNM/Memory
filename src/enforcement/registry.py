@@ -38,7 +38,6 @@ __all__ = [
     "APPROVED_SCHEMA_VERSION",
     "DEFAULT_APPROVED_PATH",
     "DEFAULT_REGISTRY_PATH",
-    "ApprovedTool",
     "LoadedRegistry",
     "ToolRegistry",
     "approve_registry",
