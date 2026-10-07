@@ -28,7 +28,6 @@ from policy.models import (
     POLICY_VERSION,
     SCHEMA_VERSION,
     Operation,
-    Principal,
     StrictModel,
     canonical_identifier,
     normalize_repo_path,
@@ -74,13 +73,19 @@ class Credentials(StrictModel):
 
 
 class PrincipalDTO(StrictModel):
-    """主体声明：只由调用方显式提供，服务端不从路径或载荷推断。"""
+    """主体声明：只由调用方显式提供，服务端不从路径或载荷推断。
+
+    声明出来的 subject 由 `runtime._authenticate` 交给 `authorize`（认证主体），roles 则**只**
+    来自令牌（`ClientSpec.roles`）——载荷声明的 roles 不参与授权。
+
+    以前这里还有一个 `to_domain()`：全仓没有任何调用点，而它会把载荷声明的 roles 变成核心的
+    `Principal`——那正好是"客户端自带决策"的入口。删掉它，DTO 不再承诺一次从未发生的转换
+    （`ContextDTO.to_context_payload()` 不产出 principal 键；API 路径上也没有消费
+    `PolicyContext.principal` 的代码，多角色 Agent 路径的 principal 由 Adapter 的装配声明给出）。
+    """
 
     subject: str = Field(min_length=1, max_length=200)
     roles: Tuple[str, ...] = ()
-
-    def to_domain(self) -> Principal:
-        return Principal(subject=self.subject, roles=frozenset(self.roles))
 
     @field_validator("subject")
     @classmethod
