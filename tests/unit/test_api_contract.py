@@ -318,6 +318,49 @@ def test_load_api_config_reports_missing_and_unreadable_files(tmp_root: Path) ->
     assert "顶层必须是映射" in str(empty.value)
 
 
+def test_client_projects_are_canonicalized_at_load_time(tmp_root: Path) -> None:
+    """配置里的项目名与请求侧**同一个口径**，否则合法配置永远匹配不上。
+
+    历史缺陷（medium 台账 M1，auth.py:121）：`tenant_project`（authorize:184）与请求侧
+    project（runtime._authenticate）都过 `canonical_identifier`，只有 `client.projects`
+    不过，于是配置里写 "Alpha-Project" 的客户端在请求侧 "alpha-project" 上被静默 403
+    （project_not_allowed），调用方与运维都看不出问题出在大小写。
+    """
+
+    from policy_api.auth import allows_project
+
+    text = (
+        'schema_version: "1.0"' + chr(10)
+        + "tenants:" + chr(10)
+        + "  - tenant_id: alpha" + chr(10)
+        + "    project_root: project" + chr(10)
+        + "    project: alpha-project" + chr(10)
+        + "    rules: [rules]" + chr(10)
+        + "clients:" + chr(10)
+        + "  - client_id: alpha-client" + chr(10)
+        + '    token_sha256: "' + "0" * 64 + '"' + chr(10)
+        + "    tenants: [alpha]" + chr(10)
+        + "    projects: [Alpha-Sub]" + chr(10)
+    )
+    config = load_api_config(write_config(tmp_root, text))
+    client = config.clients[0]
+
+    assert client.projects == ("alpha-sub",)
+    # 请求侧被 runtime 规范化后的形态必须能匹配上；别的项目仍然拒绝（不扩权）
+    assert allows_project(client, "alpha-sub") is True
+    assert allows_project(client, "alpha-other") is False
+
+    # 规范化后为空的项目名是配置错误，不是"一个匹配不上的名字"
+    with pytest.raises(ConfigError):
+        load_api_config(
+            write_config(
+                tmp_root,
+                text.replace("projects: [Alpha-Sub]", 'projects: ["   "]'),
+                name="blank-project.yaml",
+            )
+        )
+
+
 def test_hash_token_is_a_stable_sha256_hex_digest() -> None:
     """令牌只以摘要形式参与比较与落盘：这里钉死它的确切算法与形状。"""
 

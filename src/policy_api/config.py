@@ -24,7 +24,7 @@ from typing import Any, Mapping, Optional, Tuple
 import yaml
 from pydantic import Field, ValidationError, field_validator, model_validator
 
-from policy.models import RuleValidationError, StrictModel
+from policy.models import RuleValidationError, StrictModel, canonical_identifier
 
 __all__ = [
     "API_CONFIG_SCHEMA_VERSION",
@@ -168,6 +168,22 @@ class ClientSpec(StrictModel):
                 raise ValueError(
                     f"client {self.client_id!r} 的 expires_at 不合法：{error}"
                 ) from error
+        return self
+
+    @model_validator(mode="after")
+    def _projects_are_canonical(self) -> "ClientSpec":
+        """项目名按与请求侧**同一个口径**存下来。
+
+        `authorize` 里的 `tenant_project` 与 `runtime._authenticate` 里的请求侧 project 都过
+        `canonical_identifier`（去首尾空白 + 小写），配置这一侧不过的话，配置里写
+        "Alpha-Project" 的客户端永远匹配不上规范化后的 "alpha-project"：合法配置被静默拒绝
+        （403 project_not_allowed），而调用方与运维都看不出问题出在大小写。
+        """
+
+        normalized = tuple(canonical_identifier(item) for item in self.projects)
+        if any(not item for item in normalized):
+            raise ValueError(f"client {self.client_id!r} 声明了空的项目名")
+        object.__setattr__(self, "projects", normalized)
         return self
 
     @model_validator(mode="after")
