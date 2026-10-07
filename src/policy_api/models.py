@@ -69,7 +69,14 @@ class Credentials(StrictModel):
     """认证凭据。**绝不**写进日志：观测层只记 sha256 前 12 位。"""
 
     scheme: str = "bearer"
-    token: str = Field(min_length=8, max_length=512)
+    # `repr=False`：这条承诺必须在**声明密钥的地方**成立，而不是只靠调用方自觉（落盘前剥离
+    # `credentials` 是 `runtime._payload_for` 里的模型外补丁）。没有换成 SecretStr 是因为它
+    # 要求每个使用点显式 `get_secret_value()`——改一个类型就得多改认证边界；而 repr=False
+    # 已经关掉了最现实的那条路：`logger.info("%s", request)` / `repr(model)` / 捕获局部变量的
+    # 错误上报 / traceback 里的模型表示。
+    # 注：理由写在这里而不是类 docstring 里——docstring 会作为 description 进 OpenAPI 快照，
+    # 一句注释不该造成一次"契约变化"。
+    token: str = Field(min_length=8, max_length=512, repr=False)
 
 
 class PrincipalDTO(StrictModel):

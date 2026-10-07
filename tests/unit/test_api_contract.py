@@ -916,6 +916,35 @@ def test_core_framework_check_can_fail_and_is_not_vacuous(
     assert contract._core_is_framework_free() is True
 
 
+def test_credentials_repr_does_not_leak_the_token() -> None:
+    """`repr(model)` / `"%s" % model` 不许带出令牌：docstring 写了"绝不写进日志"。
+
+    历史缺陷（medium 台账 M1，models.py:73）：字段没有 `repr=False`、也不是 SecretStr，
+    唯一的保护在模型之外（落盘前删掉 credentials）——一行 `logger.info("%s", request)`、
+    一个捕获局部变量的错误上报，或一段 traceback 就会把明文令牌写出去。
+    """
+
+    from policy_api.models import Credentials, EvaluateRequest
+
+    token = "alpha-secret-token"
+    credentials = Credentials(token=token)
+    assert token not in repr(credentials)
+    assert token not in str(credentials)
+    assert token not in f"{credentials}"
+
+    request = EvaluateRequest(
+        api_version="1.0",
+        request_id="r-1",
+        principal={"subject": "alice"},
+        context={"file": "src/a.py", "layer": "service"},
+        credentials={"token": token},
+    )
+    assert token not in repr(request), "嵌套 repr 里带出了令牌"
+    # 认证路径照常能拿到明文（repr=False 不影响取值）
+    assert request.credentials is not None
+    assert request.credentials.token == token
+
+
 @pytest.mark.parametrize("subject", [" ", "   ", chr(9)])
 def test_blank_subject_is_rejected(subject: str) -> None:
     """空白不是主体：`" "` 满足 min_length=1，落到日志与证据里却对不上任何真实调用者。
