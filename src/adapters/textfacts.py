@@ -82,7 +82,11 @@ _DYNAMIC_CALL_RE = re.compile(
 # 只认 r/u 前缀：f-string 不是常量，b"" 不是 str，拼接（"a" + x）也不是常量 ——
 # 一律算"证明不了"，交给依赖类 checker 失败关闭。
 _LITERAL_ARGUMENT_RE = re.compile(
-    r"""^[ \t]*(?:[rRuU])?(?:"([^"\n]*)"|'([^'\n]*)')[ \t]*(?:,|\))"""
+    # 前后的空白都允许**跨行**：black 会把常量目标折到下一行
+    # （`importlib.import_module(\n    "some.real.module"\n)`），只认 `[ \t]` 会把它判成
+    # 「证明不了」。字面量内部仍然不许换行（那不是单个字符串字面量），尾巴仍然必须是 `,` 或 `)`
+    # ——`import_module("a" + x)` 因此照旧不算常量。
+    r"""^[ \t\r\n]*(?:[rRuU])?(?:"([^"\n]*)"|'([^'\n]*)')[ \t\r\n]*(?:,|\))"""
 )
 
 
@@ -181,9 +185,14 @@ def _dynamic_targets(text: str) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
     unproven: list[str] = []
     for match in _DYNAMIC_CALL_RE.finditer(text):
         window = text[match.end() :]
+        # 实参窗口到**第一个右括号**为止：只认 `)`，不认换行。black 会把字面量目标折到下一行
+        # （`importlib.import_module(\n    "some.real.module"\n)`），在换行处截断会把一个常量目标
+        # 误判成「证明不了」——依赖类 checker 于是对一段其实证明得了的改动失败关闭。
+        # 窗口变长不会放宽判据：`_LITERAL_ARGUMENT_RE` 锚定在窗口开头，第一个实参不是字符串字面量
+        # 就匹配不上（多实参调用里后面的字面量也不会被当成第一个）。
         stop = len(window)
         for index, char in enumerate(window):
-            if char in ")\n":
+            if char == ")":
                 stop = index
                 break
         literal = _LITERAL_ARGUMENT_RE.match(window[:stop] + ")")

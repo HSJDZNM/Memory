@@ -483,6 +483,29 @@ def test_proposed_dependencies_reads_relative_and_dynamic_targets():
     assert proposed_dependencies("普通文本，没有 import") == ()
 
 
+def test_a_wrapped_literal_dynamic_import_is_still_proven():
+    """black 把字面量目标折到下一行时，它仍然是**证明得了**的常量目标。
+
+    实参窗口此前在第一个换行处截断：`importlib.import_module(\n    "some.real.module"\n)` 于是
+    落进 unproven，依赖类 checker 对一段其实证明得了的改动失败关闭（cry wolf 的那一侧）。
+    窗口只认右括号之后，多实参调用里的字面量不会被误当成第一个实参（下面第三条反例）。
+    """
+
+    wrapped = propose_dependencies('importlib.import_module(\n    "some.real.module"\n)\n')
+    assert wrapped.names == ("some.real.module",)
+    assert wrapped.unproven_dynamic == ()
+
+    # 反例一：目标不是字面量 → 仍然"证明不了"
+    dynamic = propose_dependencies("importlib.import_module(name)\n")
+    assert dynamic.names == ()
+    assert dynamic.unproven_dynamic == ("import_module",)
+
+    # 反例二：多实参调用里，第一个实参不是字面量 → 不许把后面的字面量当成它
+    multi = propose_dependencies('importlib.import_module(\n    name,\n    "pkg.real",\n)\n')
+    assert multi.names == ()
+    assert multi.unproven_dynamic == ("import_module",)
+
+
 def test_dynamic_import_without_a_literal_is_unproven_not_ignored():
     proposal = propose_dependencies("importlib.import_module(name)\n")
 
