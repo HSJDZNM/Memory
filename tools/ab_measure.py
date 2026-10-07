@@ -51,7 +51,6 @@ import hashlib
 import json
 import math
 import os
-import platform as _platform
 import re
 import shutil
 import subprocess
@@ -2392,7 +2391,9 @@ def build_reading_context(
         declarations=declarations,
         host=reading.host_block(
             sandbox=sandbox,
-            extra={"tool": TOOL_ID, "tool_version": TOOL_VERSION, "python": _platform.python_version()},
+            # 只放本读数专有的宿主事实：python 由 host_block 自己产出（同值重复一遍是
+            # 两个来源表达同一件事，将来不一致时会变成静默覆盖的入口）。
+            extra={"tool": TOOL_ID, "tool_version": TOOL_VERSION},
         ),
         include_run=include_run,
     )
