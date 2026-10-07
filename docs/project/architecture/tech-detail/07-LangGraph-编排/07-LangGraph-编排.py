@@ -402,10 +402,19 @@ tampered = build_record(initial, engine="reference", sequence=3).model_copy(
     update={"state_digest": "sha256:" + "0" * 64})
 tampered_credentials = build_record(initial, engine="reference", sequence=4).model_copy(
     update={"compatibility": PlatformSnapshot(rule_set_hash="sha256:" + "9" * 64)})
+tampered_results = {
+    "state_digest 与状态不一致": save_problem(tampered),
+    "改掉兼容性凭据": save_problem(tampered_credentials),
+}
 print(pad("写一份什么样的记录", 28) + "结果")
 print("-" * 96)
-print(pad("state_digest 与状态不一致", 28) + save_problem(tampered))
-print(pad("改掉兼容性凭据", 28) + save_problem(tampered_credentials))
+for label, detail in tampered_results.items():
+    print(pad(label, 28) + detail)
+# 与上面的 refusals 同一条口径：**没被拒绝就是缺陷**。只打印的话，store 的摘要 / 兼容性检查
+# 一旦回归，这两行会变成"写进去了（缺陷）"而整个单元照样绿——这一节讲的正是"写进去之前要挡住"。
+assert not [
+    value for value in tampered_results.values() if value.endswith("（缺陷）")
+], tampered_results
 
 probe_config = support.graph_config(TEMP, name="commit-probe")
 probe_assembly = build_assembly(
