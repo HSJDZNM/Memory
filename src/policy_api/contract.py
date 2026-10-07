@@ -202,17 +202,32 @@ def _contract_checks(runtime: ApiRuntime) -> list[dict[str, Any]]:
 
 
 def _core_is_framework_free() -> bool:
-    """核心层不得导入 Web 框架（契约测试也会查一遍，这里给部署者一个直接可见的结论）。"""
+    """核心层不得导入 Web 框架（契约测试也会查一遍，这里给部署者一个直接可见的结论）。
 
-    root = Path(__file__).resolve().parents[2] / "src" / "policy"
-    if not root.is_dir():
-        return True
+    树的定位走**已导入的核心包**（`policy.__path__`），不是 `__file__.parents[2]`：后者只在
+    源码检出里成立，装成 site-packages 时算出的是 `<prefix>/lib/src/policy` 这种不存在的路径，
+    函数于是返回 True——它证明的其实只是"我没找到要检查的东西"。定位不到 = 证明不了 =
+    失败关闭（返回 False），不把"没查"记成"查过没问题"。
+    """
+
+    try:
+        import policy
+
+        # 用 `__path__` 而不是 `__file__`：`src/policy` 是**命名空间包**（没有 __init__.py），
+        # 它的 `__file__` 是 None。命名空间包的路径还可能有多段，逐段都查。
+        roots = [Path(item) for item in getattr(policy, "__path__", ())]
+    except Exception:  # noqa: BLE001 - 定位不到核心包就证明不了
+        return False
+    roots = [item for item in roots if item.is_dir()]
+    if not roots:
+        return False
     forbidden = ("fastapi", "starlette", "uvicorn", "flask", "requests", "httpx")
-    for path in sorted(root.glob("*.py")):
-        text = path.read_text(encoding="utf-8")
-        for name in forbidden:
-            if f"import {name}" in text or f"from {name}" in text:
-                return False
+    for root in roots:
+        for path in sorted(root.glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for name in forbidden:
+                if f"import {name}" in text or f"from {name}" in text:
+                    return False
     return True
 
 

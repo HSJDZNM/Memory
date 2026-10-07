@@ -798,6 +798,34 @@ def test_a_missing_raw_body_on_a_body_route_is_rejected_not_substituted() -> Non
     assert "请求体" in info.value.detail
 
 
+def test_core_framework_check_can_fail_and_is_not_vacuous(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """这个自检必须能证伪：把核心层指到一棵"导入了 fastapi"的假树上，结论必须是 False。
+
+    历史缺陷（medium 台账 M1，contract.py:207）：树的位置按 `__file__.parents[2]` 算，只在
+    源码检出里成立；装成 site-packages 时那是条不存在的路径（实测 `<prefix>/lib/src/policy`），
+    函数直接返回 True——它证明的只是"我没找到要检查的东西"。
+    """
+
+    import policy
+
+    from policy_api import contract
+
+    assert contract._core_is_framework_free() is True  # 本仓库的核心层确实干净
+
+    fake = tmp_path / "policy"
+    fake.mkdir()
+    (fake / "bad.py").write_text("import fastapi" + chr(10), encoding="utf-8", newline="")
+    monkeypatch.setattr(policy, "__path__", [str(fake)])
+    assert contract._core_is_framework_free() is False, "检查放过了导入 Web 框架的核心层"
+
+    # 对照组：同一棵树上换成干净文件 → True（不是"永远返回 False"）
+    (fake / "bad.py").unlink()
+    (fake / "good.py").write_text("import json" + chr(10), encoding="utf-8", newline="")
+    assert contract._core_is_framework_free() is True
+
+
 # --------------------------------------------------------------------------- 公开面
 
 # 逐条登记的公开面检查：新增一个 policy_api 模块就把名字加进来。
