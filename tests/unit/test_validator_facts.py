@@ -112,6 +112,84 @@ def test_symlink_escaping_the_workspace_is_rejected(tmp_root: Path) -> None:
         read_source("link.py", workspace=workspace, language="python", max_bytes=1024)
 
 
+def test_read_source_rechecks_containment_after_a_swap_in_the_read_window(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """解析之后、读取之前把目标换成指向工作区外的符号链接：必须拒绝。
+
+    历史缺陷（OCR 全量审查 L13）：`resolve_target` 证明的是"解析那一刻"的包含关系，
+    读取却用路径重新 stat/read——中间那段窗口足以把链接换掉，读到的是工作区外的内容，
+    而摘要仍然把它绑在工作区内的相对路径上（证据被污染）。
+
+    换链的时机用 `Path.is_file` 钩住：那是 `resolve_target` 的最后一步，两种实现都会
+    经过它（不钩实现私有的读取函数，钩子才不是"照着实现写的"）。
+    """
+
+    workspace = tmp_root / "workspace"
+    workspace.mkdir()
+    outside = tmp_root / "outside.py"
+    outside.write_text("secret = 'outside'" + chr(10), encoding="utf-8", newline="")
+    target = workspace / "target.py"
+    target.write_text("inside = 1" + chr(10), encoding="utf-8", newline="")
+
+    original_is_file = Path.is_file
+    swapped = {"done": False}
+
+    def swapping_is_file(self: Path) -> bool:
+        result = original_is_file(self)
+        if result and self == target and not swapped["done"]:
+            swapped["done"] = True
+            target.unlink()
+            try:
+                os.symlink(outside, target)
+            except (OSError, NotImplementedError):
+                pytest.skip("本机不允许创建符号链接（Windows 需要开发者模式）")
+        return result
+
+    monkeypatch.setattr(Path, "is_file", swapping_is_file)
+    with pytest.raises(SourceError):
+        read_source("target.py", workspace=workspace, language="python", max_bytes=1024)
+    assert swapped["done"] is True, "换链没有发生：这条用例什么都没证明"
+
+
+def test_read_source_bounds_the_read_by_the_descriptor_not_the_path_stat(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """大小上限必须按**描述符**判、读取必须有界：路径 stat 说小、文件实际很大时全读进内存就是缺陷。
+
+    历史缺陷（OCR 全量审查 L13）：`absolute.stat().st_size` 与 `absolute.read_bytes()`
+    是两次独立的路径解析，"stat 说 16 字节、read 读回 16MB"因此可以同时成立
+    （文件在两次调用之间增长、或被换成另一个文件）。这里让路径 stat 谎报 1 字节，
+    真实文件远大于上限：修复前会把整份内容读进内存并当成合法源码返回。
+    """
+
+    workspace = tmp_root / "workspace"
+    workspace.mkdir()
+    target = workspace / "grown.py"
+    target.write_bytes(b"x = 1" + chr(10).encode("utf-8") * 4096)
+
+    real_stat = Path.stat
+
+    class _LyingStat:
+        """真实 stat 结果，只把 st_size 说小；其余字段照旧，exists/is_file 仍然可用。"""
+
+        def __init__(self, real: os.stat_result, size: int) -> None:
+            self._real = real
+            self.st_size = size
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._real, name)
+
+    def lying_stat(self: Path, *args: object, **kwargs: object) -> object:
+        result = real_stat(self, *args, **kwargs)
+        return _LyingStat(result, 1) if self == target else result
+
+    monkeypatch.setattr(Path, "stat", lying_stat)
+    with pytest.raises(SourceError) as error:
+        read_source("grown.py", workspace=workspace, language="python", max_bytes=64)
+    assert "超过上限" in str(error.value)
+
+
 # ------------------------------------------------------------------ AST 事实
 
 
