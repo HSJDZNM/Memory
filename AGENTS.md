@@ -498,6 +498,16 @@
       与 `tools.control_plane_facts.FACTS_TABLE_SCHEMA_VERSION`
       （**数据文件** `validation/control-plane-facts.yaml` 自己的轴，从 "1" 起——13 行最小集，
       只放指针，读不出来只在只报告工具内部降级）。
+    - 规范治理价值评测（W1 保真度）：`tools.eval_corpus.ANNOTATION_SCHEMA_VERSION`（语料注解记录的形状轴，
+      现为 "1"——`Annotation` 的键集合、`annotation_scopes` 的取值语义，含 `line == 0` 的文件级哨兵）与
+      `tools.eval_corpus.LOCK_SCHEMA_VERSION`（`evaluation/corpora/<id>.lock.json` 的轴，现为 "1"）；
+      `evaluation/thresholds.yaml` 自己的轴（`schema_id: governance-eval-thresholds/1` + `version: 1`——
+      **门槛必须先于读数写下**，改门槛 = 改这个轴）；
+      `tools.governance_eval.GOVERNANCE_EVAL_SCHEMA_VERSION`（`evaluation/results/fidelity-<revision>.json`
+      读数载荷的轴，现为 "1.0"）。三者各自独立演进、谁也不跟随平台阶段；
+      `eval_corpus.py --json` 的输出**不带**文件级/行级拆分键——拆分由消费者从 `load_annotations` 推出
+      （2026-10-07 裁定：该轴首次建立且尚未发布，首次发布前的形状修正在同一版本号内，
+      与 `policy.check.OUTPUT_SCHEMA_VERSION` 1.2 的先例同型）。
     **已登记、但还没有版本轴的载荷**（第一次改键时必须引入 1.1——不许"只加一个键"了事）：
     **台阶 4 第二件之后这一档是空的**——原先登记在这里的 `tools/exemption_expiry.py --json`
     已按本条首次建轴（`EXEMPTION_REPORT_SCHEMA_VERSION = "1.1"`，见上）。

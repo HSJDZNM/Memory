@@ -1,0 +1,99 @@
+{
+  "schema_version": "1",
+  "dataset": "pyflakes-messages",
+  "revision": "9f0a7f9c8feb4d086a918a708bb778b38ce7a248",
+  "url": "https://codeload.github.com/PyCQA/pyflakes/tar.gz/9f0a7f9c8feb4d086a918a708bb778b38ce7a248",
+  "license": "MIT",
+  "license_source": "gh api repos/PyCQA/pyflakes/contents/LICENSE?ref=9f0a7f9c8feb4d086a918a708bb778b38ce7a248 -> 1093 B, sha256 22c47569cc0aae531b372361366818af01c6fc2e314770584a7866c92b3a0463, 首行 'Copyright 2005-2011 Divmod, Inc.'（SPDX: MIT）[2026-10-07]",
+  "tier": "A",
+  "expectation_kind": "pyflakes-message-expectation",
+  "archive_root": "pyflakes-9f0a7f9c8feb4d086a918a708bb778b38ce7a248",
+  "paths": [
+    "pyflakes/test",
+    "pyflakes/messages.py"
+  ],
+  "registry_ref": "pyflakes-messages",
+  "file_count": 16,
+  "files": [
+    {
+      "path": "pyflakes/messages.py",
+      "sha256": "9ac1b4c316326f321c7094d6ebf52d1149edb9bd249acc0b0aa73584cba409d5",
+      "size": 11290
+    },
+    {
+      "path": "pyflakes/test/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "pyflakes/test/harness.py",
+      "sha256": "2e8dcec271b1ffac4f92f9c7dbdb6aff49ff59511fa2898a409dd10b2b131ea3",
+      "size": 891
+    },
+    {
+      "path": "pyflakes/test/test_api.py",
+      "sha256": "76b527bc30a8f60617be2351fe23e5e079d098cff41fa216706db8989510f201",
+      "size": 24207
+    },
+    {
+      "path": "pyflakes/test/test_builtin.py",
+      "sha256": "931be33d8b45e2c0cda15d046f67fb295187301909aaedb5a08bc651bd0a7740",
+      "size": 582
+    },
+    {
+      "path": "pyflakes/test/test_code_segment.py",
+      "sha256": "4fdc4162b4c5724f48012336e0eb62175e418d4fded19c30c6952002c9454f6e",
+      "size": 4496
+    },
+    {
+      "path": "pyflakes/test/test_custom_builtins.py",
+      "sha256": "907f080ceb42dcf0a8eed8b6d016fcb0cb4c10871fa9900e8dc8dbe0c231510a",
+      "size": 838
+    },
+    {
+      "path": "pyflakes/test/test_dict.py",
+      "sha256": "2e7cf4ca0a97c8fb9ed4d659146acbb9df35ccddc7945e0435df0454da37e862",
+      "size": 5271
+    },
+    {
+      "path": "pyflakes/test/test_doctests.py",
+      "sha256": "0bc7255e2dddb83fa4e03cc2683419611698c9a621182c4e0f070c948ff315de",
+      "size": 12922
+    },
+    {
+      "path": "pyflakes/test/test_imports.py",
+      "sha256": "adfde8724f0edd81cf6744b880e54df8d4a727aa9da2017f314fff020627e762",
+      "size": 35557
+    },
+    {
+      "path": "pyflakes/test/test_is_literal.py",
+      "sha256": "a63f570923919b3159e9f3918f5dbf1c6b6158fe9137930f7a8ca3de4af0571b",
+      "size": 4573
+    },
+    {
+      "path": "pyflakes/test/test_lazy_imports.py",
+      "sha256": "2c2a632a063121a68519eb8ed19fe808017fbce69914d4303d19882dc6df4010",
+      "size": 3021
+    },
+    {
+      "path": "pyflakes/test/test_match.py",
+      "sha256": "28090af0f8be1c77492cc01963ebbd3d47c9a8e72f0a477cdafbeb57ea8074fb",
+      "size": 2300
+    },
+    {
+      "path": "pyflakes/test/test_other.py",
+      "sha256": "70fb634c2a789765bf787f1c4536e318fa13d6796e8de1aafc20f65ff6e9f241",
+      "size": 54612
+    },
+    {
+      "path": "pyflakes/test/test_type_annotations.py",
+      "sha256": "e2b41d70bd785e2719b1b295ca708293a597a3b48982630278e80723a7a2253c",
+      "size": 24161
+    },
+    {
+      "path": "pyflakes/test/test_undefined_names.py",
+      "sha256": "2f48ac263e2783f8fd31723965b8aac15a99a903bdfcf3ac848f2694539baad9",
+      "size": 23973
+    }
+  ]
+}

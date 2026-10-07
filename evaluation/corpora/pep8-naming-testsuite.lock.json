@@ -1,0 +1,88 @@
+{
+  "schema_version": "1",
+  "dataset": "pep8-naming-testsuite",
+  "revision": "1587bfe4ca73800d64a067580a8f6eb1b8dad209",
+  "url": "https://codeload.github.com/PyCQA/pep8-naming/tar.gz/1587bfe4ca73800d64a067580a8f6eb1b8dad209",
+  "license": "MIT/Expat",
+  "license_source": "gh api repos/PyCQA/pep8-naming/contents/LICENSE?ref=1587bfe4ca73800d64a067580a8f6eb1b8dad209 -> 1132 B, sha256 44bea406fa76e543e465fbfe0ba71029d143ca9a251504fbc8659f3965ab28fb, 第 2 行 'Licensed under the terms of the Expat License'（GitHub 报 NOASSERTION，原文是 Expat/MIT）[2026-10-07]",
+  "tier": "A",
+  "expectation_kind": "pep8-naming-testsuite-marker",
+  "archive_root": "pep8-naming-1587bfe4ca73800d64a067580a8f6eb1b8dad209",
+  "paths": [
+    "testsuite"
+  ],
+  "registry_ref": "pep8-naming-testsuite",
+  "file_count": 14,
+  "files": [
+    {
+      "path": "testsuite/N801.py",
+      "sha256": "66e9969ee87ec35e7c7f4ece56633c45a8e846b47f8021e42e3374f972a53aba",
+      "size": 904
+    },
+    {
+      "path": "testsuite/N802.py",
+      "sha256": "ce489d51bd33916f523f2cf2e6ee99e301468ad1b933dc72a1648556e7df1d85",
+      "size": 1601
+    },
+    {
+      "path": "testsuite/N803.py",
+      "sha256": "56ac1207824528e06f7a07f66d845af2a4ee54987d98735c5efc88b4f839672c",
+      "size": 1682
+    },
+    {
+      "path": "testsuite/N804.py",
+      "sha256": "ad908386065c3d1636df4e4d4b451f6a7020a7d6392d15d32032161d50cf8361",
+      "size": 1799
+    },
+    {
+      "path": "testsuite/N805.py",
+      "sha256": "f2c01ecf0ff21a0c11c647ee4d13d6dbaffeaeee7e658003703c569b4cdbdf4f",
+      "size": 3880
+    },
+    {
+      "path": "testsuite/N806.py",
+      "sha256": "51735b0b85fe248deb092f15691af86621ca317ce56976e829a7b87315ba61e0",
+      "size": 4115
+    },
+    {
+      "path": "testsuite/N807.py",
+      "sha256": "9e171c4ed42620a4841dc9e27c6fce642aa11ffc7a11665be14f547cab3fb84f",
+      "size": 1332
+    },
+    {
+      "path": "testsuite/N808.py",
+      "sha256": "75b953e9f4e61bc86ea29f6b3a0eef56d3955fab2e4dddee5a6176d7e16b7d50",
+      "size": 1184
+    },
+    {
+      "path": "testsuite/N80x.py",
+      "sha256": "a0d0a385d25d31155e22e12a6810567c2aac2a23122ffa5726b1ce3990088c57",
+      "size": 117
+    },
+    {
+      "path": "testsuite/N815.py",
+      "sha256": "75b0ec4192d5e5a861f1b07aa6027dd7e3f16df6c180446a67c6e154efc2908a",
+      "size": 408
+    },
+    {
+      "path": "testsuite/N816.py",
+      "sha256": "b510fab7e49e2c0ec5a44097daa041e04b3056c1b3eefae18d0856abc268474a",
+      "size": 803
+    },
+    {
+      "path": "testsuite/N818.py",
+      "sha256": "83c86a421cc89e83c445a37db40e914b85ed7ff794e516522c652c0e0d85ab99",
+      "size": 587
+    },
+    {
+      "path": "testsuite/N81x.py",
+      "sha256": "8f74ad7b21d57f2604cc75cb2310cd8e3548920c89d77e5ec6533e598bcf3e03",
+      "size": 562
+    },
+    {
+      "path": "testsuite/N8xx.py",
+      "sha256": "855f21867b98ce4f8624779119e69da5c15d07183ba5bfd05e4317af4f36dc1b",
+      "size": 225
+    }
+  ]
+}

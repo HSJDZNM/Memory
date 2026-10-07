@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "dataset": "flake8-logging-tests",
+  "revision": "ee5d482b790ce6b3bddca67f58be9dab8e1e2559",
+  "url": "https://codeload.github.com/adamchainz/flake8-logging/tar.gz/ee5d482b790ce6b3bddca67f58be9dab8e1e2559",
+  "license": "MIT",
+  "license_source": "gh api repos/adamchainz/flake8-logging/contents/LICENSE?ref=ee5d482b790ce6b3bddca67f58be9dab8e1e2559 -> 1069 B, sha256 267d7bf517e5911657852086b7f0fb6ac2f2d84c78ec2d167411f17b49416b39, 首行 'MIT License'（SPDX: MIT）[2026-10-07]",
+  "tier": "A",
+  "expectation_kind": "flake8-logging-snippet-expectation",
+  "archive_root": "flake8-logging-ee5d482b790ce6b3bddca67f58be9dab8e1e2559",
+  "paths": [
+    "tests"
+  ],
+  "registry_ref": "flake8-logging-tests",
+  "file_count": 2,
+  "files": [
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "tests/test_flake8_logging.py",
+      "sha256": "6c419e5319d6adaf9f1f4537218e96957787e6d5ae819ec016354bbe0dbc2e1b",
+      "size": 44387
+    }
+  ]
+}

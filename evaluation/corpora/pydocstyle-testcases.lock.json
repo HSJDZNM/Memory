@@ -1,0 +1,108 @@
+{
+  "schema_version": "1",
+  "dataset": "pydocstyle-testcases",
+  "revision": "8d0cdfc93e86e096bb5753f07dc5c7c373e63837",
+  "url": "https://codeload.github.com/PyCQA/pydocstyle/tar.gz/8d0cdfc93e86e096bb5753f07dc5c7c373e63837",
+  "license": "MIT",
+  "license_source": "gh api repos/PyCQA/pydocstyle/contents/LICENSE-MIT?ref=8d0cdfc93e86e096bb5753f07dc5c7c373e63837 -> 1210 B, sha256 2449878c93af4d10bbdb6618ac26d18877e0b893ecff597532b3867c4458aa93, 首行 'Copyright (c) 2012 GreenSteam'（SPDX: MIT）[2026-10-07]",
+  "tier": "A",
+  "expectation_kind": "pydocstyle-object-expectation",
+  "archive_root": "pydocstyle-8d0cdfc93e86e096bb5753f07dc5c7c373e63837",
+  "paths": [
+    "src/tests/test_cases"
+  ],
+  "registry_ref": "pydocstyle-testcases",
+  "file_count": 18,
+  "files": [
+    {
+      "path": "src/tests/test_cases/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "src/tests/test_cases/all_import.py",
+      "sha256": "72911657db9d4bdb12b2aa6b0915aff9d2b9027f1f98575f7a2cba5115418f5d",
+      "size": 321
+    },
+    {
+      "path": "src/tests/test_cases/all_import_as.py",
+      "sha256": "88c83882909fc51df0418e1cf75e3a8a625a2dd2c1c0d680b1e754b96a53bd28",
+      "size": 322
+    },
+    {
+      "path": "src/tests/test_cases/all_import_aux.py",
+      "sha256": "236ea9be72f004cdfb2924ede994329ea062a9b8f3e12f9cf9c89a4c3df53bca",
+      "size": 48
+    },
+    {
+      "path": "src/tests/test_cases/canonical_google_examples.py",
+      "sha256": "a44196e2f08d6aa71364fd9085442acc9a3838505e34e5315546c4f51b6133ad",
+      "size": 4176
+    },
+    {
+      "path": "src/tests/test_cases/canonical_numpy_examples.py",
+      "sha256": "6531d4bd68ae57db70aa0dc56f6f827f8460efd85a350ec44b6a465ab90006db",
+      "size": 5315
+    },
+    {
+      "path": "src/tests/test_cases/canonical_pep257_examples.py",
+      "sha256": "ac64b3b6e9a5e82518d43e1a3211499b483f006ecc4ad7f04f4bb8e7a06d2050",
+      "size": 1359
+    },
+    {
+      "path": "src/tests/test_cases/capitalization.py",
+      "sha256": "6158fe4ceaf79bb07bca95a1ce62635bb93846cc544bc1fc997a45d102461f5e",
+      "size": 1255
+    },
+    {
+      "path": "src/tests/test_cases/comment_after_def_bug.py",
+      "sha256": "42fa601310146d8e0514056f4558c07942416f6d2cf452129a125ee23c799012",
+      "size": 325
+    },
+    {
+      "path": "src/tests/test_cases/expected.py",
+      "sha256": "4c553bb9b6e1c6a93e016ffcb9a400de264d52b17b8670f290e4b10c0af1a25d",
+      "size": 617
+    },
+    {
+      "path": "src/tests/test_cases/functions.py",
+      "sha256": "008e452e92d5746a225366edaa4f78643a0d8c17e37741af314db11400119f2b",
+      "size": 1485
+    },
+    {
+      "path": "src/tests/test_cases/multi_line_summary_start.py",
+      "sha256": "e1464b64b1ffbc06e7fd74ec3f7b527a0746e592cf0e1bba6b0c981dc197655f",
+      "size": 2053
+    },
+    {
+      "path": "src/tests/test_cases/nested_class.py",
+      "sha256": "2f0c5b3d264235c6fd84b909c431784901c6b314608887f52fbe206a7bf38e5d",
+      "size": 774
+    },
+    {
+      "path": "src/tests/test_cases/noqa.py",
+      "sha256": "37cea909dfb8b8c8bd0b670efd45cf78ffc17e4a6b60db82f8ebbdde27b182c6",
+      "size": 527
+    },
+    {
+      "path": "src/tests/test_cases/sections.py",
+      "sha256": "5f65ac85caf92f30f9baa112cc1c7354dce56bae9c15b941ad820811b0c8bdaf",
+      "size": 12885
+    },
+    {
+      "path": "src/tests/test_cases/superfluous_quotes.py",
+      "sha256": "c97866dcdf4ba126b9a22ebff4f183caf24d62c09b98fb00106b2ab8b6aabe16",
+      "size": 449
+    },
+    {
+      "path": "src/tests/test_cases/test.py",
+      "sha256": "c4d20d7c8f2620b84d28c0c4bbbc405218e065b44bbb7585cf55d0dc05a98b45",
+      "size": 12157
+    },
+    {
+      "path": "src/tests/test_cases/unicode_literals.py",
+      "sha256": "6a5c78a1114d1b7f47eb899aea3f77ed96abd8b983eed51e53ab62dd01366004",
+      "size": 185
+    }
+  ]
+}

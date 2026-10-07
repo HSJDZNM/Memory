@@ -1,0 +1,246 @@
+{
+  "schema_version": "1",
+  "dataset": "pycodestyle-testsuite",
+  "revision": "f39d0999392236970bec1f01cbb670a4f4e088db",
+  "url": "https://codeload.github.com/PyCQA/pycodestyle/tar.gz/f39d0999392236970bec1f01cbb670a4f4e088db",
+  "license": "MIT/Expat",
+  "license_source": "https://raw.githubusercontent.com/PyCQA/pycodestyle/f39d0999392236970bec1f01cbb670a4f4e088db/LICENSE",
+  "tier": "A",
+  "expectation_kind": "pycodestyle-hash-colon",
+  "archive_root": "pycodestyle-f39d0999392236970bec1f01cbb670a4f4e088db",
+  "paths": [
+    "testing/data",
+    "testing/support.py",
+    "tests/test_data.py",
+    "LICENSE"
+  ],
+  "registry_ref": "pycodestyle-testsuite",
+  "file_count": 45,
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "f772295e81af3478d34e88e52d076200230ec7dd6a39e123bc5cb35aa66abdae",
+      "size": 1254
+    },
+    {
+      "path": "testing/data/E10.py",
+      "sha256": "febe145c1a3d11e118473e4ab72210cc5c3947c192afa5ff07facfb0988472a7",
+      "size": 617
+    },
+    {
+      "path": "testing/data/E11.py",
+      "sha256": "4017888b7cf8bb295841c5240a93e97b6e338c5a88f2dbcf82abe82435aa3463",
+      "size": 737
+    },
+    {
+      "path": "testing/data/E12.py",
+      "sha256": "1723c7844a26aa9beee14aa9e6ce568e6abb7406c7bf41f43407419e79bf8c22",
+      "size": 7403
+    },
+    {
+      "path": "testing/data/E12not.py",
+      "sha256": "28692129aefc43729d58ef2776a3b5039a4eae0f13ccd0c4455ad89efcdc370e",
+      "size": 13376
+    },
+    {
+      "path": "testing/data/E20.py",
+      "sha256": "8ec6632720fd59a9b239cdd7422b4d33f982c5f1b93f63fb6e65094093176352",
+      "size": 1354
+    },
+    {
+      "path": "testing/data/E21.py",
+      "sha256": "94871fb758649cf7a44a4cb151dbd8bfc374259292319fd2cac7067c8e627c78",
+      "size": 226
+    },
+    {
+      "path": "testing/data/E22.py",
+      "sha256": "0046c1d2f31ed11d9c7da83b9e702c4f40dcdc49e6ec10705ef6ba4349a18a05",
+      "size": 2126
+    },
+    {
+      "path": "testing/data/E23.py",
+      "sha256": "68e47f1bbe229be9c4cba07f206cd6d315b3303add147bd44f3100a90a162f20",
+      "size": 163
+    },
+    {
+      "path": "testing/data/E24.py",
+      "sha256": "24c672cf3acf3de2ccbeae08f9ed55ee907c2ea58aeb5b56c5a120c22401edd6",
+      "size": 216
+    },
+    {
+      "path": "testing/data/E25.py",
+      "sha256": "8d57eb90c7935e785038a513d3e4ee19dc17721faec18b246104905ef4d7d96d",
+      "size": 1214
+    },
+    {
+      "path": "testing/data/E26.py",
+      "sha256": "f594996b2373c2bb7c4ac5fb34d82c0481b83b56c12760ff203c509aa9604ce1",
+      "size": 1370
+    },
+    {
+      "path": "testing/data/E27.py",
+      "sha256": "32317fbc67e06083100562e226558404b7621b51c25f3a6467dc4c219684fb0d",
+      "size": 733
+    },
+    {
+      "path": "testing/data/E30.py",
+      "sha256": "c4112da33a71d71044d42374c6afdda4951b6cf804245fe1b9f701b53d2eb8f0",
+      "size": 2124
+    },
+    {
+      "path": "testing/data/E30not.py",
+      "sha256": "929e9e8f24aea123f14e3091b554a7db1f06ba3f5c2a2b1ead66831691c3624a",
+      "size": 2752
+    },
+    {
+      "path": "testing/data/E40.py",
+      "sha256": "ccbf64d176ffdcbfcda62eeb0b18f6fdb3ea2d553f53cab3fbb8408eb1a36ed6",
+      "size": 776
+    },
+    {
+      "path": "testing/data/E50.py",
+      "sha256": "213295284acbc14b2c389a2e59c50a8abae48280535785c829a91c8a075ccda0",
+      "size": 3424
+    },
+    {
+      "path": "testing/data/E70.py",
+      "sha256": "8404782276a3fa31920a2ec24ed21bad8ca1be0d35f532a5a81a9c46f938b9c7",
+      "size": 502
+    },
+    {
+      "path": "testing/data/E71.py",
+      "sha256": "e9fb7451692f093301731069fd75c8455260ebee562effe10bf5aa78e6e00e16",
+      "size": 1245
+    },
+    {
+      "path": "testing/data/E72.py",
+      "sha256": "0cc8959ee9447f4134efaa6dadcd051465dfd7390c5b0d975ae2952594ca00da",
+      "size": 1352
+    },
+    {
+      "path": "testing/data/E73.py",
+      "sha256": "003e2baa74a046c343b4ce2644be11acf2521401dead40f87444e19a440fe0fa",
+      "size": 262
+    },
+    {
+      "path": "testing/data/E74.py",
+      "sha256": "3bdfc20a4c6de3c8fc246e428a482a25865fa74ce6ae8ea39870b7e29b20ce8e",
+      "size": 277
+    },
+    {
+      "path": "testing/data/E90.py",
+      "sha256": "c2b4437ade3298f624209ac71b7b1ab24034ac789a2437aa3fa23f05fed2a1c0",
+      "size": 231
+    },
+    {
+      "path": "testing/data/W19.py",
+      "sha256": "b4e2c21b24a6c9bde6456bddd73d3f52af40657a50afbea56e41032e8cbaae0b",
+      "size": 2693
+    },
+    {
+      "path": "testing/data/W29.py",
+      "sha256": "0902bcb7589c566a7ae08e984fbb2ae6b34c0e5544b3450d3dcd23400a9b3d80",
+      "size": 405
+    },
+    {
+      "path": "testing/data/W39.py",
+      "sha256": "e0ec8646eb4ab31a321d4027349d03535551d0909603e93e33a78b1a998a0008",
+      "size": 269
+    },
+    {
+      "path": "testing/data/W60.py",
+      "sha256": "f4842ae7d223a788b4207c14724958496ebb1a53b31232ee15430d5ac0982b64",
+      "size": 330
+    },
+    {
+      "path": "testing/data/crlf.py",
+      "sha256": "1a5786a9852750821034793b0ae37c1bb4e67f898aa1ef16029bccf9d42b2f39",
+      "size": 17
+    },
+    {
+      "path": "testing/data/latin-1.py",
+      "sha256": "62f7297553d4889bd342dec0364bcd108485746c27d1d11542f1c07e34be92a3",
+      "size": 152
+    },
+    {
+      "path": "testing/data/noqa.py",
+      "sha256": "414adca5310303e3648bb279ca0f6dcd6edfbdfad7ba44d19ec3bcebffde3053",
+      "size": 541
+    },
+    {
+      "path": "testing/data/python3.py",
+      "sha256": "227e8313e9e1afbde7aa0aed2027130b8d758b12bb7982e011827de279e2cc2c",
+      "size": 925
+    },
+    {
+      "path": "testing/data/python310.py",
+      "sha256": "d1605e83304ec410631dc393b1b1a727cbdd65c0c2700a7f8e3f24f261544626",
+      "size": 372
+    },
+    {
+      "path": "testing/data/python311.py",
+      "sha256": "8f00d5fcf006d0646ac770626416564f1a65c85bd026df4de2daa49d7d8796c1",
+      "size": 266
+    },
+    {
+      "path": "testing/data/python312.py",
+      "sha256": "5d0eb02df2af7fab289e75a811a6439e66470244e9cdc26e9f4f6e1ec79eac40",
+      "size": 449
+    },
+    {
+      "path": "testing/data/python313.py",
+      "sha256": "84928c84800975f85c37d48115aad57fe90bc919f3c2ced2d6c180d830c234d1",
+      "size": 271
+    },
+    {
+      "path": "testing/data/python314.py",
+      "sha256": "ba192b7cff910f718c6471ae9875b0b4ce2b3cdf5bafb436d134c5096b52182f",
+      "size": 281
+    },
+    {
+      "path": "testing/data/python315.py",
+      "sha256": "4cc6fab6ea0e3714f3e63af701e98b3f1504169de98435e6cdbc1b2c138af030",
+      "size": 145
+    },
+    {
+      "path": "testing/data/python35.py",
+      "sha256": "98ab085189191a54f20e25fdcc0fe6cea9a6a7608cc0db41de67bedb9acdc52c",
+      "size": 76
+    },
+    {
+      "path": "testing/data/python36.py",
+      "sha256": "427baa1faf2b3f93291e385126f4bd3cb053faa8c18aa0491cfe9f3cfa7713c6",
+      "size": 36
+    },
+    {
+      "path": "testing/data/python38.py",
+      "sha256": "6a30ff0fe05209ab0ee7b08cb0e4c68f548e66f05763635aca9c5cb32649fdd6",
+      "size": 758
+    },
+    {
+      "path": "testing/data/python39.py",
+      "sha256": "2a32b76d800340035028b3da0bc0ffb7dd74835e80fd2c995ccb48de85aa0650",
+      "size": 89
+    },
+    {
+      "path": "testing/data/utf-8-bom.py",
+      "sha256": "209d524a55615c5c2e4a5bd1fe525a0608f058d9d144201c64ad5bc57e6bfa19",
+      "size": 83
+    },
+    {
+      "path": "testing/data/utf-8.py",
+      "sha256": "47bd5f7f6b66109b879c34b8edeb50fb522bc07b0a13c570da3d3ed4ec20d9be",
+      "size": 1815
+    },
+    {
+      "path": "testing/support.py",
+      "sha256": "ae7cccab615b7856107d86aaed5402d65fc38a8a36fcac475113b26c3da7e6ee",
+      "size": 997
+    },
+    {
+      "path": "tests/test_data.py",
+      "sha256": "f1972a7fd1e497e2ae4db5f31c1507d1b8a46a9d67cd610d9f8d91772e0de825",
+      "size": 2713
+    }
+  ]
+}
