@@ -20,7 +20,9 @@ Phase 4 文档要求"参数绑定授权与人工门禁"。这里刻意不做任�
 
 - 按 action_id 的重复拦截完全不变，由台账与审计链两处把关（与审批无关）；
 - 次数上限由台账**先原子占用、再执行**，写进审计；用尽 / 过期 / 主体不符一律拒绝；
-- 参数一变、模式匹配不上即拒绝（旧授权自动失效）；
+- 参数一变、模式匹配不上即拒绝（旧授权自动失效）；**模式必须覆盖本次请求的全部参数**：
+  只声明一部分等于给未声明的参数（例如 exec.pwsh 的 workdir / sandbox_permissions）
+  留一张"跟着条子一起放行"的后门——有意放行的参数要显式写成通配模式；
 - 单次绑定仍然是默认档，且不许与模式字段混写（自相矛盾的声明直接拒绝）。
 
 授予者必须持有 repo.approve 权限——审批权与执行权分开，不能自己批自己。
@@ -58,7 +60,11 @@ __all__ = [
 
 # 审批记录有自己的协议轴（与受控执行协议各走各的）：载荷键集合或语义变化时，
 # 只动这个常数——它不再是一个"定义了但没人用"的死常量。
-APPROVAL_SCHEMA_VERSION = "1.0"
+#
+# 1.1：binding=pattern 从"只校验声明过的参数"收紧为"必须覆盖本次请求的全部参数"
+#（语义变更，AGENTS 第 55 条）。1.0 的审批文件没有声明这层意思——谁也不知道签的人
+# 是不是这个意思，所以 1.0 一律拒收，必须显式重签。
+APPROVAL_SCHEMA_VERSION = "1.1"
 SUPPORTED_APPROVAL_SCHEMA_VERSIONS = frozenset({APPROVAL_SCHEMA_VERSION})
 
 # 参数模式名与参数名同口径（稳定标识符）：允许点号，便于将来扩展到嵌套结构。
@@ -293,6 +299,18 @@ def verify_approval(
                 f"参数 {name!r} 的取值不匹配审批模式 {pattern!r}（整串匹配）："
                 "参数一变旧授权自动失效"
             )
+    # 声明的模式全部对上了还不够：**没声明的参数同样是一次调用的组成部分**。
+    # 只校验声明过的那些，等于给未声明的参数（exec.pwsh 的 workdir / sandbox_permissions、
+    # exec.shell 的 description …）留一张"跟着条子一起放行"的后门——而 binding=pattern
+    # 不校验 action_hash，没有任何第二道闸能发现这种放大。
+    undeclared = sorted(set(params) - set(record.param_patterns))
+    if undeclared:
+        hints = "、".join(f"{name}=.*" for name in undeclared)
+        raise ApprovalError(
+            f"本次请求的参数 {undeclared} 没有在审批模式里声明：模式化授权必须覆盖全部参数。"
+            f"有意放行的参数请显式写成通配模式（例如 --param-pattern {hints}）；"
+            "取值类型不支持模式匹配（例如列表）时请改用 binding=action 的单次绑定"
+        )
 
 
 def approval_payload(record: ApprovalRecord) -> dict[str, Any]:

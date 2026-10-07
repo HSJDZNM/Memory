@@ -444,7 +444,13 @@ def write_pattern_approval(
         granted_at=now - timedelta(seconds=1),
         expires_at=now + timedelta(seconds=300),
         max_uses=max_uses,
-        param_patterns={"command": command_pattern},
+        # 模式必须覆盖本次请求的全部参数：这条 pwsh 请求里除了 command 还有
+        # description 与 run_in_background（见 tests/fixtures/agent_events/dsh/）。
+        param_patterns={
+            "command": command_pattern,
+            "description": ".*",
+            "run_in_background": ".*",
+        },
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(record.model_dump_json() + chr(10), encoding="utf-8", newline="")

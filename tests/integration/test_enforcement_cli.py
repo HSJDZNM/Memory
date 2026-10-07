@@ -494,6 +494,8 @@ def test_pattern_approval_makes_a_governed_session_rerunnable(enforcement_paths)
         "3",
         "--param-pattern",
         "command=^print[(]'ok'[)]$",
+        "--param-pattern",
+        "description=.*",
         *paths_args(enforcement_paths),
     )
     assert approved.returncode == 0, approved.stderr
@@ -501,7 +503,11 @@ def test_pattern_approval_makes_a_governed_session_rerunnable(enforcement_paths)
     assert payload["binding"] == "pattern"
     assert payload["max_uses"] == 3
     assert payload["action_hash"] is None, "模式化审批不得绑定运行期生成的调用编号"
-    assert payload["param_patterns"] == {"command": "^print[(]'ok'[)]$"}
+    # 模式必须覆盖本次请求的全部参数：只绑 command 会漏掉 description 那一格。
+    assert payload["param_patterns"] == {
+        "command": "^print[(]'ok'[)]$",
+        "description": ".*",
+    }
 
     def execute(request_path: Path) -> subprocess.CompletedProcess[str]:
         return run_cli(

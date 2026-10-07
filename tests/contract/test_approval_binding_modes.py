@@ -147,7 +147,7 @@ def test_approver_must_hold_the_approval_role(enforcement_paths):
     registry = paths.registry_object()
     request = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
     approval = pattern_approval(
-        request, patterns={"command": COMMAND_PATTERN}, roles=("developer",)
+        request, patterns={"command": COMMAND_PATTERN, "description": ".*"}, roles=("developer",)
     )
 
     outcome, _ = run_pre(paths, "exec.shell", shell_params(), approval=approval, action_id="call-1")
@@ -165,7 +165,7 @@ def test_pattern_approval_lets_the_same_command_run_under_a_new_call_id(enforcem
     paths = EnforcementPaths(enforcement_paths.root / "pattern")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
-    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN}, max_uses=3)
+    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=3)
 
     one, _ = run_pre(paths, "exec.shell", shell_params(), approval=approval, action_id="call-1")
     two, _ = run_pre(paths, "exec.shell", shell_params(), approval=approval, action_id="call-2")
@@ -180,7 +180,7 @@ def test_pattern_approval_rejects_a_command_that_does_not_match_the_pattern(enfo
     paths = EnforcementPaths(enforcement_paths.root / "mismatch")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
-    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN}, max_uses=3)
+    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=3)
 
     # echo hi 本身在白名单内（^echo( .*)?$），但它不匹配审批模式
     outcome, _ = run_pre(
@@ -196,7 +196,7 @@ def test_pattern_approval_stops_at_the_declared_use_limit(enforcement_paths):
     paths = EnforcementPaths(enforcement_paths.root / "quota")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
-    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN}, max_uses=2)
+    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=2)
 
     for index in (1, 2):
         allowed, _ = run_pre(
@@ -217,12 +217,39 @@ def test_pattern_approval_stops_at_the_declared_use_limit(enforcement_paths):
     assert len(EnforcementLedger(paths.ledger).approval_uses(approval.approval_id)) == 2
 
 
+def test_pattern_approval_must_cover_every_request_parameter(enforcement_paths):
+    """只声明一部分参数的"一类调用"条子必须被拒，且理由要说清怎么改。
+
+    真实注册表的 exec.pwsh 除了 command 还有 workdir / timeoutMs / run_in_background /
+    sandbox_permissions 等参数；binding=pattern 不校验 action_hash，因此"只校验声明过的
+    那几个"等于给未声明的参数留一张跟着条子放行的后门（改 workdir 就是改这次调用干什么）。
+    """
+
+    paths = EnforcementPaths(enforcement_paths.root / "coverage")
+    registry = paths.registry_object()
+    first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
+    partial = pattern_approval(first, patterns={"command": COMMAND_PATTERN}, max_uses=3)
+
+    outcome, _ = run_pre(
+        paths, "exec.shell", shell_params(), approval=partial, action_id="call-1"
+    )
+
+    assert outcome.decision.decision is Decision.BLOCK
+    assert outcome.decision.reason_code is ReasonCode.APPROVAL_INVALID
+    detail = outcome.decision.check("approval").detail
+    assert "description" in detail
+    assert "必须覆盖全部参数" in detail
+    # 拒绝理由必须给出"改成什么形态就能过"（AGENTS 第 50 条）
+    assert "--param-pattern description=.*" in detail
+    assert "binding=action" in detail
+
+
 def test_pattern_approval_never_crosses_subjects(enforcement_paths):
     paths = EnforcementPaths(enforcement_paths.root / "subject")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
     approval = pattern_approval(
-        first, patterns={"command": COMMAND_PATTERN}, subject="someone-else"
+        first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, subject="someone-else"
     )
 
     outcome, _ = run_pre(paths, "exec.shell", shell_params(), approval=approval, action_id="call-1")
@@ -235,7 +262,7 @@ def test_expired_pattern_approval_is_refused(enforcement_paths):
     paths = EnforcementPaths(enforcement_paths.root / "expired")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
-    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN}, expired=True)
+    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, expired=True)
 
     outcome, _ = run_pre(paths, "exec.shell", shell_params(), approval=approval, action_id="call-1")
 
@@ -250,7 +277,7 @@ def test_the_same_action_id_can_never_run_twice_even_with_pattern_approval(enfor
     paths = EnforcementPaths(enforcement_paths.root / "replay")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
-    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN}, max_uses=5)
+    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=5)
 
     one, _ = run_pre(paths, "exec.shell", shell_params(), approval=approval, action_id="call-1")
     assert one.decision.decision is not Decision.BLOCK
@@ -267,7 +294,7 @@ def test_approval_quota_is_returned_when_the_audit_is_unwritable(enforcement_pat
     paths = EnforcementPaths(enforcement_paths.root / "release")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
-    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN}, max_uses=1)
+    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=1)
 
     blocked, _ = run_pre(
         paths, "exec.shell", shell_params(), approval=approval, sink=NullAuditSink()
@@ -335,7 +362,7 @@ def test_contradictory_or_unknown_approval_fields_are_refused(tmp_root):
             binding="action",
             action_hash="h",
             action_id="i",
-            param_patterns={"command": COMMAND_PATTERN},
+            param_patterns={"command": COMMAND_PATTERN, "description": ".*"},
         )
     # 单次绑定必须声明 action_hash / action_id
     with pytest.raises(ApprovalError):

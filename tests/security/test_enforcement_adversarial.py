@@ -241,7 +241,7 @@ def test_tampered_approval_file_is_detected(enforcement_paths, tmp_root):
 
 def test_unknown_approval_fields_are_rejected(tmp_root):
     payload = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "approval_id": "a",
         "action_hash": "sha256:x",
         "action_id": "a",

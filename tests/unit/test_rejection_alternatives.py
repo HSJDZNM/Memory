@@ -211,7 +211,9 @@ def test_pattern_approval_mismatch_shows_the_covered_form_and_still_allows_a_mat
 
     paths = EnforcementPaths(tmp_root / "alt-approval-pattern")
     spec = shell_spec(paths)
-    approval = pattern_approval(spec, patterns={"command": "^print[(]'ok'[)]$"})
+    approval = pattern_approval(
+        spec, patterns={"command": "^print[(]'ok'[)]$", "description": ".*"}
+    )
 
     blocked = run(
         paths,
