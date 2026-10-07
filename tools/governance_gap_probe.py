@@ -1028,6 +1028,12 @@ def check_g03(env: Env) -> Check:
 
 
 # ---------------------------------------------------------------------------- G04
+def _pwsh_params(command: str) -> dict[str, str]:
+    """exec.pwsh 这条探针请求的**全部**参数（请求与审批声明共用同一份，不许各写一套）。"""
+
+    return {"command": command, "description": "probe"}
+
+
 def _pwsh_request(env: Env, *, name: str, action_id: str, command: str) -> Path:
     return env.write_request(name, {
         "action_id": action_id,
@@ -1037,7 +1043,7 @@ def _pwsh_request(env: Env, *, name: str, action_id: str, command: str) -> Path:
         "tool_id": "exec.pwsh",
         "subject": "local-user",
         "roles": ["owner"],
-        "params": {"command": command, "description": "probe"},
+        "params": _pwsh_params(command),
     })
 
 
@@ -1046,11 +1052,16 @@ def _approve_flags(env: Env) -> set[str]:
     return set(re.findall(r"(--[a-z][a-z0-9-]*)", run.stdout + run.stderr))
 
 
-def _pattern_approval_attempts(flags: set[str],
-                              value: str = ".*pytest.*") -> list[list[str]]:
+def _pattern_approval_attempts(flags: set[str], params: Mapping[str, object], *,
+                              command_value: str) -> list[list[str]]:
     """按 approve --help 里真实存在的开关拼出"模式化审批"的候选命令（不猜接口）。
 
-    value 是 --param-pattern 里 command 的整串正则（调用方按被测命令给）。
+    params 是**本次请求自己的**参数（与 _pwsh_request 同源），command_value 是给
+    command 的整串正则。审批协议 1.1 起，模式化审批必须覆盖请求里的每一个参数：
+    没声明的参数会跟着条子一起放行，因此 precheck 一律 approval_invalid
+    （见 approvals.verify_approval 的覆盖检查）。所以这里从请求推导要声明的集合
+    （command 用被测正则，其余参数写 .*），而不是手写一条 "command="：
+    探针要跟着审批协议的口径走，请求以后加参数时也不会悄悄签出一张用不了的条子。
     """
 
     attempts: list[list[str]] = []
@@ -1061,12 +1072,17 @@ def _pattern_approval_attempts(flags: set[str],
     pattern_flag = next((item for item in ("--param-pattern", "--pattern")
                          if item in flags), None)
     base_extra = [max_use_flag, "5"] if max_use_flag else []
+    # 每个参数一条 --param-pattern：顺序按请求参数的名字稳定排序，读数可复现。
+    covered: list[str] = []
+    if pattern_flag:
+        for name in sorted(params):
+            covered.extend([pattern_flag, f"{name}={command_value if name == 'command' else '.*'}"])
     if mode_flag and pattern_flag:
-        attempts.append([mode_flag, "pattern", pattern_flag, f"command={value}", *base_extra])
+        attempts.append([mode_flag, "pattern", *covered, *base_extra])
     if mode_flag:
         attempts.append([mode_flag, "pattern", *base_extra])
     if pattern_flag:
-        attempts.append([pattern_flag, f"command={value}", *base_extra])
+        attempts.append([*covered, *base_extra])
     if "--approve-pattern" in flags:
         attempts.append(["--approve-pattern", *base_extra])
     return attempts
@@ -1103,7 +1119,9 @@ def check_g04(env: Env) -> Check:
 
     flags = _approve_flags(env)
     check.facts["approve_flags"] = sorted(flags)
-    attempts = _pattern_approval_attempts(flags)
+    attempts = _pattern_approval_attempts(
+        flags, _pwsh_params(command_ok), command_value=".*pytest.*"
+    )
     pattern_supported = False
     approval_path = env.work / "approval-g04-pattern.json"
     used_attempt: list[str] = []
@@ -1195,7 +1213,11 @@ def check_g04(env: Env) -> Check:
     def sign_replay(target: Path, approval_name: str) -> bool:
         """给 replay_req 签一张审批：模式化审批要覆盖它自己的命令（整串匹配）。"""
 
-        candidates = _pattern_approval_attempts(flags, ".*") if pattern_supported else [[]]
+        candidates = (
+            _pattern_approval_attempts(flags, _pwsh_params(replay_command), command_value=".*")
+            if pattern_supported
+            else [[]]
+        )
         for extra in candidates:
             trial = env.enforcement(["approve", "--request", str(replay_req), "--out",
                                      str(target), "--granted-by", "alice",
@@ -1255,7 +1277,9 @@ def check_g04(env: Env) -> Check:
             limited = env.work / "approval-g04-limited.json"
             # 这次被测命令是 Write-Output probe-g04，参数模式必须覆盖它（整串匹配）。
             limit_attempt: list[str] = []
-            for extra in _pattern_approval_attempts(flags, ".*"):
+            for extra in _pattern_approval_attempts(
+                flags, _pwsh_params(replay_command), command_value=".*"
+            ):
                 # 去掉候选里自带的次数上限，只留本次要测的 --max-uses 1。
                 trimmed = list(extra)
                 if max_use_flag in trimmed:
