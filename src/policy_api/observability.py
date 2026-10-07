@@ -436,9 +436,17 @@ def verify_seal(log: RequestLog, seal: Mapping[str, Any]) -> Tuple[str, ...]:
     if seal.get("seal_schema_version") != "1.0":
         issues.append("锚的协议版本未知；拒绝按不确定的语义校验")
     current = log.summary()
-    if int(seal.get("records", -1)) != current["records"]:
+    declared = seal.get("records")
+    if not isinstance(declared, int) or isinstance(declared, bool):
+        # 锚是**外部输入**（对象存储 / 工单 / 另一台主机上的另一个文件）：records 的类型
+        # 不可信。以前 `int(seal.get("records", -1))` 会抛 TypeError（null）/ ValueError
+        # （非数字字符串）——"返回问题列表（空 = 一致）"的契约被一个坏锚变成未处理异常。
         issues.append(
-            f"记录数不一致：锚 {seal.get('records')} / 当前 {current['records']}"
+            "锚的记录数不是整数；拒绝按不确定的语义校验（这份锚可能不是本服务写的）"
+        )
+    elif declared != current["records"]:
+        issues.append(
+            f"记录数不一致：锚 {declared} / 当前 {current['records']}"
             "（尾部被删或被追加）"
         )
     if seal.get("chain_digest") != current["chain_digest"]:

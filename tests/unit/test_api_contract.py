@@ -1305,6 +1305,24 @@ def test_request_log_disabled_fails_closed(tmp_root: Path) -> None:
     assert memory_only.read_back() == ()
 
 
+@pytest.mark.parametrize("records", [None, "abc", []])
+def test_verify_seal_reports_a_malformed_records_field_instead_of_crashing(
+    tmp_root: Path, records: object
+) -> None:
+    """锚是外部输入：`records` 类型不对时要返回问题，而不是抛异常。
+
+    历史缺陷（medium 台账 M1，observability.py:394）：`int(seal.get("records", -1))` 对 JSON
+    `null` 抛 TypeError、对非数字字符串抛 ValueError——"返回问题列表（空 = 一致）"的契约
+    被一个坏锚变成未处理异常。
+    """
+
+    log = RequestLog(tmp_root / "audit" / "service.jsonl")
+    issues = verify_seal(
+        log, {"seal_schema_version": "1.0", "records": records, "chain_digest": None}
+    )
+    assert any("记录数" in item for item in issues)
+
+
 def test_summary_derives_every_reading_from_one_snapshot(
     tmp_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
