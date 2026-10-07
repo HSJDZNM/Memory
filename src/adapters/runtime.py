@@ -72,6 +72,10 @@ __all__ = [
 AGENT_RUNTIME_SCHEMA_VERSION = "1.0"
 DEFAULT_BREAKER_LIMIT = 50
 DEFAULT_WINDOW_SECONDS = 60
+# 判定超时后**还活着**的判定线程上限。Python 没有线程取消原语（见 `_evaluate` 的注释）：
+# 超时只能"放弃"，线程会跑到自然结束。不设上限就等于每超时一次泄漏一个线程；到上限之后
+# 继续开新线程只会让运行时越来越不可信，所以按失败关闭拒绝。
+ABANDONED_EVALUATION_LIMIT = 4
 
 # 面向 Agent 的受控原因码。Adapter 只能从这里取，不能自己编——
 # 否则"错误响应能被 Agent 理解"就退化成每个 Adapter 各说各话。
@@ -530,6 +534,8 @@ class AgentRuntime:
         self.enforcers = dict(enforcers or {})
         self.evidence_providers = dict(evidence_providers or {})
         self._memory: list[dict[str, Any]] = []
+        # 被放弃的判定线程（超时后仍在跑的那些）：只用于记账与上限，见 `_evaluate`。
+        self._abandoned: list[threading.Thread] = []
         self._lock = threading.RLock()
 
     # ------------------------------------------------------------------ 台账
@@ -1322,11 +1328,36 @@ class AgentRuntime:
         worker.start()
         worker.join(budget_ms / 1000)
         if worker.is_alive():
+            # 线程杀不掉（Python 没有取消原语）：这次判定按失败关闭返回，但那个线程会继续跑到
+            # 自然结束。三件事因此写下来并被执行——
+            #   1. 它的返回值**一律丢弃**：`box` 是本次调用私有的，超时之后没有任何读者；
+            #   2. 判定器必须**线程安全**：被放弃之后不得再改共享状态（平台自己的 `evaluate`
+            #      是纯函数：读规则集与上下文、返回结果，不写任何东西）；
+            #   3. 放弃的线程要**记账**：同一时刻还活着的超过 `ABANDONED_EVALUATION_LIMIT`
+            #      就说明判定器已经卡死，继续开新线程只会无限泄漏——按失败关闭拒绝。
+            live = self._track_abandoned(worker)
+            if live > ABANDONED_EVALUATION_LIMIT:
+                raise PolicyTimeout(
+                    f"策略判定超过内部预算 {budget_ms} ms，且已有 {live} 个判定线程没有退出："
+                    "判定器已经卡死，拒绝继续开新线程（避免无限泄漏）"
+                )
             raise PolicyTimeout(f"策略判定超过内部预算 {budget_ms} ms")
         error = box.get("error")
         if error is not None:
             raise error
         return box["result"]
+
+    def _track_abandoned(self, worker: threading.Thread) -> int:
+        """记下被放弃的判定线程，返回当前**还活着**的数量（含刚记下的这个）。
+
+        已经结束的线程顺手清掉：这个清单只回答"此刻有几个判定线程还在跑"，不做历史账
+        （历史读数属于审计，不属于运行时内存）。
+        """
+
+        with self._lock:
+            self._abandoned = [item for item in self._abandoned if item.is_alive()]
+            self._abandoned.append(worker)
+            return len(self._abandoned)
 
     def _record(
         self,
