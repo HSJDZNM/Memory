@@ -12,6 +12,7 @@ from policy.models import (
     Decision,
     Evidence,
     RequiredAction,
+    Rule,
     RuleSet,
     Severity,
     SkippedRule,
@@ -20,7 +21,7 @@ from policy.models import (
     expected_decision,
 )
 
-from conftest import make_context, make_rule
+from conftest import make_context, make_rule, rule_document
 
 
 def rules(*items: object) -> RuleSet:
@@ -212,6 +213,38 @@ def test_warning_rule_with_approval_is_not_downgraded_to_warning() -> None:
 
     assert result.decision is Decision.BLOCK
     assert result.required_action is RequiredAction.APPROVAL
+
+
+def test_approval_gate_does_not_depend_on_whether_evidence_was_passed() -> None:
+    """门禁由**范围命中**决定：不带证据包也不许把审批要求静默吞掉。
+
+    证据类 checker 在"只给上下文"的路径上会进 extra_skipped。门禁若从 evaluated 派生，
+    同一条规则就会"带证据包 → block + approval"、"不带 → 普通 allow"——同一份规则两套结论，
+    与"一旦范围命中，审批标记就转成 block + approval，与 violations 无关"的承诺相反。
+    """
+
+    # 证据类 checker 的规则体必须与 checker 同名（Rule 自己会在构造期拒绝写错的组合）
+    evidence_rule = Rule.model_validate(
+        rule_document(
+            id="STYLE-900",
+            enforcement={
+                "type": "deterministic",
+                "checker": "style_lint",
+                "requires_approval": True,
+            },
+            rule={"style_lint": {"tool": "ruff", "codes": ["E501"]}},
+        )
+    )
+    rule_set = rules(evidence_rule)
+
+    without_evidence = evaluate(rule_set, make_context())
+
+    assert without_evidence.required_action is RequiredAction.APPROVAL
+    assert without_evidence.decision is Decision.BLOCK
+    assert without_evidence.requires_approval is True
+    # "这次没取证"照旧如实记在 skipped_rules 里：门禁与"查没查"是两件事，谁也不顶替谁。
+    assert [item.rule_id for item in without_evidence.skipped_rules] == ["STYLE-900@1"]
+    assert without_evidence.to_decision_dict()["required_action"] == "approval"
 
 
 def test_unmatched_approval_rule_does_not_block() -> None:

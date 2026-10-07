@@ -167,8 +167,13 @@ def evaluate(
     violations.sort(key=lambda item: item.sort_key)
     pending_findings.sort(key=lambda item: item.sort_key)
 
+    # 审批门禁由**范围命中**决定，与"这次有没有带证据包"无关：只给上下文的调用路径会把
+    # 证据类 checker 的规则挪进 extra_skipped，如果门禁从 evaluated 派生，同一条规则就会
+    # "带证据包 → block + approval"、"不带 → 普通 allow" —— 同一份规则两套结论，而文档承诺的是
+    # "一旦范围命中，审批标记就转成 block + approval，与 violations 无关"（tech-detail 01 章）。
+    # 用 matched（scope 命中）而不是 evaluated（本次真的判了）：门禁是前置条件，不是发现。
     approval_rules = sorted(
-        rule.canonical_id for rule in evaluated if rule.enforcement.requires_approval
+        rule.canonical_id for rule in matched if rule.enforcement.requires_approval
     )
     required_action = RequiredAction.APPROVAL if approval_rules else None
 
