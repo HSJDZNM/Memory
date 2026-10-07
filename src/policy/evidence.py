@@ -348,7 +348,11 @@ class Blocker(StrictModel):
     validator_version: str = Field(min_length=1)
     status: ValidatorStatus
     reason: str = Field(min_length=1)
-    checkers: Tuple[str, ...] = ()
+    # **必须非空**（与 PendingImplementation 同口径）：引擎只按 checker 查 blocker
+    # （EvidenceBundle.blocker_for），一个没有 checker 的 blocker 会让 blocked=True 而永远
+    # 命不中任何规则——载荷宣称有一个失败关闭点，实际谁都不会被它挡住。那种形态在这里
+    # 直接不可表示，于是"失败关闭点是不是真的生效"不再取决于每个构造点的自觉。
+    checkers: Tuple[str, ...] = Field(min_length=1)
 
     @property
     def validator(self) -> str:

@@ -282,6 +282,43 @@ def test_critical_validator_failure_blocks_even_without_findings() -> None:
     assert "关键验证器不可用" in result.violations[0].message
 
 
+def test_a_blocker_without_checkers_is_unrepresentable() -> None:
+    """没有 checker 的 blocker 直接不可表示。
+
+    引擎只按 checker 查 blocker（EvidenceBundle.blocker_for），所以那种形态会让
+    blocked=True 而永远命不中任何规则——载荷宣称有一个失败关闭点，实际谁都不会被它挡住，
+    正是"看不懂就当通过"的变体。与 PendingImplementation 同口径：checkers 必须非空。
+    """
+
+    with pytest.raises(ValidationError):
+        Blocker(
+            validator_id="py.docstring",
+            validator_version="1.0",
+            status=ValidatorStatus.TIMEOUT,
+            reason="超过超时 1000ms",
+        )
+
+
+def test_every_blocker_is_reachable_by_the_checkers_it_declares() -> None:
+    """反向不变量：bundle 里的每个 blocker 都能被它声明的 checker 找回来。"""
+
+    evidence = bundle(
+        validators=(record(status=ValidatorStatus.TIMEOUT),),
+        blockers=(
+            Blocker(
+                validator_id="py.docstring",
+                validator_version="1.0",
+                status=ValidatorStatus.TIMEOUT,
+                reason="超过超时 1000ms",
+                checkers=("missing_docstring",),
+            ),
+        ),
+    )
+
+    assert evidence.blocked is True
+    assert evidence.blocker_for("missing_docstring") is not None
+
+
 def test_checker_without_any_evidence_is_fail_closed() -> None:
     rule = make_checker_rule("DOC-001")
     rules = RuleSet(rules=(rule,), source_paths=())
