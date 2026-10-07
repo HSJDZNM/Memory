@@ -67,6 +67,43 @@ def seeded_store() -> ChunkStore:
     return store
 
 
+def test_transaction_control_statements_follow_the_store_error_contract(monkeypatch) -> None:
+    """BEGIN / COMMIT / ROLLBACK 失败必须落 StoreError，且不许盖掉原始异常（复核发现）。"""
+
+    store = ChunkStore(":memory:")
+    try:
+        # 没有活动事务时 COMMIT 会真的失败：sqlite3.OperationalError -> StoreError。
+        assert not store._raw.in_transaction
+        with pytest.raises(StoreError):
+            store._run_control("COMMIT")
+
+        # ROLLBACK 失败：原始异常原样抛出，回滚失败只作为 note 附上。
+        real_control = store._run_control
+
+        def flaky(sql: str) -> None:
+            if sql.strip().upper().startswith("ROLLBACK"):
+                raise StoreError("模拟 ROLLBACK 失败")
+            real_control(sql)
+
+        with monkeypatch.context() as patcher:
+            patcher.setattr(store, "_run_control", flaky)
+            with pytest.raises(RuntimeError) as failure:
+                with store.transaction():
+                    raise RuntimeError("原始失败")
+        notes = getattr(failure.value, "__notes__", [])
+        assert any("ROLLBACK" in note for note in notes), notes
+
+        # 回滚失败这件事本身不可修复：连接会停在事务里——这是必须能被读出来的后果，
+        # 不是"静默恢复"。只有真的回滚成功之后，句柄才回到可用的干净状态。
+        assert store._raw.in_transaction is True
+        store._raw.execute("ROLLBACK")
+        assert store._raw.in_transaction is False
+        store.upsert_document(make_document("doc_after"))
+        assert store.document("doc_after") is not None
+    finally:
+        store.close()
+
+
 def test_replace_chunks_rolls_back_when_a_write_fails(monkeypatch) -> None:
     """中途失败必须整体回滚：不许留下负序号或缺 FTS 行的半套状态。"""
 

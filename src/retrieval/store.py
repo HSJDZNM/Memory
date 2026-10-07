@@ -293,16 +293,29 @@ class ChunkStore:
             finally:
                 self._depth -= 1
             return
-        self._raw.execute("BEGIN IMMEDIATE")
+        self._run_control("BEGIN IMMEDIATE")
         self._depth = 1
         try:
             try:
                 yield
-            except BaseException:
-                self._raw.execute("ROLLBACK")
+            except BaseException as error:
+                try:
+                    self._run_control("ROLLBACK")
+                except StoreError as rollback_error:
+                    # 回滚失败不许盖掉原始异常：类型与因果链不变，失败只作为 note 附上。
+                    error.add_note(f"另外：ROLLBACK 也失败了：{rollback_error}")
                 raise
             else:
-                self._raw.execute("COMMIT")
+                try:
+                    self._run_control("COMMIT")
+                except StoreError:
+                    # COMMIT 失败后连接仍停在事务里，后续 autocommit 语句会静默加入它：
+                    # 尽力回滚把连接交回干净状态，然后如实抛出提交失败。
+                    try:
+                        self._run_control("ROLLBACK")
+                    except StoreError:
+                        pass
+                    raise
         finally:
             self._depth = 0
 
@@ -311,6 +324,18 @@ class ChunkStore:
             return self._raw.execute(sql, tuple(parameters))
         except sqlite3.Error as error:
             raise StoreError(f"索引库操作失败: {error} ({sql.strip().split()[0]})") from error
+
+    def _run_control(self, sql: str) -> None:
+        """事务控制语句（BEGIN / COMMIT / ROLLBACK）也走 StoreError 契约。
+
+        它们旧实现直接 execute：失败时抛的是裸 sqlite3.Error，而调用方（CLI、indexer）
+        按 StoreError 归类成"配置或执行错误"，裸异常会以另一种方式逃出去。
+        """
+
+        try:
+            self._raw.execute(sql)
+        except sqlite3.Error as error:
+            raise StoreError(f"索引库事务失败: {error} ({sql.split()[0]})") from error
 
     def _initialize(self) -> None:
         try:
