@@ -382,12 +382,20 @@ def _read_current(workspace: Path, repo_path: str) -> str:
 
 
 def _relative(path: Path, root: Path) -> str:
-    """仓库相对路径（POSIX 分隔符）；等于根目录时返回空串。"""
+    """仓库相对路径（POSIX 分隔符）；**等于根目录时返回空串**。
+
+    `PurePath.relative_to` 在两路径相同时给的是 "."，不是空串。`_copy_workspace` 靠这个空串
+    拼顶层子项的相对路径（`f"{relative_dir}/{name}" if relative_dir else name`）："." 会让每一项
+    变成 "./.git" 这种写法，而排除 glob（`.git/**`）只认 ".git" 与 ".git/"——顶层被排除的目录
+    因此整棵被复制进影子副本（.git / node_modules / .venv …），既拖慢取证，又让验证器看见
+    声明明确要排除的文件。
+    """
 
     try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
+        relative = path.resolve().relative_to(root.resolve()).as_posix()
     except (OSError, ValueError):  # pragma: no cover - os.walk 只会给出 root 之下的路径
         return path.as_posix()
+    return "" if relative == "." else relative
 
 
 def _excluded(relative: str, exclude: Sequence[str]) -> bool:
