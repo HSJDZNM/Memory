@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Optional, Protocol, Tuple
+from typing import Any, Callable, Final, Mapping, Optional, Protocol, Tuple
 
 from pydantic import ValidationError
 
@@ -73,6 +73,24 @@ class StepResult:
     state: GraphState
     label: str
     terminal: bool = False
+
+
+# 与上限有关的失败码：报告里的 `limit_reached` 只由它们置真。
+#
+# 为什么要有这个字段（它此前永远是 False）：`RunReport` 是给人与机器读**这一轮为什么停下**的地方，
+# 而"因为撞上限而停下"与"因为平台不可用 / 审批缺失而停下"是两类完全不同的事实——
+# 前者说明这条任务需要更小的步长或更高的预算，后者说明环境或人生出了问题。
+# 只按 failure.code 推导，节点与引擎都不必各自记得去置这个布尔值。
+LIMIT_FAILURE_CODES: Final[frozenset[FailureCode]] = frozenset(
+    {
+        FailureCode.LIMIT_REPAIR_ROUNDS,
+        FailureCode.LIMIT_TOOL_CALLS,
+        FailureCode.LIMIT_NODE_RUNS,
+        FailureCode.LIMIT_TOKENS,
+        FailureCode.LIMIT_WALL_CLOCK,
+        FailureCode.LIMIT_COST,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -416,6 +434,10 @@ class BaseEngine:
             failure=final.failure,
             elapsed_ms=elapsed,
             checkpoints=self.executor.checkpoints,
+            # 只由终止失败码推导：不靠调用方记得置这个布尔值（此前它永远是 False）。
+            limit_reached=(
+                final.failure is not None and final.failure.code in LIMIT_FAILURE_CODES
+            ),
         )
 
 

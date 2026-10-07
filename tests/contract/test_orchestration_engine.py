@@ -202,6 +202,43 @@ def test_auto_engine_reports_the_engine_it_actually_used(tmp_root) -> None:
     assert report.engine == name
 
 
+def test_limit_reached_is_derived_from_the_terminal_failure_code(tmp_root) -> None:
+    """"因为撞上限而停下"是一类要能读出来的事实（这个字段此前永远是 False）。
+
+    它只按终止失败码推导：节点与引擎都不必各自记得去置它，读报告的人也不必反推
+    "needs_human 到底是预算不够还是审批缺失"。
+    """
+
+    limited = next(item for item in SCENARIOS if item.name == "repair-limit-reached")
+    run = run_graph(
+        tmp_root,
+        name="limit-flag",
+        task=task_spec("limit-flag-task"),
+        client=limited.client(),
+        author=limited.author(),
+        runner=limited.runner(),
+        limits=limited.limits,
+    )
+    assert run.report.failure is not None
+    assert run.report.failure.code is FailureCode.LIMIT_REPAIR_ROUNDS
+    assert run.report.limit_reached is True
+    assert run.report.to_payload()["limit_reached"] is True
+
+    # 反向：正常跑完的一轮不该被标成"撞了上限"
+    happy = SCENARIOS[0]
+    done = run_graph(
+        tmp_root,
+        name="limit-flag-ok",
+        task=task_spec("limit-flag-ok-task"),
+        client=happy.client(),
+        author=happy.author(),
+        runner=happy.runner(),
+        limits=happy.limits,
+    )
+    assert done.report.status is RunStatus.COMPLETED
+    assert done.report.limit_reached is False
+
+
 def test_repair_limit_is_reported_with_its_failure_code(tmp_root) -> None:
     """上限击穿不是"静默停下"：报告里必须带失败码，状态是 needs_human。"""
 
