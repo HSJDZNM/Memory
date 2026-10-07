@@ -1287,6 +1287,47 @@ def test_probe_rejects_a_decision_it_cannot_parse(monkeypatch: pytest.MonkeyPatc
     assert result["violations"][0]["evidence"]["value"] == "invalid_response"
 
 
+def test_probe_block_payload_carries_the_event_correlation_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """阻断载荷必须带 request_id / trace_id：否则这次 policy_unavailable 回指不到事件。
+
+    历史缺陷（medium 台账 M1，probe.py:160）：`_unavailable` 把 request_id 写死 `""`、
+    trace_id 写死 None——调用方的日志里有 request_id，而这个 block 说"不知道是谁"，
+    一次失败的服务调用因此无法与具体事件对齐。
+    """
+
+    from policy_api.probe import HttpApiAdapter
+
+    def failing_post(path: str, payload: object) -> tuple[int, dict]:
+        return 503, {"error": {"code": "knowledge_unavailable", "detail": "服务忙"}}
+
+    adapter = object.__new__(HttpApiAdapter)
+    adapter.client = SimpleNamespace(post=failing_post)  # type: ignore[assignment]
+    monkeypatch.setattr(
+        HttpApiAdapter,
+        "to_policy_context",
+        lambda self, event, workspace=None: SimpleNamespace(
+            principal=None,
+            file="src/a.py",
+            layer="service",
+            language="python",
+            module=None,
+            operation=None,
+            dependencies=(),
+            agent=None,
+            project=None,
+        ),
+    )
+    event = SimpleNamespace(request_id="it-probe-block", trace_id="trace-42")
+
+    result = adapter.decide(event)
+
+    assert result["decision"] == "block"
+    assert result["request_id"] == "it-probe-block"
+    assert result["trace_id"] == "trace-42"
+
+
 def test_probe_forwards_base_dir_to_the_inner_json_adapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
