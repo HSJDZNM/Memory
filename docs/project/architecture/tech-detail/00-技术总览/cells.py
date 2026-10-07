@@ -270,7 +270,12 @@ for package in PACKAGES:
 
 
 def framework_importers(framework):
-    """真的导入了某个框架的文件清单：含 importlib.import_module("框架…") 这种延迟导入。"""
+    """**平台运行时代码（`src/`）**里真的导入了某个框架的文件清单。
+
+    含 importlib.import_module("框架…") 这种延迟导入。范围刻意只到 `src/`：`tools/` 与 `tests/`
+    是开发期仪器（`api_loop` / `orchestration_loop` 会起真实 uvicorn 跑协议闭环），它们用 Web
+    框架是**有意为之**，不属于"平台运行时代码不许依赖 Web 框架"这句话的射程。
+    """
 
     def touches(node):
         if isinstance(node, ast.Import):
@@ -299,11 +304,14 @@ workflow = framework_importers("langgraph")
 
 print(pad("检查项", 24) + "结果")
 print("-" * 88)
-print(pad("Web 框架导入点", 24) + (", ".join(web) or "（无）"))
-print(pad("工作流框架导入点", 24) + (", ".join(workflow) or "（无）"))
+print(pad("Web 框架导入点（src/）", 24) + (", ".join(web) or "（无）"))
+print(pad("工作流框架导入点（src/）", 24) + (", ".join(workflow) or "（无）"))
 print()
 
-# Web 框架只允许出现在传输层（policy_api）；工作流框架只允许出现在编排层的引擎适配文件。
+# **在平台运行时代码（src/）里**：Web 框架只允许出现在传输层（policy_api），
+# 工作流框架只允许出现在编排层的引擎适配文件。这两句话的射程就是上面那次扫描的范围——
+# 写成无限定词的话，`tools/api_loop.py` / `tools/orchestration_loop.py` 里那两处
+# `import uvicorn`（开发期闭环要起真实服务器）会让它当场变成假话。
 assert web and all(path.startswith("src/policy_api/") for path in web), web
 assert not [path for path in web if path.startswith("src/policy/")], web
 assert workflow == ["src/orchestration/langgraph_engine.py"], workflow
