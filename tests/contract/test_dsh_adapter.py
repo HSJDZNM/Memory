@@ -917,6 +917,37 @@ def test_a_relative_path_without_a_session_cwd_is_refused(dsh_config_path, dsh_p
         assert "cwd" in str(error.value), fixture
 
 
+def test_the_read_scope_containment_follows_the_path_flavour_case_semantics(
+    dsh_config_path, dsh_project
+) -> None:
+    """只读范围的大小写口径跟路径实现走，不自己 lower()。
+
+    WindowsPath 的比较不区分大小写，PurePosixPath 区分。旧实现两边都 lower()：在区分大小写的
+    文件系统上，`/srv/App/x.py` 会被判成 `/srv/app` 以内，尾巴再被报成「仓库内路径 x.py」——
+    一次越界读按工作区内的文件被记录、被判层。与 `adapters.models._within` 同一口径。
+    """
+
+    from adapters.dsh.adapter import _resolve_read_scope
+
+    config = load_config(dsh_config_path)
+    anchor = Path(config.project_root).resolve()
+
+    # 正例：真正的子路径照常解析成仓库相对路径
+    assert _resolve_read_scope("src/x.py", cwd=str(anchor), config=config, tool="read") == "src/x.py"
+
+    # 反例：只差大小写的**兄弟目录**。Windows 上它们本来就是同一个目录（不敏感），
+    # POSIX 上是两棵树——判据是"路径实现怎么说"，不许由 lower() 决定。
+    sibling = anchor.parent / (
+        anchor.name.upper() if anchor.name.islower() else anchor.name.lower()
+    )
+    target = sibling / "x.py"
+    if anchor in target.parents:  # Windows：同一个目录，越界判定不成立
+        assert _resolve_read_scope(str(target), cwd=None, config=config, tool="read") == "x.py"
+    else:  # POSIX：兄弟目录，必须拒绝
+        with pytest.raises(DshEventError):
+            _resolve_read_scope(str(target), cwd=None, config=config, tool="read")
+
+
 def test_a_relative_path_is_resolved_against_the_session_cwd(dsh_config_path, dsh_project):
     """反例对照：给了 cwd 时相对路径按 cwd 解析——子目录会话落到子目录里。"""
 
