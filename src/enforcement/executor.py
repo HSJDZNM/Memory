@@ -171,17 +171,17 @@ class ControlledExecutor:
                 notes=notes,
             )
 
-        grant = pre.grant
-        assert grant is not None
-        try:
-            self.ledger.consume_grant(grant, now=moment)
-        except GrantError as error:
+        # 驱动存在性检查必须在**消费授权之前**：DRIVER_UNAVAILABLE 是"平台跑不了"，
+        # 没有任何副作用发生；先消费会把一张仍然有效的单次授权烧掉，修好驱动之后
+        # 同一个动作再也执行不了（凭据已作废，用户必须重新走一遍审批）。
+        driver = self.drivers.get(spec.id) or self.drivers.get(spec.driver.value)
+        if driver is None:
             record = self._record(
                 request,
                 spec,
                 status=ExecutionStatus.REFUSED,
-                reason_code=ReasonCode.GRANT_REUSED,
-                detail=str(error),
+                reason_code=ReasonCode.DRIVER_UNAVAILABLE,
+                detail=f"没有为 {spec.driver.value} 注册执行驱动：平台不假装执行过",
                 started=moment,
                 finished=moment,
             )
@@ -203,14 +203,17 @@ class ControlledExecutor:
                 notes=notes,
             )
 
-        driver = self.drivers.get(spec.id) or self.drivers.get(spec.driver.value)
-        if driver is None:
+        grant = pre.grant
+        assert grant is not None
+        try:
+            self.ledger.consume_grant(grant, now=moment)
+        except GrantError as error:
             record = self._record(
                 request,
                 spec,
                 status=ExecutionStatus.REFUSED,
-                reason_code=ReasonCode.DRIVER_UNAVAILABLE,
-                detail=f"没有为 {spec.driver.value} 注册执行驱动：平台不假装执行过",
+                reason_code=ReasonCode.GRANT_REUSED,
+                detail=str(error),
                 started=moment,
                 finished=moment,
             )

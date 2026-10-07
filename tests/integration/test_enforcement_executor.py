@@ -197,6 +197,51 @@ def test_block_never_calls_the_driver(enforcement_paths):
     assert spies["exec.process"].calls == 0
 
 
+def test_driver_unavailable_does_not_burn_the_single_use_grant(enforcement_paths):
+    """平台跑不了的动作没有任何副作用，不能因此作废一张仍然有效的单次授权。
+
+    旧顺序是先 consume_grant 再查驱动：DRIVER_UNAVAILABLE 把授权烧掉，修好驱动之后
+    同一个动作再也执行不了（凭据已作废，用户必须重新走一遍审批）。
+    """
+
+    seed(enforcement_paths)
+    registry, sink, ledger, executor, spies = build(enforcement_paths)
+    request = make_action(registry, enforcement_paths, "fs.edit", edit_params())
+    pre = pre_execute(request, registry=registry, ledger=ledger, sink=sink)
+    assert pre.decision.decision is Decision.ALLOW
+    grant = pre.decision.grant
+    assert grant is not None
+
+    without_driver = ControlledExecutor(
+        ledger=ledger,
+        drivers={},
+        sink=sink,
+        max_grant_ttl_seconds=registry.max_grant_ttl_seconds,
+    )
+    refused = without_driver.execute(
+        request,
+        spec=registry.tool("fs.edit"),
+        pre=pre.decision,
+        workspace=enforcement_paths.workspace,
+    )
+
+    assert refused.record.reason_code is ReasonCode.DRIVER_UNAVAILABLE
+    assert refused.final.outcome is FinalOutcome.BLOCKED
+    assert (
+        EnforcementLedger(enforcement_paths.ledger).grant_used(grant.grant_id) is False
+    ), "平台跑不了不该消费授权"
+
+    # 反真空：授权仍然可用，装上驱动之后同一个动作照常执行（且只执行一次）。
+    retry = executor.execute(
+        request,
+        spec=registry.tool("fs.edit"),
+        pre=pre.decision,
+        workspace=enforcement_paths.workspace,
+    )
+    assert retry.record.status is ExecutionStatus.EXECUTED
+    assert spies["fs.edit"].calls == 1
+
+
 def test_executor_refuses_a_pre_decision_without_a_grant(enforcement_paths):
     seed(enforcement_paths)
     registry, sink, ledger, executor, spies = build(enforcement_paths)
