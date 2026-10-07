@@ -279,3 +279,21 @@ def test_the_default_text_output_is_a_cross_file_contract_and_did_not_change(tmp
     out = capsys.readouterr().out
     assert "HITS: 1 / declared=" in out
     assert "reading_context" not in out
+
+def test_reading_context_is_built_only_for_json(monkeypatch) -> None:
+    """默认文本路径不构建 reading_context（树摘要 + git 子进程）；--json 才算。"""
+
+    module = _load()
+    calls: list = []
+
+    def fake_build(*, scope: Path) -> dict:
+        calls.append(scope)
+        return {"status": "available"}
+
+    monkeypatch.setattr(module, "build_reading_context", fake_build)
+
+    assert module.run([]) == 0
+    assert calls == [], "默认输出那条 HITS: 机器行不需要树摘要，算一遍就是白花"
+
+    assert module.run(["--json"]) == 0
+    assert len(calls) == 1
