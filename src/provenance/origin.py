@@ -271,6 +271,16 @@ def payload_is_well_formed(payload: Mapping[str, Any]) -> bool:
         return False
     if not isinstance(obs.get("verified"), bool) or not isinstance(obs.get("run_scoped"), bool):
         return False
+    # 形状对不等于值合法：与 Origin.__post_init__ 的硬规则对齐。一份 owner="" /
+    # object.value=null / observation.result=null 的 JS 载荷能过"恰好是契约形状"这一关，
+    # 却会被 Python 构造器拒绝——跨语言校验器的意义正是在这里拦下它，而不是等下游
+    # 重建 Origin 时才炸。
+    for value in (payload.get("owner"), obj.get("value"), obj.get("source"), obs.get("result")):
+        if not isinstance(value, str) or not value:
+            return False
+    # verified_at 必须来自真实调用：类型是字符串且非空（构造器与 to_payload 都保证非空）。
+    if not isinstance(obs.get("verified_at"), str) or not obs.get("verified_at"):
+        return False
     return True
 
 

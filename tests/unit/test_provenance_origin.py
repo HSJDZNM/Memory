@@ -144,6 +144,39 @@ def test_the_payload_is_exactly_the_contract_shape():
     assert payload_is_well_formed(broken_verified) is False
 
 
+def test_the_cross_language_validator_matches_the_python_hard_rules():
+    """形状对不等于值合法：payload_is_well_formed 必须与 Origin 的硬规则同口径（复核发现）。
+
+    否则一份 owner="" / object.value=null / observation.result=null 的 JS 载荷能过校验，
+    却在 Python 侧重建成 Origin 时才炸——那正是这个跨语言校验器要拦下的东西。
+    """
+
+    payload = _good().to_payload()
+    assert payload_is_well_formed(payload)
+
+    def mutations():
+        yield lambda item: item.update({"owner": ""})
+        yield lambda item: item.update({"owner": None})
+        yield lambda item: item["object"].update({"value": None})
+        yield lambda item: item["object"].update({"value": ""})
+        yield lambda item: item["object"].update({"source": None})
+        yield lambda item: item["observation"].update({"result": None})
+        yield lambda item: item["observation"].update({"result": ""})
+        yield lambda item: item["observation"].update({"verified_at": ""})
+        yield lambda item: item["observation"].update({"verified_at": None})
+        yield lambda item: item["observation"].update({"verified_at": 7})
+
+    for mutate in mutations():
+        candidate = json.loads(json.dumps(payload))
+        mutate(candidate)
+        assert payload_is_well_formed(candidate) is False, candidate
+
+    # 与构造器同口径：这些取值连 Origin 都构造不出来（同一个判据的两侧）。
+    for field, value in (("owner", ""), ("object_value", None), ("result", "")):
+        with pytest.raises(OriginError):
+            _good(**{field: value})
+
+
 def test_unknown_origin_is_the_only_landing_place_when_verification_fails():
     origin = unknown_origin(reason="核验判据不成立：没有指名任何输入")
     assert origin.origin == "unknown_origin"
