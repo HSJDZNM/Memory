@@ -387,6 +387,26 @@ def _violations_from(payload: Mapping[str, Any]) -> Tuple[ViolationRef, ...]:
     return tuple(items)
 
 
+def _mapping_items(
+    value: Any, *, where: str, code: FailureCode
+) -> Tuple[Mapping[str, Any], ...]:
+    """载荷里的"对象列表"：给了就必须是序列，形状不对是**契约违规**。
+
+    为什么不像文件里别处那样"不是 Mapping 就跳过"：这里跳过等于把"平台回了一份读不懂的报告"
+    读成"这次没有验证器/没有阻断点"——契约违规被降级成了正常结论。旧实现更糟：
+    `for item in report.get("validators", []) or []` 遇到标量直接抛 TypeError，
+    绕过 ResilientPolicyClient 的失败计数（熔断与降级因此瞎掉）。
+    """
+
+    if value is None:
+        return ()
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise PlatformUnavailableError(
+            f"{where} 必须是对象列表，得到 {type(value).__name__}", code=code
+        )
+    return tuple(item for item in value if isinstance(item, Mapping))
+
+
 def _parse_validation(payload: Mapping[str, Any]) -> ValidationResult:
     try:
         return parse_decision(payload)
@@ -663,8 +683,11 @@ class ApiPolicyClient:
             )
         validators = tuple(
             str(item.get("validator", ""))
-            for item in report.get("validators", []) or []
-            if isinstance(item, Mapping)
+            for item in _mapping_items(
+                report.get("validators"),
+                where="validate 响应的 report.validators",
+                code=FailureCode.VALIDATOR_UNAVAILABLE,
+            )
         )
         blockers = tuple(
             ":".join(
@@ -674,8 +697,11 @@ class ApiPolicyClient:
                     str(item.get("reason", "")),
                 ]
             )
-            for item in body.get("blockers", []) or []
-            if isinstance(item, Mapping)
+            for item in _mapping_items(
+                body.get("blockers"),
+                where="validate 响应的 blockers",
+                code=FailureCode.VALIDATOR_UNAVAILABLE,
+            )
         )
         decision_block = body.get("decision")
         evidence = report.get("evidence")

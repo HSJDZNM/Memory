@@ -27,6 +27,7 @@ from orchestration.client import (
     ApiPolicyClient,
     EvaluateCall,
     ResilientPolicyClient,
+    ValidateCall,
 )
 from orchestration.errors import CircuitOpenError, PlatformUnavailableError
 from orchestration.models import (
@@ -513,6 +514,41 @@ def test_validate_without_a_decision_blocks_the_run_over_the_real_client(tmp_roo
         ROUTE_PATHS["evaluate"],
         ROUTE_PATHS["validate"],
     )
+
+
+def test_validate_with_a_scalar_validators_field_is_a_contract_violation(tmp_root) -> None:
+    """200 响应里 validators 是标量：契约违规 → 显式不可用。
+
+    旧实现直接 `for item in report.get("validators", []) or []`：标量抛 TypeError，
+    绕过 ResilientPolicyClient 的失败计数（熔断与降级因此瞎掉），而不是按"拿不到就是拿不到"处理。
+    """
+
+    echo = echo_validate_response()
+
+    def malformed(request: Any) -> Tuple[int, Mapping[str, Any]]:
+        status, body = echo(request)
+        body["report"]["validators"] = 1  # 标量：既不是列表也不是 None
+        return status, body
+
+    opener = FakeOpener(
+        {
+            ROUTE_PATHS["readiness"]: readiness_response(),
+            ROUTE_PATHS["evaluate"]: echo_decision_response(),
+            ROUTE_PATHS["retrieve"]: echo_retrieval_response(),
+            ROUTE_PATHS["validate"]: malformed,
+        }
+    )
+    client = ApiPolicyClient(
+        "http://127.0.0.1:9", token="test-token", opener=opener, timeout=2.0
+    )
+
+    with pytest.raises(PlatformUnavailableError) as error:
+        client.validate(
+            ValidateCall(request_id="req-1", context={"file": TARGET_PATH}, principal={})
+        )
+
+    assert error.value.code is FailureCode.VALIDATOR_UNAVAILABLE
+    assert "对象列表" in str(error.value)
 
 
 def test_api_client_against_an_unused_port_fails_closed() -> None:
