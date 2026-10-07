@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
-from .checkpoint import JsonCheckpointStore
+from .checkpoint import JsonCheckpointStore, build_record
 from .client import ApiPolicyClient, ResilientPolicyClient
 from .engines import StepExecutor
 from .errors import OrchestrationError
@@ -207,9 +207,9 @@ def self_check(args: argparse.Namespace) -> int:
     try:
         store = JsonCheckpointStore(directory)
         state = empty_state("self-check", limits=RunLimits())
-        record = __import__("orchestration.checkpoint", fromlist=["build_record"]).build_record(
-            state, engine="self-check", sequence=1
-        )
+        # 相对导入：这个包被改名 / 被 vendored 时，绝对包名会指向别处（或不存在），
+        # 而同一文件上面每一行导入都是相对的——同一份文件里两种口径，坏的那一种只在改名时发作。
+        record = build_record(state, engine="self-check", sequence=1)
         store.save(record)
         loaded = store.load("self-check")
         ok = loaded.state_digest == record.state_digest
