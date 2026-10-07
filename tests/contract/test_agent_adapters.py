@@ -359,6 +359,31 @@ def test_dot_slash_spellings_of_the_workspace_root_still_resolve_to_the_root() -
     # "..." 既不是根写法也不是逃逸：它保持成自己的名字，不得被折叠成 "."
     assert normalize_event_path("...", workspace=workspace) == "..."
 
+def test_path_containment_follows_the_path_flavour_case_semantics(tmp_root: Path) -> None:
+    """包含性判定的大小写口径必须跟路径实现走，不能自己 lower()。
+
+    WindowsPath 的比较不区分大小写（PROJ 与 proj 是同一个目录），PurePosixPath 区分。
+    旧实现两边都 lower()：在**区分大小写**的文件系统上，只差大小写的兄弟目录会被判成
+    「在工作区内」，一个范围外的绝对路径于是按范围内的文件被评估（并被报成 secret.py）。
+    """
+
+    from adapters.models import _within
+
+    anchor = tmp_root / "proj"
+    anchor.mkdir()
+    sibling = tmp_root / "PROJ" / "secret.py"
+
+    inside = anchor in sibling.parents  # 路径实现自己给出的答案
+    assert _within(sibling, anchor) == inside
+
+    if inside:
+        # Windows：同一个目录，按工作区相对路径报出来
+        assert normalize_event_path(str(sibling), workspace=anchor) == "secret.py"
+    else:
+        # POSIX：兄弟目录，越界一律拒绝
+        with pytest.raises(AdapterEventError):
+            normalize_event_path(str(sibling), workspace=anchor)
+
 
 def test_phase_six_glob_double_star_slash_matches_zero_directories() -> None:
     """`**/` 匹配零个或多个目录：层与语言的映射不得漏掉根目录文件。
