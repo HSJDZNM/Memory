@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, FrozenSet, Mapping, Optional
 
@@ -107,17 +108,23 @@ class JsonAdapter(Adapter):
         # （base.Adapter.to_policy_context：那里 language 已由配置声明解析出来），
         # 而不是每个 Adapter 各自提前算一份——"同一语义的改动在不同 Adapter 里
         # 得到不同的 PolicyContext"正是 G6 的成因。
-        return parse_canonical_event(raw_event, agent_id=self.agent_id)
+        event = parse_canonical_event(raw_event, agent_id=self.agent_id)
+        # 工具别名在**构造期**归一：`AgentEvent` 是 frozen dataclass，事后用
+        # `object.__setattr__` 强写会破坏它"不可变"的承诺——(1) 对象若已被放进 set/dict，
+        # hash/eq 当场失效；(2) `super().validate_event(...)` 紧接着抛错时，调用方手里留着
+        # 一个**改了一半**的对象；(3) 校验本身不需要它：`spec_for` 内部已经会归一工具名。
+        # 需要的是"返回给调用方的事件是规范形态"，`dataclasses.replace` 正好只做这件事。
+        if event.tool is not None:
+            canonical = self.canonical_tool_name(event.tool)
+            if canonical != event.tool:
+                event = replace(event, tool=canonical)
+        return event
 
     def validate_event(
         self, event: AgentEvent, *, workspace: Optional[Path] = None
     ) -> None:
-        """工具名先按别名表归一，再走公共校验。"""
+        """只校验，不改写调用方手里的对象。"""
 
-        if event.tool is not None:
-            canonical = self.canonical_tool_name(event.tool)
-            if canonical != event.tool:
-                object.__setattr__(event, "tool", canonical)
         super().validate_event(event, workspace=workspace)
 
     def response_from_decision(

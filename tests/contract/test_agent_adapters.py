@@ -775,6 +775,29 @@ def test_generic_json_response_accepts_the_pending_findings_channel() -> None:
     assert response["executable"] is True
 
 
+def test_the_generic_json_adapter_normalises_the_tool_alias_at_construction() -> None:
+    """别名归一发生在构造期：`validate_event` 只校验，不改写调用方手里的 frozen 事件。
+
+    `AgentEvent` 是 frozen dataclass。旧写法在 `validate_event` 里用 `object.__setattr__` 强写：
+    对象若已被放进 set/dict，hash/eq 当场失效；`super().validate_event(...)` 紧接着抛错时，
+    调用方手里还会留着一个改了一半的对象。校验本身也不需要它（`spec_for` 内部会归一工具名）。
+    """
+
+    from adapters.loader import load_adapter
+
+    adapter = load_adapter("generic-json", root=REPO_ROOT)
+    workspace = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
+
+    # ① 返回给调用方的事件是规范形态（别名已经归一）
+    event = adapter.to_policy_event(_event_document(tool="Edit"), workspace=workspace)
+    assert event.tool == "edit"
+
+    # ② validate_event 不改写调用方手里的对象
+    raw = parse_canonical_event(_event_document(tool="Edit"), agent_id="generic-json")
+    adapter.validate_event(raw, workspace=workspace)
+    assert raw.tool == "Edit"
+
+
 def test_generic_json_response_rejects_a_malformed_violation_entry() -> None:
     """不是映射的 violations 条目必须拒绝，不能静默丢掉。
 
