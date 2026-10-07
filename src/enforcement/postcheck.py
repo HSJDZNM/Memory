@@ -215,14 +215,6 @@ def collect_evidence(
     )
 
 
-def _change_expectation(spec: ToolSpec, request: ActionRequest) -> bool:
-    """这次动作是否**应当**改变目标文件。"""
-
-    if spec.effect.value != "file_write":
-        return False
-    return True
-
-
 def validate(
     request: ActionRequest,
     spec: ToolSpec,
