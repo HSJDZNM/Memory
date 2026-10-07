@@ -14,6 +14,7 @@ import yaml
 
 from policy.engine import evaluate
 from policy.loader import (
+    LANGUAGE_DEPENDENT_CHECKERS,
     LoaderError,
     RuleFileError,
     collect_rule_files,
@@ -61,6 +62,21 @@ def test_missing_directory_is_a_loader_error(tmp_root: Path) -> None:
         load_rule_set([tmp_root / "nope"], repo_root=tmp_root)
 
     assert "规则目录不存在" in str(error.value)
+
+
+def test_the_language_gate_reads_the_dispatch_table_not_a_second_copy() -> None:
+    """N14 的判据只有一份：加载期门槛直接读分派表那一侧的声明。
+
+    手抄的第二份与分派表逐字相同，靠的是"新增依赖类 checker 时记得两处一起改"——
+    忘了同步，门槛就静默失效，而那正是这条门槛存在的理由。
+    """
+
+    from policy import checkers
+
+    assert LANGUAGE_DEPENDENT_CHECKERS is checkers.LANGUAGE_DEPENDENT_CHECKERS
+    assert checkers.LANGUAGE_DEPENDENT_CHECKERS <= checkers.SUPPORTED_CHECKERS, (
+        "语言门槛的集合必须是分派表里真实存在的 checker"
+    )
 
 
 def test_rule_directory_that_cannot_be_walked_fails_closed(

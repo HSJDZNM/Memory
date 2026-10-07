@@ -45,6 +45,7 @@ from .models import (
 __all__ = [
     "CONTEXT_CHECKERS",
     "EVIDENCE_CHECKERS",
+    "LANGUAGE_DEPENDENT_CHECKERS",
     "SUPPORTED_CHECKERS",
     "UNPROVEN_CHANGED_TEXT",
     "UNPROVEN_DEPENDENCY_TOKENS",
@@ -61,6 +62,15 @@ __all__ = [
 
 # 仅凭上下文即可判定的 checker（Phase 0–4 的契约；Phase 5 起默认证据来自 AST / 依赖图）。
 CONTEXT_CHECKERS = frozenset({"forbidden_dependency"})
+
+# N14 的**唯一**声明处：判定完全建立在"依赖集"这一个维度上的 checker。
+#
+# 为什么单独一个集合而不是复用 CONTEXT_CHECKERS：两者今天的取值相同，**理由不同**——
+# 前者说"仅凭上下文就能判"，后者说"依赖集只在语言被显式解析出来时才可能非空"。
+# 加载期的 language 门槛（policy.loader.assert_language_declared）直接读这一个集合：
+# 手抄第二份的代价是"新增依赖类 checker 时忘了同步"，而那会让门槛静默失效——
+# 正是这条门槛存在的理由（AGENTS 第 44 条）。
+LANGUAGE_DEPENDENT_CHECKERS = frozenset({"forbidden_dependency"})
 
 # 必须有验证器证据的 checker；没有证据时代码把规则记进 skipped_rules 并写明原因。
 EVIDENCE_CHECKERS = frozenset(
