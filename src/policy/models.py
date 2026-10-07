@@ -200,10 +200,14 @@ def normalize_repo_path(value: str, *, allow_root: bool = False) -> str:
 
 
 def _assert_path_charset(normalized: str, *, raw: str) -> None:
-    """字符集校验：ASCII 走白名单，非 ASCII 逐字排除控制 / 格式 / 空白类。
+    """字符集校验：ASCII 走白名单，非 ASCII 先排除不可见类、再按 NFKC 形态复核同一份白名单。
 
     分成两段而不是"一个正则搞定"，是因为两段的理由不同：
-    ASCII 侧是白名单（Shell 与命令行元字符必须拒绝），非 ASCII 侧是黑名单（中文目录名必须放行）。
+    ASCII 侧是白名单（Shell 与命令行元字符必须拒绝），非 ASCII 侧还要放行中文目录名。
+
+    但"非 ASCII 就安全"是错的：全角分号、全角斜杠、全角美元、全角竖线、希腊问号的 NFKC
+    形态**正是**白名单要挡的那些字符。下游只要规范化一次（检索层对自由文本就做 NFKC）
+    或把路径映射回 ASCII，它们就变回元字符——那时这条校验就是"看起来在管、实际什么都没挡"。
     """
 
     for char in normalized:
@@ -214,6 +218,17 @@ def _assert_path_charset(normalized: str, *, raw: str) -> None:
         if unicodedata.category(char) in _REPO_PATH_UNSAFE_CATEGORIES:
             raise PolicyContextError(
                 "路径包含不可见的非 ASCII 字符（控制 / 格式 / 空白类）: " + repr(raw)
+            )
+        folded = unicodedata.normalize("NFKC", char)
+        if folded != char:
+            # 判据不是"折叠结果危不危险"，而是**这份校验看到的路径必须与消费方用到的路径一致**：
+            # 只要一个字符会被 NFKC 改写，规范化之后就是另一个路径（全角斜杠会变成路径分隔符，
+            # 全角分号/竖线会变回元字符），而白名单是在**改写前**的形态上过的。
+            # 实测：仓库 885 个受控文件里没有一个 NFKC 不稳定的路径，所以这条不误伤真实文件；
+            # 真要用兼容字符命名，报错会告诉你改成它的 NFKC 形式。
+            raise PolicyContextError(
+                "路径必须 NFKC 稳定（这个字符会被规范化改写成另一个字符，"
+                f"于是校验的路径与使用的路径不是同一条）：{char!r} -> {folded!r}；{raw!r}"
             )
 
 
