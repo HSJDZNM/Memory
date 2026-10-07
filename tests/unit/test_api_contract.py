@@ -1135,6 +1135,39 @@ def test_serve_refuses_to_start_with_an_unparsable_base_url(tmp_root: Path) -> N
     assert serve(config_path, root=anchor) == 2
 
 
+def test_probe_forwards_base_dir_to_the_inner_json_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_build_event` 必须把 base_dir 传给进程内构造的 JsonAdapter。
+
+    历史缺陷（medium 台账 M1，probe.py:106）：不传 base_dir 时 JsonAdapter 用 `Path.cwd()`
+    当锚点，同一份事件换个启动目录就得到不同的路径事实——"经 API 判定"与"本地判定"从事件
+    解析这一步就开始分叉，而这正是这个 Adapter 声称要证明的等价性。
+    """
+
+    from policy_api.probe import HttpApiAdapter
+
+    captured: dict = {}
+
+    class CapturingJsonAdapter:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def _build_event(self, raw_event: object) -> str:
+            return "parsed"
+
+    monkeypatch.setattr("adapters.json_adapter.JsonAdapter", CapturingJsonAdapter)
+    adapter = object.__new__(HttpApiAdapter)
+    adapter.manifest = "manifest"  # type: ignore[assignment]
+    adapter.config = "config"  # type: ignore[assignment]
+    adapter.config_path = "config-path"
+    adapter._base_dir = tmp_path
+
+    assert adapter._build_event({}) == "parsed"
+    assert captured["base_dir"] == tmp_path
+    assert captured["config_path"] == "config-path"
+
+
 def test_probe_unavailable_payload_is_a_consumable_decision_payload() -> None:
     """失败关闭载荷必须能被平台自己的协议消费方解析，版本只能从核心取值。
 
