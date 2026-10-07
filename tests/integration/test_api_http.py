@@ -787,6 +787,56 @@ def test_retrieve_fails_closed_when_the_index_file_disappears(tmp_root: Path) ->
 # --------------------------------------------------------------------------- 验证器
 
 
+def test_validate_bounds_the_follow_up_decision_with_the_remaining_budget(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`include_decision=true` 时，合并证据后的判定也要在预算内。
+
+    历史缺陷（medium 台账 M1，runtime.py:792）：后续 `evaluate` 跑在 `run_with_budget` **之外**
+    ——流水线有 504 兜着，这一步没有；一个慢引擎可以让 validate 路由的总耗时无上限，
+    而响应里的 elapsed 也只报了流水线那一段。
+    """
+
+    import time as clock_module
+
+    from validators import pipeline as pipeline_module
+
+    from policy_api import runtime as runtime_module
+
+    runtime, client, _ = build_api(tmp_root)
+
+    class InstantReport:
+        """让流水线瞬间返回：被测的是**后续判定**那一段的预算。"""
+
+        bundle = ()
+        blockers = ()
+
+        def to_payload(self) -> Mapping[str, Any]:
+            return {"evidence": [], "served_checkers": []}
+
+    monkeypatch.setattr(
+        pipeline_module, "run_pipeline", lambda request, config: InstantReport()
+    )
+
+    def slow_evaluate(*args: Any, **kwargs: Any) -> Any:
+        clock_module.sleep(2)  # 远超下面给的预算
+        return None
+
+    monkeypatch.setattr(runtime_module, "evaluate", slow_evaluate)
+    response = client.post(
+        "/v1/validation/evaluate",
+        headers=auth(),
+        json={
+            **envelope("it-validate-budget", context=GOOD_CONTEXT),
+            "target": "src/shop/order_service.py",
+            "budget_ms": 300,
+        },
+    )
+
+    assert response.status_code == 504, response.json()
+    assert error_code(response) == "validate_timeout"
+
+
 def test_validate_runs_the_real_pipeline_and_returns_a_decision(tmp_root: Path) -> None:
     """验证路由跑**真流水线**：报告带 schema_version、依赖事实与 served_checkers，判定一并给出。
 

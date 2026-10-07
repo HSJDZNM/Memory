@@ -57,7 +57,7 @@ from .models import (
 )
 from .observability import Metrics, RequestLog, RequestLogEntry
 from .services import LoadedTenant, TenantStore
-from .timeout import run_with_budget
+from .timeout import Elapsed, run_with_budget
 
 __all__ = [
     "ROUTES",
@@ -830,7 +830,28 @@ class ApiRuntime:
                 f"验证器流水线超出预算 {budget_ms}ms；未产出证据（不把缺失当通过）",
                 retryable=True,
             )
-        result = evaluate(rules, context, evidence=report.bundle) if request.include_decision else None
+        result = None
+        if request.include_decision:
+            # 合并证据后的判定**也要在预算内**：它跑的是同一个引擎、读的是刚产出的证据，
+            # 不受约束的话 validate 路由的总耗时就没有上限（预算只管住了流水线那一段），
+            # 而 504 是这条路由对"超出预算"的唯一口径。剩余预算 = 总预算 − 流水线已用。
+            remaining_ms = max(1, budget_ms - int(elapsed.milliseconds))
+            result, decision_elapsed = run_with_budget(
+                lambda: evaluate(rules, context, evidence=report.bundle),
+                budget_ms=remaining_ms,
+                clock=self.clock,
+            )
+            if result is None:
+                raise ApiError(
+                    ErrorCode.VALIDATE_TIMEOUT,
+                    f"合并证据后的判定超出剩余预算 {remaining_ms}ms；未给出结论（不伪造 allow）",
+                    retryable=True,
+                )
+            # 响应里的耗时是**这条路由的总耗时**，不是流水线那一段的
+            elapsed = Elapsed(
+                milliseconds=elapsed.milliseconds + decision_elapsed.milliseconds,
+                timed_out=False,
+            )
         report_payload = dict(report.to_payload())
         truncated = 0
         evidence_items = list(report_payload.get("evidence") or [])
