@@ -317,7 +317,11 @@ def _render_decision(payload: Mapping[str, Any]) -> str:
 
 
 def _registry(args: argparse.Namespace) -> int:
-    loaded = load_registry(args.registry, approved_path=args.approved)
+    # --approve 只读当前注册表：旧产物可能是别的版本、也可能已经漂移，
+    # 读它会把"改注册表 → 重新审核"这条恢复路径自己堵死（加载期会拒绝旧版本 / 漂移）。
+    loaded = load_registry(
+        args.registry, approved_path=None if args.approve else args.approved
+    )
     registry = loaded.registry
 
     if args.approve:

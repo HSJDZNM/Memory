@@ -48,7 +48,9 @@ __all__ = [
     "write_approved",
 ]
 
-APPROVED_SCHEMA_VERSION = "1.0"
+# 1.1：已审核清单新增 governance_digest（角色 / 权限 / 默认值 / 审批角色表的摘要）。
+# 加键 = 改协议（AGENTS 第 55 条）：1.0 的清单证明不了治理表被审核过，拒收、必须重签。
+APPROVED_SCHEMA_VERSION = "1.1"
 DEFAULT_REGISTRY_PATH = "registry/tool-registry.yaml"
 DEFAULT_APPROVED_PATH = "registry/tool-registry.approved.json"
 
@@ -163,9 +165,72 @@ class ToolRegistry:
                 return spec
         return None
 
+    @property
+    def governance_payload(self) -> dict[str, Any]:
+        """非工具段：协议版本、修订号、权限表、角色表、审批角色与默认值。
+
+        逐工具的 schema_hash 只覆盖工具自己的描述；这些表决定"谁能调用什么"，
+        必须另有摘要才能被审核（改 roles 里一条授权 = 改授权面，工具描述一个字没变）。
+        """
+
+        payload = self.registry_payload()
+        payload.pop("tools", None)
+        return payload
+
+    @property
+    def governance_digest(self) -> str:
+        """治理表（角色 / 权限 / 默认值 / 审批角色）的摘要。"""
+
+        return digest_of(self.governance_payload)
+
+    def registry_drift_reason(self) -> str:
+        """注册表级（非单个工具）漂移的原因；空串 = 没有注册表级问题。
+
+        判定顺序与覆盖关系：
+        1. governance_digest 缺失或不一致 → 治理表改动（或证明不了被审核过）；
+        2. 治理表一致、逐工具哈希也一致，但 registry_digest != identity → identity 里
+           还有两边都没覆盖到的字段被改动。这一条是**覆盖关系的兜底自检**：
+           registry_payload() 的每个字段都被"治理表 + 逐工具 approved_payload"复现，
+           所以正常情况下身份必然相等，不等就是有字段没被这两道检查看住。
+        """
+
+        metadata = self.approved_metadata
+        if not metadata:
+            # 清单整体缺失：逐工具的"已审核清单里没有这条工具"已经挡住了，这里不重复报。
+            return ""
+        reviewed_governance = metadata.get("governance_digest")
+        if not isinstance(reviewed_governance, str) or not reviewed_governance:
+            return (
+                "已审核清单没有登记治理表摘要（governance_digest）："
+                "证明不了角色 / 权限 / 默认值与审批角色被审核过，按未审核处理；"
+                "请重新运行 enforcement.cli registry --approve --reviewer <name>"
+            )
+        if reviewed_governance != self.governance_digest:
+            return (
+                "角色 / 权限 / 默认值 / 审批角色表与已审核摘要不一致"
+                f"（当前 {self.governance_digest}，已审核 {reviewed_governance}）："
+                "这些表决定谁能调用什么，逐工具的 schema_hash 覆盖不到它们，必须重新审核"
+            )
+        reviewed_identity = metadata.get("registry_digest")
+        if (
+            isinstance(reviewed_identity, str)
+            and reviewed_identity
+            and reviewed_identity != self.identity
+            and all(self.approved.get(spec.id) == spec.schema_hash for spec in self.tools)
+        ):
+            return (
+                "注册表身份与已审核摘要不一致，而治理表与全部工具哈希都一致"
+                f"（当前 {self.identity}，已审核 {reviewed_identity}）："
+                "说明身份覆盖了这两道检查都没看住的字段，拒绝按已审核继续使用"
+            )
+        return ""
+
     def approval_reason(self, spec: ToolSpec) -> str:
         """工具不可用时的原因；可用时返回空串。"""
 
+        drift = self.registry_drift_reason()
+        if drift:
+            return f"{spec.id}: {drift}"
         recorded = self.approved.get(spec.id)
         if recorded is None:
             return (
@@ -412,6 +477,7 @@ def load_approved_document(path: Path | str | None) -> tuple[Mapping[str, Any], 
     return {
         "approved_schema_version": schema_version,
         "registry_digest": document.get("registry_digest"),
+        "governance_digest": document.get("governance_digest"),
         "reviewed_by": document.get("reviewed_by"),
         "approved_at": document.get("approved_at"),
         "tools": hashes,
@@ -452,6 +518,7 @@ def approve_registry(
         "approved_schema_version": APPROVED_SCHEMA_VERSION,
         "registry_version": registry.version,
         "registry_digest": registry_digest or registry.identity,
+        "governance_digest": registry.governance_digest,
         "reviewed_by": reviewer.strip(),
         "approved_at": to_timestamp(utc_now()),
         "tools": {

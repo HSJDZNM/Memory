@@ -25,6 +25,7 @@ from enforcement.registry import (
     approve_registry,
     load_registry,
     registry_document_from_mapping,
+    write_approved,
 )
 from enforcement_support import (
     ENFORCEMENT_APPROVED,
@@ -269,6 +270,64 @@ def test_unapproved_tool_is_unusable_and_reason_is_specific(tmp_root):
     assert loaded.registry.is_approved(loaded.registry.tool("fs.write"))
 
 
+def test_governance_table_edit_unapproves_every_tool_until_reapproved(tmp_root):
+    """只改 roles 里一条授权（工具描述一个字没变）也必须重新审核。
+
+    registry.identity 覆盖 tools + roles + permissions + defaults + approvals，
+    而逐工具 schema_hash 只看工具自己那一段：不比对治理表摘要的话，一次
+    "给 developer 加 shell.exec" 的手改会让 10 个工具全都继续显示"已审核"。
+    """
+
+    path, approved = write_registry(tmp_root)
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["roles"]["developer"] = ["repo.read", "repo.write", "shell.exec"]
+    path.write_text(yaml.safe_dump(document, allow_unicode=True), encoding="utf-8")
+
+    loaded = load_registry(path, approved_path=approved)
+    reasons = {spec.id: loaded.registry.approval_reason(spec) for spec in loaded.registry.tools}
+    assert all(not loaded.registry.is_approved(spec) for spec in loaded.registry.tools), reasons
+    assert all("角色 / 权限 / 默认值 / 审批角色表" in reason for reason in reasons.values())
+
+    # 恢复路径必须仍然可达：重新审核之后全部工具可用（--approve 不读旧产物，不会被旧版本挡住）
+    reloaded = registry_document_from_mapping(yaml.safe_load(path.read_text(encoding="utf-8")))
+    write_approved(approve_registry(reloaded, reviewer="alice"), approved)
+    recovered = load_registry(path, approved_path=approved)
+    assert all(recovered.registry.is_approved(spec) for spec in recovered.registry.tools)
+
+
+def test_registry_identity_digest_is_checked_not_only_recorded(tmp_root):
+    """registry_digest 不能"记了不查"：治理表与全部工具哈希都对得上时，身份仍必须相等。
+
+    覆盖关系是"治理表摘要 + 逐工具 schema_hash = registry_payload 的全部字段"，
+    所以正常情况下 identity 必然等于已审核值；不等就说明有字段没被这两道检查看住。
+    """
+
+    path, approved = write_registry(tmp_root)
+    document = json.loads(approved.read_text(encoding="utf-8"))
+    document["registry_digest"] = "sha256:" + "0" * 64
+    approved.write_text(json.dumps(document), encoding="utf-8")
+
+    loaded = load_registry(path, approved_path=approved)
+    reasons = [loaded.registry.approval_reason(spec) for spec in loaded.registry.tools]
+
+    assert all(not loaded.registry.is_approved(spec) for spec in loaded.registry.tools)
+    assert all("身份与已审核摘要不一致" in reason for reason in reasons), reasons
+
+
+def test_pre_1_1_approved_artifact_is_rejected(tmp_root):
+    """1.0 的清单没有治理表摘要：它证明不了治理表被审核过，必须重签（拒收未知版本）。"""
+
+    path, approved = write_registry(tmp_root)
+    document = json.loads(approved.read_text(encoding="utf-8"))
+    document["approved_schema_version"] = "1.0"
+    document.pop("governance_digest", None)
+    approved.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(RegistryError) as error:
+        load_registry(path, approved_path=approved)
+    assert "未知已审核清单版本" in str(error.value)
+
+
 def test_missing_approved_file_blocks_every_tool(tmp_root):
     path, _ = write_registry(tmp_root, approve=False)
     loaded = load_registry(path, approved_path=tmp_root / "registry" / "missing.json")
@@ -295,6 +354,7 @@ def test_approve_records_reviewer_and_digest():
 
     assert document["reviewed_by"] == "alice"
     assert document["registry_digest"] == registry.identity
+    assert document["governance_digest"] == registry.governance_digest
     assert set(document["tools"]) == {spec.id for spec in registry.tools}
     with pytest.raises(RegistryError):
         approve_registry(registry, reviewer="   ")
