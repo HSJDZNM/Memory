@@ -67,6 +67,32 @@ def runtime() -> ApiRuntime:
     return ApiRuntime(config, root=REPO_ROOT)
 
 
+def test_openapi_declares_how_callers_authenticate(runtime: ApiRuntime) -> None:
+    """受治理路由的凭据形态必须写进契约。
+
+    历史缺陷（medium 台账 M1，api/openapi.json:145）：四条路由一直在返回 401/403，契约里
+    却既没有 `securitySchemes`、也没有任何 `security` 要求——调用方只能靠猜。补的是**描述**，
+    不是协议形状：载荷一个字节没变，API_SCHEMA_VERSION 因此不动。
+    """
+
+    document = openapi_document(runtime)
+    scheme = document["components"]["securitySchemes"]["BearerAuth"]
+    assert (scheme["type"], scheme["scheme"]) == ("http", "bearer")
+
+    for path, method in (
+        ("/v1/policy/evaluate", "post"),
+        ("/v1/knowledge/retrieve", "post"),
+        ("/v1/validation/evaluate", "post"),
+        ("/v1/ops/metrics", "get"),
+    ):
+        assert document["paths"][path][method]["security"] == [{"BearerAuth": []}], path
+
+    # 探针按设计不要求认证：不给它们挂 requirement，也不设顶层 security
+    assert "security" not in document
+    for path in ("/v1/health/live", "/v1/health/ready"):
+        assert "security" not in document["paths"][path]["get"]
+
+
 def test_openapi_snapshot_matches_the_application(runtime: ApiRuntime) -> None:
     """OpenAPI 快照与当前应用**零差异**：这是 CI 门禁，不是提示。
 

@@ -743,6 +743,13 @@
         "title": "ValidationRequest",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "description": "Authorization: Bearer <token>；令牌只以 sha256 存在配置里",
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
@@ -933,6 +940,11 @@
             "description": "504：结构化错误（见 ErrorResponse）"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "Retrieve",
         "tags": [
           "knowledge"
@@ -962,6 +974,11 @@
             "description": "403：结构化错误（见 ErrorResponse）"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "Metrics",
         "tags": [
           "ops"
@@ -1102,6 +1119,11 @@
             "description": "504：结构化错误（见 ErrorResponse）"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "Evaluate",
         "tags": [
           "policy"
@@ -1242,6 +1264,11 @@
             "description": "504：结构化错误（见 ErrorResponse）"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "Validate",
         "tags": [
           "validation"

@@ -278,6 +278,10 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
             "responses": {
                 str(code): _error_response_doc(code) for code in _ROUTE_STATUS_CODES[route]
             },
+            # 受治理路由的凭据形态写进契约（scheme 见 _install_contract_schemas）：调用方从
+            # "不知道要不要认证"变成"知道怎么认证"。**这是补文档缺失，不是协议变更**——
+            # 请求 / 响应载荷一个字节没变，老客户端照常工作（API_SCHEMA_VERSION 不动）。
+            "security": [{"BearerAuth": []}],
         }
         app.add_api_route(
             path,
@@ -311,7 +315,8 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
         openapi_extra={
             "responses": {
                 str(code): _error_response_doc(code) for code in _METRICS_ERROR_STATUS_CODES
-            }
+            },
+            "security": [{"BearerAuth": []}],
         },
     )
 
@@ -418,6 +423,22 @@ def _install_contract_schemas(app: FastAPI) -> None:
     # 422 只在组件里也去掉（HTTPValidationError / ValidationError 是框架的产物）。
     for unused in ("HTTPValidationError", "ValidationError"):
         components.pop(unused, None)
+    # 凭据形态：`Authorization: Bearer <token>`。这是**补文档缺失**，不是协议变更——
+    # 四条受治理路由一直在返回 401/403，契约里却从没说过怎么认证。
+    # 请求体里的 `credentials.token`（Credentials 组件）只服务进程内调用路径，因此不为它
+    # 另建 scheme；探针（/v1/health/*）按设计不要求认证，所以**不设顶层 security**
+    # （那会把探针也说成需要凭据）。注意这里必须写在**顶层 components** 上，
+    # 上面的 `components` 变量指的是 `components.schemas`。
+    document.setdefault("components", {}).setdefault(
+        "securitySchemes",
+        {
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "description": "Authorization: Bearer <token>；令牌只以 sha256 存在配置里",
+            }
+        },
+    )
     components["ErrorResponse"] = {
         "title": "ErrorResponse",
         "type": "object",
