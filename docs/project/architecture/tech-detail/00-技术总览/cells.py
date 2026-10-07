@@ -261,9 +261,12 @@ assert not dirty_core, f"判定核心的业务模块出现了出边：{dirty_cor
 assert set(policy_edges) == {"src/policy/check.py"}, f"出边来源不止 CLI 装配点：{sorted(policy_edges)}"
 assert policy_edges["src/policy/check.py"][0] == ["provenance", "validators"], policy_edges["src/policy/check.py"]
 
+# 第 2 条的说法是**绝对的**（"没有任何包 import policy_api 或 orchestration"），
+# 所以判据也必须覆盖两类边：只看 eager 的话，某个包在函数里 `import policy_api` 同样违反
+# 那句话，断言却会通过——"入口层入度为 0"于是变成一句没有对应检查的口号。
 for package in PACKAGES:
-    hit = edges[package]["eager"] & {"policy_api", "orchestration"}
-    assert not hit, f"{package} 反向依赖了入口层：{sorted(hit)}"
+    hit = (edges[package]["eager"] | edges[package]["lazy"]) & {"policy_api", "orchestration"}
+    assert not hit, f"{package} 反向依赖了入口层（含函数内延迟导入）：{sorted(hit)}"
 
 
 def framework_importers(framework):
