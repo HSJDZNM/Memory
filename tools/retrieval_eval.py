@@ -394,6 +394,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # 门槛必须落在**真的评测过**的方法上：--gate 点名的方法一次都没跑时 `gated` 是空列表，
+    # `all([]) == True` 会让 result=pass、退出码 0，而载荷里的 gated_methods 照样写着它——
+    # 没有评测的方法判定不了门槛，这是门槛工具的失败开放，因此在这里（建库之前）直接拒收。
+    uncovered = _gate_coverage(args.gate, args.method)
+    if uncovered:
+        parser.error(
+            "--gate %s 要求 %s 受门槛约束，但 --method %s 没有评测它们："
+            "没跑过的方法判定不了门槛。改成 --gate %s（只对跑过的方法设门槛）或 --method both。"
+            % (args.gate, "/".join(uncovered), args.method, "/".join(_gate_methods(args.method)))
+        )
+
     now = clock.datetime.now(clock.timezone.utc)
     db_path = REPO_ROOT / args.db
     store, loaded, lexicon, ingest_report = build_store(db_path=db_path, rebuild=args.rebuild)
@@ -524,6 +535,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 def _gate_methods(gate: str) -> Tuple[str, ...]:
     return ("fts5", "vector") if gate == "both" else (gate,)
+
+
+def _gate_coverage(gate: str, method: str) -> list[str]:
+    """`--gate` 要求受门槛约束、但 `--method` 没有评测的方法（空列表 = 调用合法）。"""
+
+    return sorted(set(_gate_methods(gate)) - set(_gate_methods(method)))
 
 
 def _comparison(reports: Sequence[MethodReport]) -> dict[str, Any]:
