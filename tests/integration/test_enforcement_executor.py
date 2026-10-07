@@ -218,6 +218,50 @@ def test_block_never_calls_the_driver(enforcement_paths):
     assert spies["exec.process"].calls == 0
 
 
+def test_a_failed_execution_without_post_checks_is_still_repair_required(enforcement_paths):
+    """执行失败 / 超时是确定性结论：工具有没有声明 post_checks 都不改变它。
+
+    旧实现把它排在"没有声明 post_checks → not_required / allow"之后，于是在没有验证器的
+    工具上，一次超时（或非零退出）被事后记录写成"无需验证 / allow"。
+    """
+
+    registry = enforcement_paths.registry_object()
+    spec = registry.tool("exec.delegated")
+    assert spec.post_checks == (), "前置条件：该工具没有声明任何事后验证器"
+    request = make_action(
+        registry,
+        enforcement_paths,
+        "exec.delegated",
+        {"code": "print(1)", "description": "demo"},
+        roles=("owner",),
+    )
+    record = ExecutionRecord(
+        action_id=request.action_id,
+        request_id=request.request_id,
+        trace_id=request.trace_id,
+        action_hash=request.action_hash,
+        tool_id=request.tool_id,
+        risk=RiskLevel.PRIVILEGED_EXECUTION,
+        status=ExecutionStatus.FAILED,
+        reason_code=ReasonCode.EXECUTION_TIMEOUT,
+        driver=DriverKind.NONE,
+        timed_out=True,
+        duration_ms=1000,
+        started_at=utc_now(),
+        finished_at=utc_now(),
+    )
+    evidence = collect_evidence(request, spec, record, workspace=enforcement_paths.workspace)
+
+    post, _evidence = validate(
+        request, spec, record, evidence, workspace=enforcement_paths.workspace
+    )
+
+    assert post.status is PostStatus.REPAIR_REQUIRED
+    assert post.reason_code is ReasonCode.EXECUTION_TIMEOUT
+    assert post.checks[0].status is CheckStatus.FAILED
+    assert "超时" in post.checks[0].detail
+
+
 def test_a_target_outside_the_workspace_is_recorded_as_missing_evidence(enforcement_paths):
     """路径逃出工作区时取证拒绝，但异常不能抛穿事后链路。
 

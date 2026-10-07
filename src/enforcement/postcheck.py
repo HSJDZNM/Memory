@@ -264,6 +264,37 @@ def validate(
             evaluated_at=moment,
         ), evidence)
 
+    if record.status is ExecutionStatus.FAILED:
+        # 执行失败 / 超时是**确定性**结论：与工具有没有声明 post_checks 无关。
+        # 旧实现把这条判据排在 "没有声明 post_checks → not_required" 之后，于是在没有
+        # 验证器的工具上，一次超时（或非零退出）被事后记录写成"无需验证 / allow"。
+        failure = (
+            ReasonCode.EXECUTION_TIMEOUT if record.timed_out else ReasonCode.EXECUTION_FAILED
+        )
+        return _with_validators(PostDecision(
+            status=PostStatus.REPAIR_REQUIRED,
+            reason_code=failure,
+            action_id=request.action_id,
+            request_id=request.request_id,
+            trace_id=request.trace_id,
+            action_hash=request.action_hash,
+            tool_id=request.tool_id,
+            checks=(
+                CheckResult(
+                    check="post",
+                    status=CheckStatus.FAILED,
+                    reason_code=failure,
+                    detail=(
+                        "执行超时被终止：不需要验证器也能判定需要修复"
+                        if record.timed_out
+                        else "执行失败：不需要验证器也能判定需要修复"
+                    ),
+                ),
+            ),
+            detail=record.detail or "执行没有成功",
+            evaluated_at=moment,
+        ), evidence)
+
     if not spec.post_checks:
         return _with_validators(PostDecision(
             status=PostStatus.NOT_REQUIRED,
@@ -295,12 +326,7 @@ def validate(
     failed = [item for item in checks if item.status is CheckStatus.FAILED]
     evidence = evidence.model_copy(update={"validators": tuple(outcomes)})
 
-    if record.status is ExecutionStatus.FAILED:
-        reason = (
-            ReasonCode.EXECUTION_TIMEOUT if record.timed_out else ReasonCode.EXECUTION_FAILED
-        )
-        status = PostStatus.REPAIR_REQUIRED
-    elif not failed:
+    if not failed:
         reason = ReasonCode.ALLOW
         status = PostStatus.VALIDATED
     elif any(
