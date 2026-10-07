@@ -646,11 +646,13 @@ def test_approval_gate_accepts_a_valid_record_and_records_the_use(tmp_root) -> N
     assert excinfo.value.code is FailureCode.APPROVAL_CONSUMED
 
 
+# 合成值：它们只用来验证"凭据形态的文本不许进状态"这条拒绝路径，不是任何真实凭据。
+# secret_scan 门禁按形态匹配，所以逐行显式声明放行并写明理由（门禁的提示语要求这样做）。
 SECRET_LIKE = (
-    "Bearer abcdefgh12345678",
-    "sk-abcdefgh12345678",
-    "glpat-abcdefgh12345678",
-    "-----BEGIN RSA PRIVATE KEY-----",
+    "Bearer abcdefgh12345678",  # secret-scan: allow —— 合成形态，用于断言拒绝写入状态
+    "sk-abcdefgh12345678",  # secret-scan: allow —— 合成形态，用于断言拒绝写入状态
+    "glpat-abcdefgh12345678",  # secret-scan: allow —— 合成形态，用于断言拒绝写入状态
+    "-----BEGIN RSA PRIVATE KEY-----",  # secret-scan: allow —— 合成标题行，用于断言拒绝写入状态
 )
 
 
