@@ -337,6 +337,69 @@ def test_normalize_event_path_allows_the_workspace_root() -> None:
     assert normalize_event_path(str(workspace), workspace=workspace) == "."
 
 
+def test_phase_six_glob_double_star_slash_matches_zero_directories() -> None:
+    """`**/` 匹配零个或多个目录：层与语言的映射不得漏掉根目录文件。
+
+    旧实现把 `**` 一律翻成 `.*`，于是 `**/*_service.py` 匹配不到根目录的
+    `order_service.py`：它掉到更宽的 `**/*.py`（module），或者干脆没有 layer
+    映射被拒绝；language 掉到 default_language（text）→ 依赖维度静默为空。
+    这就是 G8 的形态：配置看着覆盖了，实际漏掉一整个层级。
+    """
+
+    from adapters.loader import load_adapter
+
+    adapter = load_adapter("dsh", root=REPO_ROOT)
+    assert adapter.layer_for("order_controller.py") == "controller"
+    assert adapter.layer_for("order_service.py") == "service"
+    assert adapter.layer_for("order_repository.py") == "repository"
+    assert adapter.layer_for("order.py") == "module"
+    assert adapter.layer_for("README.md") == "docs"
+    assert adapter.language_for("order.py") == "python"
+
+
+def test_phase_six_glob_semantics_match_the_validator_matcher() -> None:
+    """跨模块对照：Phase 6 的 `_compile_glob` 与验证器层的匹配器必须同一答案。
+
+    `src/validators/globs.py` 的 docstring 把这条一致性写成「由测试钉住」；
+    Phase 6 的这份实现此前漏了 `**/` 的零层语义，正是 G8 的另一半。
+    """
+
+    from adapters.base import _compile_glob
+    from validators.globs import glob_match
+
+    patterns = (
+        "**/*_controller.py",
+        "**/*_service.py",
+        "**/*_repository.py",
+        "**/*.py",
+        "**/*.md",
+        "src/**/*.py",
+        "**/*",
+        "**",
+        "*.py",
+        "?x.py",
+    )
+    paths = (
+        "README.md",
+        "order.py",
+        "order_service.py",
+        "docs/notes.md",
+        "docs/a/b.md",
+        "src/a.py",
+        "src/pkg/a.py",
+        "x/y/z.bin",
+    )
+    mismatches = [
+        (pattern, path)
+        for pattern in patterns
+        for path in paths
+        if bool(_compile_glob(pattern).match(path)) != glob_match(pattern, path)
+    ]
+    assert not mismatches, mismatches
+    # 对照必须非空转：至少有一条「零层」命中，否则两边全 False 也会通过。
+    assert glob_match("**/*.py", "order.py")
+
+
 # --------------------------------------------------------------------------- 注册表
 
 

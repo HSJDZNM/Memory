@@ -203,12 +203,27 @@ class SupportCeiling:
 
 
 def _compile_glob(pattern: str) -> "re.Pattern[str]":
+    """把 glob 编译成正则；语义与 `validators.globs.glob_to_regex` 一致。
+
+    `"**/"` 表示**零个或多个**目录：把 `**` 一律翻成 `.*` 会让 `**/` 要求至少一层
+    目录，于是 `**/*_service.py` 匹配不到根目录的 `order_service.py`——该文件掉到
+    更宽的那条规则（`**/*.py` → module），或者干脆没有 layer 映射被拒绝；language
+    同理掉到 default_language（text），依赖维度静默变成空。
+    这就是 G8 的形态：配置看着覆盖了，实际漏掉一整个层级。
+    两边由 `tests/contract/test_agent_adapters.py` 的对照用例钉住。
+    """
+
     parts: list[str] = []
     index = 0
     while index < len(pattern):
         char = pattern[index]
         if char == "*":
             if pattern[index : index + 2] == "**":
+                if pattern[index + 2 : index + 3] == "/":
+                    # "**/" 匹配零个或多个目录：根目录文件也必须命中
+                    parts.append("(?:.*/)?")
+                    index += 3
+                    continue
                 parts.append(".*")
                 index += 2
                 continue
