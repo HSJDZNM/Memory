@@ -385,6 +385,26 @@ class ProjectProfile(StrictModel):
     unmatched: Literal["top_level_package"] = "top_level_package"
     components: Tuple[ComponentSpec, ...] = ()
 
+    @field_validator("python_roots")
+    @classmethod
+    def _check_python_roots(cls, values: Tuple[str, ...]) -> Tuple[str, ...]:
+        """模块解析根必须是**项目内**的相对目录（"." = 项目根本身）。
+
+        与消费方同一条口径（policy.models.normalize_repo_path，allow_root=True）：反斜杠、
+        盘符、UNC、".." 与路径元字符都在加载期被拒，而且**存下来的值是归一化之后的形态**
+        ——pipeline 随后做 request.workspace / root，校验与使用必须看到同一个字符串
+        （复核发现：旧守卫只在加载器里查前导 "/" 与按 "/" 切的 ".."，于是
+        ..\\..\\outside 与 C:\\outside 都能过）。
+        """
+
+        normalized: list[str] = []
+        for item in values:
+            try:
+                normalized.append(normalize_repo_path(str(item), allow_root=True))
+            except PolicyContextError as error:
+                raise ValueError(f"python_roots 必须是项目内的相对目录：{error}") from error
+        return tuple(normalized)
+
     def language_for(self, path: str) -> Optional[str]:
         from .globs import glob_match
 

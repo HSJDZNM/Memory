@@ -12,7 +12,13 @@ from conftest import REPO_ROOT, VALIDATION_DIR, fake_tool_spec, write_validation
 from policy.evidence import ValidatorKind
 from policy.models import RuleValidationError
 from validators.models import Registry, ToolSpec, ValidatorSpec
-from validators.registry import RegistryError, config_digest, load_config, load_registry
+from validators.registry import (
+    RegistryError,
+    config_digest,
+    load_config,
+    load_project,
+    load_registry,
+)
 
 
 def registry_document() -> dict:
@@ -293,6 +299,25 @@ def test_version_pattern_must_capture_a_version() -> None:
         ToolSpec(command=("ruff",), version_pattern=r"ruff [0-9.]+")
 
     assert "捕获组" in str(error.value)
+
+
+def test_project_profile_rejects_windows_style_escaping_python_roots(tmp_root: Path) -> None:
+    """python_roots 的逃逸守卫必须覆盖反斜杠 / 盘符 / UNC（复核发现：只做了 POSIX 那一半）。"""
+
+    for bad in ("..\\..\\outside", "C:\\outside", "C:/outside", "\\\\server\\share", "../outside"):
+        document = yaml.safe_load((VALIDATION_DIR / "project.yaml").read_text(encoding="utf-8"))
+        document["python_roots"] = [bad]
+        write_validation_config(tmp_root, project=document)
+        with pytest.raises(RegistryError) as error:
+            load_config(root=tmp_root, registry=VALIDATION_DIR / "validators.yaml")
+        assert "python_roots" in str(error.value), bad
+
+    # 合法的解析根照常，反斜杠写法被归一成消费方看到的形态。
+    document = yaml.safe_load((VALIDATION_DIR / "project.yaml").read_text(encoding="utf-8"))
+    document["python_roots"] = [".", "src", ".\\src"]
+    write_validation_config(tmp_root, project=document)
+    profile = load_project(root=tmp_root)
+    assert profile.python_roots == (".", "src", "src")
 
 
 def test_project_profile_rejects_escaping_python_roots(tmp_root: Path) -> None:
