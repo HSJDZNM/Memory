@@ -613,6 +613,39 @@ def test_idempotency_record_refuses_to_replace_a_fresh_entry_with_another_digest
     assert replaced is not None and replaced.body == {"who": "second"}
 
 
+@pytest.mark.skipif(os.name != "nt", reason="这一支是 Windows 的 msvcrt 代码路径")
+def test_lock_timeout_reports_the_timeout_not_a_permission_error(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """取锁超时必须报"锁超时"，不能被 finally 里的解锁异常覆盖成 Windows 权限错误。
+
+    历史缺陷（medium 台账 M1，idempotency.py:119）：解锁无条件执行，而取锁超时的路径上
+    根本没拿到锁——`msvcrt.locking(..., LK_UNLCK, 1)` 自己抛 PermissionError，异常从
+    finally 抛出会替换在途的 ApiError：调用方看到一句权限错误，真正的原因（锁超时）消失。
+    实测（.tmp/m1-idem119-repro.py）：LK_UNLCK 对未持有的区间报 [Errno 13] Permission denied。
+    """
+
+    import msvcrt
+
+    from policy_api import idempotency
+
+    def always_denied(fd: int, mode: int, length: int) -> None:
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(msvcrt, "locking", always_denied)
+    # 让 5 秒的截止时间立刻到期：第一次取锁失败后 monotonic 已经越过 deadline
+    ticks = iter([0.0, 100.0, 100.0, 100.0])
+    monkeypatch.setattr(idempotency.time, "monotonic", lambda: next(ticks, 100.0))
+
+    ledger = IdempotencyLedger(tmp_root / "ledger.jsonl")
+    with pytest.raises(ApiError) as info:
+        ledger.lookup(
+            client_id="alpha-client", api_version="1.0", route="evaluate", key="k1", digest="d1"
+        )
+    assert info.value.code is ErrorCode.IDEMPOTENCY_UNAVAILABLE
+    assert "锁超时" in info.value.detail
+
+
 def test_idempotency_expiry_always_carries_microseconds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

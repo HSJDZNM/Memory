@@ -88,6 +88,7 @@ def _file_lock(path: Path) -> Iterator[None]:
             retryable=True,
         ) from error
 
+    held = False
     try:
         if os.name == "nt":
             import msvcrt
@@ -105,22 +106,29 @@ def _file_lock(path: Path) -> Iterator[None]:
                             retryable=True,
                         ) from error
                     time.sleep(0.01)
+            held = True
         else:
             import fcntl
 
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            held = True
         yield
     finally:
         try:
-            handle.seek(0)
-            if os.name == "nt":
-                import msvcrt
+            if held:
+                # **只解自己真的拿到的锁**：取锁超时（或 flock 失败）时执行 LK_UNLCK 会从
+                # finally 里抛 PermissionError——异常从 finally 抛出会替换在途异常，
+                # "幂等台账锁超时"这个真正的原因就此消失，调用方只看到一句 Windows 权限错误
+                # （实测：LK_UNLCK 对未持有的区间报 [Errno 13] Permission denied）。
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
 
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
 
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         finally:
             handle.close()
 
