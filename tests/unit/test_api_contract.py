@@ -154,6 +154,22 @@ def test_error_payload_shape_is_fixed_and_hides_debug() -> None:
     assert "Traceback" not in json.dumps(minimal, ensure_ascii=False)
 
 
+def test_redact_detail_strips_control_characters() -> None:
+    """控制字符不许穿过：它们不是"空白"，却能在终端上改写输出、污染下游解析。
+
+    历史缺陷（medium 台账 M1，errors.py:115）：docstring 承诺"无控制字符"，实现只用
+    `" ".join(str(text).split())`——`split()` 只折叠空白，ESC（\x1b）/ NUL / DEL / BEL
+    全部原样进 HTTP 响应与日志。
+    """
+
+    cleaned = redact_detail("a\x1b[31mred\x00b\x7fc\x07 d")
+
+    assert "\x1b" not in cleaned and "\x00" not in cleaned
+    assert "\x7f" not in cleaned and "\x07" not in cleaned
+    assert all(character >= " " for character in cleaned)
+    assert "red" in cleaned and "d" in cleaned  # 内容保留，只中和控制字符
+
+
 def test_redact_detail_collapses_lines_and_caps_length() -> None:
     """错误细节是**服务端生成的一行文本**：换行会被压平、超长会被截断。
 
