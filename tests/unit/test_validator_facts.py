@@ -371,10 +371,29 @@ def test_relative_imports_resolve_inside_the_package() -> None:
 
 
 def test_relative_import_beyond_the_top_level_package_is_unresolved() -> None:
-    result = dependencies_for("from .... import something" + chr(10))
+    """越界判定把"恰好一级"也算进去：`drop == len(package)` 时 Python 自己就报错。
 
+    历史缺陷（OCR 全量审查 L12）：`drop > len(package)` 只在"多出一级"时判越界，
+    `drop == len(package)` 会取到空前缀、把导入解析成**凭空造出的顶层模块**
+    （包深度 1 里的 `from .. import x` → 外部包 x）。
+    """
+
+    # 明显越界：包深度 1（src/shop/order_controller_bad.py 的包是 ("shop",)）里的 level=5
+    result = dependencies_for("from .... import something" + chr(10))
     assert [item.kind for item in result.unresolved] == ["from_import"]
     assert "顶层包" in result.unresolved[0].reason
+
+    # 恰好一级：from .. import x 在包深度 1 的模块里 = 越界，不是"外部包 x"
+    exactly = dependencies_for("from .. import order_service" + chr(10))
+    assert exactly.dependencies == ()
+    assert [item.kind for item in exactly.unresolved] == ["from_import"]
+    assert "顶层包" in exactly.unresolved[0].reason
+
+    # 没有包（顶层模块）时 level=1 同样不合法：no known parent package
+    toplevel = dependencies_for("from . import helper" + chr(10), target="src/loose_tool.py")
+    assert toplevel.dependencies == ()
+    assert [item.kind for item in toplevel.unresolved] == ["from_import"]
+    assert "顶层包" in toplevel.unresolved[0].reason
 
 
 def test_relative_import_of_a_missing_sibling_is_unresolved(tmp_root: Path) -> None:

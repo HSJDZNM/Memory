@@ -234,7 +234,12 @@ def _relative_modules(
     if level < 1:
         return (), "相对导入的 level 必须是正数"
     drop = level - 1
-    if drop > len(package):
+    # **恰好一级也算越界**：drop == len(package)（包深度 1 的模块里写 `from .. import x`，
+    # 或没有包的顶层模块里写 `from . import x`）在 Python 里分别是 "attempted relative
+    # import beyond top-level package" 与 "no known parent package"，都解析不了。
+    # 写成 `drop > len(package)` 会让它取到空前缀（package[:0]）、被解析成凭空造出的
+    # 顶层模块——把"解析不了"洗成了一条依赖边，与模块 docstring 的口径相反。
+    if drop >= len(package):
         return (
             (),
             "相对导入超出顶层包（level=" + str(level) + "，当前包深度 " + str(len(package)) + "）",
