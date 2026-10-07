@@ -218,6 +218,55 @@ def test_block_never_calls_the_driver(enforcement_paths):
     assert spies["exec.process"].calls == 0
 
 
+def test_non_applicable_post_checks_are_recorded_as_skipped_not_passed(enforcement_paths):
+    """"什么都没查"不能与"查过且通过"同形：不适用的检查项必须是 SKIPPED。
+
+    旧实现用 _outcome(name, True, ...) 记"目标不存在，跳过语法检查""没有变化，无需 diff"，
+    于是 PostEvidence.validators 与审计里这两类结论长得一模一样。
+    """
+
+    registry = enforcement_paths.registry_object()
+    spec = registry.tool("fs.edit")
+    enforcement_paths.file("src/shop/data.txt", "VALUE = 1\n")
+    request = make_action(
+        registry,
+        enforcement_paths,
+        "fs.edit",
+        edit_params(file_path="src/shop/data.txt", old_string="VALUE = 1", new_string="VALUE = 2"),
+    )
+    baselines = baseline_files(request, spec, workspace=enforcement_paths.workspace)
+    record = ExecutionRecord(
+        action_id=request.action_id,
+        request_id=request.request_id,
+        trace_id=request.trace_id,
+        action_hash=request.action_hash,
+        tool_id=request.tool_id,
+        risk=RiskLevel.REVERSIBLE_WRITE,
+        status=ExecutionStatus.DELEGATED,
+        reason_code=ReasonCode.ALLOW,
+        driver=DriverKind.NONE,
+        duration_ms=1,
+        started_at=utc_now(),
+        finished_at=utc_now(),
+    )
+    # 目标没有被改动：diff_recorded 无从记录；.txt 目标不是 Python：file_syntax 不适用。
+    evidence = collect_evidence(
+        request, spec, record, workspace=enforcement_paths.workspace, baselines=baselines
+    )
+    decision, evidence = validate(
+        request, spec, record, evidence, workspace=enforcement_paths.workspace
+    )
+
+    validators = {item.validator: item.status for item in evidence.validators}
+    checks = {item.check: item.status for item in decision.checks}
+    assert validators["diff_recorded"] is CheckStatus.SKIPPED, validators
+    assert validators["file_syntax"] is CheckStatus.SKIPPED, validators
+    assert checks["diff_recorded"] is CheckStatus.SKIPPED, checks
+    assert checks["file_syntax"] is CheckStatus.SKIPPED, checks
+    # 反真空：真的失败仍然 FAILED（这条工具声称成功、目标却没变）。
+    assert validators["file_changed"] is CheckStatus.FAILED, validators
+
+
 def test_a_failed_execution_without_post_checks_is_still_repair_required(enforcement_paths):
     """执行失败 / 超时是确定性结论：工具有没有声明 post_checks 都不改变它。
 

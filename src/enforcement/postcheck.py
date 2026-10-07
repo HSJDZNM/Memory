@@ -406,7 +406,7 @@ def _run_post_check(
     if name == "content_matches":
         target = file_target(request)
         if target is None or workspace is None:
-            return _outcome(name, True, "非文件动作，跳过内容一致性检查")
+            return _skipped(name, "非文件动作，跳过内容一致性检查")
         effect = evidence.file(target)
         if effect is None:
             # 没有证据 ≠ 证据自相矛盾：这里根本不知道目标变成了什么。
@@ -462,9 +462,9 @@ def _run_post_check(
         target = file_target(request)
         effect = evidence.file(target) if target else None
         if effect is None or not effect.exists_after:
-            return _outcome(name, True, "目标不存在，跳过语法检查")
+            return _skipped(name, "目标不存在，跳过语法检查")
         if workspace is None or target is None or not target.endswith(".py"):
-            return _outcome(name, True, "非 Python 目标，Phase 4 不做语法检查")
+            return _skipped(name, "非 Python 目标，Phase 4 不做语法检查")
         content = (Path(workspace) / target).read_text(encoding="utf-8", errors="replace")
         try:
             ast.parse(content)
@@ -475,8 +475,10 @@ def _run_post_check(
     if name == "diff_recorded":
         target = file_target(request)
         effect = evidence.file(target) if target else None
-        if effect is None or not effect.changed:
-            return _outcome(name, True, "没有变化，无需 diff")
+        if effect is None:
+            return _skipped(name, "没有收集到文件证据：无从记录 diff")
+        if not effect.changed:
+            return _skipped(name, "没有变化，无需 diff")
         if not effect.diff_digest:
             return _outcome(name, False, "目标发生变化但没有记录 diff 摘要")
         return _outcome(name, True, f"diff_digest={effect.diff_digest}")
@@ -503,6 +505,30 @@ def _run_post_check(
         return _outcome(name, False, f"{effect.path} 不存在")
 
     return _outcome(name, False, f"未知验证器 {name!r}：注册表加载阶段本应拦下它")
+
+
+def _skipped(name: str, detail: str) -> tuple[ValidatorOutcome, CheckResult]:
+    """不适用 / 无从查起的检查项记成 **SKIPPED**，而不是"passed"。
+
+    与 precheck 同一口径（package 里其余地方的非适用检查都写 SKIPPED）：
+    "什么都没查"与"查过且通过"必须在 PostEvidence.validators 与审计里分得开——
+    否则事后读证据的人会把一条没跑过的检查读成"验证过了"。
+    """
+
+    return (
+        ValidatorOutcome(
+            validator=name,
+            status=CheckStatus.SKIPPED,
+            detail=detail,
+            evidence_digest=digest_of({"validator": name, "detail": detail}),
+        ),
+        CheckResult(
+            check=name,
+            status=CheckStatus.SKIPPED,
+            reason_code=ReasonCode.ALLOW,
+            detail=detail,
+        ),
+    )
 
 
 def _outcome(
