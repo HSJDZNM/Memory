@@ -787,6 +787,23 @@ def _apply_change(
     return NodeOutcome(state=updated, label="ok", detail=f"写入 {change.path}")
 
 
+def _changed_paths(state: GraphState, target: str) -> Tuple[str, ...]:
+    """这次要验证的**改动集**：取自落账的 CHANGE artifact，取不到才退回任务目标。
+
+    为什么不能写死任务目标：`_apply_change` 允许改 `policies/…`（规则文件也是这次任务改的东西），
+    而平台把这个集合喂给**验证器选择**与 pytest 的 `changed_only`——写死会出现"验证的是一棵
+    没被改的树、真正改过的文件却没声明"（本仓库对"证据属于哪棵树"有明确纪律）。
+    多轮修复会累积多个 artifact：按发生顺序去重，同一文件只声明一次。
+    """
+
+    executed = tuple(
+        item.path for item in state.artifacts if item.kind is ArtifactKind.CHANGE and item.path
+    )
+    if executed:
+        return tuple(dict.fromkeys(executed))
+    return (target,)
+
+
 def validation(state: GraphState, context: NodeContext) -> NodeOutcome:
     """**只**提交证据：证据由服务端验证器流水线产出，客户端不能自带。"""
 
@@ -796,7 +813,7 @@ def validation(state: GraphState, context: NodeContext) -> NodeOutcome:
         principal=dict(context.task.principal),
         trace_id=state.trace_id,
         target=context.task.target,
-        changed=(context.task.target,),
+        changed=_changed_paths(state, context.task.target),
     )
     outcome = context.client.validate(call)
     state = _trace(state, NodeId.VALIDATION, _as_decision(outcome), status=StageStatus.OK)
@@ -834,7 +851,7 @@ def testing(state: GraphState, context: NodeContext) -> NodeOutcome:
         principal=dict(context.task.principal),
         trace_id=state.trace_id,
         target=context.task.target,
-        changed=(context.task.target,),
+        changed=_changed_paths(state, context.task.target),
         only=("failing_tests",),
     )
     outcome = context.client.validate(call)

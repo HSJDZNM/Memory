@@ -70,7 +70,7 @@ from orchestration.models import (
     empty_state,
 )
 from orchestration.client import _is_relative
-from orchestration.nodes import Change
+from orchestration.nodes import Change, _changed_paths
 
 from orchestration_support import (
     INDEX_VERSION,
@@ -732,6 +732,48 @@ def test_client_accepts_plain_relative_paths(value: str) -> None:
     """反向不变量：普通相对路径照旧收（带一个百分号编码的空格不该被误伤）。"""
 
     assert _is_relative(value) is True
+
+
+def _change_artifact(index: int, path: str) -> ArtifactRef:
+    return ArtifactRef(
+        artifact_id=f"change:{index}",
+        kind=ArtifactKind.CHANGE,
+        path=path,
+        digest="sha256:" + "0" * 64,
+    )
+
+
+def test_the_change_set_for_evidence_comes_from_executed_changes() -> None:
+    """要验证的是**这次真的改了**的文件集合，不是写死的任务目标。
+
+    `_apply_change` 允许改 `policies/…`：写死任务目标会让平台去验证一棵没被改的树
+    （验证器选择与 pytest 的 changed_only 都读这个集合），真正改过的文件反而没声明。
+    """
+
+    target = "src/order/controller.py"
+    fresh = empty_state("task-1")
+    # 还没改过任何文件：退回任务目标（新任务第一次验证）
+    assert _changed_paths(fresh, target) == (target,)
+
+    repaired = fresh.replace(artifacts=(_change_artifact(0, "policies/coding/ARCH-001.yaml"),))
+    assert _changed_paths(repaired, target) == ("policies/coding/ARCH-001.yaml",)
+
+    # 多轮修复：按发生顺序去重；非 CHANGE 的 artifact（需求 / 计划 / 报告）不参与
+    accumulated = fresh.replace(
+        artifacts=(
+            ArtifactRef(
+                artifact_id="plan:0", kind=ArtifactKind.PLAN, path="docs/plan.md",
+                digest="sha256:" + "0" * 64,
+            ),
+            _change_artifact(0, "policies/coding/ARCH-001.yaml"),
+            _change_artifact(1, "policies/coding/ARCH-001.yaml"),
+            _change_artifact(2, "src/other.py"),
+        )
+    )
+    assert _changed_paths(accumulated, target) == (
+        "policies/coding/ARCH-001.yaml",
+        "src/other.py",
+    )
 
 
 def test_distinct_task_ids_never_share_a_checkpoint_file(tmp_root) -> None:
