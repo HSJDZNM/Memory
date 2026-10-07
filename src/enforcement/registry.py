@@ -131,6 +131,13 @@ def _as_token_mapping(value: Any, *, where: str) -> dict[str, tuple[str, ...]]:
             if canonical in items:
                 raise RegistryError(f"{where}.{key} 出现重复值 {item!r}")
             items.append(canonical)
+        if key in parsed:
+            # 两个不同的原始键规范化后是同一个 token（Reviewer / reviewer）：
+            # 直接覆盖等于"同一个键声明了两次，后一条说了算"，而注册表恰恰不许有这种歧义。
+            raise RegistryError(
+                f"{where} 出现重复键 {raw_key!r}：规范化后与已有的 {key!r} 相同，"
+                "同一项不得声明两次"
+            )
         parsed[key] = tuple(items)
     return parsed
 
@@ -368,6 +375,12 @@ def registry_document_from_mapping(document: Mapping[str, Any]) -> ToolRegistry:
         key = canonical_identifier(str(raw_key))
         if not key or "." not in key:
             raise RegistryError(f"权限名必须是 <域>.<动作> 形式，得到 {raw_key!r}")
+        if key in permissions:
+            # Repo.Approve / repo.approve 规范化后是同一个权限：后一条会静默盖掉前一条，
+            # 而被盖掉的那条可能挂着完全不同的说明（这是加载器声称要拒绝的歧义）。
+            raise RegistryError(
+                f"permissions 出现重复键 {raw_key!r}：规范化后与已有的 {key!r} 相同"
+            )
         permissions[key] = "" if raw_note is None else str(raw_note)
 
     roles = _as_token_mapping(document.get("roles", {}), where="roles")

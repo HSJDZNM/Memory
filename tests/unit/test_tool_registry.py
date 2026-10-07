@@ -184,6 +184,33 @@ def test_structural_registry_errors_are_registry_errors(tmp_root, document, need
     assert needle in str(error.value), error.value
 
 
+@pytest.mark.parametrize(
+    ("document", "needle"),
+    [
+        (
+            'registry_schema_version: "1.0"\nversion: 1\n'
+            "permissions:\n  repo.approve: A\n  Repo.Approve: B\n",
+            "permissions",
+        ),
+        (
+            'registry_schema_version: "1.0"\nversion: 1\n'
+            "roles:\n  Reviewer: [repo.read]\n  reviewer: [repo.write]\n",
+            "roles",
+        ),
+    ],
+)
+def test_keys_that_canonicalize_to_the_same_token_are_refused(tmp_root, document, needle):
+    """两个原始键规范化后是同一个 token：那就是"同一个键声明了两次"，后一条会静默覆盖前一条。"""
+
+    path = tmp_root / "duplicate.yaml"
+    path.write_text(document, encoding="utf-8", newline="")
+
+    with pytest.raises(RegistryError) as error:
+        registry_document_from_mapping(load_registry_document(path))
+
+    assert "重复键" in str(error.value) and needle in str(error.value), error.value
+
+
 def _retype_command_param(tool: dict, type_name: str) -> None:
     """把 exec.shell 的 command 参数换成别的类型。
 
