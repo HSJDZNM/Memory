@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from policy.checkers import (
     UNPROVEN_CHANGED_TEXT,
@@ -161,6 +162,31 @@ def test_evidence_channels_decide_between_policy_and_platform_failure() -> None:
     )
     assert dependency_refs[0].evidence_kind == "dependency"
     assert _summary(violations=dependency_refs).reason_code == REASON_POLICY_VIOLATION
+
+
+def test_a_summary_cannot_carry_a_reason_the_findings_do_not_support() -> None:
+    """给了 reason_code 就必须等于派生值；派生不出来时只能是 None。
+
+    旧实现只在"派生出东西"时才比，于是 allow（或 block + 空 violations + 无审批要求）的摘要
+    可以带任意受控 reason——这个字段成了**第二个判定通道**，消费方按一个发现并不支持的理由分流。
+    """
+
+    with pytest.raises(ValidationError):
+        ValidationSummary(
+            decision=Decision.ALLOW,
+            request_id="task-1:validation:0",
+            reason_code=REASON_POLICY_VIOLATION,
+        )
+
+    with pytest.raises(ValidationError):
+        ValidationSummary(
+            decision=Decision.BLOCK,
+            request_id="task-1:validation:0",
+            reason_code=REASON_EVIDENCE_UNAVAILABLE,
+        )
+
+    # 正例：说得出理由时仍按同一套规则派生
+    assert _summary(required_action="approval").reason_code == "approval_required"
 
 
 def test_a_block_that_cannot_say_why_has_no_reason() -> None:

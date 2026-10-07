@@ -357,7 +357,10 @@ class ValidationSummary(StrictModel):
                 f"未知的 reason_code {self.reason_code!r}；只接受 {sorted(REASON_CODES)}，"
                 "拒绝在未知理由下继续"
             )
-        if derived is not None and derived != self.reason_code:
+        if derived != self.reason_code:
+            # **无条件**比：只在"派生出东西"时才比，会让 allow（或 block + 空 violations +
+            # 无审批要求）的摘要带上任意受控 reason——这个字段就变成了第二个判定通道，
+            # 而消费方（修复节点）会按一个发现并不支持的理由分流。派生不出理由时只能是 None。
             raise ValueError(
                 f"reason_code 与发现不一致：{self.reason_code!r} != {derived!r}"
                 "（受控 reason 是从发现派生的，不许成为第二个判定通道）"
