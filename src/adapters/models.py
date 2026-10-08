@@ -848,14 +848,20 @@ def parse_canonical_event(document: Mapping[str, Any], *, agent_id: Optional[str
             f"未知事件类型 {raw_type!r}；受控枚举为 {list(EVENT_TYPES)}，拒绝并记录协议错误"
         ) from None
 
-    principal = document.get("principal") or {}
+    # 显式判 None：`or {}` 会把 [] / "" / 0 / False 这些**畸形的非映射**折成空映射，
+    # 让下面这条拒绝分支对它们永远不可达——失败关闭因此悄悄降级成"当成空的收下"。
+    principal = document.get("principal")
+    if principal is None:
+        principal = {}
     if not isinstance(principal, Mapping):
         raise AdapterEventError("principal 必须是 {subject, roles} 结构")
     unknown_principal = sorted(set(principal) - {"subject", "roles"})
     if unknown_principal:
         raise AdapterEventError(f"principal 出现未知字段 {unknown_principal}")
 
-    payload = document.get("payload") or {}
+    payload = document.get("payload")
+    if payload is None:
+        payload = {}
     if not isinstance(payload, Mapping):
         raise AdapterEventError("payload 必须是映射")
     payload = dict(payload)
