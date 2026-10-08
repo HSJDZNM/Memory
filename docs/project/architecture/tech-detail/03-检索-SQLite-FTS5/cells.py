@@ -267,6 +267,10 @@ front, body = split_front_matter(DOC)
 sections = find_sections(body)
 body_text = "".join(section.body for section in sections)
 DOCUMENT_ID = document_id_for("demo-zh", "guide.md")
+# `chunk_document` 返回的是 `FrontMatter`（带 `metadata` 映射的 dataclass），而 `upsert_document`
+# 要的是 `Sequence[Tuple[str, str]]`——转换口径照 `src/retrieval/indexer.py` 自己的写法
+# （`tuple(front.metadata.items())`）。**不能把这个值丢掉**：front matter 也是文档的一部分，
+# 丢了它，索引里那份文档的元数据就永远为空（今天这份夹具没有 front matter，所以读数是空）。
 front_matter, drafts = chunk_document(DOC, document_id=DOCUMENT_ID, max_chars=120, hard_max_chars=800)
 
 print(pad("#", 4) + pad("heading_anchor", 28) + pad("kind", 8) + pad("字符", 6) + "text_hash")
@@ -321,7 +325,7 @@ store.upsert_document(
         mirror_revision="2026-01-01T00:00:00Z",
         ingested_at="2026-01-01T00:00:00Z",
     ),
-    front_matter=(),
+    front_matter=tuple(front_matter.metadata.items()),
 )
 change = store.replace_chunks(DOCUMENT_ID, drafts)
 stats = store.stats()
@@ -543,7 +547,9 @@ store.upsert_document(
         mirror_revision="2026-01-01T00:00:00Z",
         ingested_at="2026-01-01T00:00:00Z",
     ),
-    front_matter=(),
+    # 同一件事的第二个落点：这里的分块在 upsert **之后**才做，所以直接从文本取一次 front matter
+    # （`split_front_matter` 已在本章导入），而不是把这条 upsert 挪到分块后面去。
+    front_matter=tuple(split_front_matter(RESTRICTED_TEXT)[0].metadata.items()),
 )
 _, restricted_drafts = chunk_document(
     RESTRICTED_TEXT, document_id=RESTRICTED_ID, max_chars=200, hard_max_chars=800
