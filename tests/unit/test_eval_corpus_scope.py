@@ -20,19 +20,26 @@ _MODULE = None
 
 
 def _load_eval_corpus():
-    """按路径加载一次并缓存：这个模块在被 import 时会跑 _load_extra()，重复执行会污染 SOURCES。"""
+    """按**规范名** eval_corpus 加载并复用：同一个进程里多个用例文件必须共用一份实例。
+
+    私有名各加载一份时，第二份的 `_load_extra()` 会拿到第一份的 SourceSpec 去建扩展源
+    （tools/eval_corpus_extra.py 里是 `from eval_corpus import ...`），随后被自己的
+    isinstance 检查拒掉——两个文件一起跑会整片红。
+    """
 
     global _MODULE
     if _MODULE is not None:
         return _MODULE
     if str(TOOLS) not in sys.path:
         sys.path.insert(0, str(TOOLS))
-    spec = importlib.util.spec_from_file_location(
-        "eval_corpus_scope_under_test", TOOLS / "eval_corpus.py"
-    )
+    existing = sys.modules.get("eval_corpus")
+    if existing is not None and hasattr(existing, "_drop_reason"):
+        _MODULE = existing
+        return _MODULE
+    spec = importlib.util.spec_from_file_location("eval_corpus", TOOLS / "eval_corpus.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
+    sys.modules["eval_corpus"] = module
     spec.loader.exec_module(module)
     _MODULE = module
     return module
