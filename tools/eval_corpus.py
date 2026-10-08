@@ -587,6 +587,14 @@ def _load_extra() -> None:
                 raise CorpusError(f"{path}: SCOPE_PARSERS 里的 {kind} 没有对应的 PARSERS 条目")
             if not callable(parser):
                 raise CorpusError(f"{path}: SCOPE_PARSERS[{kind}] 不是可调用的解析器")
+            if kind in SCOPE_PARSERS:
+                # 与上面 SOURCES / PARSERS 两条合并**同一条口径**：`expectation_kind` 冲突一律
+                # 报错。旧写法在这里直接赋值——扩展模块可以静默顶掉内置的
+                # `bandit-plugin-docstring-location` / `pycodestyle-hash-colon`，而文档承诺的
+                # 是"冲突必须显式"（同一个 key 两种解析器 = 同名两义）。
+                raise CorpusError(
+                    f"expectation_kind 冲突：{kind} 的 SCOPE_PARSERS 同时存在于本模块与 {EXTRA_FILENAME}"
+                )
             SCOPE_PARSERS[kind] = parser
 
 

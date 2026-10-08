@@ -167,3 +167,29 @@ def test_verify_with_non_dict_lock_returns_a_problem(tmp_root: Path) -> None:
 
     assert ok is False
     assert any("顶层必须是 JSON 对象" in item for item in problems), problems
+
+
+def test_extra_module_cannot_silently_replace_a_builtin_scope_parser(tmp_root, monkeypatch):
+    """扩展模块与内置的 `SCOPE_PARSERS` 同名 = expectation_kind 冲突，必须显式报错。
+
+    与同一函数里 `SOURCES` / `PARSERS` 两条合并**同一条口径**（那两处本来就报错）：旧写法在
+    `SCOPE_PARSERS` 这一支直接赋值，扩展模块可以静默顶掉内置的 `pycodestyle-hash-colon` /
+    `bandit-plugin-docstring-location`——同一个 key 两种解析器，正是"同名两义"。
+    """
+
+    module = _load_eval_corpus()
+    fake_dir = tmp_root / "tools"
+    fake_dir.mkdir()
+    (fake_dir / module.EXTRA_FILENAME).write_text(
+        "SOURCES = {}\n"
+        "PARSERS = {}\n"
+        "SCOPE_PARSERS = {'pycodestyle-hash-colon': lambda text, spec, rel: []}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "_EXTRA_LOADED", False)
+    monkeypatch.setattr(module, "__file__", str(fake_dir / "eval_corpus.py"))
+
+    with pytest.raises(module.CorpusError) as error:
+        module._load_extra()
+
+    assert "expectation_kind 冲突" in str(error.value)
