@@ -1016,8 +1016,13 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     # 人类输出只报计数（2026-10-03 裁定第 3 条）：逐条明细只在 --json 里。
     for key in RED_KEYS:
         cell = payload["red_conditions"][key]
-        mark = "unavailable" if cell["status"] != STATUS_AVAILABLE else str(cell["count"])
-        print("  [" + ("红" if cell["is_red"] else "ok") + "] " + key + ": " + mark)
+        if cell["status"] != STATUS_AVAILABLE:
+            # "未评"要有自己的标签：`is_red` 为 False 只表示"没有证据说它红"，印成 `[ok]` 就是
+            # 把"未评"说成了"通过"（与同一行的 unavailable、机器行里的 unavailable 自相矛盾），
+            # 正是本模块"未评不是不红"这条纪律要防的读法。
+            print("  [未评] " + key + ": unavailable")
+            continue
+        print("  [" + ("红" if cell["is_red"] else "ok") + "] " + key + ": " + str(cell["count"]))
     print("  " + payload["headline"]["machine_line"])
     # 跨文件契约：ci_local 的 report_only_hits() 读这条 HITS: 行（同 exemption_expiry）。
     print("  " + hits_line(payload))

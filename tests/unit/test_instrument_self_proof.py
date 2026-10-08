@@ -420,3 +420,20 @@ def test_the_default_output_carries_a_hits_line_the_gate_can_read(tmp_root, caps
     count, text = ci_local.report_only_reading(step, capsys.readouterr().out)
     assert text.startswith("HITS: unavailable"), text
     assert count is None, text
+
+def test_unavailable_cells_do_not_print_as_ok(tmp_root, capsys):
+    """未评的格子要有自己的标签：人类输出里不许出现 "[ok] <key>: unavailable"。"""
+
+    module = _load()
+    assert module.run(["--checks", str(tmp_root / "missing.yaml")]) == 0
+    out = capsys.readouterr().out
+
+    assert "[ok]" not in out, out
+    assert "[未评]" in out
+    for key in (
+        "no_check_id",
+        "no_mutation_and_no_gap_note",
+        "patch_not_applicable",
+        "check_id_without_object",
+    ):
+        assert "[未评] " + key + ": unavailable" in out, out
