@@ -155,6 +155,12 @@ url2path["https://cheatsheetseries.owasp.org/index.html"] = dest_of("index")
 LINKRE = re.compile(r'\[([^\]]*)\]\(\s*(https?://cheatsheetseries\.owasp\.org/[^)\s]+?)(\s+"[^"]*")?\s*\)')
 
 def rewrite(md, src_path):
+    """把站内链接改成本地相对路径。**围栏与行内代码一个字都不动**。
+
+    旧实现在整篇 Markdown 上跑 LINKRE.sub：代码样例里指向 cheatsheetseries.owasp.org 的
+    markdown 链接会被改成相对路径，发布出去的示例代码与上游原文不一致（读者复制走就是坏链接）。
+    """
+
     src_dir = os.path.dirname(src_path)
     def repl(m):
         url = m.group(2)
@@ -163,7 +169,21 @@ def rewrite(md, src_path):
         if not tgt: return m.group(0)
         rel = os.path.relpath(tgt, src_dir).replace("\\", "/")
         return "[" + m.group(1) + "](" + rel + (("#" + anchor) if anchor else "") + ")"
-    return LINKRE.sub(repl, md)
+    out, in_fence = [], False
+    for line in md.split("\n"):
+        if line.lstrip().startswith(FENCE):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence:
+            out.append(line)
+            continue
+        # 行内代码（`...`）同样跳过：里面写的是示例，不是本页要维护的引用。
+        pieces = line.split(BT)
+        for index in range(0, len(pieces), 2):
+            pieces[index] = LINKRE.sub(repl, pieces[index])
+        out.append(BT.join(pieces))
+    return "\n".join(out)
 
 def tags(m):
     a = sorted(asvs_ch.get(m["url"], set()), key=lambda x: int(x[1:]))
