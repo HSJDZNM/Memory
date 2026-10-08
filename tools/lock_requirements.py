@@ -47,7 +47,11 @@ def lock_entries(report: dict) -> list[tuple[str, list[str]]]:
     entries: list[tuple[str, list[str]]] = []
     unhashed: list[str] = []
     for item in report["install"]:
-        metadata = item["metadata"]
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        if not isinstance(metadata, dict) or "name" not in metadata or "version" not in metadata:
+            raise LockError(
+                "pip 报告里有形状不对的条目（缺 metadata.name / metadata.version）：" + repr(item)[:120]
+            )
         archive = item.get("download_info", {}).get("archive_info", {}) or {}
         hashes = dict(archive.get("hashes", {}) or {})
         if not hashes and isinstance(archive.get("hash"), str):
@@ -83,7 +87,22 @@ def main(argv: list[str]) -> int:
 
     report_path = Path(argv[1])
     output_path = Path(argv[2])
-    report = json.loads(report_path.read_text(encoding="utf-8"))
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except OSError as error:
+        print("读不了 pip 报告 " + str(report_path) + "：" + str(error), file=sys.stderr)
+        return 2
+    except json.JSONDecodeError as error:
+        print("pip 报告不是合法 JSON（" + str(report_path) + "）：" + str(error), file=sys.stderr)
+        return 2
+    if not isinstance(report, dict) or not isinstance(report.get("install"), list):
+        # 形状不对时 `report["install"]` / `item["metadata"]` 会以 KeyError / TypeError 逃出去：
+        # 文件/JSON/形状三类错误都该走"友好消息 + 退出码 2"，而不是裸 traceback。
+        print(
+            "pip 报告的顶层形状不对（需要含 install 数组的对象）：" + str(report_path),
+            file=sys.stderr,
+        )
+        return 2
     try:
         entries = lock_entries(report)
     except LockError as error:
