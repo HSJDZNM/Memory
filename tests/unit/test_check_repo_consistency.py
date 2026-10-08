@@ -201,3 +201,66 @@ def test_readme_directory_mentions_are_kept():
         "contract",
         "integration",
     ]
+
+def _repo_with(tmp_path, *, requirement: str, project: str, lock: str) -> None:
+    (tmp_path / "requirements.in").write_text(requirement + chr(10), encoding="utf-8", newline="")
+    (tmp_path / "pyproject.toml").write_text(
+        chr(10).join(["[project]", 'name = "demo"', 'dependencies = ["' + project + '"]']) + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+    (tmp_path / "requirements.lock").write_text(lock + chr(10), encoding="utf-8", newline="")
+
+
+def test_extras_declarations_are_parsed_on_both_sides(tmp_path, monkeypatch):
+    """正例：两侧都写 `httpx[http2]>=0.27` 时必须判"一致"，而不是让工具退 2。"""
+
+    _repo_with(
+        tmp_path,
+        requirement="httpx[http2]>=0.27",
+        project="httpx[http2]>=0.27",
+        lock="httpx[http2]==0.27.0",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    assert module.read_requirements_in() == {"httpx": ">=0.27"}
+    assert module.read_pyproject() == {"httpx": ">=0.27"}
+    assert module.check_lock() == [], module.check_lock()
+
+
+def test_extras_are_stripped_to_the_package_name(tmp_path, monkeypatch):
+    """extras 只影响声明形态：包名取第一段（`httpx[cli,http2]>=0.27` → httpx）。"""
+
+    (tmp_path / "requirements.in").write_text(
+        "httpx[cli,http2]>=0.27" + chr(10), encoding="utf-8", newline=""
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    assert module.read_requirements_in() == {"httpx": ">=0.27"}
+
+
+@pytest.mark.parametrize("line", ["[http2]>=0.27", ">=0.27", "httpx[http2"])
+def test_genuinely_unparsable_declarations_still_exit_two(tmp_path, monkeypatch, line):
+    """负例：放宽 extras 不等于"什么都收"——真解析不了的行照旧退 2。"""
+
+    (tmp_path / "requirements.in").write_text(line + chr(10), encoding="utf-8", newline="")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    with pytest.raises(module.EnvironmentProblem):
+        module.read_requirements_in()
+
+def test_trailing_garbage_after_specifier_becomes_drift_not_exit_two(tmp_path, monkeypatch):
+    """边界读数：`httpx>=0.27 这不是声明` 会被界定符段收下，随后在锁比对时判成漂移（可见），
+    而不是环境错误退 2——这条写下来是为了说明放宽 extras 之后"什么算解析得了"的边界在哪。"""
+
+    _repo_with(
+        tmp_path,
+        requirement="httpx>=0.27 这不是声明",
+        project="httpx>=0.27 这不是声明",
+        lock="httpx==0.27.0",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    issues = module.check_lock()
+
+    assert any("不满足声明" in issue for issue in issues), issues

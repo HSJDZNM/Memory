@@ -52,7 +52,11 @@ WORKFLOW_DIR = Path(".github/workflows")
 # 这些脚本属于离线文档镜像流水线，tools/README.md 用一段散文而不是表格登记它们。
 INVENTORY_EXEMPT = {"mirror_docs.py", "learn_site.py", "pep_site.py", "dora_site.py"}
 
-_REQ_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*([<>=!~][^;]*)?$")
+# 依赖声明：包名 + **可选** extras 段（`httpx[http2]>=0.27`）+ 可选的界定符。
+# 旧正则不认 extras：合法声明直接走 EnvironmentProblem（退出 2 = "查不了"），于是 CI 红在一个
+# **正确**的声明上，人只能改声明来迁就工具——"把自己的局限说成对方的问题"。包名仍取第一段
+# （extras 不改变依赖身份）。
+_REQ_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\s*\[[^\]]*\])?\s*([<>=!~][^;]*)?$")
 # 锁文件里的固定行：可选 extras（pkg[extra]==1.2）与可选环境标记（pkg==1.2 ; python_version >= "3.8"）。
 # 旧正则只认"光秃秃的 pkg==1.2"：带 extras 或标记的行会被**静默丢掉**，随后报成"没有固定 X"
 # ——明明固定了，只是没解析出来。
