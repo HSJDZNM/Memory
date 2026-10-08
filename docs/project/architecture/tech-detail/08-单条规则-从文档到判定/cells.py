@@ -390,8 +390,11 @@ for feed in ("bad", "good"):
               + pad(where, 48) + violation.evidence.value)
     print()
 
-bad_report, bad_context, bad_result = observations["bad"]
-good_report, good_context, good_result = observations["good"]
+# 只解包**真的会被引用**的部分：`bad_context` / `good_context` 下面的断言一次都没用（上下文在
+# 构造时已经断言过），`good_report` 也没有（正例那边只看结论与 matched / violations / skipped）。
+# 用 `_` 保留位置，读者仍然看得出两个观测的形状相同。
+bad_report, _, bad_result = observations["bad"]
+_, _, good_result = observations["good"]
 
 # 1) 反例必须命中，而且命中的是三个目标对象（模块 + 类 + 函数）。
 assert bad_result.decision is Decision.ALLOW_WITH_WARNINGS, bad_result.decision.value
