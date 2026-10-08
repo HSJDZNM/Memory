@@ -239,7 +239,9 @@ assert registered.heading_path, "没有 heading_path 会退化成'整篇文档�
 
 # 第 2 件事：这个 dataset + source_path 真的是一个语料条目，且本地哈希与 manifest 一致。
 entry = corpus.entry(registered.dataset, registered.source_path)
-mirror_root = REPO_ROOT / "docs" / "mirrors" / "python-pep-code-style"
+# 镜像根**从数据集声明读**（`datasets[].mirror`），不写死字面量：清单把镜像换到别的目录而这里
+# 没跟着改，就会去读一条不存在的路径——而"哈希对得上"这句话正是靠这条路径读出来的。
+mirror_root = REPO_ROOT / corpus.dataset(registered.dataset).mirror
 entry_file = mirror_root / entry.source_path
 assert entry_file.is_file(), "条目文件不存在: " + entry.source_path
 local_hash = "sha256:" + hashlib.sha256(entry_file.read_bytes()).hexdigest()
