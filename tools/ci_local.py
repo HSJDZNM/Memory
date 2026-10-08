@@ -915,30 +915,32 @@ def json_objects(output: str) -> list[dict]:
     为什么不能逐行 `json.loads`：`obligations_gate.py --json` 打的是
     `json.dumps(..., indent=2)` 的**多行**载荷，第一行只有一个 `{` —— 逐行解析**永远**
     读不到它，读数于是退化成"读不出命中数"（2026-09-30 第 17 轮门禁运行里实测就是这一行）。
-    这里按花括号配平把对象切出来整体解析；解析不了就跳过 —— 读不到不许被写成结论。
+    这里交给 json.JSONDecoder().raw_decode：它按 JSON 语法走，字符串与转义都算它的事。
+    **不能数花括号**：字符串值里的 { } 是内容不是结构（notes / paths / reason 里很常见），
+    数出来的深度会提前归零或永不归零——整段被跳过，读数退化成"读不出命中数"。
+    解析不了就跳过 —— 读不到不许被写成结论。
     """
 
+    decoder = json.JSONDecoder()
     found: list[dict] = []
-    lines = output.splitlines()
-    index = 0
-    while index < len(lines):
-        if not lines[index].strip().startswith("{"):
-            index += 1
+    position = 0
+    while True:
+        start = output.find("{", position)
+        if start < 0:
+            break
+        # 只认"行首（允许缩进）就是 {"的位置：输出里别处的 { 多半是正文。
+        line_start = output.rfind(chr(10), 0, start) + 1
+        if output[line_start:start].strip():
+            position = start + 1
             continue
-        depth = 0
-        chunk: list[str] = []
-        for line in lines[index:]:
-            chunk.append(line)
-            depth += line.count("{") - line.count("}")
-            if depth <= 0:
-                break
         try:
-            payload = json.loads("\n".join(chunk))
+            payload, end = decoder.raw_decode(output, start)
         except ValueError:
-            payload = None
+            position = start + 1
+            continue
         if isinstance(payload, dict):
             found.append(payload)
-        index += max(1, len(chunk))
+        position = max(end, start + 1)
     return found
 
 

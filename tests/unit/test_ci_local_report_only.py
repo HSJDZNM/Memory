@@ -98,6 +98,29 @@ def test_report_only_step_prefers_structured_hits(monkeypatch, capsys, tmp_root)
     assert "hits=2 / 3 个账本" in capsys.readouterr().out
 
 
+def test_json_objects_survive_braces_inside_string_values() -> None:
+    """字符串值里的 { } 是内容不是结构：数花括号会整段读不出（读数退化成"读不出命中数"）。"""
+
+    ci_local = _load_ci_local()
+    payload = json.dumps(
+        {"hits": 3, "ledger_count": 1, "note": "半截 } 收尾"},
+        ensure_ascii=False,
+        indent=2,
+    )
+    found = ci_local.json_objects(payload + chr(10) + "后续输出：这一步的结论行" + chr(10))
+
+    assert [item.get("hits") for item in found] == [3]
+
+
+def test_json_objects_read_a_multi_line_payload() -> None:
+    """阳性对照：普通多行载荷照旧读得出来（第一行只有一个 {）。"""
+
+    ci_local = _load_ci_local()
+    payload = json.dumps({"hits": 0, "ledger_count": 2}, ensure_ascii=False, indent=2)
+
+    assert [item.get("hits") for item in ci_local.json_objects(payload)] == [0]
+
+
 def test_report_only_step_that_cannot_be_read_says_so(monkeypatch, capsys, tmp_root):
     """读不出命中数时照实说，且仍然不阻断（不把"读不到"变成门禁结论）。"""
 
