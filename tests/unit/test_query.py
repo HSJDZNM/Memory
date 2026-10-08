@@ -28,6 +28,32 @@ def plan(text: str | None, **overrides):
     return build_plan(query, scope=SCOPE, policy=CorpusPolicy(), lexicon=LEXICON)
 
 
+def test_non_ascii_words_are_kept_whole() -> None:
+    """非 ASCII 词不再被切成碎片（复核发现 L4 query.py:41）。
+
+    旧词表只有 [0-9A-Za-z_]：tokenize("café") == ("caf",)、tokenize("naïve") == ("na","ve")
+    （"ï" 整个丢掉），碎片照样进 OR 表达式、照样能匹配到无关文本。索引侧本来就把整篇原文
+    交给 FTS5 的 unicode61（按 Unicode 字母切词），两端口径一致才谈得上"命中"。
+    """
+
+    assert tokenize("café") == ("café",)
+    assert tokenize("über checklist") == ("über", "checklist")
+    assert tokenize("naïve") == ("naïve",)
+    assert tokenize("Réglé: 规则") == ("Réglé", "规则")
+
+    # 旧口径会产生这些碎片，它们不许再出现。
+    for fragment in ("caf", "ber", "na", "ve", "gl"):
+        assert fragment not in tokenize("café über naïve Réglé")
+
+
+def test_mixed_script_runs_stay_symmetric_with_the_index_side() -> None:
+    """中英混排整段取成一个词项时，查询与索引两侧仍走同一套 CJK 切分（口径一致才可能命中）。"""
+
+    from retrieval.chunker import search_text
+
+    assert fts_phrase("中文abc") == '"' + search_text("中文abc") + '"'
+
+
 def test_over_long_token_is_reported_as_truncated() -> None:
     """超长词项被丢弃必须记 truncated（复核发现：整条查询可能因此一个词都不剩）。"""
 

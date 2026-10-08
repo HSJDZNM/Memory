@@ -38,7 +38,12 @@ __all__ = [
 
 # 单个词项的字符上限：超长"词"通常是粘贴的 payload，直接丢弃而不是送去匹配。
 MAX_TOKEN_CHARS = 48
-_TOKEN_RE = re.compile(r"[0-9A-Za-z_]+|[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]+")
+# 词项 = 一段连续的"词字符"（字母/数字/下划线，含中日韩文字）。用 Unicode 词类而不是
+# [0-9A-Za-z_]：后者会把带变音符的拉丁词切成碎片——tokenize("café") 得到 ("caf",)、
+# tokenize("naïve") 得到 ("na","ve")（"ï" 整个丢掉），而这些碎片照样进 OR 表达式、
+# 照样能匹配到无关文本（复核发现 L4 query.py:41）。索引侧本来就把整篇原文交给 FTS5 的
+# unicode61（按 Unicode 字母切词），两端口径一致才谈得上"命中"。
+_TOKEN_RE = re.compile(r"\w+")
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
