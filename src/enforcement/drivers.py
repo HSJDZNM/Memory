@@ -754,6 +754,3 @@ def default_drivers(*, shell: Sequence[str] | None = None) -> Mapping[DriverKind
     if shell:
         drivers[DriverKind.SHELL_COMMAND] = ShellCommandDriver(shell=shell)
     return drivers
-
-
-
