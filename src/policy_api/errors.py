@@ -114,6 +114,10 @@ _STATUS_BY_CODE: dict[ErrorCode, int] = {
 }
 STATUS_BY_CODE: Mapping[ErrorCode, int] = MappingProxyType(_STATUS_BY_CODE)
 
+# 「稍后重试是合理的」那一档状态码：限流与暂时不可用。其余（400/401/403/404/409/415/500）
+# 重试同一个请求只会得到同样的拒绝——把它们标成 retryable 会教客户端做无用的重试。
+_TRANSIENT_STATUSES = frozenset({429, 503, 504})
+
 _MAX_DETAIL_CHARS = 240
 
 
@@ -165,7 +169,8 @@ class ApiError(Exception):
 
     code: ErrorCode
     detail: str = ""
-    retryable: bool = False
+    # None = 调用方没有明说 → 由状态码推导（见 `_TRANSIENT_STATUSES`）；显式 True/False 以调用方为准。
+    retryable: Optional[bool] = None
     # 仅供**本地诊断**：CLI / 闭环工具打印用，绝不进 HTTP 响应体（error_payload 只取
     # code/detail/retryable）。把它带在异常上，是为了让"内部错误"能被查清楚，
     # 而不是只留下一句"internal_error"。
@@ -174,6 +179,12 @@ class ApiError(Exception):
     def __post_init__(self) -> None:
         # Exception 的 __init__ 不参与 dataclass 生成，这里显式补上一次，日志里才有可读文本。
         Exception.__init__(self, f"{self.code.value}: {self.detail}" if self.detail else self.code.value)
+        # 「可重试」此前默认 False 且完全由调用方随手给：一个 503（服务暂时不可用）只要忘了写
+        # `retryable=True`，客户端就会把它读成"重试也没用"——而协议里 429/503/504 本身就是
+        # "稍后再试"的意思。默认值改为**从状态码推导**；显式传入仍然优先（服务端最清楚这次
+        # 是不是"等一下就好"，所以保留这个逃生口）。
+        if self.retryable is None:
+            self.retryable = STATUS_BY_CODE.get(self.code, 500) in _TRANSIENT_STATUSES
 
     @property
     def status(self) -> int:

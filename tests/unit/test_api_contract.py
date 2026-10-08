@@ -127,6 +127,35 @@ def test_every_error_code_has_a_status_and_api_error_derives_it() -> None:
     assert {code for code, status in STATUS_BY_CODE.items() if status < 400} == set()
 
 
+def test_retryable_defaults_follow_the_status_code_and_explicit_still_wins() -> None:
+    """「可重试」的默认值由状态码推导：429/503/504 是暂时性失败；显式传入仍然优先。
+
+    此前 `retryable` 默认 `False` 且完全由调用方随手给：一个 503 只要忘了写 `retryable=True`，
+    客户端就会把它读成「重试也没用」——而 503/504/429 本身就是「稍后再试」的意思。
+    """
+
+    from policy_api.errors import ApiError, ErrorCode, error_payload
+
+    # 暂时性：默认 True
+    assert ApiError(ErrorCode.POLICY_BUSY, "繁忙").retryable is True
+    assert ApiError(ErrorCode.EVALUATE_TIMEOUT, "超时").retryable is True
+    assert ApiError(ErrorCode.RATE_LIMITED, "限流").retryable is True
+    assert ApiError(ErrorCode.KNOWLEDGE_UNAVAILABLE, "索引不可用").retryable is True
+
+    # 非暂时性：默认 False（重试只会得到同样的拒绝）
+    assert ApiError(ErrorCode.FORBIDDEN, "越权").retryable is False
+    assert ApiError(ErrorCode.NOT_FOUND, "不存在").retryable is False
+    assert ApiError(ErrorCode.IDEMPOTENCY_KEY_CONFLICT, "幂等键冲突").retryable is False
+    assert ApiError(ErrorCode.INTERNAL_ERROR, "内部错误").retryable is False
+
+    # 显式值优先（逃生口，也是既有的调用形态）
+    assert ApiError(ErrorCode.POLICY_BUSY, "繁忙", retryable=False).retryable is False
+    assert ApiError(ErrorCode.FORBIDDEN, "越权", retryable=True).retryable is True
+
+    # 载荷里永远是布尔值（不是 None）
+    assert error_payload(ApiError(ErrorCode.POLICY_BUSY, "繁忙"))["error"]["retryable"] is True
+
+
 def test_the_status_map_cannot_be_rewritten_at_runtime() -> None:
     """状态码表对外**只读**：任何 import 点都不能进程级改写 HTTP 状态。
 
