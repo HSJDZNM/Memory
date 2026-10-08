@@ -39,11 +39,12 @@ def _fake_repo(tmp_root: Path) -> Path:
 
 
 def _install(module, monkeypatch, repo: Path):
+    hooks = repo / ".git" / "hooks"
     monkeypatch.setattr(module, "ROOT", repo)
-    monkeypatch.setattr(module, "HOOK", repo / ".git" / "hooks" / "pre-push")
-    monkeypatch.setattr(module, "BACKUP", repo / ".git" / "hooks" / "pre-push.bak")
+    # 钩子目录现在**问 git**（`rev-parse --git-path hooks`）：假仓库里没有 git，直接给答案。
+    monkeypatch.setattr(module, "hooks_dir", lambda: hooks)
     assert module.main([]) == 0
-    return repo / ".git" / "hooks" / "pre-push"
+    return hooks / "pre-push"
 
 
 def test_install_writes_an_executable_hook(tmp_root, monkeypatch):
@@ -107,3 +108,40 @@ def test_fallback_python_is_escaped_before_it_lands_in_the_hook(tmp_root, monkey
         capture_output=True, text=True, check=True,
     )
     assert result.stdout == weird, "展开后不再是同一个路径"
+
+
+def test_hooks_dir_comes_from_git_not_from_a_hardcoded_dot_git(tmp_root, monkeypatch):
+    """钩子目录由 git 回答——三种形态旧写法都会判错。
+
+    旧检查是 `(ROOT / ".git").is_dir()`，于是：链接工作树 / 子模块里 `.git` 是文件 → 被误报
+    "这里不是 git 仓库"；配了 `core.hooksPath` 时 git 根本不读 `.git/hooks` → 报"已安装"而钩子
+    毫无作用；裸仓库 → 靠目录名猜。改成问 git 之后，这三种都由 git 的答案决定。
+    """
+
+    module = _load()
+    monkeypatch.setattr(module, "ROOT", tmp_root)
+
+    def fake_git(*args):
+        if args == ("rev-parse", "--is-inside-work-tree"):
+            return "true"
+        if args == ("rev-parse", "--git-path", "hooks"):
+            return "custom/hooks"
+        return None
+
+    monkeypatch.setattr(module, "_git_output", fake_git)
+    assert module.hooks_dir() == tmp_root / "custom/hooks", "相对路径要锚回 ROOT"
+
+    monkeypatch.setattr(module, "_git_output", lambda *args: "false")
+    assert module.hooks_dir() is None, "不在工作树里要如实回答，而不是猜 .git 目录在不在"
+
+    monkeypatch.setattr(module, "_git_output", lambda *args: None)
+    assert module.hooks_dir() is None, "git 不可用同样是 None（不是「这里不是 git 仓库」）"
+
+
+def test_install_reports_when_there_is_no_work_tree(tmp_root, monkeypatch, capsys):
+    module = _load()
+    monkeypatch.setattr(module, "ROOT", tmp_root)
+    monkeypatch.setattr(module, "hooks_dir", lambda: None)
+
+    assert module.main([]) == 2
+    assert "不是 git 工作树" in capsys.readouterr().err

@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-HOOK = ROOT / ".git" / "hooks" / "pre-push"
-BACKUP = ROOT / ".git" / "hooks" / "pre-push.bak"
+HOOK_NAME = "pre-push"
+BACKUP_NAME = "pre-push.bak"
 
 SCRIPT = """#!/bin/sh
 # 由 tools/install_hooks.py 生成；不要手改，改 tools/ci_local.py。
@@ -39,6 +40,39 @@ PY="$ROOT/.venv/Scripts/python.exe"
 if [ -n "$CI_LOCAL_PYTHON" ]; then PY="$CI_LOCAL_PYTHON"; fi
 exec "$PY" "$ROOT/tools/ci_local.py" --hook
 """
+
+
+def _git_output(*args: str) -> str | None:
+    """跑一条 git 命令并返回 stdout；git 不在 / 命令失败一律 None（调用方据此降级）。"""
+
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(ROOT), *args], capture_output=True, text=True, encoding="utf-8"
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip()
+
+
+def hooks_dir() -> Path | None:
+    """钩子目录由 **git 自己**回答（`rev-parse --git-path hooks`），不写死 `.git/hooks`。
+
+    旧写法（`(ROOT / ".git").is_dir()` + 硬编码 `.git/hooks`）漏三种形态：
+    1. 链接工作树 / 子模块里 `.git` 是**文件**（gitdir 指针）→ 被误报"这里不是 git 仓库"，
+       而 git 其实完全正常；
+    2. 配了 `core.hooksPath` 时 git **根本不读** `.git/hooks` → 脚本报"已安装"，钩子毫无作用；
+    3. 裸仓库（没有工作树）→ 现在由 `--is-inside-work-tree` 如实回答，而不是靠目录名猜。
+    """
+
+    if _git_output("rev-parse", "--is-inside-work-tree") != "true":
+        return None
+    raw = _git_output("rev-parse", "--git-path", "hooks")
+    if not raw:
+        return None
+    directory = Path(raw)
+    return directory if directory.is_absolute() else (ROOT / directory)
 
 
 def _sh_double_quoted(value: str) -> str:
@@ -71,38 +105,43 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--show", action="store_true")
     args = parser.parse_args(argv)
 
-    if not (ROOT / ".git").is_dir():
-        print("这里不是 git 仓库：找不到 .git 目录", file=sys.stderr)
+    directory = hooks_dir()
+    if directory is None:
+        print("这里不是 git 工作树（或 git 不可用）：装不了钩子", file=sys.stderr)
         return 2
+    hook = directory / HOOK_NAME
+    backup = directory / BACKUP_NAME
 
     if args.show:
-        print(HOOK.read_text(encoding="utf-8") if HOOK.is_file() else "（没有安装钩子）")
+        print(hook.read_text(encoding="utf-8") if hook.is_file() else "（没有安装钩子）")
+        if directory != ROOT / ".git" / "hooks":
+            print("# 钩子目录由 git 回答：" + directory.as_posix())
         return 0
 
     if args.uninstall:
-        if BACKUP.is_file():
-            shutil.move(str(BACKUP), str(HOOK))
+        if backup.is_file():
+            shutil.move(str(backup), str(hook))
             print("已卸载，并还原了原来的 pre-push")
-        elif HOOK.is_file():
-            HOOK.unlink()
+        elif hook.is_file():
+            hook.unlink()
             print("已卸载")
         else:
             print("没有安装钩子")
         return 0
 
-    if HOOK.is_file() and not BACKUP.is_file():
-        shutil.copy2(str(HOOK), str(BACKUP))
-        print("已备份原来的 pre-push -> " + BACKUP.name)
-    HOOK.parent.mkdir(parents=True, exist_ok=True)
-    HOOK.write_text(
+    if hook.is_file() and not backup.is_file():
+        shutil.copy2(str(hook), str(backup))
+        print("已备份原来的 pre-push -> " + backup.name)
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text(
         SCRIPT.format(fallback_python=_sh_double_quoted(_venv_python())),
         encoding="utf-8", newline="\n",
     )
     # git 只执行带可执行位的钩子（find_hook 会做 access(X_OK)）：write_text 默认 0644，
     # 在 POSIX 上新建的 pre-push 会被**静默忽略**，推送一个检查都不跑，而脚本还打印"已安装"。
     # Windows 没有可执行位，chmod 在这里是 no-op（只影响只读标志）。
-    HOOK.chmod(0o755)
-    print("已安装 pre-push -> " + HOOK.as_posix())
+    hook.chmod(0o755)
+    print("已安装 pre-push -> " + hook.as_posix())
     print("跳过单次：git push --no-verify")
     return 0
 
