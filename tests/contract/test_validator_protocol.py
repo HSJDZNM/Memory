@@ -381,3 +381,25 @@ def test_config_load_is_atomic(tmp_root: Path) -> None:
 
     with pytest.raises(Exception):
         load_config(root=tmp_root, registry=REPO_ROOT / "validation" / "validators.yaml")
+
+def test_the_ci_ruff_install_range_matches_the_validator_declaration() -> None:
+    """CI 装 ruff 的区间必须与 validation/validators.yaml 的 version_requirement 一致。
+
+    漂移的失效方式是「CI 装了一个探针不认的版本，而本机门禁看不见 CI」（workflow 里那条注释写的就是
+    这个风险）。2026-10-08 的读数：validation/ruff.toml 的 select 里 62 个具体码，逐个读
+    `ruff rule <CODE> --output-format json` 的 status.<Kind>.since，最大者是 LOG015 的 0.10.0
+    ——下界因此是 0.10，而 workflow 当时还写着 0.6。
+    """
+
+    workflow = (REPO_ROOT / ".github" / "workflows" / "phase-8.yml").read_text(encoding="utf-8")
+    match = re.search(r'uv pip install "ruff([^"]+)"', workflow)
+    assert match is not None, "workflow 里找不到 ruff 的安装行"
+    installed = match.group(1)
+
+    spec = CONFIG.spec("tool.ruff")
+    assert spec is not None and spec.tool is not None, "validation/validators.yaml 里没有 tool.ruff 的工具声明"
+    declared = spec.tool.version_requirement
+
+    assert installed == declared, (
+        "CI 装 ruff 的区间与验证器声明漂移了：workflow=" + installed + "，validators.yaml=" + declared
+    )

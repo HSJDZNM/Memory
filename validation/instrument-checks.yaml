@@ -433,7 +433,7 @@ checks:
 
   - check_id: "gate-step:Install external linter (ruff)"
     owner: ci-line
-    command: 'uv pip install "ruff>=0.6,<1"'
+    command: 'uv pip install "ruff>=0.10,<1"'
     covers: "装 ruff（登记豁免：本机用已有工具）"
     evidence_level: exit_code
     mutation_id: null

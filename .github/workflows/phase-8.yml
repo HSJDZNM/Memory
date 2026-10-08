@@ -53,9 +53,12 @@ jobs:
       - name: Install external linter (ruff)
         # 这个区间在 validation/validators.yaml 的 tool.ruff.version_requirement 里**也**写了一份
         # （探针按那一份判「版本不符」→ unavailable → 需要它的规则 critical）。两处漂移的失效方式是
-        # 「CI 装了一个探针不认的版本，而本机门禁看不见 CI」。消除它要么让这一步从那份 YAML 读区间，
-        # 要么在一致性检查里加一条比对——两者都不在这条 low 的修复范围里，先把它写在这里。
-        run: uv pip install "ruff>=0.6,<1"
+        # 「CI 装了一个探针不认的版本，而本机门禁看不见 CI」。
+        # 2026-10-08 同步：下界从 0.6 提到 0.10——validation/ruff.toml 的 select 里 62 个具体码，
+        # 逐个读 `ruff rule <CODE> --output-format json` 的 status.<Kind>.since，最大者是 LOG015 的
+        # 0.10.0（其后 S611=0.2.0、S609=v0.0.271、S602/S605=v0.0.262），所以实际下界是 0.10。
+        # 两处不再各写一份：tests/contract/test_validator_protocol.py 有一条用例比对它们必须一致。
+        run: uv pip install "ruff>=0.10,<1"
 
       # 依赖锁、workflow 引用、工具清单是否漂移（退出码 1 即阻断）
       - name: Repository consistency gate
