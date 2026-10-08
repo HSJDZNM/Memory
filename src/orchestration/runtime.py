@@ -134,7 +134,9 @@ def build_assembly(
                 "没有可用的平台客户端：既没有注入 client，也没有声明 api_base_url / token"
             )
         client = ResilientPolicyClient(
-            ApiPolicyClient(config.api_base_url, token=config.api_token),
+            # 租户作为**提示**随每个判定请求上行（服务端仍按令牌核对）；
+            # 不传就是 None——与"请求体里没有 tenant"逐字相同。
+            ApiPolicyClient(config.api_base_url, token=config.api_token, tenant=config.tenant),
             failure_threshold=config.circuit_failure_threshold,
         )
     if tool_runner is None:

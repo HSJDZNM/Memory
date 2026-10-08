@@ -510,18 +510,29 @@ class ApiPolicyClient:
         token: str,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         opener: Optional[Callable[..., Any]] = None,
+        tenant: Optional[str] = None,
     ) -> None:
+        """`tenant` 是**请求体里的提示**（租户只来自令牌，服务端按令牌的客户端声明核对）：
+
+        装配层知道 CLI 的 `--tenant`，而调用点是各节点自己构造的信封——统一在这里补上，
+        免得"收下了 --tenant 却什么都没发生"。调用方自己填了 tenant 时以调用方为准。
+        """
+
         if not base_url or not token:
             raise NodeContractError("ApiPolicyClient 需要 base_url 与 token")
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
+        self.tenant = tenant
         self._opener = opener or _default_transport_opener(self.base_url)
         self.paths: list[str] = []
 
     # -- 传输 ---------------------------------------------------------------
     def _post(self, path: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
-        body = json.dumps(dict(payload), ensure_ascii=False).encode("utf-8")
+        envelope = dict(payload)
+        if self.tenant is not None and "tenant" not in envelope:
+            envelope["tenant"] = self.tenant
+        body = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             self.base_url + path,
             data=body,

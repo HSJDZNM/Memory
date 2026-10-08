@@ -47,6 +47,7 @@ from orchestration_support import (
     CHANGED_RULE_SET_HASH,
     ExecutingToolRunner,
     FakeOpener,
+    FakeResponse,
     ROUTE_PATHS,
     RULE_SET_HASH,
     TARGET_PATH,
@@ -631,6 +632,33 @@ def test_readiness_calls_unreadable_bodies_unknown(body: bytes) -> None:
 
     assert value.state == "unknown"
     assert value.ready is False
+
+
+def test_the_tenant_hint_reaches_the_platform() -> None:
+    """`--tenant` 必须真的到得了平台：它是**提示**（租户只来自令牌），但收下却不用就是撒谎。
+
+    旧实现把 tenant 存进 OrchestrationConfig 之后没有任何消费方——每个判定请求的信封里
+    这个键始终是 None，而操作者以为 `--tenant` 已经生效。
+    """
+
+    seen: list[Any] = []
+    echo = echo_decision_response()
+
+    def record(request: Any, timeout: Optional[float] = None) -> FakeResponse:
+        seen.append(json.loads((request.data or b"{}").decode("utf-8")))
+        status, payload = echo(request)
+        return FakeResponse(status, payload)
+
+    client = ApiPolicyClient(
+        "http://127.0.0.1:9", token="test-token", tenant="alpha", opener=record, timeout=2.0
+    )
+    client.evaluate(EvaluateCall(request_id="req-1", context={"file": TARGET_PATH}, principal={}))
+    assert seen[-1]["tenant"] == "alpha"
+
+    # 不配就是不配：信封里连这个键都没有（而不是空串或 null）
+    plain = ApiPolicyClient("http://127.0.0.1:9", token="test-token", opener=record, timeout=2.0)
+    plain.evaluate(EvaluateCall(request_id="req-2", context={"file": TARGET_PATH}, principal={}))
+    assert "tenant" not in seen[-1]
 
 
 def test_api_client_against_an_unused_port_fails_closed() -> None:
