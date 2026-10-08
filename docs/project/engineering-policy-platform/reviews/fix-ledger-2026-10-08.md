@@ -215,6 +215,15 @@ python tools/check_repo_consistency.py ; python tools/check_text_conventions.py
    没发生的漂移写进账，等于解释一个不存在的问题。
 5. `68c4565` 引入语法错误（内层引号未转义），未 amend，用 `f669ff1` 更正并复跑 71 passed；根因"先提交后验证"已改成"先验证再提交"。
 6. 门禁第 18 步两次抓到**新文件结尾换行**（5 个 + 4 个），均由 Lead 单独补提交；此后各会话提交前都跑
+7. **一条 finding 的建议修法被实测证伪，已回滚**（`tools/governance_gap_probe.py:589`）。现象是真的：G13 的"默认运行"
+   不带 `--dsh-home`，而 `Env.run` 从 `os.environ` 复制，宿主 shell 里的 `DSH_HOME` 直接改变这次测量——clean 环境
+   `1/1 与「after」预期一致`（`unwired_entries=7`、`states_seen=["not_wired", "stale"]`）；把 `DSH_HOME` 指向一个
+   `patch.yml` 坏掉的目录 → `0/1`、`unwired_entries` **7 → 0**、`states_seen` 空（同一棵树、同一个提交，只换了 shell
+   变量）。但 finding 给的修法（默认运行改用夹具空配置根，"别再读宿主"）**照做之后在干净环境下 G13 也 FAIL**：
+   `channels_listed: false`、`unwired_entries: 0`——通道清单本来就来自**真实** DSH home，把配置根中性化等于把 G13
+   要测的东西抽掉。**已回滚**（工作树只留同批 `:465` 的谓词修复 `c277205`），改为交付判定与建议路径——把**生效的
+   `DSH_HOME` 记进 `facts`**（读数说得清"这次测的是哪个配置根"），并把"宿主没有通道"与"这棵树没接线"分成两种
+   **显式状态**。记这一条的理由：**建议修法看起来正当、照做却会把绿变红**，判定必须落在实测上。
    `tools/check_text_conventions.py`。
 
 ## 12 "不改代码/不改行为"清单（可直接引用）
