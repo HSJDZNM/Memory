@@ -363,7 +363,10 @@ def scenario_consumers_agree(runtime: Any) -> Scenario:
                 }
             )
 
-    equal = [item for item in divergences if item.get("error") is None]
+    # `divergent` = 真的比出分歧的场景；渲染不出来（error）的那些单独一列。
+    # 旧名字叫 `equal`，而它装的是**分歧**——读判决式 `not equal` 时极易读反。
+    divergent = [item for item in divergences if item.get("error") is None]
+    skipped = [item for item in divergences if item.get("error") is not None]
     facts = {
         "summary": dict(report.summary()),
         "failures": [item.name for item in failures][:5],
@@ -378,8 +381,13 @@ def scenario_consumers_agree(runtime: Any) -> Scenario:
     unexpected = [item.name for item in failures if item.name != "at_least_one_full_adapter"]
     return Scenario(
         "两个协议消费者（进程内 / 经 HTTP）走到同一套结论，且逐场景决定整份相等",
-        not unexpected and not equal and compared >= 4,
-        f"{len(report.checks)} 项检查（read_only 上限 1 项预期内），决定比对 {compared} 例",
+        # 渲染不出来的场景**按设计**不参与比对（见上面 try 的注释：套件已单独报告它们），
+        # 所以这里不把它当红条件；但"少比了几个"必须出现在读数里，不能只有 facts 里一个键——
+        # `skipped` 因此进 detail 文本。要不要把它升级成红条件是一次显式的设计决定：
+        # 实测当前仓库确实有跳过场景，升级会立刻把本闭环判红（见 M9 判定表里这条的判定）。
+        not unexpected and not divergent and compared >= 4,
+        f"{len(report.checks)} 项检查（read_only 上限 1 项预期内），决定比对 {compared} 例"
+        + (f"，跳过 {len(skipped)} 例（渲染不出来，按设计不参与比对）" if skipped else ""),
         {**facts, "unexpected_failures": unexpected},
     )
 
