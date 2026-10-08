@@ -11,7 +11,9 @@
 - `approvals`：参数绑定、限期、一次性的人工审批引用（语义来自 Phase 4，不另起一套）；
 - `client`：Policy API 客户端端口（HTTP 实现 + 可脚本化的假实现）；
 - `tools`：受治理的工具执行端口（默认走 Phase 4 受控执行器）；
-- `nodes` / `routers` / `graph`：节点、分支与图定义（数据 + 纯函数）；
+- `nodes` / `graph`：节点、分支与图定义（数据 + 纯函数；分支是 `graph.py` 里的 `Router` 对象与
+  `ROUTERS` 纯函数，**没有**独立的 `routers` 模块）；
+- `runtime.py`：把图、引擎与平台客户端装配成一次可运行（引擎选择与运行入口）；
 - `engines` / `langgraph_engine`：参考引擎与 LangGraph 引擎，消费同一份 `GraphSpec`；
 - `cli`：`python -m orchestration.cli`。
 
