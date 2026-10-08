@@ -450,7 +450,7 @@ class ExecutingToolRunner:
             raise AssertionError(
                 "ExecutingToolRunner 的脚本已用完：第 " + str(len(self.calls)) + " 次调用没有对应结论。"
                 "补一个 executed_outcome(...) / 拒绝结论，或改用不带脚本的 ExecutingToolRunner()"
-                "（它的语义是"每次都执行"，写在类 docstring 里）"
+                "（它的语义是「每次都执行」，写在类 docstring 里）"
             )
         return executed_outcome(tool_id=request.tool_id, action_id=request.action_id)
 
