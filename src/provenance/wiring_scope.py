@@ -26,6 +26,7 @@ owner / reason / consequence / expires_at——否则「不在范围内」就成
 from __future__ import annotations
 
 import datetime as _datetime
+import re
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -55,7 +56,18 @@ class WiringScopeError(Exception):
     """边界声明读不了或不合法：调用方必须失败关闭。"""
 
 
+_CANONICAL_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
 def _require_date(value: str, *, field: str) -> str:
+    # 先钉死**规范**形态：date.fromisoformat 还接受 20261001（基本格式）、2026-W40-1（周日期）
+    # 这类写法，放它们进来会让本文件的日期与仓库其余数据文件（一律 YYYY-MM-DD）口径分叉，
+    # 而"口径一致"正是这条校验存在的理由。
+    if _CANONICAL_DATE.fullmatch(value) is None:
+        raise ValueError(
+            f"{field} 必须是规范 ISO 日期 YYYY-MM-DD，得到 {value!r}"
+            "（date.fromisoformat 还接受 20261001 / 2026-W40-1 这类写法，这里不接受）"
+        )
     try:
         _datetime.date.fromisoformat(value)
     except ValueError as error:
