@@ -529,6 +529,21 @@ def scenario_tenant_isolation(runtime: Any) -> Scenario:
     )
 
 
+def restore_rules_dir(backup: Path, rules_dir: Path) -> None:
+    """把规则目录放回原位（恢复失败就抛，绝不假装恢复成功）。
+
+    shutil.move(src, dst) 在 dst 是**已存在的目录**时会把 src 整个搬进 dst **里面**
+    （变成 rules_dir/rules-backup）：规则集其实没恢复，而调用方在 finally 里看不出区别，
+    后面的场景就静默跑在错的状态上。所以先把目标位置清干净再搬。
+    """
+
+    if rules_dir.is_dir():
+        shutil.rmtree(rules_dir)
+    elif rules_dir.exists():
+        rules_dir.unlink()
+    shutil.move(str(backup), str(rules_dir))
+
+
 def scenario_readiness_fails_without_rules(runtime: Any) -> Scenario:
     """规则目录不可用：readiness 失败，evaluate 得到 rule_set_unavailable。"""
 
@@ -556,7 +571,7 @@ def scenario_readiness_fails_without_rules(runtime: Any) -> Scenario:
         )
         code = (response.body.get("error") or {}).get("code")
     finally:
-        shutil.move(str(backup), str(rules_dir))
+        restore_rules_dir(backup, rules_dir)
         runtime.readiness(force=True)
     return Scenario(
         "规则集不可用时 readiness 失败且 evaluate 失败关闭",
