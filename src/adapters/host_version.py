@@ -718,7 +718,9 @@ def probe_host_version(
             executable_name=name,
             detail=redact(f"输出里解析不出声明正则匹配的版本：{stdout or stderr or '（无输出）'}"),
         )
-    version = match.group(1).strip()
+    # 声明正则允许"恰好一个捕获组"，但那个组可以**不参与匹配**（可选组）：group(1) 这时是
+    # None，直接 .strip() 会抛 AttributeError，破坏"读不出来 = unavailable"的契约。
+    version = (match.group(1) or "").strip()
     if not version:
         return ProbeOutcome(
             ok=False,
@@ -1057,6 +1059,9 @@ def check_recorded_versions(
             findings.append(
                 HostVersionFinding(
                     status=HostVersionStatus.RECORDING_STALE,
+                    # 记录文档按不可信加载：它里面的 executable / args / version_pattern
+                    # 必须与活体探测那条路径同口径过 redact()，否则手改记录就能把绝对路径
+                    # 带回报告（本模块的口径是报告里不出现机器布局）。
                     detail=(
                         "记录里的探测读法 "
                         + _describe_reading(entry.executable, entry.args, entry.version_pattern)
