@@ -311,7 +311,10 @@ def structural_problems(path: Path) -> list[str]:
         sys.path.insert(0, str(TOOLS_DIR))
     from check_notebook import check as check_notebook_file
 
-    return [f"[{path.name}] {item}" for item in check_notebook_file(path)]
+    # 不再补 `[name]` 前缀：check_notebook.check() 的每条消息现在自带文件位置
+    # （顶层/解析类消息一直带 {path}，单元级消息 2026-10-08 起也对齐）——
+    # 调用方补前缀正是那条 low 台账条目的"绕法"，绕法不该留在调用方。
+    return list(check_notebook_file(path))
 
 
 def run_cells(spec, workdir: Path, *, verbose: bool = True) -> list[str]:

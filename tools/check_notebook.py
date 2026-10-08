@@ -51,7 +51,10 @@ def check(path: Path) -> list[str]:
         return problems
 
     for index, cell in enumerate(cells):
-        location = f"单元 {index}"
+        # 位置自带文件名：main() 把**所有目标**的问题汇总成一个列表打印（用法就是一次传多份），
+        # 只写"单元 N"的话，读的人无从判断是哪一份 notebook（调用方 build_notebooks.py 之前
+        # 只能自己在外面补 `[name]` 前缀来兜）。顶层/解析类消息本来就用 `{path}`，这里与它们对齐。
+        location = f"{path}: 单元 {index}"
         if not isinstance(cell, dict):
             problems.append(f"{location}: 单元必须是 JSON 对象，得到 {type(cell).__name__}")
             continue
