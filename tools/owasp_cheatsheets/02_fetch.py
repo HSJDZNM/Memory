@@ -92,6 +92,9 @@ async def main():
                 ok = bool(r.success) and len(md) > 300
                 m = {"url": u, "slug": slug, "kind": kinds[u], "success": bool(r.success),
                      "status": r.status_code, "chars": len(md), "words": len(md.split()),
+                     # error 空串而不是缺键：成功与失败读数必须**同一套键**，消费方才能
+                     # 一律按同一形状读（旧实现成功记录没有 error、失败记录缺过 words）。
+                     "error": "",
                      "title": "", "desc": "", "h2": [], "saved": ok, "links_out": []}
                 if ok:
                     h1 = re.search(r"^# (.+)$", md, re.M)
