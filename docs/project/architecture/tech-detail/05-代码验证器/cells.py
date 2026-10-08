@@ -337,6 +337,11 @@ passing_report, passing_result = decide(
     changed=("src/shop/order_service.py",),
 )
 pytest_record = passing_report.record("tool.pytest")
+# 同一族：**解引用之前先断言它存在**（前一位在 critical[0] 处立的判据）。record() 的返回类型是
+# Optional[ValidatorRecord]：管线不再给 tool.pytest 产出记录时，下面那行打印先抛的是
+# AttributeError: 'NoneType' object has no attribute 'status'——读者看到的是"讲解写错了"，
+# 而这一格要给的判据是"正例放行，且 tool.pytest 这一路真的跑过、状态 ok"。
+assert pytest_record is not None, "正例里 tool.pytest 没有产出记录：验证器流水线回归了"
 print()
 print("变更集里的文件:", passing_report.selection["nodeids"],
       "（层级", passing_report.selection["level"] + "）")
