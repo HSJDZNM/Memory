@@ -58,4 +58,18 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["src/policy", "src/retrieval"]
+# 度量范围 = 发行版真的装出去的全部包（src/ 下的 8 个），不是"核心两层"：
+# 只量 policy + retrieval 会让 adapters / enforcement / orchestration / policy_api /
+# provenance / validators 的回归在覆盖率读数里**根本不存在**（不是 0%，是不出现）。
+source = [
+  "src/adapters",
+  "src/enforcement",
+  "src/orchestration",
+  "src/policy",
+  "src/policy_api",
+  "src/provenance",
+  "src/retrieval",
+  "src/validators",
+]
+# 刻意不设 fail_under：覆盖率门槛是**门禁决策**（谁跑、跑哪些套件、达不到时拦不拦），
+# 现在没有任何步骤跑 --cov，先写一个数字只会制造一条没人验证的门槛。
