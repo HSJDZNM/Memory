@@ -115,13 +115,17 @@ for name, count in sorted(by_checker.items()):
 print()
 print(pad("source.kind", 22) + "条数")
 print("-" * 40)
+# 词表**从模型自己的声明取**（`policy.models.SOURCE_KINDS`），不在讲解里手抄一份——手抄的那份会在
+# 模型新增一种来源时静默过期，而下面那条断言正是"来源类型读得懂"的判据。
+from policy.models import SOURCE_KINDS
+
 by_kind = Counter(item.source.kind for item in RULES)
 for name, count in sorted(by_kind.items()):
     print(pad(name, 22) + str(count))
 
 # 空规则集会让后面所有判据变成空转，先拦住。
 assert RULES, "policies/ 下一条规则都没有加载到"
-assert set(by_kind) <= {"project-policy", "standard"}, by_kind
+assert set(by_kind) <= set(SOURCE_KINDS), (sorted(by_kind), sorted(SOURCE_KINDS))
 print()
 print("加载通过：每条规则都有一个确定的 checker 与一个本地来源类别。")
 '''
@@ -403,7 +407,7 @@ print("  仓库里 " + str(allowed_total) + " 条规则命中后只告警（含 
             '''
 # 变异实验：把真实规则逐个改坏，记录加载器拦在哪。
 from policy.loader import LoaderError, RuleFileError, load_rule_file, load_rules
-from policy.models import EnforcementType, SOURCE_KINDS
+from policy.models import EnforcementType
 
 BASE = yaml.safe_load((REPO_ROOT / "policies" / "coding" / "DOC-001.yaml").read_text(encoding="utf-8"))
 
