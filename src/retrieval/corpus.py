@@ -202,22 +202,35 @@ def _resolve_dataset(
         title = page.get("title")
         if not isinstance(url, str) or not url.strip():
             raise CorpusError(f"{dataset.name}:{source_path} 的镜像 manifest 缺少 source_url")
-        resolved.append(
-            ResolvedEntry(
-                dataset=dataset.name,
-                source_path=source_path,
-                title=str(title) if title else PurePosixPath(source_path).stem,
-                source_url=url.strip(),
-                license=dataset.license,
-                license_source=dataset.license_source,
-                tier=dataset.tier,
-                visibility=dataset.visibility,
-                language=dataset.language,
-                manifest_sha256=_string_or_none(page.get("sha256")),
-                manifest_bytes=_int_or_none(page.get("bytes")),
-                mirror_revision=revision_text,
+        try:
+            resolved.append(
+                ResolvedEntry(
+                    dataset=dataset.name,
+                    source_path=source_path,
+                    title=str(title) if title else PurePosixPath(source_path).stem,
+                    source_url=url.strip(),
+                    license=dataset.license,
+                    license_source=dataset.license_source,
+                    tier=dataset.tier,
+                    visibility=dataset.visibility,
+                    language=dataset.language,
+                    manifest_sha256=_string_or_none(page.get("sha256")),
+                    manifest_bytes=_int_or_none(page.get("bytes")),
+                    mirror_revision=revision_text,
+                )
             )
-        )
+        except ValidationError as error:
+            # 本函数里唯一没有包 CorpusError 的校验点：manifest 里一个被改坏的 sha256
+            # （形态不合法）会让 pydantic 抛 ValidationError，而调用方只接 CorpusError
+            # （cli.py 的 config error 分支），于是它变成一次未捕获的 traceback。
+            details = "; ".join(
+                f"{'.'.join(str(part) for part in item.get('loc', ())) or '<root>'}: "
+                f"{item.get('msg')}"
+                for item in error.errors()
+            )
+            raise CorpusError(
+                f"{dataset.name}:{source_path} 的镜像 manifest 记录校验失败 -> {details}"
+            ) from error
     return tuple(resolved), tuple(issues)
 
 
