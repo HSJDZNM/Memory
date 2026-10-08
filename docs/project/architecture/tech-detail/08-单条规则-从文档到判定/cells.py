@@ -196,11 +196,13 @@ print(pad("字节 / 行数", 24) + str(source_file.stat().st_size) + " / "
 2. 如果它是某条规则的来源，还要在 `rule_sources` 里登记
    `{rule_id, rule_version, dataset, source_path, heading_path}`——这一步决定"能查回它"。
 
-两处的 `source_path` 写法**不一样**，这是最容易踩的坑：
+两处的 `source_path` 写的是**同一种**路径（都相对**数据集镜像根**，见 `datasets[].mirror`），
+因为索引器的文档身份就是 `dataset + 镜像根下的路径`。真正容易踩的坑在**另一个文件**里：
 
-- `entries` 里的路径是**仓库相对**的（`docs/mirrors/...`）；
-- `rule_sources` 里的路径是**相对该数据集镜像根**的（`pep-257-docstrings/index.md`），
-  因为索引器的文档身份是 `dataset + 镜像根下的路径`。
+- `knowledge/corpus.yaml` 的 `entries` 与 `rule_sources` 都写 `pep-257-docstrings/index.md`；
+- 而**规则 YAML** 的 `source.path` 写的是**仓库相对**的完整路径
+  （`docs/mirrors/python-pep-code-style/pep-257-docstrings/index.md`）——两者必须指向同一份文档，
+  所以下面用 `rule.source.path.endswith(registered.source_path)` 把它们对齐。
 
 下面把两条都查出来对一遍：登记存在、数据集存在、条目的镜像文件在仓库里、
 本地内容的 sha256 等于镜像 manifest 记录的哈希（哈希漂移会被 `verify` 报出来，退出码 1）。
