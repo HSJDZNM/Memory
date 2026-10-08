@@ -10,6 +10,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOLS = REPO_ROOT / "tools"
 
@@ -67,3 +69,51 @@ def test_file_inside_the_corpus_is_not_skipped(tmp_root: Path) -> None:
     (base / "x.py").write_text("value = 1" + chr(10), encoding="utf-8", newline=chr(10))
 
     assert module._drop_reason(base, _scope(module, file="x.py"), {}) is None
+
+def test_unreadable_target_is_a_skip_not_a_crash(tmp_root: Path) -> None:
+    """目标在那儿但读不出来（这里是目录）：记 target_unreadable，不抛 OSError。"""
+
+    module = _load_eval_corpus()
+    base = tmp_root / "corpus"
+    (base / "adir").mkdir(parents=True, exist_ok=True)
+
+    skip = module._drop_reason(base, _scope(module, file="adir"), {})
+
+    assert skip is not None and skip.reason == module.SKIP_TARGET_UNREADABLE
+    assert "读不出来" in skip.detail
+
+
+def test_read_failure_is_a_skip_not_a_crash(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """读权限错误：记 target_unreadable，OSError 不许逃出 _drop_reason。"""
+
+    module = _load_eval_corpus()
+    base = tmp_root / "corpus"
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "x.py").write_text("value = 1" + chr(10), encoding="utf-8", newline=chr(10))
+    real_read_bytes = Path.read_bytes
+
+    def boom(self: Path) -> bytes:
+        if self.name == "x.py":
+            raise PermissionError("denied by test")
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", boom)
+
+    skip = module._drop_reason(base, _scope(module, file="x.py"), {})
+
+    assert skip is not None and skip.reason == module.SKIP_TARGET_UNREADABLE
+    assert "PermissionError" in skip.detail
+
+
+def test_missing_target_still_uses_the_missing_reason(tmp_root: Path) -> None:
+    """真·不存在仍然是 target_missing（理由不许被这次收口改错）。"""
+
+    module = _load_eval_corpus()
+    base = tmp_root / "corpus"
+    base.mkdir(parents=True, exist_ok=True)
+
+    skip = module._drop_reason(base, _scope(module, file="nope.py"), {})
+
+    assert skip is not None and skip.reason == module.SKIP_TARGET_MISSING

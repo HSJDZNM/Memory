@@ -197,6 +197,9 @@ class Skip:
 SKIP_TARGET_MISSING = "target_missing"
 SKIP_TARGET_LINE_OUT_OF_RANGE = "target_line_out_of_range"
 SKIP_TARGET_OUTSIDE_CORPUS = "target_outside_corpus"
+#: 文件在那儿但读不出来（权限 / 变成了目录 / 读到一半消失）：**不是**"上游漂移"（TARGET_MISSING），
+#: 也不是崩溃——如实记一条带异常类型的 skip，由读数的人决定要不要管。
+SKIP_TARGET_UNREADABLE = "target_unreadable"
 SKIP_NO_LOCATION = "expectation_without_location"
 SKIP_NO_CODE = "expectation_without_code"
 SKIP_UNDECLARED_CODE = "code_not_declared_in_file"
@@ -898,9 +901,21 @@ def _drop_reason(
     if target != base_resolved and base_resolved not in target.parents:
         return Skip(SKIP_TARGET_OUTSIDE_CORPUS, f"{annotation.code} {annotation.file}")
     if annotation.file not in line_cache:
-        line_cache[annotation.file] = (
-            len(_decode(target.read_bytes()).splitlines()) if target.is_file() else None
-        )
+        # 一次读到底（旧实现是 `is_file()` 再 `read_bytes()`：中间那一小段是 TOCTOU 窗口，
+        # 而且 `read_bytes()` 本身没守护——权限错误/目标变成目录都会裸抛 OSError，
+        # 逃出 annotation_report()/load_annotations()，与模块契约不符）。
+        try:
+            data = target.read_bytes()
+        except (FileNotFoundError, NotADirectoryError):
+            line_cache[annotation.file] = None
+        except OSError as error:
+            return Skip(
+                SKIP_TARGET_UNREADABLE,
+                f"{annotation.code} {annotation.file}:{annotation.line}"
+                f"（读不出来：{type(error).__name__}: {error}；声明于 {annotation.source}）",
+            )
+        else:
+            line_cache[annotation.file] = len(_decode(data).splitlines())
     total = line_cache[annotation.file]
     if total is None:
         return Skip(
