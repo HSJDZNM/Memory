@@ -74,3 +74,32 @@ def test_exact_stage_selector_runs_only_that_stage(monkeypatch) -> None:
     assert module.main() == 0
     assert len(calls) == 1
     assert calls[0][0][-1].endswith("03_build.py")
+
+def test_stage_timeout_stops_the_pipeline(monkeypatch, capsys) -> None:
+    """阶段挂起 → 退出码 2 + 写明停在哪，不许永远等下去。"""
+
+    module = _load()
+
+    def timeout(*args: object, **kwargs: object) -> int:
+        raise module.subprocess.TimeoutExpired(cmd="stage", timeout=1)
+
+    monkeypatch.setattr(module.subprocess, "call", timeout)
+    monkeypatch.setattr(sys, "argv", ["pipeline.py", "03"])
+
+    assert module.main() == 2
+    assert "超过" in capsys.readouterr().out
+
+
+def test_stage_start_failure_is_a_controlled_error(monkeypatch, capsys) -> None:
+    """sys.executable 起不来（OSError）→ 退出码 2 + 一行理由，不是栈回溯。"""
+
+    module = _load()
+
+    def boom(*args: object, **kwargs: object) -> int:
+        raise OSError("no interpreter")
+
+    monkeypatch.setattr(module.subprocess, "call", boom)
+    monkeypatch.setattr(sys, "argv", ["pipeline.py", "03"])
+
+    assert module.main() == 2
+    assert "起不来" in capsys.readouterr().out

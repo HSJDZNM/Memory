@@ -12,6 +12,10 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 STAGES = ["01_analyze.py", "02_fetch.py", "03_build.py", "04_index.py", "05_verify.py"]
 
+#: 单个阶段的墙钟上限（秒）：某个阶段挂起（例如 02_fetch 在网络上等、或交互式提示等输入）
+#: 时不许把整条流水线永远钉死。可用 OWASP_PIPELINE_STAGE_TIMEOUT_S 显式覆盖。
+STAGE_TIMEOUT_S = float(os.environ.get("OWASP_PIPELINE_STAGE_TIMEOUT_S", "1800"))
+
 
 def main():
     argv = sys.argv[1:]
@@ -38,7 +42,19 @@ def main():
         print("=" * 64)
         print(">>> " + s)
         print("=" * 64)
-        rc = subprocess.call([sys.executable, os.path.join(HERE, s)])
+        try:
+            rc = subprocess.call(
+                [sys.executable, os.path.join(HERE, s)], timeout=STAGE_TIMEOUT_S
+            )
+        except subprocess.TimeoutExpired:
+            print("")
+            print("!! " + s + " 超过 " + str(int(STAGE_TIMEOUT_S)) + " 秒仍未结束：流水线停在这里，不继续跑后面的阶段")
+            return 2
+        except OSError as error:
+            # sys.executable 缺失（嵌入/冻结解释器）也会走到这里：要一条可读的失败，不是栈回溯。
+            print("")
+            print("!! " + s + " 起不来：" + type(error).__name__ + ": " + str(error))
+            return 2
         if rc != 0:
             print("")
             print("!! " + s + " 失败，退出码 " + str(rc))
