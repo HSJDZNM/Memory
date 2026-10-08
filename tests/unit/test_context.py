@@ -474,3 +474,18 @@ def test_case_differing_absolute_path_stays_in_scope_on_windows() -> None:
     outside = str(REPO_ROOT).upper() + chr(92) + "src" + chr(92) + "order" + chr(92) + "controller.py"
 
     assert repo_relative_path(outside, repo_root=REPO_ROOT) == "src/order/controller.py"
+
+
+def test_absolute_path_helper_covers_unc_and_backslash_forms() -> None:
+    """`_is_absolute_path` 直接调用时也要认出 UNC 与反斜杠开头——那条分支不是死代码。
+
+    repo_relative_path 会先把 "\" 换成 "/"，所以经它进来的 UNC 走的是 "/" 那条分支；
+    但 helper 自己的 docstring 声称跨平台判据，直接调用（或将来新增的调用点）必须仍然成立。
+    """
+
+    from policy.context import _is_absolute_path
+
+    assert _is_absolute_path("/etc/passwd") is True
+    assert _is_absolute_path("\\\\server\\share\\file.txt") is True
+    assert _is_absolute_path("C:/Windows/system32") is True
+    assert _is_absolute_path("relative/path.py") is False
