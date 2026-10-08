@@ -447,6 +447,19 @@ def test_relative_imports_resolve_inside_the_package() -> None:
     assert result.unresolved == ()
 
 
+def test_relative_from_import_of_an_attribute_is_not_a_spurious_unresolved() -> None:
+    """`from . import SomeAttribute`（包的属性、不是子模块）不许变成假阻断（复核发现）。"""
+
+    result = dependencies_for("from . import OrderService" + chr(10))
+
+    assert result.unresolved == ()
+    assert result.dependencies == ()
+
+    # 显式子模块缺失仍然必须留痕（不是"没查"）。
+    missing = dependencies_for("from .missing_module import thing" + chr(10))
+    assert [item.module for item in missing.unresolved] == ["shop.missing_module"]
+
+
 def test_relative_import_beyond_the_top_level_package_is_unresolved() -> None:
     """越界判定把"恰好一级"也算进去：`drop == len(package)` 时 Python 自己就报错。
 
