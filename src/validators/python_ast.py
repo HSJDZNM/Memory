@@ -296,7 +296,10 @@ def parse_module(text: str) -> ModuleFacts:
             imports.append(_dynamic_import(node, name, line, column))
 
     return ModuleFacts(
-        module_docstring=_docstring_of(tree) is not None,
+        # 与定义层同一条口径（_has_docstring：字面量 strip() 之后必须非空）：旧实现只查
+        # "有没有字符串字面量"，于是 module_docstring 对 "" 与 "   " 报 True，而同样构造写在
+        # 函数里报 False——同一个问题在模块层与定义层给出相反答案（复核发现）。
+        module_docstring=_has_docstring(tree),
         imports=tuple(sorted(imports, key=lambda item: (item.line, item.column, item.module))),
         calls=tuple(sorted(calls, key=lambda item: (item.line, item.column, item.dotted))),
         definitions=tuple(

@@ -244,6 +244,20 @@ def test_read_source_bounds_the_read_by_the_descriptor_not_the_path_stat(
 # ------------------------------------------------------------------ AST 事实
 
 
+def test_module_docstring_uses_the_same_blank_rule_as_definitions() -> None:
+    """模块与定义用同一条口径：空 / 全空白字面量不算 docstring（复核发现）。"""
+
+    assert parse_module('"""模块。"""' + chr(10)).module_docstring is True
+    assert parse_module('""' + chr(10)).module_docstring is False
+    assert parse_module('"   "' + chr(10)).module_docstring is False
+
+    # 同一个构造在定义层早就是这个答案——两层必须一致。
+    blank = parse_module("def f():" + chr(10) + "    \"\"" + chr(10))
+    assert blank.definitions[0].docstring is False
+    real = parse_module("def f():" + chr(10) + "    \"\"\"说明。\"\"\"" + chr(10))
+    assert real.definitions[0].docstring is True
+
+
 def test_nested_definitions_are_collected_with_their_kind() -> None:
     """嵌套类/方法、函数里的函数、模块级 if 里的定义都要收（复核发现：旧实现只走一层）。"""
 
