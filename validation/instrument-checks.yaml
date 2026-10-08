@@ -267,7 +267,11 @@ checks:
     evidence_level: exit_code
     mutation_id: null
     gap_note: "存量检查，未做变异自证"
-    severity: blocking
+    # 本行 covers 自己写明"报告模式恒退 0"，按头部对 severity 的定义（blocking = 在 CI 或本机
+    # 门禁上红了就是失败；advisory = 手工仪器或只报告步骤）它不该占 blocking 名额——否则
+    # "有多少步 blocking"这个读数会把一条**永远不会红**的步骤算进阻断覆盖（复核发现）。
+    # 可失败的形式是 `adapters.cli wiring --check`（挂在测试与 G13 上），那一条另计。
+    severity: advisory
 
   - check_id: "gate-step:Multi-agent closed loop"
     owner: ci-line
