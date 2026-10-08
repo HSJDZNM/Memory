@@ -42,12 +42,25 @@ def test_hash_lines_are_continuations_of_their_pin():
         assert all(line.lstrip().startswith("--hash=") for line in lines[1:])
 
 
-def test_a_package_without_hashes_stays_a_single_line():
-    entries = lock_requirements.lock_entries(
-        {"install": [{"metadata": {"name": "demo", "version": "1.0"}}]}
-    )
+def test_a_package_without_hashes_is_refused_not_written_as_a_bare_pin():
+    """没有哈希的条目**拒绝出锁**（2026-10-08 口径推翻，带证据）。
 
-    assert entries == [("demo", ["demo==1.0"])]
+    旧用例断言"没有哈希就写成一条单行 pin"。但本文件产出的锁是给 `pip install --require-hashes`
+    用的（头部就写着这条用法）：混进一条没有哈希的 pin，pip 会**整份拒绝**，而读文件的人看不出
+    哪一条没被校验——"看起来带了哈希的锁"比没有锁更糟。因此该行为判为缺陷，改成显式报错。
+    旧行为来自可编辑 / VCS / 本地安装在 pip 报告里带 `dir_info` / `vcs_info` 而不是
+    `archive_info.hashes` 的真实形态，不是假设。
+    """
+
+    import pytest
+
+    with pytest.raises(lock_requirements.LockError) as error:
+        lock_requirements.lock_entries(
+            {"install": [{"metadata": {"name": "demo", "version": "1.0"}}]}
+        )
+
+    assert "demo" in str(error.value)
+    assert "没有哈希" in str(error.value)
 
 
 def test_generated_lock_is_readable_by_the_repo_parser(tmp_root, monkeypatch):
@@ -84,3 +97,21 @@ def test_requirements_in_is_anchored_to_the_repo(monkeypatch, tmp_root):
     assert lock_requirements.requirements_digest() == hashlib.sha256(
         lock_requirements.REQUIREMENTS_IN.read_bytes()
     ).hexdigest()
+
+
+def test_the_singular_archive_info_hash_is_understood():
+    """老版本 pip 只给单数 `archive_info.hash`：认它，别当成「没有哈希」。"""
+
+    report = {
+        "install": [
+            {
+                "metadata": {"name": "PyYAML", "version": "6.0.3"},
+                "download_info": {"archive_info": {"hash": "sha256=" + "aa" * 32}},
+            }
+        ]
+    }
+
+    entries = lock_requirements.lock_entries(report)
+
+    assert [name for name, _lines in entries] == ["pyyaml"]
+    assert any("--hash=sha256:" + "aa" * 32 in line for line in entries[0][1])
