@@ -40,6 +40,10 @@ WORKSPACE = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
 
 AGENTS = ("dsh", "generic-json", "legacy-post-only")
 
+# 本闭环用的熔断上限：场景、驱动它的 runtime 与一致性套件必须是同一个数，
+# 否则"到上限即熔断"这个判据会跟着某一处的改动悄悄失真。
+BREAKER_LIMIT = 3
+
 # 语义动作：在 Controller 里直接依赖 Repository（ARCH-001 禁止的那件事）。
 VIOLATING = "from repository import OrderRepository"
 CLEAN = "value = 1"
@@ -252,9 +256,16 @@ def scenario_trace_provenance(runtime) -> Scenario:
     )
 
 
-def scenario_breaker(runtime) -> Scenario:
+def scenario_breaker(runtime, limit: int) -> Scenario:
+    """窗口内到上限即熔断——而且要**按 Agent 各算各的**、熔断之后不许再放行。
+
+    旧判据是 any(code == "dsh:request_busy")：全局熔断（B 被 A 的计数连坐）与"只熔断一次
+    又放行"都能让它保持绿。这里给每个 Agent 各发 limit + 2 条，要求前 limit 条不熔断、
+    之后每一条都熔断——多发两条才看得见"熔断之后又放行"。
+    """
+
     codes: list[str] = []
-    for index in range(8):
+    for index in range(2 * (limit + 2)):
         agent = "dsh" if index % 2 == 0 else "generic-json"
         raw = (
             _dsh_event(f"loop-{index}", f"c{index}", CLEAN)
@@ -262,10 +273,23 @@ def scenario_breaker(runtime) -> Scenario:
             else _generic_event(f"loop-{index}", CLEAN, tool="read")
         )
         codes.append(f"{agent}:{runtime.handle(agent, raw, execute=lambda e: None).outcome_code}")
+
+    by_agent = {
+        agent: [code.split(":", 1)[1] for code in codes if code.startswith(agent + ":")]
+        for agent in ("dsh", "generic-json")
+    }
+
+    def trips_at_its_own_limit(sequence: list[str]) -> bool:
+        return (
+            len(sequence) == limit + 2
+            and all(code != "request_busy" for code in sequence[:limit])
+            and all(code == "request_busy" for code in sequence[limit:])
+        )
+
     return Scenario(
         name="cross-agent-loop-is-terminated",
-        passed=any(code == "dsh:request_busy" for code in codes),
-        detail="窗口内事件数到上限即熔断（互相触发的循环不会烧完预算）",
+        passed=all(trips_at_its_own_limit(sequence) for sequence in by_agent.values()),
+        detail="窗口内事件数到上限即熔断，且熔断按 Agent 各算各的（互相触发的循环不会烧完预算）",
         facts={"sequence": codes},
     )
 
@@ -313,7 +337,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     shutil.rmtree(DEMO_ROOT, ignore_errors=True)
 
     registry, rules, adapters, runtime = _load()
-    loop_runtime = _load(state_name="breaker", breaker_limit=3)[3]
+    loop_runtime = _load(state_name="breaker", breaker_limit=BREAKER_LIMIT)[3]
     conformance = run_conformance(
         adapters=adapters,
         rules=rules,
@@ -321,7 +345,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         outside=WORKSPACE.parent / "outside-workspace.py",
         ledger_dir=DEMO_ROOT / "conformance-ledger",
         trace_path=DEMO_ROOT / "conformance-traces.jsonl",
-        breaker_limit=3,
+        breaker_limit=BREAKER_LIMIT,
     )
 
     scenarios = [
@@ -330,7 +354,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         scenario_capability_degradation(registry, runtime),
         scenario_cross_agent_isolation(runtime),
         scenario_trace_provenance(runtime),
-        scenario_breaker(loop_runtime),
+        scenario_breaker(loop_runtime, BREAKER_LIMIT),
         scenario_support_matrix(registry, conformance),
     ]
     passed = all(item.passed for item in scenarios)
