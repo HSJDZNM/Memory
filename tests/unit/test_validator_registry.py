@@ -292,6 +292,19 @@ def test_config_digest_returns_none_when_the_file_cannot_be_read(monkeypatch, tm
     assert config_digest(None) is None
 
 
+def test_component_name_must_not_canonicalize_to_empty() -> None:
+    """组件名规范化后为空必须报错：空名字会让"没命中"与"命中无名组件"分不清（复核发现）。"""
+
+    from validators.models import ComponentSpec
+
+    with pytest.raises(Exception) as error:
+        ComponentSpec(name="   ", match=("src/**",))
+    assert "不能为空" in str(error.value)
+
+    # 正常名字照常规范化（strip + lower）。
+    assert ComponentSpec(name="  Service ", match=("src/**",)).name == "service"
+
+
 def test_unknown_placeholder_spellings_are_rejected() -> None:
     """任何花括号词都必须在白名单里：大小写 / 数字 / 带空格都溜不过去（复核发现）。"""
 

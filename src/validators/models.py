@@ -358,7 +358,14 @@ class ComponentSpec(StrictModel):
     @field_validator("name")
     @classmethod
     def _check_name(cls, value: str) -> str:
-        return canonical_identifier(value)
+        normalized = canonical_identifier(value)
+        if not normalized:
+            # min_length=1 只约束**原始**输入："   " 规范化之后是空串，组件名于是成了 falsy，
+            # 而消费方 component_for 的约定是 None = 没有命中——空名字的组件会让"没命中"与
+            # "命中了一个没有名字的组件"分不清（同名两义）。与 RulePack._check_id /
+            # LanguageSpec._check_language 等兄弟校验器同口径（复核发现）。
+            raise ValueError(f"component.name 规范化之后不能为空，得到 {value!r}")
+        return normalized
 
 
 class LanguageSpec(StrictModel):
