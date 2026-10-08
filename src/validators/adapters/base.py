@@ -32,6 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -484,8 +485,8 @@ def _truncate_utf8(payload: bytes, limit: int) -> bytes:
     真正非法的字节仍然会在这里抛 UnicodeDecodeError，由调用方按 OUTPUT_INVALID 处理。
     """
 
-    if len(payload) <= limit:
-        return payload
+    # 不做 `len(payload) <= limit -> 原样返回` 的短路：调用方在有界收集里已经把缓冲切到上限，
+    # 那**同样可能切开**一个多字节字符，短路会让切开的那一段留在缓冲里（复核发现）。
     decoder = codecs.getincrementaldecoder("utf-8")()
     # final=False：结尾不完整的那个序列留在解码器缓冲里，不报错也不产出字符。
     return decoder.decode(payload[:limit], final=False).encode("utf-8")
@@ -553,24 +554,51 @@ def _run_process(
         )
 
     timed_out = False
-    out = b""
-    err = b""
+    # 有界收集：两个管道各自由一条线程按 64 KiB 读，**只留到上限为止**、其余照读不误
+    # （不读的话子进程会写满管道阻塞）。旧实现用 communicate()：它先把完整输出缓冲进内存
+    # 再让我们截断——上限根本管不住内存，一个话痨工具能在超时之前把运行方撑爆（复核发现）。
+    collected: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
+    totals: dict[str, int] = {"stdout": 0, "stderr": 0}
+
+    def drain(name: str, stream: Any) -> None:
+        while True:
+            chunk = stream.read(65536)
+            if not chunk:
+                return
+            totals[name] += len(chunk)
+            room = max_output_bytes - len(collected[name])
+            if room > 0:
+                collected[name].extend(chunk[:room])
+
+    readers = [
+        threading.Thread(target=drain, args=("stdout", process.stdout), daemon=True),
+        threading.Thread(target=drain, args=("stderr", process.stderr), daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
     try:
-        out, err = process.communicate(timeout=max(0.001, timeout_ms / 1000.0))
+        process.wait(timeout=max(0.001, timeout_ms / 1000.0))
     except subprocess.TimeoutExpired:
         timed_out = True
         _terminate_tree(process)
         try:
-            out, err = process.communicate(timeout=5)
+            process.wait(timeout=5)
         except subprocess.TimeoutExpired:  # pragma: no cover - 已经 kill 过
-            out, err = b"", b""
+            pass
     finally:
-        # 进程已结束（或已被终止）：关掉 job handle 顺手带走可能残留的后代进程。
+        # 先让读线程看到 EOF（进程已结束或已被终止），再关管道与 job handle。
+        for reader in readers:
+            reader.join(timeout=5)
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+        # 关掉 job handle 顺手带走可能残留的后代进程。
         _close_windows_job(process)
     duration_ms = int((time.monotonic() - started) * 1000)
 
-    raw = out + err
-    output_bytes = len(raw)
+    out = bytes(collected["stdout"])
+    err = bytes(collected["stderr"])
+    output_bytes = totals["stdout"] + totals["stderr"]
     truncated = output_bytes > max_output_bytes
     if truncated:
         out = _truncate_utf8(out, max_output_bytes)
