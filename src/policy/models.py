@@ -556,6 +556,35 @@ class MissingDocstringRule(StrictModel):
     missing_docstring: MissingDocstringSpec
 
 
+def _normalize_codes(value: Any, *, field: str) -> tuple[str, ...]:
+    """规范化声明的诊断码（排序 + 去重 + 大写），错误消息带**调用方自己的字段名**。
+
+    为什么字段名要由调用方给：style_lint 与 type_check 共用这段规范化，写死其中一个的字段名
+    会让另一边的规则作者收到指向不存在字段的报错（"style_lint.codes 不能包含空值"——
+    而文件里根本没有 style_lint）。
+    容器形态也要显式判：非可迭代输入（例如 123）会让 for 抛裸 TypeError，pydantic 不把它
+    包成校验错误；映射会被静默当成键序列——两者都让作者看到与"这个字段写错了"无关的报错。
+    """
+
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        value = (value,)
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        raise ValueError(f"{field} 必须是字符串或字符串列表")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in value:
+        token = str(raw).strip().upper()
+        if not token:
+            raise ValueError(f"{field} 不能包含空值；全部码请省略该键")
+        if token in seen:
+            continue
+        seen.add(token)
+        normalized.append(token)
+    return tuple(sorted(normalized))
+
+
 class StyleLintSpec(StrictModel):
     """外部风格工具的诊断码归属：这条规则拥有哪些工具码。"""
 
@@ -573,21 +602,7 @@ class StyleLintSpec(StrictModel):
     @field_validator("codes", mode="before")
     @classmethod
     def _check_codes(cls, value: Any) -> Any:
-        if value is None:
-            return ()
-        if isinstance(value, str):
-            value = (value,)
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for raw in value:
-            token = str(raw).strip().upper()
-            if not token:
-                raise ValueError("style_lint.codes 不能包含空值；全部码请省略该键")
-            if token in seen:
-                continue
-            seen.add(token)
-            normalized.append(token)
-        return tuple(sorted(normalized))
+        return _normalize_codes(value, field="style_lint.codes")
 
 
 class StyleLintRule(StrictModel):
@@ -615,7 +630,7 @@ class TypeCheckSpec(StrictModel):
     @field_validator("codes", mode="before")
     @classmethod
     def _check_codes(cls, value: Any) -> Any:
-        return StyleLintSpec._check_codes(value)
+        return _normalize_codes(value, field="type_check.codes")
 
 
 class TypeCheckRule(StrictModel):
