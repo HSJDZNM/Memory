@@ -457,7 +457,11 @@ class CorpusManifest(StrictModel):
         # 登记成受限而 visibility 还是 public = 按清单作者的意思该受限、实际任何人都能检索
         # （fail-open）；反过来漏登记 = 这份"哪些数据集受限"的声明在骗读者。
         # 一致的写法只有一种：登记 ∩ restricted == visibility==restricted 的数据集集合。
-        restricted = {dataset.name for dataset in self.datasets if dataset.visibility is Visibility.RESTRICTED}
+        restricted = {
+            dataset.name
+            for dataset in self.datasets
+            if dataset.visibility is Visibility.RESTRICTED
+        }
         listed = set(self.restricted_datasets)
         fail_open = sorted(listed - restricted)
         if fail_open:
@@ -935,7 +939,9 @@ class EngineeringContext(StrictModel):
         """
 
         if self.status is ContextStatus.OK and not self.snippets:
-            raise ValueError("status=ok 必须带至少一条片段：没有可追溯来源时只能是 knowledge_unavailable")
+            raise ValueError(
+                "status=ok 必须带至少一条片段：没有可追溯来源时只能是 knowledge_unavailable"
+            )
         if self.status is ContextStatus.KNOWLEDGE_UNAVAILABLE and self.reason is None:
             raise ValueError("status=knowledge_unavailable 必须说明 reason（受控原因）")
         return self
