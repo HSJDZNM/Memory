@@ -1083,7 +1083,6 @@ async def run(site_key):
     mod = importlib.import_module(spec["site_module"]) if spec.get("site_module") else None
     meta = getattr(mod, "manifests", None)
 
-    config = run_config(spec)
     async with AsyncWebCrawler(crawler_strategy=AsyncHTTPCrawlerStrategy()) as crawler:
         pages = await discover(crawler, spec)
         extra = {}
