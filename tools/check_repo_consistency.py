@@ -63,6 +63,9 @@ _SPEC_RE = re.compile(r"^(>=|<=|==|!=|~=|>|<)?\s*([0-9][0-9A-Za-z.\-+]*)$")
 _WORKFLOW_REF_RE = re.compile(r"\.github/workflows/([A-Za-z0-9._-]+\.ya?ml)")
 _SCRIPT_RE = re.compile(r"([a-z0-9_]+\.py)")
 _UV_SYNC_RE = re.compile(r"^\s*uv sync\b")
+# README 里提到的测试**目录**：`tests/<名字>` 后面不能再跟 `.` 或名字字符——`tests/test_cli.py`
+# 是文件不是目录（旧写法 `tests/([a-z_]+)\b` 在点号前也成立，于是把文件名报成"目录不存在"）。
+README_TEST_DIR_RE = re.compile(r"tests/([a-z_]+)(?![a-z_0-9_.])")
 _INSTALL_RE = re.compile(r"\bpip install\s+(?:[^\n]*?)-r\s+([^\s#]+)")
 
 
@@ -280,6 +283,15 @@ def check_lock() -> list[str]:
     return issues
 
 
+def mentioned_test_dirs(readme: str) -> list[str]:
+    """README 里提到的 tests/<目录名>：去重、稳定排序。
+
+    纯函数，便于用例直接喂文本（`check_docs_and_config` 读的是真 README）。
+    """
+
+    return sorted(set(README_TEST_DIR_RE.findall(readme)))
+
+
 def check_docs_and_config() -> list[str]:
     issues: list[str] = []
     workflows = sorted(path.name for path in (ROOT / WORKFLOW_DIR).glob("*.y*ml"))
@@ -329,12 +341,9 @@ def check_docs_and_config() -> list[str]:
             if not (ROOT / item).is_dir():
                 issues.append("pytest.ini 的 testpaths 指向不存在的目录 %s" % item)
     readme = _read_text("README.md")
-    for match in re.finditer(r"tests/([a-z_]+)\b", readme):
-        candidate = ROOT / "tests" / match.group(1)
-        if candidate.suffix:
-            continue
-        if not candidate.exists():
-            issues.append("README.md 提到的 tests/%s 不存在" % match.group(1))
+    for name in mentioned_test_dirs(readme):
+        if not (ROOT / "tests" / name).is_dir():
+            issues.append("README.md 提到的 tests/%s 不存在" % name)
     return issues
 
 

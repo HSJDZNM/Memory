@@ -183,3 +183,21 @@ def test_different_ranges_are_still_drift(monkeypatch):
     issues = module.check_lock()
 
     assert any("版本区间不一致" in issue for issue in issues), issues
+
+def test_readme_test_file_mentions_are_not_treated_as_directories():
+    """`tests/test_cli.py` 是文件：不许（像旧实现那样）报成"tests/test_cli 不存在"。"""
+
+    readme = (
+        "跑 tests/unit 与 tests/security，另见 tests/test_cli.py、tests/unit/test_x.py 与 tests/fixtures/decisions/block.json"
+    )
+
+    assert module.mentioned_test_dirs(readme) == ["fixtures", "security", "unit"]
+
+
+def test_readme_directory_mentions_are_kept():
+    """阳性对照：真目录照旧认出来（这次收口不许把目录也吃掉）。"""
+
+    assert module.mentioned_test_dirs("`tests/contract` 与 `tests/integration`") == [
+        "contract",
+        "integration",
+    ]
