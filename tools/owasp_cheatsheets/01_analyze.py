@@ -69,13 +69,19 @@ async def main():
     async with AsyncWebCrawler(crawler_strategy=strat, config=BrowserConfig(verbose=False)) as c:
         cfg = CrawlerRunConfig(cache_mode=CacheMode.BYPASS, page_timeout=45000)
         pages = {}
-        for name in ["index.html","IndexASVS.html","IndexProactiveControls.html","IndexTopTen.html","IndexMASVS.html","Glossary.html"]:
+        # 每次抓取的**响应对象**都留着：下面要用的站内链接直接从这里复用。
+        # `CacheMode.BYPASS` 下重复 `arun` 不是命中缓存，而是对 OWASP 源站**再发一次同样的请求**。
+        resps = {}
+        for name in ["index.html","IndexASVS.html","IndexProactiveControls.html","IndexTopTen.html","IndexMASVS.html"]:
             r = await c.arun(BASE+name, config=cfg)
+            resps[name] = r
             pages[name] = markdown_of(r, name)
         r_seed = await c.arun(SEED, config=cfg)
         s_seed = set(sheet_urls(internal_links(r_seed, "seed")))
-        r_index = await c.arun(BASE+"index.html", config=cfg)
-        s_idx  = set(sheet_urls(internal_links(r_index, "index.html")))
+        # 复用 index.html 那一次抓取：本脚本从不读 `pages["index.html"]`，旧写法为了拿它的站内链接
+        # 又 `arun` 了一次——纯浪费一次往返。同族的浪费还有 `Glossary.html`：抓了、存了，全脚本没人读，
+        # 已从上表删掉。原 8 次请求里有 2 次（约四分之一）是这种空跑。
+        s_idx = set(sheet_urls(internal_links(resps["index.html"], "index.html")))
         all_sheets = sorted(s_seed | s_idx)
         print("union sheets:", len(all_sheets))
 
