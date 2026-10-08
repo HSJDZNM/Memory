@@ -352,14 +352,6 @@ def _rel(from_path, to_path):
     return rel if rel.startswith(".") else "./" + rel
 
 
-def urlmap_extra(spec):
-    """根文档在其它站点的等价地址：让站外引用也能落到本地文件。"""
-    out = {}
-    for item in targets():
-        if item["source"] != item["url"]:
-            out[item["source"]] = item["path"]
-    return out
-
 def pathmap():
     """来源 URL -> 本地相对路径。本地目录按「层级语义」命名，而非照抄 URL 数字。"""
     return {item["url"]: item["path"] for item in targets()}
