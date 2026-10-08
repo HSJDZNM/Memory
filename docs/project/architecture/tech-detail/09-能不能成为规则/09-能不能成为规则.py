@@ -237,7 +237,7 @@ for spec in REGISTRY.validators:
     for checker in spec.checkers:
         providers.setdefault(checker, []).append(spec.id)
 
-print(pad("checker", 22) + pad("产证据的验证器", 16) + "仓库里在用的规则数")
+print(pad("checker", 22) + pad("产证据的验证器", 24) + "仓库里在用的规则数")
 print("-" * 78)
 for checker in sorted(SUPPORTED_CHECKERS):
     owners = ", ".join(sorted(providers.get(checker, ()))) or "<无>"
@@ -289,7 +289,7 @@ for item in RULES:
         values = value if isinstance(value, tuple) else (value,)
         declared_values.setdefault(dimension, set()).update(values)
 
-print(pad("维度", 12) + pad("取值从哪里来", 26) + "规则实际用到")
+print(pad("维度", 12) + pad("取值从哪里来", 30) + "规则实际用到")
 print("-" * 84)
 for dimension in KNOWN_SCOPE_DIMENSIONS:
     if dimension == "language":
@@ -458,7 +458,7 @@ CASES = (
 )
 
 measured = {}
-print(pad("变异", 20) + pad("拦住的异常", 16) + pad("出错字段", 16) + "对应判据")
+print(pad("变异", 20) + pad("拦住的异常", 14) + pad("出错字段", 20) + "对应判据")
 print("-" * 96)
 for name, why, expected_field, change in CASES:
     path, kind, field = mutate(name, change)
@@ -474,7 +474,7 @@ measured["typecheck-rule"] = (path, kind, field)
 loaded = load_rule_file(path, repo_root=REPO_ROOT)
 assert loaded.rule.enforcement.checker == "type_check"
 assert loaded.rule.enforcement.type is EnforcementType.DETERMINISTIC
-print(pad("typecheck-rule", 20) + pad("加载成功（没拦住）", 16) + pad("<无>", 16) + "shape 合法、但当前判不了")
+print(pad("typecheck-rule", 20) + pad("加载成功（没拦住）", 14) + pad("<无>", 20) + "shape 合法、但当前判不了")
 print()
 
 # 原子性：目录里**一条好 + 一条坏**，整批都不加载（错的顺序不影响结论）。
