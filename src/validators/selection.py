@@ -80,13 +80,20 @@ def list_test_files(workspace: Path | str, layout: TestLayout) -> Tuple[str, ...
     return tuple(sorted(found))
 
 
-def _patterns_for(level: str, layout: TestLayout, *, stem: str, package: str) -> Tuple[str, ...]:
+def _patterns_for(
+    level: str, layout: TestLayout, *, stem: str, package: Optional[str]
+) -> Tuple[str, ...]:
     for item in layout.escalation:
-        if item.level == level:
-            return tuple(
-                pattern.replace("{stem}", stem).replace("{package}", package)
-                for pattern in item.match
-            )
+        if item.level != level:
+            continue
+        patterns: list[str] = []
+        for pattern in item.match:
+            if "{package}" in pattern and not package:
+                # 推不出可信的包名：跳过这条模式，而不是拿空串去替换——那会生成
+                # "tests/**//**/test_*.py" 这种永远匹配不到任何真实路径的 glob（复核发现）。
+                continue
+            patterns.append(pattern.replace("{stem}", stem).replace("{package}", package or ""))
+        return tuple(patterns)
     return ()
 
 
@@ -95,15 +102,40 @@ def _stem_of(path: str) -> str:
     return name[: -len(".py")] if name.endswith(".py") else name
 
 
-def _package_of(path: str, layout: TestLayout) -> str:
+def _literal_prefix(pattern: str) -> str:
+    """模式里第一个通配符之前的那段字面目录（没有字面目录时返回空串）。
+
+    旧实现用 pattern.split("**")[0]，于是 "packages/*/src/**/*.py" 这种**根里带 glob** 的
+    模式得到字面串 "packages/*/src"，永远不可能命中真实路径（复核发现）。
+    """
+
+    cut = len(pattern)
+    for char in "*?[":
+        index = pattern.find(char)
+        if index != -1:
+            cut = min(cut, index)
+    return pattern[:cut].rstrip("/")
+
+
+def _package_of(path: str, layout: TestLayout) -> Optional[str]:
+    """生产文件在 python 根下的第一层目录名；推不出可信值时返回 None。
+
+    None 的两种来源：文件直接躺在 python 根下（没有"包"这一层），或没有任何生产模式
+    能同时提供字面前缀与整体匹配。调用方据此**跳过** package 级，而不是拿一个不可信的
+    名字去替换 {package}（复核发现）。
+    """
+
+    from .globs import glob_match
+
     for pattern in layout.production_patterns:
-        prefix = pattern.split("**")[0].rstrip("/")
-        if prefix and path.startswith(prefix + "/"):
-            remainder = path[len(prefix) + 1 :]
-            parts = remainder.split("/")
-            return parts[0] if len(parts) > 1 else ""
-    parts = path.split("/")
-    return parts[0] if len(parts) > 1 else ""
+        prefix = _literal_prefix(pattern)
+        if not prefix or not path.startswith(prefix + "/"):
+            continue
+        if not glob_match(pattern, path):
+            continue
+        parts = path[len(prefix) + 1 :].split("/")
+        return parts[0] if len(parts) > 1 else None
+    return None
 
 
 def select_tests(
@@ -188,11 +220,15 @@ def _match_levels(
     levels: Tuple[str, ...],
     *,
     stem: str,
-    package: str,
+    package: Optional[str],
 ) -> Tuple[Optional[str], Tuple[str, ...]]:
     """按给定层级顺序找测试文件；没有命中时层级返回 None（调用方据此区分"没找到"）。"""
 
     for level in levels:
+        if level == "package" and not package:
+            # 没有可信的包名时 package 级不适用：跳过它（既不误报"没有同包测试"，
+            # 也不拿空串拼出匹配不到东西的模式）——复核发现。
+            continue
         patterns = _patterns_for(level, layout, stem=stem, package=package)
         matched = tuple(
             candidate

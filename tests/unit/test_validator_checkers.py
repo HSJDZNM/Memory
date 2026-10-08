@@ -32,7 +32,7 @@ from policy.evidence import (
 from policy.models import Decision, Evidence, RuleSet, Severity, ValidationResult, Violation
 from validators.docstrings import missing_docstring_evidence
 from validators.python_ast import parse_module
-from validators.selection import list_test_files, select_tests
+from validators.selection import _package_of, _patterns_for, list_test_files, select_tests
 
 CONFIG = validators_config()
 VALIDATOR = "py.docstring@1.0"
@@ -146,6 +146,28 @@ def test_docstring_evidence_is_sorted_and_deduplicated() -> None:
 
 
 # ------------------------------------------------------------------ 测试选择
+
+
+def test_package_derivation_handles_glob_roots_and_root_level_files() -> None:
+    """包名推导：根里带 glob 的生产模式要按字面前缀推；python 根下的文件没有包（复核发现）。"""
+
+    glob_root = CONFIG.layout.model_copy(update={"production_patterns": ("packages/*/src/**/*.py",)})
+    # 旧实现用 split("**")[0] 得到字面串 "packages/*/src"，永远命中不了真实路径，
+    # 于是回落到顶层目录 "packages"——同包测试因此永远找不到。
+    assert _package_of("packages/foo/src/main.py", glob_root) == "foo"
+    # 更深的文件同样取字面前缀之后的第一段（复核条目给的就是这个口径）。
+    assert _package_of("packages/foo/src/sub/deep.py", glob_root) == "foo"
+
+    root_level = CONFIG.layout.model_copy(update={"production_patterns": ("src/**/*.py",)})
+    assert _package_of("src/main.py", root_level) is None  # 直接躺在 python 根下：没有包
+    assert _package_of("src/shop/order_service.py", root_level) == "shop"
+
+    # 没有可信包名时 package 级**跳过**：旧实现拿空串替换出 tests/**//**/test_*.py，
+    # 那种模式匹配不到任何真实路径，"有同包测试"会被报成"没有相关测试"。
+    assert _patterns_for("package", CONFIG.layout, stem="main", package=None) == ()
+    assert _patterns_for("package", CONFIG.layout, stem="main", package="shop") == (
+        "tests/**/shop/**/test_*.py",
+    )
 
 
 def test_selection_prefers_the_related_test_file() -> None:
