@@ -282,6 +282,16 @@ def extract_script(spec, cells: Sequence[tuple[str, str]]) -> str:
         "",
         "内容改动请修改同目录的 cells.py 后重新生成，不要直接编辑本文件。",
         '"""',
+        "",
+        "# **`assert` 就是这些讲解的检查手段**：`-O` / `PYTHONOPTIMIZE` 会把它们**全部剥离**——",
+        "# 每张表照样打印、退出码照样 0，而结论一条都没校验：这正是这些脚本要防的假绿。",
+        "# 所以在开头就拒绝运行，而不是跑完看起来都对。",
+        "import sys as _sys",
+        "",
+        "if _sys.flags.optimize:",
+        "    raise SystemExit(",
+        '        "请勿用 -O / PYTHONOPTIMIZE 运行本讲解：assert 已被剥离，结论无法校验"',
+        "    )",
     ]
     for kind, text in cells:
         parts.append("")
@@ -307,6 +317,14 @@ def structural_problems(path: Path) -> list[str]:
 def run_cells(spec, workdir: Path, *, verbose: bool = True) -> list[str]:
     """在指定工作目录下按顺序执行全部代码单元；返回失败原因列表。"""
 
+    if sys.flags.optimize:
+        # 与产物开头那段同一个理由：assert 被剥离时，单元会"全部通过"而结论一条都没校验。
+        # 这里必须显式拒绝——生成/门禁路径上绝不允许出现这种假绿。
+        print(
+            "请勿用 -O / PYTHONOPTIMIZE 运行：assert 会被剥离，讲解单元会全部\"通过\"而结论无从校验",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     failures: list[str] = []
     namespace: dict = {"__name__": "__notebook__"}
     for directory in (SRC_DIR, TOOLS_DIR):

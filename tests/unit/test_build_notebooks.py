@@ -65,6 +65,38 @@ def test_markdown_only_chapter_does_not_crash_the_table_helper_injection() -> No
     assert module.notebook_cells(spec) == [("markdown", "说明里提到 pad( 这个词")]
 
 
+def test_optimized_mode_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`-O` 会把 assert 全部剥离：讲解的检查退化成"打印 + 退出码 0"，必须显式拒绝。
+
+    历史缺陷（medium 台账 MA0，00-技术总览.py:178）：十个章节的正面检查全是 assert，而 assert
+    在 `python -O` / `PYTHONOPTIMIZE=1` 下会被**整个删掉**——脚本照样打印全部表格、退出码照样 0。
+    这些脚本存在的意义就是"结论被钉住"，被剥离之后它们正好变成要防的那种假绿。
+    """
+
+    from types import SimpleNamespace
+
+    module = load_tool()
+    monkeypatch.setattr(module.sys, "flags", SimpleNamespace(optimize=1))
+
+    with pytest.raises(SystemExit) as info:
+        module.run_cells(SimpleNamespace(stem="00-假章", cells=()), tmp_path)
+    assert info.value.code == 2
+
+
+def test_generated_script_carries_the_optimize_guard() -> None:
+    """产物本身也要拒绝 `-O`：它同样会被人工直接运行。"""
+
+    from types import SimpleNamespace
+
+    module = load_tool()
+    spec = SimpleNamespace(stem="00-假章", title="假章")
+
+    script = module.extract_script(spec, (("code", "assert True"),))
+
+    assert "_sys.flags.optimize" in script
+    assert "assert 已被剥离" in script
+
+
 def test_worktree_guard_only_allows_this_runs_two_artifacts() -> None:
     """工作区守卫按**精确路径**放行，不按后缀。
 
