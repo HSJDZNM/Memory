@@ -16,6 +16,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # 标签先在**仓库设置**里建好才有意义：.github/ 下没有标签定义，仓库里也没有任何工具会创建它们，
+    # Dependabot 遇到不存在的标签只是静默丢掉（PR 照开、只是没标签）。所以这两行表达的是意图，
+    # 不是"一定会打上标签"的事实——要让它成立，得在 GitHub 上先有 dependencies / ci 两个标签。
     labels: ["dependencies"]
   - package-ecosystem: github-actions
     directory: "/"
