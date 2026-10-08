@@ -53,6 +53,21 @@ SELF = "tools/secret_scan.py"
 ALLOW_MARKER = "secret-scan: allow"
 
 
+def is_exempt(line: str) -> bool:
+    """命中行是否被显式豁免：标记**必须带理由**（`secret-scan: allow <理由>`）。
+
+    docstring 一直写着"必须写明理由"，而旧实现只判 `ALLOW_MARKER in line`——一个光秃秃的标记
+    与"写明理由的豁免"在读数上完全一样，于是"有没有被复核过"这个要求在评审时无法执行。
+    现在裸标记照旧报命中（想豁免就补一句理由）。
+    """
+
+    index = line.find(ALLOW_MARKER)
+    if index < 0:
+        return False
+    reason = line[index + len(ALLOW_MARKER):].strip().lstrip(":：-—").strip()
+    return bool(reason)
+
+
 class ScanEnvironmentError(RuntimeError):
     """扫描环境错误：有文件读不出来 ⇒ 这次门禁证明不了任何事（退出码 2）。
 
@@ -110,7 +125,7 @@ def scan(path: str, patterns: tuple[re.Pattern[str], ...]) -> list[str]:
         ) from error
     findings: list[str] = []
     for number, line in enumerate(text.splitlines(), start=1):
-        if ALLOW_MARKER in line:
+        if is_exempt(line):
             continue
         for pattern in patterns:
             match = pattern.search(line)
