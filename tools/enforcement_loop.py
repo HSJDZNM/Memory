@@ -208,7 +208,11 @@ def run() -> list[Scenario]:
         Scenario(
             name="high_risk_needs_an_approval",
             passed=needs_approval.decision.decision.value == "block"
-            and needs_approval.decision.reason_code.value in {"approval_required", "permission_denied"},
+            # 只认 `approval_required`：把 `permission_denied` 也算通过会掩盖审批门禁回归
+            # （例如"角色没权限所以挡住"被读成"审批门禁起作用"），而本场景声称的正是
+            # "缺少绑定审批时被阻断"——理由码必须是那一个。
+            and needs_approval.decision.reason_code.value == "approval_required"
+            and needs_approval.decision.required_action is not None,
             detail="高权限动作缺少绑定审批时被阻断；审批由人工门禁签发（approve 子命令）",
             facts={
                 "reason_code": needs_approval.decision.reason_code.value,
