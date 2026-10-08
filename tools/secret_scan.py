@@ -146,10 +146,13 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
 
-    patterns = secret_patterns()
     findings: list[str] = []
     unreadable: list[str] = []
     try:
+        # `secret_patterns()` 里的 `from enforcement.audit import …` 也在这一档里：
+        # 它导不进来同样是**环境错误**（退出码 2）。放在 try 外面时，解释器会以退出码 1 收场，
+        # 而 1 与"发现凭据"同码——CI 分不清"没查成"与"查出东西"。
+        patterns = secret_patterns()
         files = tracked_files(include_mirrors=include_mirrors)
     except (OSError, subprocess.SubprocessError, ImportError) as error:
         # git 缺失 / 不在仓库里 / enforcement.audit 导不进来：都是**环境错误**（退出码 2）。
