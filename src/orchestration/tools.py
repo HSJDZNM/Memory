@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional, Protocol, Sequence, Tuple, runtime_checkable
@@ -421,9 +420,3 @@ class RecordingToolRunner:
             reason_code="unavailable",
             detail="脚本已用尽：失败关闭，不做隐式执行",
         )
-
-
-def tool_params(action: Mapping[str, Any]) -> str:
-    """把参数渲染成**摘要**文本：需要展示时用它，永远不打印原文。"""
-
-    return json.dumps({key: "<value>" for key in sorted(action)}, ensure_ascii=False)
