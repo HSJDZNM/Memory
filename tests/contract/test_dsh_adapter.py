@@ -192,6 +192,24 @@ def test_agent_identity_is_fixed_and_version_is_recorded_separately(dsh_config_p
     assert decision.event.kind == "tool.pre_execute"
 
 
+def test_post_tool_use_is_not_labelled_as_a_pre_execute_proposal(dsh_config_path, dsh_project):
+    """PostToolUse 载荷不得被标成 `tool.pre_execute`：它描述的是已经发生的执行。
+
+    `read_payload` 明确支持 PostToolUse（还要求 tool_response 在场），而两者的
+    event_id / request_id 完全相同（`{session}:{tool_use_id}`）——kind 是消费方唯一
+    能区分「提议」与「已执行」的字段，写死就等于让审计与下游把执行后事件当成
+    尚未执行的提议。
+    """
+
+    config = load_config(dsh_config_path)
+    post = map_event(event_for("post-tool-use-edit.json", dsh_project), config)
+    pre = map_event(event_for("pre-tool-use-edit-block.json", dsh_project), config)
+
+    assert post.event is not None and pre.event is not None
+    assert post.event.kind == "tool.post_execute"
+    assert pre.event.kind == "tool.pre_execute"
+
+
 def test_request_trace_and_principal_are_preserved(dsh_config_path, dsh_project):
     config = load_config(dsh_config_path)
     context = context_of(event_for("pre-tool-use-edit-block.json", dsh_project), config)
@@ -560,6 +578,53 @@ def test_unparseable_changed_text_fails_closed(dsh_config_path, dsh_project, arc
     assert result.decision is Decision.BLOCK
     assert result.violations[0].severity is Severity.CRITICAL
     assert "解析" in result.violations[0].message
+
+
+def test_missing_change_text_field_is_refused_not_treated_as_no_dependencies(
+    dsh_config_path, dsh_project
+):
+    """变更文本字段缺失 / 不是字符串 ≠「没有引入依赖」。
+
+    旧实现把这个载荷 join 成空串：`governed_dependencies("")` 返回 `()` 且不加
+    `UNPROVEN_CHANGED_TEXT`（空文本 ast.parse 得通），依赖类 checker 于是一致读到
+    「本次没有引入依赖」——一次不带 content 的 write 就能结构性绕过依赖规则。
+    """
+
+    config = load_config(dsh_config_path)
+
+    missing = event_for(
+        "pre-tool-use-edit-block.json",
+        dsh_project,
+        tool_input={"file_path": "src/shop/order_controller.py", "old_string": "x = 1"},
+    )
+    with pytest.raises(DshEventError) as error:
+        to_policy_event(missing, config=config)
+    assert "new_string" in str(error.value)
+
+    # 结构化内容块（不是字符串）同样证明不了，不得当成「没有依赖」
+    structured = event_for(
+        "pre-tool-use-write-block.json",
+        dsh_project,
+        tool_input={
+            "file_path": "src/shop/cart_controller.py",
+            "content": [{"type": "text", "text": "from shop import order_repository"}],
+        },
+    )
+    with pytest.raises(DshEventError):
+        to_policy_event(structured, config=config)
+
+
+def test_an_empty_change_text_is_still_a_declared_change(dsh_config_path, dsh_project):
+    """字段在、值是空串：清空文件 / 删掉一行是合法输入，不得被上一条拒掉。"""
+
+    config = load_config(dsh_config_path)
+    decision = to_policy_event(
+        edit_payload(dsh_project, file_path="src/shop/order_controller.py", text=""),
+        config=config,
+    )
+
+    assert decision.event is not None
+    assert decision.event.dependencies == ()
 
 
 def test_unproven_dependencies_only_block_when_a_dependency_rule_is_in_scope(

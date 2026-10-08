@@ -1,0 +1,179 @@
+{
+  "schema_version": "1",
+  "dataset": "tryceratops-samples",
+  "revision": "ca149be9a5c6169b77bf70991d2f87661158d283",
+  "url": "https://codeload.github.com/guilatrova/tryceratops/tar.gz/ca149be9a5c6169b77bf70991d2f87661158d283",
+  "license": "MIT",
+  "license_source": "gh api repos/guilatrova/tryceratops/contents/LICENSE?ref=ca149be9a5c6169b77bf70991d2f87661158d283 -> 1084 B, sha256 6b0961575e0c568062de54e958f32ed03aa176eec5c303a9cae74ae86d2266cd, 首行 'The MIT License (MIT)'（SPDX: MIT）[2026-10-07]",
+  "tier": "A",
+  "expectation_kind": "tryceratops-sample-violation",
+  "archive_root": "tryceratops-ca149be9a5c6169b77bf70991d2f87661158d283",
+  "paths": [
+    "src/tests",
+    "src/tryceratops/violations/codes.py"
+  ],
+  "registry_ref": "tryceratops-samples",
+  "file_count": 32,
+  "files": [
+    {
+      "path": "src/tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "src/tests/analyzer_helpers.py",
+      "sha256": "9a38d66b579b5ef74ecef9322758a761bc669c98607466dc67323334830eea01",
+      "size": 837
+    },
+    {
+      "path": "src/tests/analyzers_call_test.py",
+      "sha256": "f9223908f2c090321dfaa84c66a0419df7fddf00a3f588b845894b49ddbc47a4",
+      "size": 2073
+    },
+    {
+      "path": "src/tests/analyzers_classdefs_test.py",
+      "sha256": "4d3dcaf0108d0ca1768ec964fe46d6147ed5dd90ec17361660af29ea182e5141",
+      "size": 1997
+    },
+    {
+      "path": "src/tests/analyzers_conditional_test.py",
+      "sha256": "11d868414229878350f0affa831ebe133dafccc83972e3b17eadfb7934e6fb58",
+      "size": 1960
+    },
+    {
+      "path": "src/tests/analyzers_exception_block_test.py",
+      "sha256": "624890e02218658afff640d969bb7e40159806692ccc4c6115b555e8c7afbeb3",
+      "size": 3143
+    },
+    {
+      "path": "src/tests/analyzers_try_block_test.py",
+      "sha256": "29aef94bd777c55f64776a9086a0e68ef2ce053efbd525260810fbde3c312481",
+      "size": 1347
+    },
+    {
+      "path": "src/tests/files_test.py",
+      "sha256": "3fb4154e38f3180d6728538fa688a5caf332c9194f901417befbf3bcdb1b41fb",
+      "size": 3604
+    },
+    {
+      "path": "src/tests/fixers_test.py",
+      "sha256": "9caf22d64fbb5c409d43746ecdfa7f4f2b7362a651750eb18850bca0140b7f08",
+      "size": 5126
+    },
+    {
+      "path": "src/tests/samples/autofix/except_reraise_no_cause.py",
+      "sha256": "5fab1464d4ccb4cef50ef3410b38d042b9edb2f4320cc6ec6b1cdb1f81861765",
+      "size": 692
+    },
+    {
+      "path": "src/tests/samples/ignore_comments/ignore_file.py",
+      "sha256": "0cf09747a51b2e97c1c1f76298cce80de92c3c17425c6c9d8ee57af0af53929b",
+      "size": 565
+    },
+    {
+      "path": "src/tests/samples/ignore_comments/ignore_line.py",
+      "sha256": "7761160df3c8fa08961085c846034cbf72fc6b4ae3904bb7e1f198a09763c1ac",
+      "size": 521
+    },
+    {
+      "path": "src/tests/samples/ignore_comments/ignore_line_specific.py",
+      "sha256": "89271e206b093defa01c1304d7275991271ac827b35758933931199863d9c750",
+      "size": 598
+    },
+    {
+      "path": "src/tests/samples/violations/call_check_continue.py",
+      "sha256": "85ee06fa3d45382bc4920ab7c753d48f19bb9a1bf70c8094ae2e4b0ed748a610",
+      "size": 1479
+    },
+    {
+      "path": "src/tests/samples/violations/call_raise_long_str.py",
+      "sha256": "dbe150e03540c815785dbdef3cc41a9eb2910cab0a3618532c6f0c0313eb2a53",
+      "size": 1187
+    },
+    {
+      "path": "src/tests/samples/violations/call_raise_vanilla.py",
+      "sha256": "1b8fb7eecf200bf27ea186c183e900a6e89a80fdb3671887660e693373d63f2c",
+      "size": 599
+    },
+    {
+      "path": "src/tests/samples/violations/call_too_many_try.py",
+      "sha256": "adcc110984684ebb5d8a248ec8214b52d7254e4948f29375653c11f4d7a53e83",
+      "size": 411
+    },
+    {
+      "path": "src/tests/samples/violations/class_base_allowed.py",
+      "sha256": "1fd9e5293a65f07f08bc9467294d049ca6faf05c6c4a01598c5d4d0fb9c5e715",
+      "size": 366
+    },
+    {
+      "path": "src/tests/samples/violations/class_non_pickable.py",
+      "sha256": "f934eebc7af9210ea0ba1ef77d7b656e248886aaf2a00c7b0e8614c454575865",
+      "size": 1446
+    },
+    {
+      "path": "src/tests/samples/violations/conditional_prefer_type_error.py",
+      "sha256": "7090b8f6d7f6bf0dcff97fdd8b6aeda6d537e33a69fea536ebd2d6c2f3cea472",
+      "size": 5919
+    },
+    {
+      "path": "src/tests/samples/violations/except_bare.py",
+      "sha256": "fa823480018508c19f12cc2936d774e47fd790e50b037ce3012f90d49c13243b",
+      "size": 105
+    },
+    {
+      "path": "src/tests/samples/violations/except_pass.py",
+      "sha256": "2c8a0bb78fbeca1c72ce32a6324fbc217fe21686742440ce0a6e4c8520d66248",
+      "size": 619
+    },
+    {
+      "path": "src/tests/samples/violations/except_prefer_log_method.py",
+      "sha256": "05e5b9f4ab5764c79dbbaed501217a463c23aa92e46cb8bfada26cd592c57ff1",
+      "size": 221
+    },
+    {
+      "path": "src/tests/samples/violations/except_reraise_no_cause.py",
+      "sha256": "6e6a5c40f257eff4761cfef0f7225bf18ae40d753b45065d4c64455bc9458fa0",
+      "size": 388
+    },
+    {
+      "path": "src/tests/samples/violations/except_verbose_reraise.py",
+      "sha256": "7e89e391cfafb158fc10cc1fc32a82c250ef006df4c0cd6235b3d72722e51d82",
+      "size": 459
+    },
+    {
+      "path": "src/tests/samples/violations/log_error.py",
+      "sha256": "a895cab4ab249377b08310eba0906ee6083d502eb3ab62813c746a15db692bbf",
+      "size": 259
+    },
+    {
+      "path": "src/tests/samples/violations/log_object.py",
+      "sha256": "8d7663a6ce0738f133faac0dfa5004d22120d1ad2a699c8b13b1a2843b829302",
+      "size": 451
+    },
+    {
+      "path": "src/tests/samples/violations/try_consider_else.py",
+      "sha256": "df65f27516ad809b21ccf014c787283a4ddbf155f814e6991912dd024e985642",
+      "size": 654
+    },
+    {
+      "path": "src/tests/samples/violations/try_finally_dont_consider_else.py",
+      "sha256": "247cf4a299b55b58a86c83d5faf045693b508fa69f08d40579cbcffab5b37285",
+      "size": 553
+    },
+    {
+      "path": "src/tests/samples/violations/try_inner_raise.py",
+      "sha256": "fcc71d82d85f58ac215899254f509cc0b4638b15ae84cfc6c6845cab75fbb672",
+      "size": 691
+    },
+    {
+      "path": "src/tests/samples/violations/try_useless_except.py",
+      "sha256": "e8c59d95a474e3bcbd013d1aa2055a2326fd712fc2efcd5f79e523be0c81ddab",
+      "size": 2487
+    },
+    {
+      "path": "src/tryceratops/violations/codes.py",
+      "sha256": "f187b45d19e08a8389359455cb58fc3dcd38f3df46b1dbb199936ac037bd1504",
+      "size": 1745
+    }
+  ]
+}

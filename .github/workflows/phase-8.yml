@@ -19,7 +19,9 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        # 第三方 action 锁到完整 commit SHA：可变 tag 可以被重新指向，
+        # 供应链上等于"每次 CI 跑的是别人此刻的内容"。（actions/* 是平台方，按 vN 引用。）
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           enable-cache: true
 

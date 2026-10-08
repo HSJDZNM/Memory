@@ -85,11 +85,17 @@ class LoadedTenant:
                     f"租户 {self.spec.tenant_id} 的规则集不可加载（{type(error).__name__}）",
                     retryable=True,
                 ) from error
-            if not loaded.rules and self._rules is not None:
-                # 规则目录被清空：拒绝用空规则集替换掉正在服务的规则集。
+            if not loaded.rules:
+                # **任何一次**加载得到空集都拒绝，不只是"替换正在服务的规则集"那条路径：
+                # 冷启动时"规则目录存在、里面没有规则文件"同样会得到空 RuleSet，而空集
+                # 判定的结果永远是 allow——"没有规则 = 全部放行"正是本模块 docstring
+                # 明写不允许的回落。守卫原来写成 `and self._rules is not None`，
+                # 只保护了替换路径，冷启动直接把空集缓存下来开始服务（实测：本该 block 的
+                # 上下文拿到 decision=allow、rules=0、rule_set hash 是空串的 sha256）。
                 raise ApiError(
                     ErrorCode.RULE_SET_UNAVAILABLE,
-                    f"租户 {self.spec.tenant_id} 的规则集变成空集；拒绝以空规则集继续服务",
+                    f"租户 {self.spec.tenant_id} 的规则集为空集；拒绝以空规则集服务"
+                    "（没有规则不等于没有违规）",
                     retryable=True,
                 )
             self._rules = loaded

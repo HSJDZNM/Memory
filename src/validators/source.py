@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -70,6 +72,57 @@ def resolve_target(path: str, *, workspace: Path | str) -> tuple[str, Path]:
     return normalized, resolved
 
 
+def _open_source(absolute: Path, *, normalized: str) -> int:
+    """打开目标文件：POSIX 带 O_NOFOLLOW，其它平台用 getattr 兜底取 0。
+
+    兜底是"这个平台没有该标志"，不是"跳过校验"：拿不到 O_NOFOLLOW 时由
+    `_assert_descriptor_inside` 接过"仍在工作区内"这条不变量（见那里的说明）。
+    """
+
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        return os.open(absolute, flags)
+    except OSError as error:
+        raise SourceError(f"{normalized}: 无法读取文件（{error}）") from error
+
+
+def _assert_descriptor_inside(fd: int, *, absolute: Path, anchor: Path, normalized: str) -> None:
+    """复核"打开的这个对象仍在工作区内"。
+
+    优先读**描述符自身**的真实路径（Linux 的 /proc/self/fd，读数不带竞态）；拿不到时
+    退回 `realpath` 重新解析。`O_NOFOLLOW` 只覆盖最后一级组件，父目录被换成指向
+    工作区外的链接要靠这一步。
+
+    残余窗口如实写在这里：`realpath` 与 `open` 之间仍有理论上的竞态（Windows 没有
+    O_NOFOLLOW，也没有 /proc 读数）。但内容始终来自同一个已打开的 fd——不存在
+    "读到半个文件"或"读的过程中又被换掉"，被换链时读到的也只会是拒读。
+    """
+
+    try:
+        descriptor = Path(os.readlink(f"/proc/self/fd/{fd}"))
+    except OSError:
+        try:
+            descriptor = Path(os.path.realpath(absolute))
+        except OSError as error:
+            raise SourceError(f"{normalized}: 无法确认目标仍在工作区内（{error}）") from error
+    if not descriptor.is_relative_to(anchor):
+        raise SourceError(
+            f"{normalized}: 打开后目标指向工作区外的 {descriptor}；拒绝读取（换链/竞态）"
+        )
+
+
+def _read_bounded(fd: int, *, max_bytes: int) -> bytes:
+    """从描述符读，最多 max_bytes + 1 字节：多读的那一个字节就是"超限"的证据。"""
+
+    buffer = bytearray()
+    while len(buffer) <= max_bytes:
+        chunk = os.read(fd, max_bytes + 1 - len(buffer))
+        if not chunk:
+            break
+        buffer.extend(chunk)
+    return bytes(buffer)
+
+
 def read_source(
     path: str,
     *,
@@ -77,22 +130,38 @@ def read_source(
     language: str,
     max_bytes: int,
 ) -> SourceFile:
-    """读取目标并计算内容哈希；任何读取问题都抛 SourceError。"""
+    """读取目标并计算内容哈希；任何读取问题都抛 SourceError。
 
+    **打开一次、只从描述符读**：`resolve_target` 证明的是"解析那一刻"的包含关系，
+    之后再用路径重新 `stat` / `read_bytes` 就给了换链一个窗口——把目标（或它的父目录）
+    换成指向工作区外的链接，读到的会是工作区外的内容，而摘要仍然把它绑在工作区内的
+    相对路径上（证据被污染）。大小上限同理：`stat` 与 `read` 是两次独立的路径解析，
+    "stat 说 16 字节、read 读回 16MB"可以同时成立，读取本身必须有界。
+    """
+
+    anchor = Path(workspace).resolve()
     normalized, absolute = resolve_target(path, workspace=workspace)
+    fd = _open_source(absolute, normalized=normalized)
     try:
-        size = absolute.stat().st_size
-    except OSError as error:
-        raise SourceError(f"{normalized}: 无法读取文件属性（{error}）") from error
-    if size > max_bytes:
-        raise SourceError(
-            f"{normalized}: 文件 {size} 字节超过上限 {max_bytes} 字节；"
-            "超限属于失败关闭，不按空文件处理"
-        )
-    try:
-        data = absolute.read_bytes()
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise SourceError(f"{normalized}: 目标不是普通文件，拒绝按源码读取")
+        _assert_descriptor_inside(fd, absolute=absolute, anchor=anchor, normalized=normalized)
+        if info.st_size > max_bytes:
+            raise SourceError(
+                f"{normalized}: 文件 {info.st_size} 字节超过上限 {max_bytes} 字节；"
+                "超限属于失败关闭，不按空文件处理"
+            )
+        data = _read_bounded(fd, max_bytes=max_bytes)
     except OSError as error:
         raise SourceError(f"{normalized}: 无法读取文件（{error}）") from error
+    finally:
+        os.close(fd)
+    if len(data) > max_bytes:
+        raise SourceError(
+            f"{normalized}: 文件在读取过程中增长到超过上限 {max_bytes} 字节；"
+            "超限属于失败关闭，不按空文件处理"
+        )
     if b"\x00" in data:
         raise SourceError(f"{normalized}: 含 NUL 字节，不是可分析的文本源码")
     try:

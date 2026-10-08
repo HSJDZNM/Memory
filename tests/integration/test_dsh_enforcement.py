@@ -16,10 +16,11 @@ from pathlib import Path
 
 import pytest
 
-from adapters.dsh.adapter import AdapterConfig, load_config
+from adapters.dsh.adapter import AdapterConfig, DshEventError, load_config
 from adapters.dsh.enforcement import EnforcementBridge, bridge_from_config
 from adapters.dsh.hooks import EXIT_ALLOW, EXIT_BLOCK, DshPreExecuteHook, run_hook
 from policy.loader import load_rule_set
+from policy.models import Decision
 
 from conftest import REPO_ROOT, dsh_event, write_dsh_config
 
@@ -278,6 +279,13 @@ def test_post_tool_use_requires_repair_when_the_result_does_not_parse(dsh_config
 
 
 def test_post_tool_use_without_a_pre_record_does_not_guess(dsh_config_path, dsh_project):
+    """没有 pre-check 记录 = 证据不足：只记占位，然后**拒绝**（不得放行）。
+
+    修前这条路径返回 None，hooks 把它读成 `post_not_required` 并放行——一次没有经过
+    授权的执行（例如 pre 阶段根本没接线）于是伪装成「不需要事后核对」。占位记录照写：
+    审计仍能区分「跑过 post 但没有基线」与「事后核对完成」。
+    """
+
     audit = dsh_project.parent / "audit.jsonl"
     write_source(dsh_project, "src/shop/order_controller.py", "from service import OrderService\n")
 
@@ -287,10 +295,82 @@ def test_post_tool_use_without_a_pre_record_does_not_guess(dsh_config_path, dsh_
         audit_path=audit,
     )
 
-    assert post.exit_code == EXIT_ALLOW
-    assert post.reason_code == "post_not_required"
+    assert post.exit_code == EXIT_BLOCK
+    assert post.reason_code == "post_error"
+    assert "证据不足" in post.stderr
     notes = [item for item in records(audit) if item.get("payload", {}).get("stage_note")]
     assert notes and notes[0]["payload"]["stage_note"] == "post_without_pre"
+
+
+def test_post_refuses_when_the_request_view_cannot_be_rebuilt(tmp_root: Path) -> None:
+    """请求视图重建不出来（含 secret 参数）= 证据不足：拒绝，不得当放行。
+
+    台账里的请求视图对 secret 参数只留摘要（AGENTS 第 16 条），事后因此重建不出
+    ActionRequest、也算不出 action_hash。修前这条路径返回 None，hooks 把它读成
+    post_not_required 并放行——而记录里写的却是「证据不足，按需修复处理」。
+    """
+
+    from adapters.dsh.enforcement import EnforcementBridge
+    from enforcement.action import build_action_request
+    from enforcement.audit import FileAuditSink
+    from enforcement.ledger import EnforcementLedger
+    from enforcement.registry import load_registry
+    from enforcement_support import EnforcementPaths, write_registry
+
+    secret_tool = {
+        "id": "fs.write_secret",
+        "title": "test write with a secret parameter",
+        "agent": "dsh",
+        "tool_name": "write",
+        "schema_version": "1.0",
+        "risk": "reversible_write",
+        "effect": "file_write",
+        "driver": "file_write",
+        "required_permissions": ["repo.write"],
+        "rollback": "file_snapshot",
+        "post_checks": ["content_matches"],
+        "parameters": [
+            {"name": "file_path", "type": "path", "required": True, "path_scope": "workspace"},
+            {"name": "content", "type": "string", "required": True, "secret": True},
+        ],
+    }
+    paths = EnforcementPaths(tmp_root)
+    write_registry(paths.root, tools=(secret_tool,))
+    registry = load_registry(paths.registry, approved_path=paths.approved).registry
+    bridge = EnforcementBridge(
+        registry=registry,
+        sink=FileAuditSink(paths.audit, workspace=paths.workspace),
+        ledger=EnforcementLedger(paths.ledger),
+        workspace=paths.workspace,
+    )
+
+    request = build_action_request(
+        registry.tool("fs.write_secret"),
+        {"file_path": "src/shop/x.py", "content": "VALUE = 1" + chr(10)},
+        action_id="sess-secret:call-1",
+        request_id="sess-secret",
+        agent="dsh",
+        agent_version="0.1.5-rc.1",
+        trace_id=None,
+        subject="local-user",
+        roles=("developer",),
+        permissions=registry.permissions_for(("developer",)),
+        workspace=paths.workspace,
+        ttl_seconds=registry.grant_ttl_seconds,
+    )
+    assert bridge.pre(request).decision.decision is not Decision.BLOCK
+
+    with pytest.raises(DshEventError) as error:
+        bridge.post(
+            {
+                "session_id": "sess-secret",
+                "tool_use_id": "call-1",
+                "tool_name": "write",
+                "tool_response": "ok",
+            }
+        )
+    assert "请求视图不可重建" in str(error.value)
+    assert "证据不足" in str(error.value)
 
 
 def test_bridge_state_records_do_not_store_file_content(dsh_config_path, dsh_project):

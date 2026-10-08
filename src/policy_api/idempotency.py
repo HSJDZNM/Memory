@@ -285,12 +285,29 @@ class IdempotencyLedger:
             "status": int(status),
             "body": stored_body,
             "recorded_at": _utc_now().isoformat().replace("+00:00", "Z"),
+            # timespec 必须写死：`isoformat()` 在微秒恰为 0 时**省略小数部分**，
+            # 而 `_fresh` 按 "%Y-%m-%dT%H:%M:%S.%fZ" 解析——整秒写入的条目会被判成
+            # "读不懂 = 已过期"，于是同一个 key 重新判定一次，幂等保证在那一刻失效。
             "expires_at": (_utc_now() + datetime.timedelta(seconds=self.ttl_seconds))
-            .isoformat()
+            .isoformat(timespec="microseconds")
             .replace("+00:00", "Z"),
         }
         with self._guard():
             entries = self._read_unlocked()
+            # **在锁内重新读一次**：调用方的 lookup 与 record 是两个临界区
+            # （runtime.handle 先 lookup 再 record），并发同 key、不同请求体时两次 lookup
+            # 可以双双未命中。没有这一步，后写的那次会静默替换先写的结论——文档承诺的
+            # 409（不覆盖、不合并）永远不会发生，而第一个调用方的响应变成不可重放。
+            existing = entries.get(entry_key)
+            if (
+                existing is not None
+                and self._fresh(existing)
+                and str(existing.get("request_digest") or "") != digest
+            ):
+                raise ApiError(
+                    ErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+                    "同一个 idempotency_key 被用于了不同的请求；请换一个 key",
+                )
             entries[entry_key] = record
             self._write_unlocked(entries)
 

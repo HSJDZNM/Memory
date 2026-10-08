@@ -14,6 +14,7 @@ from retrieval.indexer import ingest
 from retrieval.models import (
     AccessScope,
     ContextStatus,
+    QuarantineOrigin,
     RetrievalQuery,
     RetrievalStatus,
     UnavailableReason,
@@ -144,6 +145,7 @@ def test_quarantined_chunk_is_not_retrievable_even_when_quoted(indexed) -> None:
         text_hash=hit.text_hash,
         quarantined_at="2026-09-16T00:00:00Z",
         document_id=hit.document_id,
+        origin=QuarantineOrigin.RUNTIME,
     )
     store.bump_generation()
     after = retriever.retrieve(RetrievalQuery(text=hit.text[:60], limit=5), scope)

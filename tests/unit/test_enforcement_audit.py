@@ -128,6 +128,39 @@ def test_chain_links_records_and_verifies(tmp_root):
     assert sink.final_digest() == second.digest
 
 
+def test_a_missing_audit_file_is_not_a_verified_chain(tmp_root):
+    """没有产物 ≠ 链完整：CLI 的 verify 子命令把 issues 为空当 ok，这里不能是空。"""
+
+    sink = sink_for(tmp_root)
+
+    issues = sink.verify()
+
+    assert issues and "不存在" in issues[0]
+    described = sink.describe()
+    assert described["chained_records"] == 0
+    assert described["issues"], "describe() 也不能把缺产物报成健康"
+
+
+def test_an_existing_audit_file_without_chained_records_stays_chain_only(tmp_root):
+    """只有外来行的文件：链完整性没有可报的问题，但"本层没有证据"是产物状态。
+
+    这条边界是刻意的：Phase 2 的 dsh 审计行与 Phase 4 的链式记录共用同一个文件，
+    链只跟随本层记录（见 FileAuditSink 的文档字符串与
+    tests/unit/test_hook_audit_reading_context.py 的混排用例）；
+    "有没有产生过证据"由消费方（cli.py::_verify）判定并据此拒绝判通过。
+    """
+
+    path = tmp_root / "audit.jsonl"
+    path.write_text(
+        json.dumps({"decision": "block", "file": "src/x.py"}) + "\n", encoding="utf-8"
+    )
+    sink = FileAuditSink(path, workspace=tmp_root)
+
+    assert sink.verify() == ()
+    assert sink.chain_records() == ()
+    assert sink.foreign_records() == 1
+
+
 def test_tampering_with_a_record_is_detected(tmp_root):
     sink = sink_for(tmp_root)
     sink.append(AuditStage.REQUEST, payload={"a": 1})
@@ -211,6 +244,33 @@ def test_trace_replay_orders_the_chain_and_requires_a_final_decision(tmp_root):
     assert verify_chain(report.records) == ()
 
 
+def test_trace_replay_reports_an_unparsable_record_instead_of_raising(tmp_root):
+    """链上有一条读不出来的记录时，重放要给出诊断，而不是把 AuditError 抛给 CLI。
+
+    verify_chain 一直把"记录不可解析"记成问题；load_trace 曾经在这条路径上直接
+    parse_audit_record（无 try），于是同一条坏记录让 trace 子命令以 traceback 收场。
+    """
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.REQUEST, payload={"a": 1}, action_id="act-1", trace_id="trace-1")
+
+    path = tmp_root / "audit.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[0])
+    record["payload"]["a"] = 2  # 摘要与内容不再一致：parse_audit_record 会抛 AuditError
+    path.write_text(
+        json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    report = load_trace(path, trace_id="trace-1")
+
+    assert not report.ok
+    assert any("不可解析" in issue for issue in report.issues)
+    assert report.entries == []  # 读不出来的记录不进条目，但它在 issues 里被点名
+
+
 def test_execution_without_a_pre_decision_is_reported(tmp_root):
     sink = sink_for(tmp_root)
     sink.append(AuditStage.EXECUTION, payload={"status": "executed"}, action_id="act-9")
@@ -284,6 +344,92 @@ def test_grant_is_single_use(tmp_root):
     assert ledger.grant_used("grant-1") is True
     with pytest.raises(GrantError):
         ledger.consume_grant(grant)
+
+
+def _grant(grant_id: str = "grant-1") -> AuthorizationGrant:
+    now = utc_now()
+    return AuthorizationGrant(
+        grant_id=grant_id,
+        action_id="a-1",
+        action_hash="sha256:h",
+        tool_id="fs.edit",
+        tool_schema_hash="sha256:s",
+        subject="local-user",
+        permissions=("repo.write",),
+        risk="reversible_write",
+        issued_at=now,
+        expires_at=now + timedelta(seconds=60),
+        nonce="n-1",
+    )
+
+
+def test_grant_claim_identity_is_not_derived_from_the_clock(tmp_root, monkeypatch):
+    """两个并发方拿到同一个 now 时，不能因为 claim_id 相同而双双得手。
+
+    单次消费的真正闸门是"先追加、再复核序号最小者"；旧实现用
+    f"{grant_id}:{to_timestamp(now)}" 做认领身份，于是同一个 now 下两个进程写出
+    逐字节相同的 claim_id，winner 比对在两边都成立——一张授权被消费两次。
+    这里把"双方都在对方写入之前读过台账"这个竞态用 monkeypatch 还原成确定性场景。
+    """
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    now = utc_now()
+    grant = _grant("grant-race")
+    ledger.consume_grant(grant, now=now)
+
+    # 前置的 grant_used 是读-判-写，天然有竞态；写入后的复核才是真正的一致性点。
+    monkeypatch.setattr(ledger, "grant_used", lambda grant_id: False)
+    with pytest.raises(GrantError):
+        ledger.consume_grant(grant, now=now)
+
+    uses = ledger.of_kind("grant_used")
+    assert len(uses) == 2  # 两方都追加过
+    assert uses[0]["claim_id"] != uses[1]["claim_id"], "认领身份不得由 now 推导"
+
+
+class _RacingApprovalLedger(EnforcementLedger):
+    """把"两个进程同时抢最后一次审批额度"搬进单进程：对手在本进程追加之前先写一行。"""
+
+    def __init__(self, path) -> None:
+        super().__init__(path)
+        self.raced = False
+
+    def record_approval_use(self, approval_id, **kwargs):  # type: ignore[no-untyped-def]
+        if not self.raced:
+            self.raced = True
+            super().record_approval_use(approval_id, action_hash=kwargs["action_hash"])
+        return super().record_approval_use(approval_id, **kwargs)
+
+
+def test_approval_quota_race_loser_returns_its_own_slot(tmp_root):
+    """抢输的一方不能永久烧掉一格额度：它一个字都没执行。"""
+
+    ledger = _RacingApprovalLedger(tmp_root / "ledger.jsonl")
+    claim = ledger.claim_approval_use(
+        approval_id="approval-1",
+        action_id="act-1",
+        tool_id="exec.shell",
+        action_hash="sha256:h",
+        max_uses=1,
+    )
+
+    assert claim.claimed is False and claim.reason == "approval_quota_exhausted"
+    assert claim.uses == 1  # 归还自己那一行后，生效的消费次数只剩对手那 1 次
+    stored = EnforcementLedger(ledger.path)
+    assert len(stored.approval_uses("approval-1")) == 1
+    released = stored.of_kind("approval_use_released")
+    assert [item["use_id"] for item in released] == [claim.use_id]
+
+    # 反真空：归还的是"自己那一格"，不是把别人的占用清零——额度仍然是用尽的。
+    again = ledger.claim_approval_use(
+        approval_id="approval-1",
+        action_id="act-2",
+        tool_id="exec.shell",
+        action_hash="sha256:h2",
+        max_uses=1,
+    )
+    assert again.claimed is False
+    assert len(EnforcementLedger(ledger.path).approval_uses("approval-1")) == 1
 
 
 def test_rate_limit_windows_count_only_recent_records(tmp_root):

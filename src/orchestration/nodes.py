@@ -84,6 +84,31 @@ class Change:
     tokens: int = 0
     cost_units: int = 0
 
+    def __post_init__(self) -> None:
+        """契约不成立就在**构造期**失败，而不是在写入那一刻变成数据损失。
+
+        下面三种形态以前都能构造出来，而且都是静默的（实测 params() 的读数）：
+          - old 与 content 都没有 → `content: ''`：整文件被写成空（截断目标文件）；
+          - 有 old 没有 replacement → `new_string: ''`：把匹配到的文本**删掉**，不是改掉；
+          - 两个都有 → content 被静默丢掉，写进去的是编辑分支。
+        改动是受治理动作，参数错一个字段就是一次不可逆写入，所以判据钉在构造期。
+        """
+
+        if not self.path:
+            raise NodeContractError("候选改动缺少目标路径")
+        editing = self.old is not None
+        writing = self.content is not None
+        if editing == writing:
+            raise NodeContractError(
+                f"候选改动 {self.path!r} 必须**恰好**给出 old 或 content 之一"
+                "（替换片段 / 写整文件）：都没有会变成一次空写入，都有会静默丢掉一个"
+            )
+        if editing and self.replacement is None:
+            raise NodeContractError(
+                f"候选改动 {self.path!r} 给了 old 却没有 replacement："
+                "那会把匹配到的文本删掉，而不是改掉它"
+            )
+
     def digest(self) -> str:
         material = {
             "path": self.path,
@@ -101,13 +126,15 @@ class Change:
         return PROTECTED_WRITE_TOOL if self.path.startswith("policies/") else WRITE_TOOL
 
     def params(self) -> dict[str, Any]:
+        # __post_init__ 已经保证"二选一"，这里不再用 `or ""` 把 None 抹成空串——
+        # 那正是"缺失参数变成一次空写入"的最后一层掩盖。
         if self.old is not None:
             return {
                 "file_path": self.path,
                 "old_string": self.old,
-                "new_string": self.replacement or "",
+                "new_string": self.replacement,
             }
-        return {"file_path": self.path, "content": self.content or ""}
+        return {"file_path": self.path, "content": self.content}
 
 
 @runtime_checkable

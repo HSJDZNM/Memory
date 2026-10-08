@@ -62,6 +62,74 @@ def test_unterminated_front_matter_keeps_every_character() -> None:
     assert body == text
 
 
+def test_bom_does_not_shift_front_matter_coordinates() -> None:
+    """BOM 只是被跳过的前缀，不得让 front matter 的边界错位（复核发现的坐标空间缺陷）。"""
+
+    text = "\ufeff---" + chr(10) + "title: x" + chr(10) + "---" + chr(10) + "# H" + chr(10) + chr(10) + "body" + chr(10)
+    front, body = split_front_matter(text)
+    assert front.kind == "yaml"
+    # 边界错位时 raw 会少掉最后一个 "-"，YAML 于是"解析失败"；错位修好后没有警告。
+    assert front.warning is None
+    assert front.raw == "---" + chr(10) + "title: x" + chr(10) + "---"
+    assert front.metadata["title"] == "x"
+    assert body == "# H" + chr(10) + chr(10) + "body" + chr(10)
+    # 带不带 BOM 必须得到同一份正文（body 里不许残留分隔符残字）。
+    assert split_front_matter(text.lstrip("\ufeff"))[1] == body
+
+
+def test_bom_before_a_heading_is_not_swallowed_into_the_preamble() -> None:
+    """没有 front matter 时，BOM 也不得留在正文里，否则首行标题会被吞进前言。"""
+
+    text = "\ufeff# Title" + chr(10) + chr(10) + "body text" + chr(10)
+    front, body = split_front_matter(text)
+    assert front.kind == ""
+    assert body == "# Title" + chr(10) + chr(10) + "body text" + chr(10)
+    assert [section.anchor for section in find_sections(body)] == ["title"]
+
+
+def test_bom_html_comment_front_matter_keeps_coordinates() -> None:
+    text = "\ufeff<!--" + chr(10) + "title: y" + chr(10) + "-->" + chr(10) + "# H2" + chr(10) + chr(10) + "body" + chr(10)
+    front, body = split_front_matter(text)
+    assert front.kind == "html-comment"
+    assert front.raw == "<!--" + chr(10) + "title: y" + chr(10) + "-->"
+    assert front.metadata["title"] == "y"
+    assert body == "# H2" + chr(10) + chr(10) + "body" + chr(10)
+
+
+def test_yaml_values_json_cannot_serialize_do_not_break_chunking() -> None:
+    """YAML 的日期 / 二进制 / 集合不得让整份文档分块失败（复核发现的 TypeError 逃逸）。"""
+
+    nl = chr(10)
+    text = (
+        "---" + nl
+        + "title: x" + nl
+        + "date: 2024-01-01" + nl
+        + "blob: !!binary aGk=" + nl
+        + "tags: !!set {beta: null, alpha: null, gamma: null}" + nl
+        + "2024-01-02: 键本身也是日期" + nl
+        + "nested: {2024-01-03: y}" + nl
+        + "---" + nl
+        + "# H" + nl + nl + "body" + nl
+    )
+    front, body = split_front_matter(text)
+    assert front.kind == "yaml"
+    # 元数据转换失败会退化成"解析失败"警告，这里必须是真解析成功、没有警告。
+    assert front.warning is None
+    assert front.metadata["date"] == "2024-01-01"
+    assert front.metadata["blob"] == "hi"
+    # 集合没有固有顺序：退化文本必须排序后才拼接，否则同一输入会得到两种结果。
+    assert front.metadata["tags"] == "{alpha, beta, gamma}"
+    assert front.metadata["2024-01-02"] == "键本身也是日期"
+    assert front.metadata["nested"] == '{"2024-01-03": "y"}'
+    assert body == "# H" + nl + nl + "body" + nl
+    # 同一输入两次得到同一份元数据（确定性是模块的硬约定）。
+    again, _ = split_front_matter(text)
+    assert dict(again.metadata) == dict(front.metadata)
+    # 真正要保证的事：一个元数据字段不能让整个分块步骤失败。
+    _, chunks = chunk_document(text, document_id="doc_meta", max_chars=200, hard_max_chars=400)
+    assert [(item.heading_anchor, item.text) for item in chunks] == [("h", "body")]
+
+
 def test_heading_inside_code_fence_is_not_a_heading() -> None:
     text = (
         "# Title\n\n"

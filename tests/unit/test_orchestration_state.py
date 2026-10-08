@@ -39,6 +39,7 @@ from orchestration.errors import (
     ApprovalError,
     CheckpointError,
     LimitExceeded,
+    NodeContractError,
     OrchestrationError,
     status_for,
 )
@@ -525,6 +526,38 @@ def test_plan_resume_tool_schema_change_reapproves() -> None:
     assert any("重新审批" in note for note in state.notes)
 
 
+def test_plan_resume_rule_change_and_tool_schema_change_both_invalidate() -> None:
+    """规则集与工具 schema **一起**变：两边的失效都要做，不能只做前一件。
+
+    老实现里 revalidate 分支先 return，reapprove 的清空被整段丢掉——审批绑的是旧工具 schema
+    算出来的 action_hash，却跟着恢复进新一轮，等于让一张过期条子继续生效。
+    """
+
+    recorded = _history_state()
+    record = build_record(recorded, engine="reference", sequence=3)
+    current = _snapshot(
+        rule_set_hash="sha256:" + "f" * 64, tool_schema_hash="sha256:" + "e" * 64
+    )
+    plan = plan_resume(record, current, fresh_state=empty_state("task-1"))
+
+    # 退得更远的那一个决定 mode：重评会把阶段退回检索节点。
+    assert plan.mode is ResumeMode.REVALIDATE
+    assert set(plan.changed) == {"rule_set_hash", "tool_schema_hash"}
+    state = plan.state
+    assert state is not None
+    # 决定失效
+    assert state.traces == ()
+    assert state.validation is None
+    assert state.test_validation is None
+    assert state.contexts == ()
+    assert state.stage is NodeId.POLICY_RETRIEVAL
+    # 审批**同样**失效（这一条就是老实现丢掉的那一半）
+    assert recorded.approvals != ()
+    assert state.approvals == ()
+    assert any("重新评估" in note for note in state.notes)
+    assert any("重新审批" in note for note in state.notes)
+
+
 @pytest.mark.parametrize("changed_dimension", ["policy_version", "decision_schema_version"])
 def test_plan_resume_generation_change_refuses(changed_dimension: str) -> None:
     """协议世代变了就直接拒绝恢复：不沿用任何旧决定（ResumeError → checkpoint_incompatible）。"""
@@ -734,6 +767,40 @@ def test_change_digest_binds_parameters() -> None:
     changed = Change(path=TARGET_PATH, summary="写入", content="b\n")
     assert action_key("task-1", base) != action_key("task-1", changed)
     assert action_key("task-1", base, repair_rounds=1) != action_key("task-1", base)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({}, id="neither-old-nor-content"),
+        pytest.param({"old": "a", "content": "b"}, id="both-old-and-content"),
+        pytest.param({"old": "a"}, id="old-without-replacement"),
+    ],
+)
+def test_change_contract_is_enforced_at_construction(kwargs: dict) -> None:
+    """三种畸形改动都必须在构造期被拒：它们以前都是**静默**的数据损失。
+
+    实测（修复前 params() 的读数）：都没有 → content: ''（整文件截断）；
+    有 old 没有 replacement → new_string: ''（把匹配到的文本删掉）；两个都有 → content 被丢掉。
+    候选改动是受治理写入的参数，错一个字段就是一次不可逆写入。
+    """
+
+    with pytest.raises(NodeContractError):
+        Change(path=TARGET_PATH, **kwargs)
+
+
+def test_change_params_never_coerce_missing_values_to_empty() -> None:
+    """params() 不再用 `or ""` 兜底：缺失的值不可能被抹成一次空写入。"""
+
+    writing = Change(path=TARGET_PATH, content="a\n")
+    assert writing.params() == {"file_path": TARGET_PATH, "content": "a\n"}
+
+    editing = Change(path=TARGET_PATH, old="a", replacement="b")
+    assert editing.params() == {
+        "file_path": TARGET_PATH,
+        "old_string": "a",
+        "new_string": "b",
+    }
 
 
 def test_policy_changes_use_approval_gated_tools_for_create_and_edit() -> None:

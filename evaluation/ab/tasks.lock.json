@@ -1,0 +1,88 @@
+{
+  "baselines": {
+    "matplotlib__matplotlib-22719": {
+      "baseline_source": "unknown",
+      "bytes": 35009563,
+      "extracted_at": "unknown",
+      "record": ".tmp/ab-tasks/matplotlib__matplotlib-22719/source.json",
+      "record_sha256": "71dbac195412685f71d9af52612fa4365e1bc49e8e695c26d8ee9cf8598d3c9a",
+      "sha256": "35eba5f76143c4869e245e376f431825a02a9556d354ddb11701d77e5558f758",
+      "url": "https://codeload.github.com/matplotlib/matplotlib/tar.gz/a2a1b0a11b993fe5f8fab64b6161e99243a6393c"
+    },
+    "pallets__flask-5014": {
+      "baseline_source": "unknown",
+      "bytes": 692792,
+      "extracted_at": "unknown",
+      "record": ".tmp/ab-tasks/pallets__flask-5014/source.json",
+      "record_sha256": "3b0628d32f4dced83d8f957ebd2613cf87eeebaf1893d090dffc6e74022ae95e",
+      "sha256": "b1a4c83b7d12981b81e5f8d2028a73eacfbd153f4e425504c254a6f177b99997",
+      "url": "https://codeload.github.com/pallets/flask/tar.gz/7ee9ceb71e868944a46e1ff00b506772a53a4f1d"
+    },
+    "psf__requests-5414": {
+      "baseline_source": "unknown",
+      "bytes": 4032376,
+      "extracted_at": "unknown",
+      "record": ".tmp/ab-tasks/psf__requests-5414/source.json",
+      "record_sha256": "13a56b8b5b2a8779f50baf4ee5ec349498acf780d6cd6c5fccef08078145f1ef",
+      "sha256": "3f584cc5cd8ce4846c5ae7439461878d0813246efdc10eb18d049a00cf2ceb83",
+      "url": "https://codeload.github.com/psf/requests/tar.gz/39d0fdd9096f7dceccbc8f82e1eda7dd64717a8e"
+    },
+    "pytest-dev__pytest-7324": {
+      "baseline_source": "unknown",
+      "bytes": 1048989,
+      "extracted_at": "unknown",
+      "record": ".tmp/ab-tasks/pytest-dev__pytest-7324/source.json",
+      "record_sha256": "9bf2036223715a3bdf0394b50e173ead9932905bbe8e3a154ba2bb2afe172bb7",
+      "sha256": "2de10b455d6fe82717b5752c018b53067a86213c5d1f9a0674bf34a283a7abec",
+      "url": "https://codeload.github.com/pytest-dev/pytest/tar.gz/19ad5889353c7f5f2b65cc2acd346b7a9e95dfcd"
+    },
+    "sympy__sympy-14711": {
+      "baseline_source": "unknown",
+      "bytes": 5864908,
+      "extracted_at": "unknown",
+      "record": ".tmp/ab-tasks/sympy__sympy-14711/source.json",
+      "record_sha256": "7af5f965de273cf7df4cd4129db8214d7e5d6be8abdb631e972a2dcafad48591",
+      "sha256": "6cd8b186cfd033da20f42f972936a71e0d51656c1c2ff3ee8a58468cae9d90bc",
+      "url": "https://codeload.github.com/sympy/sympy/tar.gz/c6753448b5c34f95e250105d76709fe4d349ca1f"
+    },
+    "sympy__sympy-19637": {
+      "baseline_source": "unknown",
+      "bytes": 6854854,
+      "extracted_at": "unknown",
+      "record": ".tmp/ab-tasks/sympy__sympy-19637/source.json",
+      "record_sha256": "6dfdb5f23c20824a88e367c84bbba8f0dd77014f14edd2530c930d200b9dcd79",
+      "sha256": "7074b2abc928dc63e5a9119e61d84e6f4399944d683152593a0185585d010d75",
+      "url": "https://codeload.github.com/sympy/sympy/tar.gz/63f8f465d48559fecb4e4bf3c48b75bf15a3e0ef"
+    },
+    "sympy__sympy-22456": {
+      "baseline_source": "unknown",
+      "bytes": 7546164,
+      "extracted_at": "unknown",
+      "record": ".tmp/ab-tasks/sympy__sympy-22456/source.json",
+      "record_sha256": "8f0f9002614f06e8280d6b139ba9621333e36396e444db74e62f6f621cb43c25",
+      "sha256": "f862bed5b614aec17aec7582e7d2f2e8b8a8fd67aba484182f4c897ae2fb3983",
+      "url": "https://codeload.github.com/sympy/sympy/tar.gz/a3475b3f9ac662cd425157dd3bdb93ad7111c090"
+    },
+    "sympy__sympy-22714": {
+      "baseline_source": "unknown",
+      "bytes": 7626360,
+      "extracted_at": "unknown",
+      "record": ".tmp/ab-tasks/sympy__sympy-22714/source.json",
+      "record_sha256": "188425067e5d309e2829e50814f8d9d66f07ae01a9173cdda02cd4fd7433db95",
+      "sha256": "cdec2e886b408a2cb954e183567f222d35ed4cd37dc03ab7f0aedc900edecd55",
+      "url": "https://codeload.github.com/sympy/sympy/tar.gz/3ff4717b6aef6086e78f01cdfa06f64ae23aed7e"
+    }
+  },
+  "datasets": {
+    "swe-bench-verified": {
+      "files": {
+        "rows.jsonl": "c008a79591375164956d8b64c92817aa68e766c9238313a09879693c35324eea"
+      },
+      "revision": "c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
+      "url": "https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified"
+    }
+  },
+  "note": "任务集取用的钉死记录：数据集 revision + 逐文件 sha256。漂移由 --verify 发现，不静默。",
+  "recorded_on": "2026-10-07",
+  "schema_version": "1"
+}

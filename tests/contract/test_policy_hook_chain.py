@@ -587,6 +587,9 @@ def test_a_blocked_call_that_still_reaches_post_is_not_reported_as_validated(
     因此"有 post 记录"本身不能证明"事后核对通过"：这类调用在事后阶段找不到执行前基线，
     只写一条 stage_note=post_without_pre 的占位记录，且**不得**产生 final_decision/validated。
     本用例把"真实执行成功"与"被 pre 阻断"两类分开断言（前者见上一条用例）。
+
+    找不到基线就是证据不足：事后阶段以 exit 2 结束（`post_error`），而不是"不需要事后核对"。
+    被阻断的动作不在 pre 的放行集合里，所以 G2 的成对契约不受这条拒绝影响。
     """
 
     audit = dsh_project.parent / "audit.jsonl"
@@ -610,8 +613,9 @@ def test_a_blocked_call_that_still_reaches_post_is_not_reported_as_validated(
         audit_path=audit,
     )
 
-    assert post.exit_code == EXIT_ALLOW
-    assert post.reason_code == "post_not_required"
+    assert post.exit_code == EXIT_BLOCK
+    assert post.reason_code == "post_error"
+    assert "找不到对应的 pre-check 记录" in post.stderr
     audit_records = load_jsonl(audit)
     placeholders = [
         record

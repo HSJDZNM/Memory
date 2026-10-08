@@ -1,0 +1,114 @@
+# 规范治理价值评测 · 预注册门槛（跑之前写下，跑完只允许"如实记录 + 显式重记基线"）
+#
+# 为什么门槛住在数据文件里：与 tests/fixtures/retrieval_eval/queries.yaml 同型（AGENTS 第 18 条）——
+# 代码里不写"脱离数据的常数"。改门槛必须改这个文件，diff 里看得见。
+#
+# 三条纪律（方案 §2 的 R1 / R2 / R3）：
+#   R1 不许自证：标签来自第三方标注，不来自平台自己的 Decision；用平台读数的地方一律标成自洽性检查；
+#   R2 三层不互相顶替：本表只有 L1 保真度门槛，"全绿"只说明实现与证据工具口径一致，
+#      不说明这些诊断值得报（方案 §9 的反面清单）；
+#   R3 预注册：门槛先写、跑完只记不改；行为有意变化时用 tools/governance_eval.py --record 显式重记基线。
+#
+# 谁读这张表：tools/governance_eval.py（严格模型，未知字段一律报错——表里多一个没人读的键，
+# 就会让"门槛是什么"重新变成靠猜）。
+schema_id: governance-eval-thresholds/1
+version: 1
+preregistered_on: '2026-10-07'
+plan_ref: docs/project/engineering-policy-platform/testing/governance-value-eval-plan.md
+metric_definitions:
+  GV-01: 规则精确率 = TP/(TP+FP)，按 rule_id 分组，error 与 warning 分开；**定义在 L1b 上**
+  GV-02: 规则召回率 = TP/(TP+FN)，按 rule_id 分组；**定义在 L1b 上**
+  GV-03: 归属准确率 = 命中行的 rule_id 与标注码映射的正确率；**定义在 L1b 上**，必须为 1.00
+  GV-04: 静默漏报率 = 标注为阳性、却既无 violation 也无 skipped_rules / language_coverage 说明的占比；必须为 0
+  L1a: 原始 ruff check --output-format=json 的诊断 vs 上游标注——度量**证据工具与上游标注**的差，只报告
+  L1b: 平台判定 vs **同一次**原始 ruff 诊断——度量归属 / 分级 / 聚合 / 证据传递，期望 100%
+  L1b_is_not_a_value_claim: L1b 全绿不是"规则有用"，它只证明平台忠实转述了它声明的证据工具（方案 §2 R2）
+suites:
+  fidelity:
+    # ---- 被测数据集（id 取 eval-datasets.yaml 的条目 id 原文）----
+    # 命令行 --dataset 可以覆盖这里；覆盖不了的是"读数要写清测了哪几个"。
+    datasets: [
+      'bandit-functional',
+      'pycodestyle-testsuite',
+      'pydocstyle-testcases',
+      'pep8-naming-testsuite',
+      'tryceratops-samples',
+      'pyflakes-messages',
+      'flake8-logging-tests',
+      'isort-tests',
+    ]
+    # ---- 上游的空白期望标记（负例，不是码）----
+    # pycodestyle 的 "#: Okay" 表示"这一块期望零诊断"。它没有码，**不许**喂给 policies 求 rule_id
+    # （那会把它算成"能力外"），只单独计数它覆盖到多少条诊断。
+    blank_code_tokens: ['Okay']
+    # ---- 样本量诚实（方案 §6.2）----
+    # N = 该规则在语料里**能映射到平台规则**的标注条数。N < 下限 → insufficient_sample：
+    # 不参与门槛判定、**也不许算成通过**（读数里单列）。
+    min_annotations_per_rule: 5
+    # ---- GV-01..04（方案 §3 / §5 W1）----
+    gv01_precision_error_min: 0.90
+    gv01_precision_overall_min: 0.80
+    gv02_recall_per_rule_min: 0.80
+    gv03_attribution_accuracy_required: 1.00
+    gv04_silent_miss_rate_max: 0.00
+    # ---- 语料完整性（漂移不许静默：AGENTS 第 12 条的同一条纪律）----
+    # 锁文件缺失 = "无法证明没有漂移"，与"确认没漂移"是两件事：这里显式要求能证明。
+    require_corpus_lock: true
+    # ---- 上游码 → 平台码的**机械归一**（不是映射表）----
+    # 方案 §4.1 已声明"Ruff S 码与 Bandit B 码同号"。这里只声明前缀等价的**规则**，
+    # 归属仍然全部来自 policies/**（tools/governance_eval.py 不持任何码→规则的表）。
+    # 归一后查不到平台规则的前缀码记 capability_out，绝不当成平台的漏报。
+    code_aliases:
+      - upstream_prefix: B
+        platform_prefix: S
+        reason: Bandit 功能测试的期望是 B###，平台的规则体声明的是同号的 Ruff S###（方案 §4.1/§4.5）
+    # ---- 判定上下文的显式构造（AGENTS 核心约束 6：上下文只接受显式字段）----
+    # 语料文件本身给不出 layer / operation，必须由 harness 显式构造，否则那 4 条非 style_lint
+    # 规则进的是 skipped_rules（那是"说明"，不是判定）。层值取 validation/project.yaml 里真实存在的组件名。
+    context:
+      corpus:
+        language: python
+        layer: service
+        operation: edit
+        layer_source: declared
+      fidelity_corpus_note: 语料是被测对象，不是本仓库；不按文件名推断层（那会把"猜的层"写进读数）
+      repo_scan:
+        language: python
+        layer: from_filename
+        operation: null
+        layer_source: filename_guess
+      repo_scan_note: 与 docs/project/architecture/规则转化覆盖报告.md §10.4 的 CLI 实跑同口径（policy.check 默认分层）
+    # ---- P2/P3 的本仓库对照扫描（方案 §6.5 的预注册预测）----
+    repo_scan:
+      enabled: true
+      listing: git ls-files --cached
+      exclude_prefixes:
+        - tests/fixtures/
+      attribution_method: 同一批证据（同一次 run_pipeline）+ 两个规则集（全集 / 去掉 STYLE-002）
+      attribution_note: 移除规则不改变证据，因此 block 数的差只归因于这条规则；这不是"再跑一遍"的差
+    # ---- 预注册预测（方案 §6.5；跑完对照，不许调参）----
+    predictions:
+      P1:
+        statement: SEC-004（S105/S106）在标注语料与本仓库上的精确率 < 0.5
+        rule_id: SEC-004
+        codes: ['S105', 'S106']
+        metric: precision
+        operator: lt
+        value: 0.5
+        falsified_means: 方案第 10.4 节的核对方法有偏，先复核那份报告
+      P2:
+        statement: 关掉 STYLE-002（F401）后本仓库 block 数下降 > 50%
+        rule_id: STYLE-002
+        codes: ['F401']
+        metric: repo_block_drop_ratio
+        operator: gt
+        value: 0.50
+        falsified_means: '“只由它造成”的归因算法有问题'
+      P3:
+        statement: warning 级规则贡献的诊断 ≥ 80%，error 级 < 20%
+        metric: repo_findings_severity_share
+        warning_share_operator: gte
+        warning_share_value: 0.80
+        error_share_operator: lt
+        error_share_value: 0.20
+        falsified_means: 规则集已被重新标定过，旧读数过期

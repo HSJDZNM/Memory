@@ -16,9 +16,22 @@ from __future__ import annotations
 
 import pytest
 
+from policy.checkers import (
+    UNPROVEN_CHANGED_TEXT,
+    blocker_violation,
+    uncovered_checker_violation,
+    unproven_dependency_violation,
+)
+from policy.evidence import Blocker, ValidatorStatus
+from policy.loader import load_rule_file
+from policy.models import Decision as PolicyDecision
+from policy.models import ValidationResult, Violation
+
+from conftest import ARCH_DIR, REPO_ROOT, make_context
 from orchestration.client import (
     REASON_EVIDENCE_UNAVAILABLE,
     REASON_POLICY_VIOLATION,
+    _violations_from,
     decision_reason,
 )
 from orchestration.errors import NodeContractError
@@ -52,6 +65,51 @@ def _summary(**overrides: object) -> ValidationSummary:
     return ValidationSummary(**payload)
 
 
+def _rule():
+    """一条真规则：下面两种"平台没能查"的 violation 都从规则出发，用判定侧的真函数产出。"""
+
+    return load_rule_file(
+        ARCH_DIR / "ARCH-001.yaml",
+        repo_path="policies/architecture/ARCH-001.yaml",
+        repo_root=REPO_ROOT,
+    ).rule
+
+
+def _platform_refs(*violations: Violation) -> tuple[ViolationRef, ...]:
+    """判定侧产出 → 平台序列化 → 消费方投影。**不手抄形状**。
+
+    手抄正是这条缺陷藏了这么久的原因：用例里把 `uncovered_checker` / `blocker` 写进
+    `evidence_value`，而平台从来不那样写（它把 checker 名写进 value，`uncovered_checker` 写进
+    detail，blocker 的 detail 是自由文本原因）。走真函数 + 真投影，形状漂移会当场把用例打红。
+    `_violations_from` 就是 `ApiPolicyClient.evaluate/validate` 用的那一个投影。
+    """
+
+    result = ValidationResult(
+        decision=PolicyDecision.BLOCK,
+        request_id="task-1:validation:0",
+        rule_set_hash=RULE_SET_HASH,
+        violations=tuple(violations),
+    )
+    return _violations_from(result.to_decision_dict())
+
+
+def _blocker_refs() -> tuple[ViolationRef, ...]:
+    """关键验证器不可用：判定侧的真实产出（blocker_violation）。"""
+
+    return _platform_refs(
+        blocker_violation(
+            _rule(),
+            Blocker(
+                validator_id="pytest",
+                validator_version="1",
+                status=ValidatorStatus.FAILED,
+                reason="验证器没有跑成",
+                checkers=("missing_tests",),
+            ),
+        )
+    )
+
+
 def _state_with(summary: ValidationSummary) -> GraphState:
     """一份「刚验证失败」的状态：validation 摘要在位，阶段停在 REPAIR。"""
 
@@ -72,35 +130,37 @@ def test_an_approval_gate_is_not_read_as_a_violation() -> None:
 
 
 def test_evidence_channels_decide_between_policy_and_platform_failure() -> None:
-    """H10：证据通道（kind/value）决定归类，**不解析中文 message**。"""
+    """H10：证据通道（kind）决定归类，**不解析中文 message**；三种 violation 都是真产出。
 
-    policy = _summary(
-        violations=(
-            ViolationRef(
-                rule_id="ARCH-001",
-                rule_version=1,
-                severity="error",
-                message="Controller 不得直接访问 Repository。",
-                evidence_kind="dependency",
-                evidence_value="repository",
-            ),
+    两条"平台没能查"（关键验证器不可用 / 没有验证器为 checker 产证据）都必须归到
+    evidence_unavailable——它们改文件改不掉，修复节点据此停止而不是去改代码；
+    一条"规则报了违规"（依赖无法证明）归 policy_violation。
+    """
+
+    rule = _rule()
+
+    # 1) 关键验证器不可用（blocker_violation）：value 是验证器状态、detail 是自由文本原因
+    blocker_refs = _blocker_refs()
+    assert blocker_refs[0].evidence_kind == "validator"
+    assert blocker_refs[0].evidence_value == ValidatorStatus.FAILED.value
+    assert _summary(violations=blocker_refs).reason_code == REASON_EVIDENCE_UNAVAILABLE
+
+    # 2) 没有验证器为 checker 产证据（uncovered_checker_violation）：value 是 checker 名
+    uncovered_refs = _platform_refs(uncovered_checker_violation(rule, "missing_tests"))
+    assert uncovered_refs[0].evidence_kind == "validator"
+    assert uncovered_refs[0].evidence_value == "missing_tests"
+    assert _summary(violations=uncovered_refs).reason_code == REASON_EVIDENCE_UNAVAILABLE
+
+    # 3) 规则真的报了违规（依赖无法证明）：kind 是 "dependency"，可修
+    dependency_refs = _platform_refs(
+        unproven_dependency_violation(
+            rule,
+            make_context(file="src/order/controller.py", layer="controller"),
+            (UNPROVEN_CHANGED_TEXT,),
         )
     )
-    assert policy.reason_code == REASON_POLICY_VIOLATION
-
-    uncovered = _summary(
-        violations=(
-            ViolationRef(
-                rule_id="TESTING-002",
-                rule_version=1,
-                severity="critical",
-                message="没有验证器为 checker missing_tests 提供证据",
-                evidence_kind="validator",
-                evidence_value="uncovered_checker",
-            ),
-        )
-    )
-    assert uncovered.reason_code == REASON_EVIDENCE_UNAVAILABLE
+    assert dependency_refs[0].evidence_kind == "dependency"
+    assert _summary(violations=dependency_refs).reason_code == REASON_POLICY_VIOLATION
 
 
 def test_a_block_that_cannot_say_why_has_no_reason() -> None:
@@ -138,21 +198,7 @@ def test_repair_stops_at_the_approval_gate_instead_of_failing_the_run(tmp_root) 
 def test_repair_stops_when_the_platform_could_not_check(tmp_root) -> None:
     """R3：平台没能查 → BLOCKED，不规划改动。"""
 
-    state = _state_with(
-        _summary(
-            violations=(
-                ViolationRef(
-                    rule_id="TESTING-002",
-                    rule_version=1,
-                    severity="critical",
-                    message="关键验证器不可用",
-                    evidence_kind="validator",
-                    evidence_value="blocker",
-                ),
-            ),
-            reason_code=REASON_EVIDENCE_UNAVAILABLE,
-        )
-    )
+    state = _state_with(_summary(violations=_blocker_refs()))
     context = node_context(tmp_root, task=task_spec("task-1"))
 
     outcome = repair(state, context)

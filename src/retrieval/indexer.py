@@ -3,7 +3,8 @@
 不变式：
 
 1. **幂等**：同一输入连续摄取两次，document/chunk 数量不变，chunk_id 与 text_hash 完全一致；
-   内容没变的文档连分块都不会重跑（content_hash + chunker_version 短路）。
+   内容没变的文档连分块都不会重跑（content_hash + **有效分块版本**短路，后者含预算参数，
+   因此清单里改分块预算同样会强制重切）。
 2. **只动相关 chunk**：文档内容变化时按 chunk_id + text_hash 比对，未变的 chunk 保持
    revision 不变（可被测试直接观察），只有真正变化的 chunk 被替换。
 3. **删除失效**：清单里没有的入口（源文件被删除/被移出清单）对应文档及其 chunk 会被删除，
@@ -20,13 +21,14 @@ import uuid
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 
-from .chunker import CHUNKER_VERSION, chunk_document
+from .chunker import CHUNKER_VERSION, chunk_document, effective_chunker_version
 from .corpus import EntryIssue, LoadedCorpus
 from .models import (
     CorpusError,
     DocumentRecord,
     IndexRunStatus,
     IndexingError,
+    QuarantineOrigin,
     ResolvedEntry,
     StrictModel,
     document_id_for,
@@ -131,6 +133,7 @@ def _document_record(
     content_hash: str,
     byte_size: int,
     ingested_at: str,
+    chunker_version: str = CHUNKER_VERSION,
 ) -> DocumentRecord:
     return DocumentRecord(
         document_id=entry.document_id,
@@ -147,7 +150,7 @@ def _document_record(
         manifest_hash=entry.manifest_sha256,
         byte_size=byte_size,
         mirror_revision=entry.mirror_revision,
-        chunker_version=CHUNKER_VERSION,
+        chunker_version=chunker_version,
         ingested_at=ingested_at,
     )
 
@@ -178,6 +181,12 @@ def ingest(
     identifier = run_id or "run_" + uuid.uuid4().hex[:16]
     mirrors = {dataset.name: dataset.mirror for dataset in loaded.manifest.datasets}
     policy = loaded.manifest.policy
+    # 有效分块版本：分块器版本 + 影响切分的预算参数。清单里改预算（例如 max_chunk_chars）
+    # 会改变 loaded.input_hash，但如果只比 content_hash + CHUNKER_VERSION，每份文档都会
+    # 被"内容没变"短路掉——run 报 completed，索引却仍沿用旧边界。
+    chunker_version = effective_chunker_version(
+        max_chars=policy.max_chunk_chars, hard_max_chars=policy.hard_max_chunk_chars
+    )
 
     store.start_run(loaded.input_hash, started_at=stamp, run_id=identifier)
     outcomes: list[DocumentOutcome] = []
@@ -208,7 +217,7 @@ def ingest(
                 if (
                     existing is not None
                     and existing.content_hash == content_hash
-                    and existing.chunker_version == CHUNKER_VERSION
+                    and existing.chunker_version == chunker_version
                 ):
                     untouched = len(store.chunks(entry.document_id))
                     outcomes.append(
@@ -235,7 +244,11 @@ def ingest(
                     hard_max_chars=policy.hard_max_chunk_chars,
                 )
                 record = _document_record(
-                    entry, content_hash=content_hash, byte_size=byte_size, ingested_at=stamp
+                    entry,
+                    content_hash=content_hash,
+                    byte_size=byte_size,
+                    ingested_at=stamp,
+                    chunker_version=chunker_version,
                 )
                 with store.transaction():
                     store.upsert_document(record, front_matter=tuple(front.metadata.items()))
@@ -350,20 +363,24 @@ def _apply_quarantine(
             text_hash=item.text_hash,
             quarantined_at=stamp,
             document_id=chunk.document_id,
+            origin=QuarantineOrigin.MANIFEST,
         )
         quarantined.append(item.chunk_id)
 
-    # 清单是隔离状态的唯一事实来源：清单里没有的记录一律释放（chunk 被删除或文本已变化同理）。
+    # 解除条件按来源分开（这正是 origin 存在的理由）：
+    # - 内容已失效（chunk 被删除 / 正文哈希变了）：两种来源都释放；
+    # - 清单类：清单是它的唯一事实来源，清单里删掉就释放；
+    # - 运行期类：只能由运维显式解除（CLI quarantine --release）——"不在清单里"
+    #   从来就不是运行期隔离的解除条件，否则一次 ingest 就把安全隔离放回索引。
     wanted = {item.chunk_id: item.text_hash for item in loaded.manifest.quarantine}
     released: list[str] = []
     for record in store.quarantined():
         chunk = store.chunk(record.chunk_id)
-        stale = (
-            record.chunk_id not in wanted
-            or chunk is None
-            or chunk.text_hash != record.text_hash
+        expired = chunk is None or chunk.text_hash != record.text_hash
+        dropped_from_manifest = (
+            record.origin is QuarantineOrigin.MANIFEST and record.chunk_id not in wanted
         )
-        if stale:
+        if expired or dropped_from_manifest:
             store.release_quarantine(record.chunk_id)
             released.append(record.chunk_id)
     return tuple(sorted(quarantined)), tuple(sorted(released))
@@ -424,7 +441,11 @@ def quarantine_chunk(
     reason: str,
     quarantined_at: str,
 ) -> str:
-    """运行期隔离一个 chunk（供 CLI 与运维使用）：保留审计记录并立即从索引移除。"""
+    """运行期隔离一个 chunk（供 CLI 与运维使用）：保留审计记录并立即从索引移除。
+
+    这是**运行期**隔离（origin=runtime）：它不写回 corpus.yaml，因此后续 ingest 不得
+    以"清单里没有它"为理由释放它；解除只有两条路——运维显式解除，或内容失效。
+    """
 
     chunk = store.chunk(chunk_id)
     if chunk is None:
@@ -435,6 +456,7 @@ def quarantine_chunk(
         text_hash=chunk.text_hash,
         quarantined_at=quarantined_at,
         document_id=chunk.document_id,
+        origin=QuarantineOrigin.RUNTIME,
     )
     store.bump_generation()
     return chunk.text_hash

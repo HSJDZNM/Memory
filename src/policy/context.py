@@ -58,6 +58,20 @@ def _is_absolute_path(value: str) -> bool:
     )
 
 
+def _same_tree(head: tuple[str, ...], anchor: Path) -> bool:
+    """绝对路径的前缀比较：**大小写口径交给路径风格**，不自己 lower()。
+
+    自己 lower() 会把"大小写敏感的文件系统"上的兄弟目录当成范围内：
+    repo_root=/srv/repo 时，/srv/Repo/src/x.py 会被判成仓库内路径，
+    范围校验在 POSIX 上形同虚设（Windows 上 Path 的比较本来就不区分大小写，
+    而"哪端区分"是路径风格说了算，不该由这里各写一遍）。
+    用**同一风格**的 Path 比较即可：WindowsPath 不区分、PosixPath 区分。
+    """
+
+    path_type = type(anchor)
+    return path_type(*head) == anchor
+
+
 def repo_relative_path(
     value: Any, *, repo_root: Path | str | None = None, allow_root: bool = False
 ) -> str:
@@ -92,9 +106,7 @@ def repo_relative_path(
     anchor_parts = anchor.parts
     target_parts = target.parts
     head = target_parts[: len(anchor_parts)]
-    if len(target_parts) < len(anchor_parts) or [item.lower() for item in head] != [
-        item.lower() for item in anchor_parts
-    ]:
+    if len(target_parts) < len(anchor_parts) or not _same_tree(head, anchor):
         # P8：拒绝方向一个字不变，但理由要能一次改对——与读类（adapters/models.py 的
         # normalize_event_path）同口径：写成范围以内的仓库相对路径，范围根记为 "."。
         # 新增的这句话只说形态，不复述本机绝对路径。

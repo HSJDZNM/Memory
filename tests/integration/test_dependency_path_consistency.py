@@ -367,6 +367,38 @@ def test_phase_6_dsh_path_agrees_with_the_phase_2_path(
     assert phase6_context.language == phase2_context.language == "python"
 
 
+def test_phase_6_dsh_path_is_not_resolved_twice_when_cwd_is_a_subdirectory(
+    workspace: Path, adapter_config, phase6_dsh_adapter
+) -> None:
+    """会话 cwd 是工作区子目录时，已归一化的路径不得再按 cwd 解析第二遍。
+
+    `_build_event` 已经按 cwd 把原始路径归一成工作区相对路径（`sub/src/...`）；
+    公共层若再声明一次 cwd，`base.canonical_path` 会把它接成 `sub/sub/src/...` ——
+    一个不存在的幻影路径，layer / language / 规则范围与审计全都看错文件。
+    同一份载荷在 Phase 2 路径上是单次解析，两条路径的 file 因此必须相等。
+    """
+
+    target = "src/shop/order_controller.py"
+    sub = workspace / "sub"
+    (sub / target).parent.mkdir(parents=True, exist_ok=True)
+    (sub / target).write_text(
+        CASE_TEXTS["反例：from 点分路径 import"], encoding="utf-8", newline=""
+    )
+
+    raw = edit_payload(workspace, CASE_TEXTS["反例：from 点分路径 import"], target=target)
+    raw["cwd"] = str(sub)
+
+    decision = to_policy_event(raw, config=adapter_config)
+    assert decision.event is not None, decision.reason
+    phase2 = to_policy_context(decision.event, config=adapter_config)
+    event = phase6_dsh_adapter.to_policy_event(raw, workspace=workspace)
+    phase6 = phase6_dsh_adapter.to_policy_context(event, workspace=workspace)
+
+    assert phase2.file == f"sub/{target}"
+    assert event.path == f"sub/{target}"
+    assert phase6.file == phase2.file
+
+
 @pytest.mark.parametrize("label", list(PARITY_TEXTS))
 def test_canonical_path_agrees_with_the_phase_2_path(
     workspace: Path, adapter_config, canonical_adapter, label: str

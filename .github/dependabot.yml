@@ -2,6 +2,15 @@
 # 只开提案，不自动合并：升级必须过 CI，注册表与规则集的变更仍走人工审核。
 version: 2
 updates:
+  # pip 生态只能改**声明**（requirements.in / pyproject.toml）。真正决定装哪个版本的是
+  # requirements.lock（hash 固定，由 tools/lock_requirements.py 从 pip 报告生成），
+  # Dependabot 不会碰它。因此这类 PR 必须跟一次锁文件重建，否则 tools/check_repo_consistency.py
+  # 的「依赖锁」一步会以「requirements.lock 固定了 X，声明要求 Y」阻断，PR 永远绿不了，
+  # 而且"已经升级"是假象（CI 仍从 requirements.lock 装旧版本）。重建（需要联网）：
+  #   python -m pip install --dry-run --report .tmp/pip-report.json -r requirements.in
+  #   python tools/lock_requirements.py .tmp/pip-report.json requirements.lock
+  # 彻底的解法是把锁文件改成 Dependabot 能识别的形态（如 pip-compile 约定的 requirements.txt），
+  # 那是一次涉及 CI、README、AGENTS.md 与一致性检查的独立改造，不在本次修复范围内。
   - package-ecosystem: pip
     directory: "/"
     schedule:

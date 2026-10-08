@@ -6,11 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from retrieval.chunker import chunk_document
 from retrieval.corpus import load_corpus, verify_corpus
-from retrieval.indexer import IndexingError, ingest, needs_reindex
+from retrieval.indexer import IndexingError, ingest, needs_reindex, quarantine_chunk
 from retrieval.models import (
     AccessScope,
     IndexRunStatus,
+    QuarantineOrigin,
     RetrievalQuery,
     RetrievalStatus,
 )
@@ -264,6 +266,116 @@ def test_quarantine_with_stale_hash_fails_closed(tmp_root) -> None:
         with pytest.raises(IndexingError):
             ingest(stale, store, repo_root=tmp_root)
         assert store.run(store.runs(limit=1)[0].run_id).status is IndexRunStatus.FAILED
+    finally:
+        store.close()
+
+
+def test_runtime_quarantine_survives_the_next_ingest(tmp_root) -> None:
+    """运行期隔离不是"清单的缺失项"：下一次 ingest 不许把它放回索引（复核发现）。
+
+    旧实现把"清单里没有这条记录"当成 stale，于是 CLI/运维的隔离在下一次摄取时被
+    release_quarantine 清掉、chunk 重新进 FTS，审计行也一起消失。
+    """
+
+    loaded = load_fixture_corpus(tmp_root)
+    store = open_store(tmp_root)
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        document_id = loaded.entry("adversarial", "poisoned.md").document_id
+        target = next(
+            chunk
+            for chunk in store.chunks(document_id)
+            if "IGNORE ALL PREVIOUS INSTRUCTIONS" in chunk.text
+        )
+        quarantine_chunk(
+            store,
+            chunk_id=target.chunk_id,
+            reason="运行期发现注入样本",
+            quarantined_at="2026-09-16T00:00:00Z",
+        )
+        assert store.chunk(target.chunk_id).quarantined is True
+
+        # 清单没变（它从未声明过这条隔离）：再摄取一次之后必须仍然隔离。
+        report = ingest(loaded, store, repo_root=tmp_root)
+        assert target.chunk_id not in report.released_quarantine
+        assert store.chunk(target.chunk_id).quarantined is True
+        assert [item.chunk_id for item in store.quarantined()] == [target.chunk_id]
+        assert store.fts_row_count() == store.stats().chunks - 1
+
+        # 只有运维显式解除才把内容放回索引。
+        assert store.release_quarantine(target.chunk_id) is True
+        assert store.chunk(target.chunk_id).quarantined is False
+        store.assert_integrity()
+    finally:
+        store.close()
+
+
+def test_manifest_entry_does_not_launder_a_runtime_quarantine(tmp_root) -> None:
+    """清单声明不得把运行期隔离降级：清单里删掉之后它仍然隔离（origin 保持 runtime）。"""
+
+    loaded = load_fixture_corpus(tmp_root)
+    store = open_store(tmp_root)
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        document_id = loaded.entry("adversarial", "poisoned.md").document_id
+        target = store.chunks(document_id)[0]
+        quarantine_chunk(
+            store,
+            chunk_id=target.chunk_id,
+            reason="运行期隔离",
+            quarantined_at="2026-09-16T00:00:00Z",
+        )
+
+        declared = load_fixture_corpus(
+            tmp_root,
+            quarantine=[
+                {
+                    "chunk_id": target.chunk_id,
+                    "text_hash": target.text_hash,
+                    "reason": "清单也登记了",
+                }
+            ],
+        )
+        ingest(declared, store, repo_root=tmp_root)
+        records = {item.chunk_id: item for item in store.quarantined()}
+        assert records[target.chunk_id].origin is QuarantineOrigin.RUNTIME
+
+        # 清单里删掉这条声明：运行期隔离不跟着释放。
+        released = ingest(loaded, store, repo_root=tmp_root)
+        assert target.chunk_id not in released.released_quarantine
+        assert store.chunk(target.chunk_id).quarantined is True
+    finally:
+        store.close()
+
+
+def test_expired_runtime_quarantine_is_released_when_the_text_changes(tmp_root) -> None:
+    """内容失效是两种来源共同的解除条件：正文变了，运行期隔离记录随之释放。"""
+
+    loaded = load_fixture_corpus(tmp_root)
+    store = open_store(tmp_root)
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        document_id = loaded.entry("guides", INDEX_DOCUMENT).document_id
+        target = store.chunks(document_id)[0]
+        quarantine_chunk(
+            store,
+            chunk_id=target.chunk_id,
+            reason="运行期隔离",
+            quarantined_at="2026-09-16T00:00:00Z",
+        )
+        original = (tmp_root / GUIDE_MIRROR / INDEX_DOCUMENT).read_text(encoding="utf-8")
+        head = target.text.split(chr(10))[0]
+        changed_text = original.replace(head, head + " (revised)", 1)
+        assert changed_text != original
+
+        report = ingest(
+            load_fixture_corpus(tmp_root, overrides={"guides/index.md": changed_text}),
+            store,
+            repo_root=tmp_root,
+        )
+        assert target.chunk_id in report.released_quarantine
+        assert store.quarantined() == ()
+        assert store.chunk(target.chunk_id).quarantined is False
     finally:
         store.close()
 
@@ -559,6 +671,52 @@ def test_failed_run_bumps_generation_so_caches_are_dropped(tmp_root) -> None:
         with pytest.raises(IndexingError):
             ingest(changed, store, repo_root=tmp_root, after_document=explode)
         assert store.index_version != version_before
+    finally:
+        store.close()
+
+
+def test_chunk_budget_change_forces_a_recut(tmp_root) -> None:
+    """清单里改分块预算必须强制重切（复核发现：旧实现静默沿用旧边界）。
+
+    只比较 content_hash + CHUNKER_VERSION 时，改 max_chunk_chars 会让输入指纹变化、
+    needs_reindex() 返回 True，但每份文档都被"内容没变"短路掉：run 报 completed，
+    索引里的 chunk 边界却还是旧的。
+    """
+
+    loaded = load_fixture_corpus(tmp_root)
+    store = open_store(tmp_root)
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        document_id = loaded.entry("guides", INDEX_DOCUMENT).document_id
+        before = store.chunks(document_id)
+
+        tighter = load_fixture_corpus(tmp_root, policy={"max_chunk_chars": 250})
+        assert tighter.input_hash != loaded.input_hash
+        assert needs_reindex(tighter, store) is True
+        report = ingest(tighter, store, repo_root=tmp_root)
+
+        # 预算变了：没有文档可以再报 "unchanged"。
+        assert report.chunks_created + report.chunks_updated > 0
+        assert all(outcome.status != "unchanged" for outcome in report.documents)
+        after = store.chunks(document_id)
+        assert len(after) > len(before)
+        # 库里的边界必须与"用新预算重新分块"的结果逐字一致。
+        _, drafts = chunk_document(
+            (tmp_root / GUIDE_MIRROR / INDEX_DOCUMENT).read_text(encoding="utf-8"),
+            document_id=document_id,
+            max_chars=tighter.policy.max_chunk_chars,
+            hard_max_chars=tighter.policy.hard_max_chunk_chars,
+        )
+        assert [(item.chunk_id, item.ordinal, item.text_hash) for item in after] == [
+            (item.chunk_id, item.ordinal, item.text_hash) for item in drafts
+        ]
+        assert sorted(item.ordinal for item in after) == list(range(len(after)))
+        store.assert_integrity()
+
+        # 换完预算之后仍然是幂等的：同一份输入再摄取一次不再改动任何 chunk。
+        third = ingest(tighter, store, repo_root=tmp_root)
+        assert third.chunks_created == 0 and third.chunks_updated == 0
+        assert all(outcome.status == "unchanged" for outcome in third.documents)
     finally:
         store.close()
 

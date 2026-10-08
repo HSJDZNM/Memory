@@ -57,7 +57,10 @@ _ROUTE_STATUS_CODES: Mapping[str, tuple[int, ...]] = {
     "validate": (400, 401, 403, 404, 409, 413, 415, 429, 500, 503, 504),
 }
 _READINESS_STATUS_CODES = (200, 503)
-_METRICS_STATUS_CODES = (200, 403)
+# 指标端点的状态码要**分开**：403 是结构化错误（无运维权限），200 是成功响应
+# （进程内指标载荷）。把 200 也丢进错误信封会让按这份契约生成的客户端把一次成功的
+# 指标读成错误对象——成功路径的形状必须由成功路径描述。
+_METRICS_ERROR_STATUS_CODES = (403,)
 
 # 路由 → OpenAPI operationId / tag（URL 与运行时路由名分开：改 URL 不该改台账语义）。
 _OPERATION_IDS = {
@@ -233,14 +236,19 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
         # 两个坑都在这一行签名里：
         # 1) `_guard` 的注解**不能写 None**：get_type_hints 会把它规范成 NoneType，
         #    而 FastAPI 跳过 NoneType 参数——依赖于是被静默丢弃，"先读一次请求体"也不再发生；
-        # 2) `route` 必须**绑成默认值**：它是循环变量，闭包共享同一个 cell，循环结束后
-        #    三条路由会全部变成最后一个值（实测：evaluate/retrieve 都被分派成 validate，
-        #    HTTP 上它们等于不存在，而进程内调用仍然正确——所以只有"经 HTTP"的用例能发现它）。
-        async def handler(
-            request: Request, _guard: Any = guard, _route: str = route
-        ) -> JSONResponse:
-            return await handle_route(_route, request)
+        # 2) `route` **不能出现在签名里**：写成 `_route: str = route` 的默认值确实绑定了
+        #    循环变量（闭包共享 cell，循环结束后三条路由会全变最后一个值——实测 evaluate/
+        #    retrieve 都被分派成 validate），但 FastAPI 会把这个签名参数当成**可绑定的
+        #    query 参数**写进公开契约，于是调用方能用 `?_route=validate` 自己挑一条路由，
+        #    预算 / 幂等键 / 审计口径跟着切换。路由是服务端装配出来的，不能由请求参数决定；
+        #    因此绑定改由 make_handler 的闭包提供，签名里一个可绑定参数都不多。
+        def make_handler(bound_route: str) -> Any:
+            async def handler(request: Request, _guard: Any = guard) -> JSONResponse:
+                return await handle_route(bound_route, request)
 
+            return handler
+
+        handler = make_handler(route)
         handler.__name__ = f"handle_{route}"
         handler.__doc__ = summary
         # `openapi_extra` 必须**传给 add_api_route**：写成 `handler.__dict__["openapi_extra"]`
@@ -288,7 +296,9 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
         tags=["ops"],
         responses={200: {"description": "进程内指标（路由计数、延迟分位、限流与超时计数）"}},
         openapi_extra={
-            "responses": {str(code): _error_response_doc(code) for code in _METRICS_STATUS_CODES}
+            "responses": {
+                str(code): _error_response_doc(code) for code in _METRICS_ERROR_STATUS_CODES
+            }
         },
     )
 

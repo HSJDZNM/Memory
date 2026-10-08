@@ -410,6 +410,36 @@ def test_unknown_route_and_method_have_explicit_codes(tmp_root: Path) -> None:
     assert error_code(wrong_method) == "method_not_allowed"
 
 
+def test_query_string_cannot_rewrite_which_route_handles_the_request(tmp_root: Path) -> None:
+    """走哪条路由由 URL 决定：`?_route=validate` 不能把 evaluate 的请求转给 validate。
+
+    历史缺陷（OCR 全量审查 L09 / L31）：处理器签名里 `_route: str = route` 被 FastAPI
+    当成 query 参数，调用方于是能用它改写分派——而运行时的预算、幂等键、指标与审计口径
+    全部按被改写的路由名取（`runtime.handle` 按这个字符串分派）。
+    这里用**响应形状**判分派：evaluate 给 decision/rule_set，validate 给 report/blockers，
+    两者都是 200，状态码分辨不出来。
+    """
+
+    runtime, client, _ = build_api(tmp_root)
+    plain = client.post(
+        "/v1/policy/evaluate", headers=auth(), json=envelope("it-route-plain", context=GOOD_CONTEXT)
+    )
+    spoofed = client.post(
+        "/v1/policy/evaluate?_route=validate",
+        headers=auth(),
+        json=envelope("it-route-spoofed", context=GOOD_CONTEXT),
+    )
+    assert plain.status_code == 200 and spoofed.status_code == 200
+    assert "rule_set" in plain.json() and "report" not in plain.json()
+    # 同一个 URL、同一个请求体：加一个 query 参数不能让响应换成另一条路由的形状。
+    assert set(spoofed.json()) == set(plain.json())
+    assert "report" not in spoofed.json()
+
+    # 台账 / 指标 / 日志的键也是同一条口径：记录里的 route 必须是 evaluate。
+    rows = runtime.request_log.read_back()
+    assert [row["route"] for row in rows] == ["evaluate", "evaluate"]
+
+
 # --------------------------------------------------------------------------- 限流与幂等
 
 
@@ -470,7 +500,13 @@ def test_idempotency_replays_the_stored_response_and_conflicts_on_other_bodies(t
     assert conflict.status_code == 409
     assert error_code(conflict) == "idempotency_key_conflict"
 
-    assert [row["replayed"] for row in runtime.request_log.read_back()] == [False, True, False]
+    rows = runtime.request_log.read_back()
+    assert [row["replayed"] for row in rows] == [False, True, False]
+    # 重放记录的 decision 必须是决策字符串，不是把整份决策载荷 repr 出来
+    # （顶层 decision 是 Mapping；那串 repr 内嵌 request_id，作为指标标签会让标签集合
+    #  随请求数无界增长，历史缺陷：OCR 全量审查 L10）。第三条是 409，没有结论。
+    assert [row["decision"] for row in rows] == ["block", "block", ""]
+    assert runtime.metrics.to_payload()["decisions"] == {"block": 2}
 
 
 def test_oversized_idempotent_response_fails_explicitly_without_a_false_replay(
@@ -494,6 +530,31 @@ def test_oversized_idempotent_response_fails_explicitly_without_a_false_replay(
 
 
 # --------------------------------------------------------------------------- readiness
+
+
+def test_a_tenant_whose_rule_directory_is_empty_is_refused_on_cold_start(
+    tmp_root: Path,
+) -> None:
+    """冷启动时规则目录里一个规则文件都没有：拒绝服务，而不是"零条规则 = 全部放行"。
+
+    历史缺陷（OCR 全量审查 L10）：空集守卫写成
+    `if not loaded.rules and self._rules is not None:`，只保护"替换"路径；首次加载拿到空集时
+    `self._rules` 还是 None，守卫不触发，空 RuleSet 被缓存并开始服务——模块 docstring 明写
+    不允许的"没有规则 = 全部放行"。这里删掉规则**文件**但保留规则目录（装配仍然成功），
+    正是"目录存在、里面没有规则"这种部署形态。
+    """
+
+    runtime, client, _ = build_api(tmp_root)
+    rules_dir = tmp_root / "project" / "rules"
+    for item in sorted(rules_dir.glob("*.yaml")):
+        item.unlink()
+    assert rules_dir.is_dir() and list(rules_dir.iterdir()) == [], "目录必须还在，只是空了"
+
+    blocked = client.post(
+        "/v1/policy/evaluate", headers=auth(), json=envelope("it-empty-rules", context=GOOD_CONTEXT)
+    )
+    assert blocked.status_code == 503
+    assert error_code(blocked) == "rule_set_unavailable"
 
 
 def test_readiness_goes_not_ready_when_the_rule_directory_disappears(tmp_root: Path) -> None:

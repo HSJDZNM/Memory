@@ -803,18 +803,6 @@
       "post": {
         "description": "检索离线规范并组装带来源的 Engineering Context。",
         "operationId": "knowledgeRetrieve",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "_route",
-            "required": false,
-            "schema": {
-              "default": "retrieve",
-              "title": " Route",
-              "type": "string"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -958,12 +946,10 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
+                "schema": {}
               }
             },
-            "description": "200：结构化错误（见 ErrorResponse）"
+            "description": "进程内指标（路由计数、延迟分位、限流与超时计数）"
           },
           "403": {
             "content": {
@@ -986,18 +972,6 @@
       "post": {
         "description": "对固定上下文给出 allow / allow_with_warnings / block。",
         "operationId": "policyEvaluate",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "_route",
-            "required": false,
-            "schema": {
-              "default": "evaluate",
-              "title": " Route",
-              "type": "string"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1138,18 +1112,6 @@
       "post": {
         "description": "产出验证器证据（可选顺带判定）。",
         "operationId": "validationEvaluate",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "_route",
-            "required": false,
-            "schema": {
-              "default": "validate",
-              "title": " Route",
-              "type": "string"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {

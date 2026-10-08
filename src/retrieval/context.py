@@ -240,6 +240,18 @@ class ContextBuilder(StrictModel):
                 snippets.append(snippet)
                 blocks.append(block)
             dropped = tuple(dropped)
+            if not snippets:
+                # 检索成功、但预算把候选全部丢掉：结构化状态必须与渲染一致。
+                # 不改的话 status=ok / is_available=True，而 render_context 走的是
+                # "知识不可用（reason=unknown）"分支——同一份载荷自相矛盾，
+                # 且受控原因退化成了 uncontrolled 的 unknown。
+                status = ContextStatus.KNOWLEDGE_UNAVAILABLE
+                reason = UnavailableReason.NO_RESULTS
+                detail_text = (
+                    f"检索命中 {len(ordered)} 条候选，但预算（{self.budget_chars} 字符）"
+                    f"放不下任何一条片段（固定开销之后每条可用预算不足 {_MIN_SNIPPET_CHARS} 字符），"
+                    "全部按 budget 丢弃；请提高 context_budget_chars 或减少策略事实"
+                )
 
         context = EngineeringContext(
             status=status,

@@ -704,9 +704,18 @@ def _trace(args: argparse.Namespace, _repo: Path) -> int:
 def _verify(args: argparse.Namespace, repo: Path) -> int:
     sink = FileAuditSink(args.audit, workspace=repo)
     issues = list(sink.verify())
+    described = sink.describe()
+    if sink.path.is_file() and not described["chained_records"]:
+        # 产物存在但本层一条链式记录都没有（例如只有 Phase 2 的外来行）：没有证据可校验。
+        # ok 不能由"链完整性没有 issue"直接推出——那会把"没人尝试 / 没写出来"读成通过。
+        issues.append(
+            "审计日志里没有本层（enforcement schema）的链式记录：没有证据可校验，"
+            "不能据此判定为通过"
+        )
+    described["issues"] = issues  # 载荷里的 issues 必须与 ok 同源（describe 自己算过一次）
     payload: dict[str, Any] = {
         "audit": str(args.audit),
-        **sink.describe(),
+        **described,
         "ok": not issues,
     }
     if getattr(args, "verify_registry", False):

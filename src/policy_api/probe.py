@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -22,7 +23,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from adapters.base import Adapter, AdapterConfig, RegistryError
 from adapters.models import AgentEvent, AdapterManifest
-from policy.models import Decision, PolicyContext
+from policy.models import SCHEMA_VERSION, Decision, PolicyContext
 
 __all__ = ["HttpApiAdapter", "HttpApiClient"]
 
@@ -47,6 +48,29 @@ class HttpApiClient:
         self._opener = opener or urllib.request.urlopen
         self.calls: list[dict[str, Any]] = []
 
+    @staticmethod
+    def _parse_body(raw: bytes, *, label: str) -> Mapping[str, Any]:
+        """把应答正文解析成对象；任何"读不懂"都抛 RegistryError。
+
+        契约是"Policy API 的响应顶层必须是对象"：非 UTF-8、非 JSON、JSON 但不是对象
+        都属于**没有可判断的应答**。以前这三种情况里的两种会以 `JSONDecodeError` /
+        `UnicodeDecodeError` 直接冒出去（`decide` 只接 RegistryError），第三种
+        （`[]` / `null`）会原样返回、然后在 `body.get(...)` 上炸成 AttributeError——
+        三条路都不是"阻断"，而是未处理异常。
+        """
+
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise RegistryError(f"{label}不是合法 UTF-8（{type(error).__name__}）") from error
+        try:
+            parsed = json.loads(text) if text else {}
+        except json.JSONDecodeError as error:
+            raise RegistryError(f"{label}不是合法 JSON（{type(error).__name__}）") from error
+        if not isinstance(parsed, Mapping):
+            raise RegistryError(f"{label}顶层必须是对象，拒绝按不确定的语义处理")
+        return dict(parsed)
+
     def post(self, path: str, payload: Mapping[str, Any]) -> tuple[int, Mapping[str, Any]]:
         data = json.dumps(dict(payload), ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
@@ -61,17 +85,26 @@ class HttpApiClient:
         self.calls.append({"path": path, "request_id": payload.get("request_id")})
         try:
             with self._opener(request, timeout=self.timeout) as response:  # type: ignore[call-arg]
-                raw = response.read().decode("utf-8")
-                return int(response.status), json.loads(raw) if raw else {}
+                return int(response.status), self._parse_body(
+                    response.read(), label="Policy API 响应"
+                )
         except urllib.error.HTTPError as error:  # 4xx/5xx 也是"有应答"：读出来再判断
-            raw = error.read().decode("utf-8")
+            # 错误响应的正文读不出来 / 不是受控错误信封时，用 invalid_response 表达
+            # "有应答但不是我们的协议"：状态码与阻断语义都保留，不让解析细节改写结论。
             try:
-                body = json.loads(raw) if raw else {}
-            except json.JSONDecodeError:
-                body = {"error": {"code": "invalid_response"}}
+                body = self._parse_body(error.read(), label="Policy API 错误响应")
+            except (RegistryError, OSError, http.client.HTTPException) as parse_error:
+                body = {
+                    "error": {
+                        "code": "invalid_response",
+                        "detail": type(parse_error).__name__,
+                    }
+                }
             return int(error.code), body
-        except (urllib.error.URLError, TimeoutError, OSError) as error:
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as error:
             # 网络层失败：不是"没有结论"，而是"策略服务不可用"——必须失败关闭。
+            # `http.client.HTTPException`（IncompleteRead / BadStatusLine / …）不是 OSError，
+            # 漏掉它就会让"连接中途断了"变成未处理异常，而不是阻断。
             raise RegistryError(
                 f"Policy API 不可达（{type(error).__name__}）"
             ) from error
@@ -150,6 +183,19 @@ class HttpApiAdapter(Adapter):
         except RegistryError as error:
             # 网络层失败不是"没有结论"，而是"策略服务不可用"：必须失败关闭。
             return self._unavailable(0, {"error": {"code": "policy_unavailable", "detail": str(error)}})
+        except Exception as error:  # noqa: BLE001 - 适配器只有"阻断"一种安全失败形态
+            # 这条兜底让 docstring 的承诺（"任何异常都转成携带 policy_unavailable 的阻断响应"）
+            # 成为事实：这里**没有**放行路径，未预期异常也只会变成阻断（带异常类型），
+            # 绝不把"我没算出来"翻译成"策略说可以"。
+            return self._unavailable(
+                0,
+                {
+                    "error": {
+                        "code": "policy_unavailable",
+                        "detail": f"未预期异常 {type(error).__name__}",
+                    }
+                },
+            )
         if status != 200:
             return self._unavailable(status, body)
         decision = body.get("decision")
@@ -157,11 +203,23 @@ class HttpApiAdapter(Adapter):
             return self._unavailable(status, {"error": {"code": "invalid_response"}})
         return decision
 
-    def _unavailable(self, status: int, body: Mapping[str, Any]) -> Mapping[str, Any]:
-        error = body.get("error") if isinstance(body.get("error"), Mapping) else {}
-        code = str((error or {}).get("code") or "policy_unavailable")
+    def _unavailable(self, status: int, body: Any) -> Mapping[str, Any]:
+        """阻断载荷：错误码取服务端给的，取不到就是 policy_unavailable。
+
+        `body` 可能是**任何东西**（代理的 HTML、非对象 JSON、读失败时的空映射），
+        所以只做类型判断，绝不假设它是 Mapping——原来对非对象正文会抛 AttributeError，
+        那正好发生在"必须阻断"的路径上。
+        """
+
+        candidate = body.get("error") if isinstance(body, Mapping) else None
+        error = candidate if isinstance(candidate, Mapping) else {}
+        code = str(error.get("code") or "policy_unavailable")
         return {
-            "schema_version": "1.0",
+            # 决策协议版本**只能从核心取**（AGENTS 第 7/31 条）：写死 "1.0" 会让这份
+            # 失败关闭载荷被平台自己的消费方（policy.models.parse_decision）以
+            # "未知决策协议版本"拒收——拒绝理由从"策略服务不可用"变成"协议版本不认识"，
+            # 而它本来是"服务不可达 → 阻断"这条链路上唯一的证据。
+            "schema_version": SCHEMA_VERSION,
             "decision": Decision.BLOCK.value,
             "request_id": "",
             "trace_id": None,

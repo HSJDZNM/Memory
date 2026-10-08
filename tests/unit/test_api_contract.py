@@ -10,11 +10,16 @@
 
 from __future__ import annotations
 
+import datetime
 import hashlib
+import http.client
+import io
 import json
 import os
 import time
+import urllib.error
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
 import pytest
@@ -38,10 +43,11 @@ from policy_api.observability import (
     verify_seal,
 )
 from policy_api.runtime import ApiRuntime, RateLimiter, budget_for
+from policy_api.serve import endpoint, serve
 from policy_api.services import signature_of
 from policy_api.timeout import Budget, BudgetExceeded, run_with_budget
 
-from api_support import TOKEN_SHA
+from api_support import TOKEN_SHA, isolated_api
 
 # --------------------------------------------------------------------------- 工具
 
@@ -442,6 +448,79 @@ def test_idempotency_ledger_with_zero_ttl_never_expires(tmp_root: Path) -> None:
     assert IdempotencyLedger(path, ttl_seconds=900).lookup(**lookup, digest="d1") is None
 
 
+def test_idempotency_record_refuses_to_replace_a_fresh_entry_with_another_digest(
+    tmp_root: Path,
+) -> None:
+    """两次 lookup 都未命中之后，先写的那份结论不能被后写的覆盖。
+
+    历史缺陷（OCR 全量审查 L10）：`runtime.handle` 的 lookup（runtime.py:319）与
+    record（runtime.py:369）在两个临界区里，并发同 key、不同请求体可以双双未命中并双双
+    写入，后写的那次静默替换先写的——文档承诺的 409（不覆盖、不合并）永远不会发生，
+    第一个调用方的响应变成不可重放。这里把那个交错**按顺序**摆出来（不需要线程：
+    两次 lookup 之间本来就不持锁）。
+    """
+
+    path = tmp_root / "ledger.jsonl"
+    ledger = IdempotencyLedger(path, ttl_seconds=900)
+    lookup = dict(client_id="alpha-client", api_version="1.0", route="evaluate", key="k1")
+    assert ledger.lookup(**lookup, digest="d1") is None
+    assert ledger.lookup(**lookup, digest="d2") is None
+
+    ledger.record(**lookup, digest="d1", status=200, body={"who": "first"})
+    with pytest.raises(ApiError) as info:
+        ledger.record(**lookup, digest="d2", status=200, body={"who": "second"})
+    assert info.value.code is ErrorCode.IDEMPOTENCY_KEY_CONFLICT
+    assert info.value.status == 409
+
+    # 先写的那份仍在：第一个调用方的响应仍然可以逐字节重放。
+    hit = ledger.lookup(**lookup, digest="d1")
+    assert hit is not None and hit.body == {"who": "first"}
+
+    # 同一个摘要重复写（并发的同一个请求）不是冲突：那是幂等重试的正常形态。
+    ledger.record(**lookup, digest="d1", status=200, body={"who": "first"})
+
+    # 过期条目必须能被替换：TTL 到了就该重新判定，不能被"不许覆盖"挡住。
+    rows = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    rows[0]["expires_at"] = "2000-01-01T00:00:00.000000Z"
+    path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows),
+        encoding="utf-8",
+        newline="\n",
+    )
+    ledger.record(**lookup, digest="d2", status=200, body={"who": "second"})
+    replaced = ledger.lookup(**lookup, digest="d2")
+    assert replaced is not None and replaced.body == {"who": "second"}
+
+
+def test_idempotency_expiry_always_carries_microseconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """过期时间**总是**带小数秒：整秒写入的条目不能被自己判成过期。
+
+    历史缺陷（OCR 全量审查 L10）：`isoformat()` 在微秒恰为 0 时省略小数部分
+    （真实时钟每天都会经过这种时刻），而 `_fresh` 按 "%Y-%m-%dT%H:%M:%S.%fZ" 解析——
+    于是这个条目被判成"读不懂 = 已过期"、删掉、重新判定一次，幂等保证失效
+    （修复前实测：expires_at='2026-10-08T00:15:00Z'、_fresh=False、lookup=None、台账剩 0 条）。
+    """
+
+    from policy_api import idempotency
+
+    fixed = datetime.datetime(2026, 10, 8, 0, 0, 0, 0, tzinfo=datetime.timezone.utc)
+    monkeypatch.setattr(idempotency, "_utc_now", lambda: fixed)
+
+    ledger = IdempotencyLedger(None, ttl_seconds=900)
+    lookup = dict(client_id="alpha-client", api_version="1.0", route="evaluate", key="k1")
+    ledger.record(**lookup, digest="d1", status=200, body={"decision": "allow"})
+
+    stored = ledger.entries()["alpha-client|1.0|evaluate|k1"]
+    assert stored["expires_at"] == "2026-10-08T00:15:00.000000Z"
+    hit = ledger.lookup(**lookup, digest="d1")
+    assert hit is not None, "TTL 内的条目被判成过期：幂等保证失效"
+    assert hit.body == {"decision": "allow"}
+
+
 def test_idempotency_ledger_fails_closed_on_corrupted_file(tmp_root: Path) -> None:
     """台账损坏 / 协议版本未知时宁可 503，也不按不确定的语义去重。"""
 
@@ -464,6 +543,204 @@ def test_idempotency_ledger_fails_closed_on_corrupted_file(tmp_root: Path) -> No
         IdempotencyLedger(wrong_version).lookup(**lookup)
     assert info.value.code is ErrorCode.IDEMPOTENCY_UNAVAILABLE
     assert "协议版本" in info.value.detail
+
+
+# --------------------------------------------------------------------------- HTTP 探针
+
+
+class _FakeResponse:
+    """最小的 urlopen 返回值：只提供 post() 真正用到的 read/status/上下文管理。"""
+
+    def __init__(self, body: bytes = b"", status: int = 200) -> None:
+        self._body = body
+        self.status = status
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *args: Any) -> bool:
+        return False
+
+
+def _probe_client(*, body: bytes = b"", raises: BaseException | None = None) -> Any:
+    from policy_api.probe import HttpApiClient
+
+    def opener(request: Any, timeout: float | None = None) -> Any:
+        if raises is not None:
+            raise raises
+        return _FakeResponse(body)
+
+    return HttpApiClient("http://127.0.0.1:1", token="t", opener=opener)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"<html>proxy interstitial</html>", b"[]", b"null", b'"a string"', b"\xff\xfe"],
+)
+def test_probe_rejects_a_response_it_cannot_read_as_an_object(body: bytes) -> None:
+    """读不懂的应答 = 没有可判断的结论：必须抛 RegistryError，由 decide 转成阻断。
+
+    历史缺陷（OCR 全量审查 L10）：成功路径上的 `json.loads` 没有守卫——HTML 正文抛
+    JSONDecodeError、非对象 JSON 被原样返回（随后 `body.get` 炸成 AttributeError）、
+    非 UTF-8 抛 UnicodeDecodeError；而 `decide` 只接 RegistryError。修复前实测：
+    b'[]' -> returned (200, [])、b'null' -> returned (200, None)。
+    """
+
+    from adapters.base import RegistryError
+
+    with pytest.raises(RegistryError):
+        _probe_client(body=body).post("/v1/policy/evaluate", {})
+
+
+@pytest.mark.parametrize(
+    "error",
+    [http.client.IncompleteRead(b"abc"), http.client.BadStatusLine("garbage")],
+)
+def test_probe_turns_low_level_http_failures_into_registry_errors(
+    error: BaseException,
+) -> None:
+    """`http.client.HTTPException` 不是 OSError：漏掉它，"连接断在半路"就成了未处理异常。
+
+    失败关闭的语义是"策略服务不可用 → 阻断"，未处理异常不是阻断——调用方拿到的
+    是一个炸掉的适配器，而不是一条 block 判定。
+    """
+
+    from adapters.base import RegistryError
+
+    with pytest.raises(RegistryError):
+        _probe_client(raises=error).post("/v1/policy/evaluate", {})
+
+
+def test_probe_http_error_with_a_non_json_body_keeps_the_status() -> None:
+    """4xx/5xx 是"有应答"：正文不是受控信封时，状态码保留、错误码记 invalid_response。"""
+
+    error = urllib.error.HTTPError(
+        "http://127.0.0.1:1/v1/policy/evaluate",
+        503,
+        "Service Unavailable",
+        {},  # type: ignore[arg-type]
+        io.BytesIO(b"<html>upstream down</html>"),
+    )
+    status, body = _probe_client(raises=error).post("/v1/policy/evaluate", {})
+    assert status == 503
+    assert body["error"]["code"] == "invalid_response"
+
+
+def test_probe_unavailable_payload_reads_a_non_mapping_body_without_raising() -> None:
+    """阻断载荷的正文可能是任何东西：解析不出来也必须给出阻断，而不是 AttributeError。
+
+    历史缺陷（OCR 全量审查 L10）：`_unavailable` 直接用 `body.get(...)`，非对象正文
+    （代理的数组 / 字符串）在"必须阻断"的路径上抛 AttributeError。
+    """
+
+    from policy_api.probe import HttpApiAdapter
+
+    adapter = object.__new__(HttpApiAdapter)
+    payload = adapter._unavailable(503, ["not", "a", "mapping"])
+    assert payload["decision"] == "block"
+    assert payload["violations"][0]["evidence"]["value"] == "policy_unavailable"
+
+
+# --------------------------------------------------------------------------- 监听地址
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1:8088x",  # 端口拼错
+        "http://127.0.0.1:not-a-port",
+        "http://[::1",  # IPv6 字面量未闭合：以前静默产出 ('::1', 8088)
+        "http://host:70000",  # 端口越界
+        "http://host:0",
+    ],
+)
+def test_endpoint_rejects_an_unusable_base_url_as_a_config_error(base_url: str) -> None:
+    """监听地址是部署边界：写错必须变成 ConfigError，由 serve 翻译成退出码 2。
+
+    历史缺陷（OCR 全量审查 L10）：`int(port_text)` 的 ValueError 直接冒出 `endpoint()`，
+    `serve()` 于是以 traceback 结束而不是"配置不可用，拒绝启动 = 2"。
+    """
+
+    with pytest.raises(ConfigError):
+        endpoint(SimpleNamespace(base_url=base_url))
+
+
+def test_endpoint_parses_the_documented_forms() -> None:
+    """加了校验之后，正常形态一个都不能变（默认端口 / 显式端口 / IPv6 / 无 scheme）。"""
+
+    assert endpoint(SimpleNamespace(base_url="http://127.0.0.1:8088")) == ("127.0.0.1", 8088)
+    assert endpoint(SimpleNamespace(base_url="https://api.example.com")) == ("api.example.com", 8088)
+    assert endpoint(SimpleNamespace(base_url="127.0.0.1:9999")) == ("127.0.0.1", 9999)
+    assert endpoint(SimpleNamespace(base_url="http://[::1]:9000")) == ("::1", 9000)
+    assert endpoint(SimpleNamespace(base_url="http://[::1]")) == ("::1", 8088)
+
+
+def test_serve_refuses_to_start_with_an_unparsable_base_url(tmp_root: Path) -> None:
+    """整条路径：配置文件里的端口写错 → serve() 返回 2，而不是抛 ValueError。
+
+    只断言退出码是不够的，所以这里走 `serve()` 本身（readiness 先通过，然后在
+    解析监听地址时被 ConfigError 拦下，不会真的起 uvicorn）。
+    """
+
+    config_path, anchor = isolated_api(tmp_root)
+    text = config_path.read_text(encoding="utf-8").replace(
+        "base_url: http://127.0.0.1:8088", "base_url: http://127.0.0.1:8088x"
+    )
+    assert "8088x" in text, "配置模板变了：这条取证没有再测到它要测的东西"
+    config_path.write_text(text, encoding="utf-8", newline="\n")
+
+    assert serve(config_path, root=anchor) == 2
+
+
+def test_probe_unavailable_payload_is_a_consumable_decision_payload() -> None:
+    """失败关闭载荷必须能被平台自己的协议消费方解析，版本只能从核心取值。
+
+    历史缺陷（delegate 轮 OCR 审查 probe.py:164）：`_unavailable` 把 `schema_version`
+    写死成 `"1.0"`，而核心是 `SCHEMA_VERSION = "1.1"`、`SUPPORTED_SCHEMA_VERSIONS` 只含
+    1.1（AGENTS 第 7/31/55 条）。策略服务不可达时产出的这份**阻断**载荷会被
+    `policy.models.parse_decision` 以"未知决策协议版本"拒收，拒绝理由从
+    "策略服务不可用"变成"协议版本不认识"。
+    """
+
+    from policy.models import SCHEMA_VERSION, parse_decision
+    from policy_api.probe import HttpApiAdapter
+
+    adapter = object.__new__(HttpApiAdapter)
+    payload = adapter._unavailable(503, {"error": {"code": "policy_unavailable"}})
+    assert payload["schema_version"] == SCHEMA_VERSION
+
+    # 真解析一遍（不是比字符串）：解析不了会抛 ProtocolError，这正是要挡住的后果。
+    parsed = parse_decision(payload)
+    assert parsed.decision.value == "block"
+    assert parsed.request_id == ""
+    assert parsed.violations[0].rule_id == "API-000"
+
+
+# --------------------------------------------------------------------------- 冒烟
+
+
+def test_smoke_with_an_unconfigured_token_is_a_structured_401_not_a_name_error(
+    tmp_root: Path,
+) -> None:
+    """冒烟令牌不在配置里：必须是结构化 401 `unauthenticated`，不是 NameError。
+
+    历史缺陷（OCR 全量审查 L10）：contract.py 只用到了 `ApiError` 却从未导入它，
+    这一行因此抛 NameError——`python -m policy_api.cli smoke --token <错令牌>` 以未处理
+    异常与 traceback 结束（退出码退化成 1），本应得到的错误分类（401 unauthenticated）
+    被吃掉。**这条路径只有 smoke 会走**，所以必须在这里钉住它。
+    """
+
+    from policy_api.contract import smoke
+
+    config_path, anchor = isolated_api(tmp_root)
+    runtime = ApiRuntime(load_api_config(config_path, root=anchor), root=anchor)
+    with pytest.raises(ApiError) as info:
+        smoke(runtime, token="definitely-not-a-configured-token")
+    assert info.value.code is ErrorCode.UNAUTHENTICATED
+    assert info.value.status == 401
 
 
 # --------------------------------------------------------------------------- 指标
@@ -607,6 +884,41 @@ def test_request_log_disabled_fails_closed(tmp_root: Path) -> None:
     memory_only = RequestLog(None)
     memory_only.append(make_entry(request_id="req-memory"))
     assert memory_only.entries()[0]["request_id"] == "req-memory"
+    assert memory_only.read_back() == ()
+
+
+def test_request_log_buffers_only_the_path_that_never_hits_the_disk(tmp_root: Path) -> None:
+    """内存缓冲只服务"不落盘"的路径；落盘路径的"记下来了"由 read_back 回答。
+
+    历史缺陷（OCR 全量审查 L10）：`append` 无条件把每一条 payload 追加进 `_written`
+    （长跑服务因此永久保留每个请求的记录，单条上限 16KB），而且是在落盘**之前**追加——
+    写盘抛 OSError 的那条记录仍留在 `entries()` 里、却永远不会出现在 `read_back()`：
+    拿 entries() 当证据的检查会在一条根本没写进日志的记录上通过。
+    """
+
+    path = tmp_root / "audit" / "service.jsonl"
+    log = RequestLog(path)
+    log.append(make_entry(request_id="req-active-1"))
+    log.append(make_entry(request_id="req-active-2"))
+    assert [row["request_id"] for row in log.read_back()] == [
+        "req-active-1",
+        "req-active-2",
+    ]
+    assert log.entries() == (), "落盘路径仍在内存里留副本"
+
+    # 写盘失败：必须显式失败关闭，且这条记录不能出现在内存读数里。
+    broken = tmp_root / "audit" / "a-directory.jsonl"
+    broken.mkdir(parents=True)
+    failing = RequestLog(broken)
+    with pytest.raises(ApiError) as info:
+        failing.append(make_entry(request_id="req-write-failed"))
+    assert info.value.code is ErrorCode.AUDIT_UNAVAILABLE
+    assert failing.entries() == (), "写盘失败的记录被内存读数当成'记下来了'"
+
+    # 不落盘的路径（--dry-run / 测试）保留缓冲，这是它存在的唯一理由。
+    memory_only = RequestLog(None)
+    memory_only.append(make_entry(request_id="req-memory"))
+    assert [row["request_id"] for row in memory_only.entries()] == ["req-memory"]
     assert memory_only.read_back() == ()
 
 

@@ -307,6 +307,24 @@ class StepExecutor:
         return outgoing[0]
 
     # ------------------------------------------------------------------ 收尾
+    @property
+    def last_saved(self) -> Optional[GraphState]:
+        """最后一份写进 checkpoint 的状态（没写过就是 None）。"""
+
+        return self._last_saved
+
+    def latest_state(self, fallback: GraphState) -> GraphState:
+        """失败收尾要长在**最新一份已知状态**上。
+
+        节点可能已经刷过盘（写前记账的 PENDING 意图），引擎也可能已经走过好几个节点：
+        拿入口状态收尾会同时丢掉两样东西——本轮的执行记录（steps 里看不到走过哪些节点、
+        failure.node 指向入口阶段）与那笔 PENDING 意图（恢复时被当成"没开过工"，副作用被重放）。
+        """
+
+        if self._last_saved is not None and len(self._last_saved.runs) > len(fallback.runs):
+            return self._last_saved
+        return fallback
+
     def save(self, state: GraphState) -> None:
         if self.store is None:
             return
@@ -324,9 +342,7 @@ class StepExecutor:
     def _fail(self, state: GraphState, code: FailureCode, detail: str) -> StepResult:
         # 节点可能已经刷过盘（写前记账的意图）。失败状态必须**长在最新那份状态上**，
         # 否则那笔 PENDING 意图会被抹掉：恢复时看不见"开工未结算"，副作用会被重放。
-        base = state
-        if self._last_saved is not None and len(self._last_saved.runs) > len(state.runs):
-            base = self._last_saved
+        base = self.latest_state(state)
         failure = FailureRef(code=code, node=base.stage, detail=detail[:400])
         updated = base.replace(
             status=STATUS_BY_CODE.get(code, RunStatus.FAILED),
@@ -363,10 +379,14 @@ class BaseEngine:
         try:
             final = self._drive(resumed_state)
         except OrchestrationError as error:
-            failure = FailureRef(
-                code=error.code, node=resumed_state.stage, detail=error.detail[:400]
-            )
-            final = resumed_state.replace(status=status_for(error), failure=failure)
+            # 失败状态要长在**执行器最后保存的那份状态**上，而且必须落盘：
+            # 用入口状态会让 steps 丢掉本轮全部执行记录、failure.node 指向入口阶段，
+            # checkpoint 里留下的还是"失败之前"的样子——下次 prepare 把它读成 RUNNING，
+            # 已经产生副作用的节点会被重放。
+            base = self.executor.latest_state(resumed_state)
+            failure = FailureRef(code=error.code, node=base.stage, detail=error.detail[:400])
+            final = base.replace(status=status_for(error), failure=failure)
+            self.executor.save(final)
         steps = [
             StepRecord(
                 node=item.node.value,

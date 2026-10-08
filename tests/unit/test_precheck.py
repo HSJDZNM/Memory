@@ -11,7 +11,7 @@ from datetime import timedelta
 
 import pytest
 
-from enforcement.approvals import ApprovalError, verify_approval
+from enforcement.approvals import ApprovalError, ApprovalRecord, load_approval, verify_approval
 from enforcement.audit import FileAuditSink, NullAuditSink
 from enforcement.ledger import EnforcementLedger
 from enforcement.models import (
@@ -21,6 +21,7 @@ from enforcement.models import (
     CheckStatus,
     Decision,
     GrantError,
+    LedgerError,
     ReasonCode,
     RequiredAction,
     utc_now,
@@ -336,6 +337,102 @@ def test_audit_failure_releases_the_claim_so_a_retry_is_possible(enforcement_pat
     assert retried.decision.decision is not Decision.BLOCK, retried.decision.reason_code
 
 
+class RacingApprovalLedger(EnforcementLedger):
+    """把"两个进程同时抢最后一次审批额度"搬进单进程：对手在本进程追加之前先写一行。"""
+
+    def __init__(self, path) -> None:
+        super().__init__(path)
+        self.raced = False
+
+    def record_approval_use(self, approval_id, **kwargs):  # type: ignore[no-untyped-def]
+        if not self.raced:
+            self.raced = True
+            super().record_approval_use(approval_id, action_hash=kwargs["action_hash"])
+        return super().record_approval_use(approval_id, **kwargs)
+
+
+class FailingGrantLedger(EnforcementLedger):
+    """授权登记写不进去的台账：阻断之后认领与已占用的额度都必须还回去。"""
+
+    def record_grant(self, grant) -> None:  # type: ignore[no-untyped-def]
+        raise LedgerError("台账不可写（测试替身）")
+
+
+def test_approval_quota_race_releases_the_action_claim(enforcement_paths):
+    """额度竞态抢输之后动作没执行：重签审批后同一个 action_id 必须能重试。"""
+
+    registry = enforcement_paths.registry_object()
+    request = make_action(
+        registry,
+        enforcement_paths,
+        "exec.process",
+        process_params(),
+        roles=("owner",),
+        action_id="race-1",
+    )
+    approval = approval_for(request)
+
+    blocked = pre_execute(
+        request,
+        registry=registry,
+        ledger=RacingApprovalLedger(enforcement_paths.ledger),
+        sink=FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace),
+        approval=approval,
+    )
+
+    assert blocked.decision.decision is Decision.BLOCK
+    assert reason_of(blocked) is ReasonCode.APPROVAL_INVALID
+    ledger = EnforcementLedger(enforcement_paths.ledger)
+    released = ledger.of_kind("claim_released")
+    assert released, "阻断之后必须释放认领，否则重试会变成 ACTION_REPLAY 死锁"
+    assert released[0]["reason"] == ReasonCode.APPROVAL_INVALID.value
+
+    retried = pre_execute(
+        request,
+        registry=registry,
+        ledger=EnforcementLedger(enforcement_paths.ledger),
+        sink=FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace),
+        approval=approval_for(request, approval_id="approval-fresh"),
+    )
+    assert retried.decision.decision is not Decision.BLOCK, retried.decision.reason_code
+
+
+def test_final_ledger_failure_returns_the_claim_and_the_quota(enforcement_paths):
+    """授权登记写不进去 → 阻断；认领与已占用的审批额度都要还回去。
+
+    这里只钉住"归还"这件事：同一条路径上重试仍可能被审计链里那条 decision=allow 的
+    旧记录挡成 ACTION_REPLAY（delegate 轮 precheck.py:976-982 的结论，不在本次 11 条内），
+    那是另一条要修的账，不在这里假装已经解除。
+    """
+
+    registry = enforcement_paths.registry_object()
+    request = make_action(
+        registry,
+        enforcement_paths,
+        "exec.process",
+        process_params(),
+        roles=("owner",),
+        action_id="grant-fail-1",
+    )
+    approval = approval_for(request)
+
+    blocked = pre_execute(
+        request,
+        registry=registry,
+        ledger=FailingGrantLedger(enforcement_paths.ledger),
+        sink=FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace),
+        approval=approval,
+    )
+
+    assert blocked.decision.decision is Decision.BLOCK
+    assert reason_of(blocked) is ReasonCode.LEDGER_UNAVAILABLE
+    ledger = EnforcementLedger(enforcement_paths.ledger)
+    assert ledger.of_kind("claim_released"), "认领必须还回去"
+    assert ledger.of_kind("approval_use_released"), "已占用的审批额度必须还回去"
+    assert ledger.approval_uses(approval.approval_id) == ()
+    assert ledger.active_claims(action_id=request.action_id, tool_id=request.tool_id) == ()
+
+
 def test_high_risk_without_approval_requires_approval(enforcement_paths):
     outcome = run_pre(
         enforcement_paths, "exec.process", process_params(), roles=("owner",)
@@ -510,6 +607,75 @@ def test_verify_approval_directly_covers_the_edge_cases(enforcement_paths):
         verify_approval(approval, **{**arguments, "tool_id": "exec.shell"})
     with pytest.raises(ApprovalError):
         verify_approval(approval, **{**arguments, "action_id": "other"})
+
+
+def test_naive_approval_timestamps_are_rejected_as_the_documented_error(tmp_root):
+    """无时区的审批时间必须在加载期报 ApprovalError，不能等到校验路径抛 TypeError。
+
+    取证：把 granted_at / expires_at 写成不带时区的 RFC3339，旧的 _check_shape 只在
+    两者时区**不一致**时报错，两者都 naive 时照样通过；随后 verify_approval 用 aware 的
+    utc_now() 比较，抛 "can't compare offset-naive and offset-aware datetimes"——
+    只 catch ApprovalError 的调用方（失败关闭路径）接不住它。
+    """
+
+    payload = {
+        "approval_id": "a-naive",
+        "binding": "action",
+        "action_hash": "sha256:h",
+        "action_id": "act-1",
+        "tool_id": "exec.process",
+        "subject": "local-user",
+        "granted_by": "alice",
+        "granted_by_roles": ["reviewer"],
+        "granted_at": "2026-10-08T06:00:00",
+        "expires_at": "2026-10-08T07:00:00",
+    }
+    path = tmp_root / "approval-naive.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8", newline="\n")
+
+    with pytest.raises(ApprovalError) as error:
+        load_approval(path)
+    assert "时区" in str(error.value)
+
+    # 构造期就是最后一道闸：直接构造同样拒绝，不给"绕过加载器"留口子。
+    with pytest.raises(ApprovalError):
+        ApprovalRecord(**payload)
+
+
+def test_approval_schema_version_is_its_own_axis(tmp_root):
+    """审批记录走自己的版本轴：默认值来自 APPROVAL_SCHEMA_VERSION，未知版本一律拒绝。
+
+    旧行为：默认值取 ENFORCEMENT_SCHEMA_VERSION，而 APPROVAL_SCHEMA_VERSION 全仓只有
+    定义处与 __all__ 引用（死常量）；加载期也不比对，于是任何未知版本的审批文件都被
+    静默接受并按 1.0 的字段语义放行（AGENTS 第 3 条 / 第 55 条）。
+    """
+
+    from enforcement.approvals import APPROVAL_SCHEMA_VERSION
+
+    payload = {
+        "approval_id": "a-version",
+        "binding": "action",
+        "action_hash": "sha256:h",
+        "action_id": "act-1",
+        "tool_id": "exec.process",
+        "subject": "local-user",
+        "granted_by": "alice",
+        "granted_by_roles": ["reviewer"],
+        "granted_at": utc_now().isoformat(),
+        "expires_at": (utc_now() + timedelta(seconds=300)).isoformat(),
+    }
+
+    assert ApprovalRecord(**payload).schema_version == APPROVAL_SCHEMA_VERSION
+
+    path = tmp_root / "approval-version.json"
+    path.write_text(
+        json.dumps({**payload, "schema_version": "9.9"}, ensure_ascii=False),
+        encoding="utf-8",
+        newline="\n",
+    )
+    with pytest.raises(ApprovalError) as error:
+        load_approval(path)
+    assert "未知审批协议版本" in str(error.value)
 
 
 # --------------------------------------------------------------------------- 策略引擎

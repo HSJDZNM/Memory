@@ -45,6 +45,7 @@ __all__ = [
     "chunk_document",
     "cjk_split",
     "compact_text",
+    "effective_chunker_version",
     "find_sections",
     "front_matter_bounds",
     "heading_anchor",
@@ -83,7 +84,7 @@ class FrontMatter:
     """front matter 的解析结果。
 
     kind 取值：yaml / html-comment / yaml-unterminated / html-comment-unterminated。
-    未闭合时正文原样保留（不删任何字符），只记录警告。
+    未闭合时正文原样保留（除被跳过的 BOM 外不删任何字符），只记录警告。
     """
 
     kind: str
@@ -139,6 +140,24 @@ def search_text(text: str) -> str:
     return cjk_split(text)
 
 
+def effective_chunker_version(
+    *,
+    max_chars: int,
+    hard_max_chars: int,
+    chunker_version: str = CHUNKER_VERSION,
+) -> str:
+    """写入 document.chunker_version 的**有效分块版本**：分块器版本 + 影响切分的预算参数。
+
+    只比较 CHUNKER_VERSION 会漏掉"预算改了、代码没改"的情况：清单里改 max_chunk_chars 时
+    摄取输入指纹会变（needs_reindex=True），但每份文档都被"内容没变"短路掉，索引于是静默
+    沿用旧边界。把预算折进版本串后，"是否需要重切"只剩一个判据。
+    旧库里的裸版本号（例如 "markdown-sections-2"）与新串不相等，会被重切一次——这是失败的
+    安全方向：多切一次只是浪费，少切一次就永远修不回来。
+    """
+
+    return f"{chunker_version}+max{max_chars}-hard{hard_max_chars}"
+
+
 def _slug(value: str) -> str:
     lowered = value.strip().lower()
     slug = SLUG_RE.sub("-", lowered).strip("-")
@@ -161,7 +180,12 @@ def heading_anchor(heading_path: Sequence[str], occurrences: Mapping[str, int]) 
 
 
 def front_matter_bounds(text: str) -> Tuple[int, int, str, Optional[str]]:
-    """定位 front matter：返回 (start, end, kind, warning)；end 之前的字符属于 front matter。"""
+    """定位 front matter：返回 (start, end, kind, warning)；end 之前的字符属于 front matter。
+
+    返回的边界一律是 **text 坐标**：BOM 只是被跳过的前缀，不是坐标基准的位移。若把
+    stripped 坐标原样返回，raw 会少掉最后一个分隔符字符、body 会多出一个残字
+    （BOM 文档的 front matter 于是"解析失败"、正文首行也跟着错位）。
+    """
 
     stripped = text.lstrip("\ufeff")
     offset = len(text) - len(stripped)
@@ -169,7 +193,7 @@ def front_matter_bounds(text: str) -> Tuple[int, int, str, Optional[str]]:
         end = _find_closing_line(stripped, start=3, tokens=("---", "..."))
         if end is None:
             return offset, offset, "yaml-unterminated", "YAML front matter 未闭合，正文原样保留"
-        return offset, end, "yaml", None
+        return offset, offset + end, "yaml", None
     if stripped.startswith("<!--"):
         closing = stripped.find("-->")
         if closing == -1:
@@ -179,8 +203,8 @@ def front_matter_bounds(text: str) -> Tuple[int, int, str, Optional[str]]:
                 "html-comment-unterminated",
                 "HTML 注释 front matter 未闭合，正文原样保留",
             )
-        return offset, closing + 3, "html-comment", None
-    return 0, 0, "", None
+        return offset, offset + closing + 3, "html-comment", None
+    return offset, offset, "", None
 
 
 def _find_closing_line(text: str, *, start: int, tokens: Sequence[str]) -> Optional[int]:
@@ -201,7 +225,9 @@ def split_front_matter(text: str) -> Tuple[FrontMatter, str]:
 
     start, end, kind, warning = front_matter_bounds(text)
     if end <= start:
-        return FrontMatter(kind=kind, raw="", metadata={}, warning=warning), text
+        # 没有 front matter（或未闭合）：正文从 start 开始。被跳过的 BOM 不属于正文——
+        # 留着它，首行 "# 标题" 就匹配不上 HEADING_RE，整个标题会被吞进前言。
+        return FrontMatter(kind=kind, raw="", metadata={}, warning=warning), text[start:]
 
     raw = text[start:end]
     body = text[end:].lstrip(chr(10))
@@ -239,9 +265,39 @@ def split_front_matter(text: str) -> Tuple[FrontMatter, str]:
 
 
 def _scalar(value: Any) -> str:
+    """把 front matter 的值转成字符串：**永不抛出**，且同一输入永远同一结果。
+
+    YAML 会产出 json 不认识的类型（datetime.date / bytes / set，以及它们在嵌套映射、
+    序列与映射键里的形态），json.dumps 遇到这些就抛 TypeError。而 _scalar 在
+    split_front_matter 的 YAML 异常分支**之外**被调用——一个元数据字段就能把整份文档
+    （乃至整个索引 run）带走，与"未闭合 / 解析失败只记警告"的模块约定相矛盾。
+    """
+
     if isinstance(value, str):
         return value
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return _plain_scalar(value)
+
+
+def _plain_scalar(value: Any) -> str:
+    """json 序列化不了的值 -> 确定性文本；集合先排序，避免哈希随机化改变结果。"""
+
+    if isinstance(value, Mapping):
+        # 键也可能是 date 这类 json 不认识的对象：先转成字符串再排序。
+        return json.dumps(
+            {str(key): _plain_scalar(item) for key, item in value.items()},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    if isinstance(value, (list, tuple)):
+        return json.dumps([_plain_scalar(item) for item in value], ensure_ascii=False)
+    if isinstance(value, (set, frozenset)):
+        return "{" + ", ".join(sorted(_plain_scalar(item) for item in value)) + "}"
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", errors="backslashreplace")
+    return str(value)
 
 
 def iter_blocks(body: str, *, line_start: int = 1) -> Tuple[Block, ...]:

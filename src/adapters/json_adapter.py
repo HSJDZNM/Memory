@@ -25,7 +25,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, FrozenSet, Mapping, Optional
 
 from policy.models import Decision, RequiredAction, ValidationResult
 
@@ -33,6 +33,14 @@ from .base import Adapter
 from .models import AdapterEventError, AgentEvent, parse_canonical_event
 
 __all__ = ["JsonAdapter", "agent_response_from_decision"]
+
+# 入参只接受**决策协议**的字段集合（未知字段一律拒绝，不得静默丢弃）。
+# 它从 `ValidationResult` 自己的字段推出，而不是在这里再抄一份白名单：
+# 手抄的那一份漏掉 rule_set_hash / skipped_rules / pending_findings 之后，
+# 本函数文档写明的两条主路径（ValidationResult 与协议载荷 dict）都会被
+# "未知字段"直接拒死。协议加键时这里自动跟上；**响应**仍是下面那份受控投影，
+# 协议字段本身不外泄。
+_ALLOWED_DECISION_KEYS: FrozenSet[str] = frozenset(ValidationResult.model_fields)
 
 
 def agent_response_from_decision(
@@ -50,17 +58,7 @@ def agent_response_from_decision(
             f"得到 {type(decision).__name__}"
         )
 
-    allowed = {
-        "schema_version",
-        "decision",
-        "request_id",
-        "trace_id",
-        "matched_rules",
-        "violations",
-        "required_action",
-        "policy_version",
-    }
-    unknown = sorted(set(payload) - allowed)
+    unknown = sorted(set(payload) - _ALLOWED_DECISION_KEYS)
     if unknown:
         raise AdapterEventError(f"决策载荷出现未知字段 {unknown}：拒绝把未知协议翻译给 Agent")
 

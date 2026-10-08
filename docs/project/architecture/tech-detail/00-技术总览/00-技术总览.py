@@ -90,19 +90,56 @@ import ast
 from collections import defaultdict
 
 SRC = REPO_ROOT / "src"
-PACKAGES = ("policy", "retrieval", "validators", "enforcement", "adapters", "policy_api", "orchestration")
+
+# 包清单**从文件系统推出来**，不手抄。手抄的那份已经漂移过：src/provenance 是真实存在的
+# 第八个包（src/policy/check.py 在模块级 import 了它），却因为不在清单里，整条边被 file_imports
+# 静默丢掉——于是"判定核心没有模块级出边"这句断言，对着与它相反的代码照样通过。
+# 判据是"src 下、含 .py 的一级目录"：src/policy 是命名空间包（没有 __init__.py），按 __init__.py
+# 筛会把判定核心自己漏掉；*.egg-info 是本地可编辑安装留下的构建产物，不是包。
+PACKAGES = tuple(
+    sorted(
+        path.name
+        for path in SRC.iterdir()
+        if path.is_dir() and not path.name.endswith(".egg-info") and any(path.rglob("*.py"))
+    )
+)
+assert PACKAGES, f"{SRC} 下没有发现任何包：src 布局变了？"
+print("扫描的顶层包：" + ", ".join(PACKAGES))
+
+
+def from_targets(node, package):
+    """把一条 from-import 解析成"仓库内部顶层包名"候选。
+
+    相对导入必须**按本文件所在的包回溯 level-1 层**再判断：只看 node.module 会把
+    `from .adapters.base import probe_tool`（真实目标是 validators.adapters）记成
+    "validators 依赖顶层包 adapters"——一个并不存在的同名顶层包，于是凭空多出一条边、
+    入边与 I = Ce/(Ca+Ce) 跟着一起失真。
+    """
+    if node.level == 0:
+        return [node.module or ""]
+    drop = node.level - 1
+    if drop > len(package):
+        # 回溯越过了顶层：不可能指向仓库里的某个顶层包（这种写法本身也是错的）。
+        return []
+    base = package[: len(package) - drop]
+    if base:
+        # 仍在同一个顶层包内（包内相对导入）：目标是本包，不产生跨包边。
+        return [base[0]]
+    # 正好回溯到顶层：module 的第一段就是顶层包名。
+    return [node.module or ""]
 
 
 def file_imports(path):
     """一个文件 import 到的仓库内部顶层包，返回 (模块级目标, 函数内目标)。"""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     top_level = {id(node) for node in tree.body}
+    package = path.relative_to(SRC).parts[:-1]  # 本文件所在的包（__init__.py 同理）
     eager, lazy = set(), set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             names = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
-            names = [node.module or ""]
+            names = from_targets(node, package)
         else:
             continue
         for name in names:
@@ -153,13 +190,15 @@ for package in PACKAGES:
 #
 # 上面打印出来的边只说明方向，真正要守的是下面三条——它们都能被断言，不是口号：
 #
-# 1. **判定核心没有模块级出边**：`src/policy` 不 import 其他任何包（不导入 Web 框架 / Agent SDK / 工作流框架）；
+# 1. **判定核心的业务模块没有模块级出边**：`src/policy` 里除 CLI 装配点 `check.py` 外，
+#    一个包都不 import（不导入 Web 框架 / Agent SDK / 工作流框架）；
 # 2. **入口层入度为 0**：没有任何包 import `policy_api` 或 `orchestration`——删掉编排层，平台照常独立运行；
 # 3. **工作流框架只有一个导入点**：只有 `orchestration/langgraph_engine.py` 导入 langgraph，
 #    而且是在**构造引擎时**才导入（没装就失败关闭，不静默回落到别的实现）。
 #
 # 第 1 条在本仓库有一个**真实的例外**，下面会把它精确地挡在一个文件里——这正是"包级统计"
-# 不够用的地方：算到包级，它看起来像"核心层依赖验证器层"；算到文件级，它是 CLI 的装配点。
+# 不够用的地方：算到包级，它看起来像"核心层依赖验证器层与溯源层"；算到文件级，它只是 CLI 的装配点
+# （`check.py` 装配验证器注册表与读数上下文，判定逻辑本身一行都不依赖它们）。
 # ----------------------------------------------------------------------------
 
 # 第 1 条要先看到文件级明细，才能判断这是"架构破了"还是"组合根例外"。
@@ -173,11 +212,12 @@ for name, (eager, lazy) in sorted(policy_edges.items()):
     print("  " + pad(name, 26) + "模块级 → " + (", ".join(eager) or "无") + "   延迟 → " + (", ".join(lazy) or "无"))
 print()
 
-# 判定核心的"业务模块"一个出边都不许有；例外只允许出现在 CLI 装配点 check.py，且只指向验证器装配。
+# 判定核心的"业务模块"一个出边都不许有；例外只允许出现在 CLI 装配点 check.py，
+# 且只指向它的两个装配对象：验证器注册表（validators）与读数上下文（provenance）。
 dirty_core = [name for name in policy_edges if Path(name).name in core_files]
 assert not dirty_core, f"判定核心的业务模块出现了出边：{dirty_core}"
 assert set(policy_edges) == {"src/policy/check.py"}, f"出边来源不止 CLI 装配点：{sorted(policy_edges)}"
-assert policy_edges["src/policy/check.py"][0] == ["validators"], policy_edges["src/policy/check.py"]
+assert policy_edges["src/policy/check.py"][0] == ["provenance", "validators"], policy_edges["src/policy/check.py"]
 
 for package in PACKAGES:
     hit = edges[package]["eager"] & {"policy_api", "orchestration"}
@@ -286,9 +326,12 @@ else:
 #
 # - 依赖方向是**代码事实**，不是文档承诺：边由 `ast` 现场扫出来，三条不变量靠断言守住；
 # - `I = Ce/(Ca+Ce)` 从上到下单调变小——入口层最"易变"（没有人依赖它），判定核心最"稳定"（所有路径都要找它）；
-# - 一个包级统计不够用的实例：`src/policy/check.py` 模块级 import 了 `validators.registry`（CLI 装配需要），
-#   但判定核心的业务模块（engine / loader / scope / models / context / evidence / checkers）**零出边**。
-#   包级表会说"核心依赖验证器层"，文件级一看，那只是组合根。
+# - 一个包级统计不够用的实例：`src/policy/check.py` 模块级 import 了 `validators.registry` 与
+#   `provenance.reading_context`（都是 CLI 装配需要），但判定核心的业务模块
+#   （engine / loader / scope / models / context / evidence / checkers）**零出边**。
+#   包级表会说"核心依赖验证器层与溯源层"，文件级一看，那只是组合根；
+# - 包清单本身也**不能手抄**：它是从 `src/` 现场推出来的——少写一个包，指向它的边就整条消失，
+#   而断言会继续通过（`src/provenance` 就是这么被漏掉过的）。
 #
 # 接下来按兴趣往下走：`01-判定核心-Policy-Engine.ipynb`（一次判定怎么算出来）、
 # `04-受控执行.ipynb`（允许之后副作用怎么被管住）、`09-能不能成为规则.ipynb`（一段文档要求够不够格成为规则）。

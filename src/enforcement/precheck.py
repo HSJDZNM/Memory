@@ -720,6 +720,71 @@ def pre_execute(
                     _check("ledger_claim", CheckStatus.PASSED, ReasonCode.ALLOW, claim.claim_id)
                 )
 
+    def release_after_block(label: str, reason: str) -> None:
+        """阻断但还没执行：把认领（与已占用的审批额度）还回去。
+
+        失败关闭不能变成死锁：本次动作一个字都没执行，占着 action_id 或额度会让
+        修好原因之后的重试被误判成 ACTION_REPLAY / approval_quota_exhausted。
+        归还本身失败时如实记一条 FAILED 检查项（不吞掉）：那条路径上只能换一个新的
+        action_id，这件事本身就是读得出来的结论。
+        """
+
+        nonlocal claim_id, approval_claim
+        if claim_id is not None:
+            try:
+                ledger.release_claim(
+                    action_id=request.action_id,
+                    tool_id=request.tool_id,
+                    claim_id=claim_id,
+                    reason=reason,
+                )
+            except LedgerError as release_error:
+                checks.append(
+                    _check(
+                        "ledger_release",
+                        CheckStatus.FAILED,
+                        ReasonCode.LEDGER_UNAVAILABLE,
+                        f"释放认领失败：{release_error}（该 action_id 需要换一个新的）",
+                    )
+                )
+            else:
+                checks.append(
+                    _check(
+                        "ledger_release",
+                        CheckStatus.PASSED,
+                        ReasonCode.ALLOW,
+                        f"{label}：已释放本次认领，重试不会被当成重放",
+                    )
+                )
+                claim_id = None
+        if approval_claim is not None:
+            assert approval is not None
+            try:
+                ledger.release_approval_use(
+                    approval_id=approval.approval_id,
+                    use_id=approval_claim.use_id,
+                    reason=reason,
+                )
+            except LedgerError as release_error:
+                checks.append(
+                    _check(
+                        "approval_release",
+                        CheckStatus.FAILED,
+                        ReasonCode.LEDGER_UNAVAILABLE,
+                        f"归还审批额度失败：{release_error}",
+                    )
+                )
+            else:
+                checks.append(
+                    _check(
+                        "approval_release",
+                        CheckStatus.PASSED,
+                        ReasonCode.ALLOW,
+                        f"{label}：已归还本次审批额度，重试不会被当成已用尽",
+                    )
+                )
+                approval_claim = None
+
     # 审批额度：**先原子占用，再执行**。位置在认领之后、签发授权之前——
     # 认领失败的动作不消耗额度；额度用尽的动作也拿不到授权。
     # 每一次占用都进审计（approval_use 检查项 + payload 里的 approval_use）。
@@ -750,6 +815,8 @@ def pre_execute(
             )
             decision = Decision.BLOCK
             reason_code = ReasonCode.LEDGER_UNAVAILABLE
+            # 额度占不上但认领已经拿到：动作不会执行，认领必须还回去。
+            release_after_block("台账不可用", ReasonCode.LEDGER_UNAVAILABLE.value)
         else:
             if not use_claim.claimed:
                 checks.append(
@@ -765,6 +832,9 @@ def pre_execute(
                 )
                 decision = Decision.BLOCK
                 reason_code = ReasonCode.APPROVAL_INVALID
+                # 额度用尽同样是"没执行"：认领还回去，重新签发审批后同一个 action_id 可重试。
+                # （抢输的那一方自己那一行由 ledger.claim_approval_use 归还，不在这里重复归还。）
+                release_after_block("审批额度无法占用", ReasonCode.APPROVAL_INVALID.value)
             else:
                 approval_claim = use_claim
                 checks.append(
@@ -848,60 +918,9 @@ def pre_execute(
                 decision = Decision.BLOCK
                 reason_code = ReasonCode.AUDIT_UNAVAILABLE
                 grant = None
-                # 失败关闭但不能留下死锁：这次动作还没执行，把认领释放掉，
+                # 失败关闭但不能留下死锁：这次动作还没执行，认领与额度都还回去，
                 # 审计修好之后同一个 action_id 仍然可以重试。
-                if claim_id is not None:
-                    try:
-                        ledger.release_claim(
-                            action_id=request.action_id,
-                            tool_id=request.tool_id,
-                            claim_id=claim_id,
-                            reason=ReasonCode.AUDIT_UNAVAILABLE.value,
-                        )
-                        checks.append(
-                            _check(
-                                "ledger_release",
-                                CheckStatus.PASSED,
-                                ReasonCode.ALLOW,
-                                "审计不可写：已释放本次认领，重试不会被当成重放",
-                            )
-                        )
-                        claim_id = None
-                    except LedgerError as release_error:
-                        checks.append(
-                            _check(
-                                "ledger_release",
-                                CheckStatus.FAILED,
-                                ReasonCode.LEDGER_UNAVAILABLE,
-                                f"释放认领失败：{release_error}（该 action_id 需要换一个新的）",
-                            )
-                        )
-                # 额度也要还回去：动作没有执行，占着额度会让修复后的重试被误判成"用尽"
-                if approval_claim is not None:
-                    try:
-                        ledger.release_approval_use(
-                            approval_id=approval.approval_id,
-                            use_id=approval_claim.use_id,
-                            reason=ReasonCode.AUDIT_UNAVAILABLE.value,
-                        )
-                        checks.append(
-                            _check(
-                                "approval_release",
-                                CheckStatus.PASSED,
-                                ReasonCode.ALLOW,
-                                "审计不可写：已归还本次审批额度，重试不会被当成已用尽",
-                            )
-                        )
-                        approval_claim = None
-                    except LedgerError as release_error:
-                        checks.append(
-                            _check(
-                                "approval_release",
-                                CheckStatus.FAILED,
-                                ReasonCode.LEDGER_UNAVAILABLE,
-                                f"归还审批额度失败：{release_error}",
-                            )
-                        )
+                release_after_block("审计不可写", ReasonCode.AUDIT_UNAVAILABLE.value)
             else:
                 checks.append(
                     _check(
@@ -980,6 +999,8 @@ def pre_execute(
             decision = Decision.BLOCK
             reason_code = ReasonCode.LEDGER_UNAVAILABLE
             grant = None
+            # 授权登记失败 → 阻断，但动作还没执行：认领与已占用的额度一并还回去。
+            release_after_block("台账不可写", ReasonCode.LEDGER_UNAVAILABLE.value)
 
     return PrecheckOutcome(
         decision=PreDecision(

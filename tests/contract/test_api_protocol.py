@@ -144,6 +144,31 @@ def test_openapi_info_pins_the_three_versions(runtime: ApiRuntime) -> None:
     assert info["x-policy-generation"] == policy_models.POLICY_VERSION
 
 
+def test_metrics_success_response_is_not_declared_as_an_error_envelope(
+    runtime: ApiRuntime,
+) -> None:
+    """`/v1/ops/metrics` 的 200 是**成功**响应，不是错误信封。
+
+    历史缺陷（OCR 全量审查 L31）：`_METRICS_STATUS_CODES = (200, 403)` 被整组丢进
+    `_error_response_doc`，于是 200 的 schema 引用 ErrorResponse、描述写成"结构化错误"。
+    按这份契约生成的客户端会把一次成功的指标读成错误对象。403（无运维权限）才是错误，
+    删掉 200 的错误声明不能顺手把 403 也改掉：两条路径的形状都要被钉住。
+    """
+
+    document = openapi_document(runtime)
+    responses = document["paths"]["/v1/ops/metrics"]["get"]["responses"]
+
+    success = responses["200"]
+    assert success["description"] == "进程内指标（路由计数、延迟分位、限流与超时计数）"
+    # 成功载荷是受控 JSON，但没有固定 schema（与另外三条路由的 200 同形）。
+    assert success["content"]["application/json"]["schema"] == {}
+    assert "ErrorResponse" not in json.dumps(success, ensure_ascii=False)
+
+    forbidden = responses["403"]
+    assert forbidden["content"]["application/json"]["schema"]["$ref"].endswith("/ErrorResponse")
+    assert "结构化错误" in forbidden["description"]
+
+
 @pytest.mark.parametrize("layer", CORE_LAYERS)
 def test_core_layers_do_not_import_web_frameworks(layer: str) -> None:
     """核心层（规则 / 检索 / 验证器 / 受控执行）不得依赖 Web 框架。
@@ -188,6 +213,32 @@ def test_app_routes_match_contract_endpoints(runtime: ApiRuntime) -> None:
         assert methods[path] == {"POST"}
     for path in ("/v1/health/live", "/v1/health/ready", "/v1/ops/metrics"):
         assert methods[path] == {"GET"}
+
+
+def test_no_route_exposes_a_bindable_parameter_from_the_handler_signature(
+    runtime: ApiRuntime,
+) -> None:
+    """处理器签名里的参数一个都不许变成公开契约里的可绑定参数。
+
+    历史缺陷（OCR 全量审查 L31）：`_route: str = route` 作为默认值是为了绑定循环变量
+    （闭包共享 cell，三条路由会全变最后一个值），但 FastAPI 把这个签名参数当成
+    **query 参数**写进文档——调用方于是能用 `?_route=validate` 自己挑一条路由，
+    预算 / 幂等键 / 审计口径跟着切换。绑定改由 `make_handler` 的闭包提供之后，
+    文档里必须一个 parameter 都不多：这六条路由的输入只有 URL、请求头与请求体。
+
+    断言写成"整份文档里没有任何 parameter"，而不是只查 `_route` 这个名字：
+    换成别的名字、或在别的路由上重新泄漏，同样会让这条用例变红。
+    """
+
+    document = openapi_document(runtime)
+    leaked = [
+        f"{path} {method} -> {item.get('name')}"
+        for path, item in (document.get("paths") or {}).items()
+        for method, operation in item.items()
+        if isinstance(operation, dict)
+        for item in (operation.get("parameters") or ())
+    ]
+    assert leaked == [], "契约里出现了可绑定的路由参数（服务端装配的路由不该由请求改写）：" + repr(leaked)
 
 
 def test_health_live_payload_has_fixed_top_level_keys(runtime: ApiRuntime) -> None:

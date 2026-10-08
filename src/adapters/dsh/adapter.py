@@ -1254,15 +1254,34 @@ def to_policy_event(raw: Any, *, config: AdapterConfig) -> AdapterDecision:
             f"路径 {repo_path} 没有命中 languages 映射；请补充规则或显式声明 default_language"
         )
 
-    text = "\n".join(
+    # 声明了变更文本字段的工具，至少要有一个字段真的带字符串：字段缺失 / 不是字符串
+    # 不等于「没有引入依赖」。旧实现会 join 成空串，`governed_dependencies("")` 返回
+    # 空元组、且不加 UNPROVEN_CHANGED_TEXT（空文本 ast.parse 得通），依赖类 checker
+    # 于是一致读到「本次没有引入依赖」——这正是结构性放行（R3 要求证明不了必须显式）。
+    proposed_values = [
         tool_input[field]
         for field in spec.proposed_fields
         if isinstance(tool_input.get(field), str)
-    )
+    ]
+    if spec.proposed_fields and not proposed_values:
+        raise DshEventError(
+            f"工具 {tool_name} 的变更文本字段 {list(spec.proposed_fields)} 缺失或不是字符串："
+            "依赖集无法证明，不得按「没有引入依赖」处理"
+        )
+    text = "\n".join(proposed_values)
     event = PolicyEvent(
         event_id=f"{session_id}:{tool_use_id}",
         request_id=f"{session_id}:{tool_use_id}",
-        kind="tool.pre_execute",
+        # kind 由 hook 事件推出，不能写死：read_payload 明确支持 PostToolUse（还要求
+        # tool_response 在场），把它标成 pre_execute 会让「提议的改动」与「已经执行完的
+        # 改动」在审计里同名——两者的 event_id / request_id 本来就相同，消费方分不开。
+        # 真实钩子入口把 PostToolUse 直接交给 post_execute_outcome；这里只保证
+        # 从这个导出函数走出来的事件不撒谎。未知事件名在 read_payload 就已经拒绝了。
+        kind=(
+            "tool.pre_execute"
+            if payload["hook_event_name"] == HOOK_EVENT_PRE_TOOL_USE
+            else "tool.post_execute"
+        ),
         agent=DSH_AGENT_ID,
         agent_version=config.agent_version,
         tool=tool_name,

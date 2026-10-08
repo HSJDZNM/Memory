@@ -337,6 +337,69 @@ def test_normalize_event_path_allows_the_workspace_root() -> None:
     assert normalize_event_path(str(workspace), workspace=workspace) == "."
 
 
+def test_phase_six_glob_double_star_slash_matches_zero_directories() -> None:
+    """`**/` 匹配零个或多个目录：层与语言的映射不得漏掉根目录文件。
+
+    旧实现把 `**` 一律翻成 `.*`，于是 `**/*_service.py` 匹配不到根目录的
+    `order_service.py`：它掉到更宽的 `**/*.py`（module），或者干脆没有 layer
+    映射被拒绝；language 掉到 default_language（text）→ 依赖维度静默为空。
+    这就是 G8 的形态：配置看着覆盖了，实际漏掉一整个层级。
+    """
+
+    from adapters.loader import load_adapter
+
+    adapter = load_adapter("dsh", root=REPO_ROOT)
+    assert adapter.layer_for("order_controller.py") == "controller"
+    assert adapter.layer_for("order_service.py") == "service"
+    assert adapter.layer_for("order_repository.py") == "repository"
+    assert adapter.layer_for("order.py") == "module"
+    assert adapter.layer_for("README.md") == "docs"
+    assert adapter.language_for("order.py") == "python"
+
+
+def test_phase_six_glob_semantics_match_the_validator_matcher() -> None:
+    """跨模块对照：Phase 6 的 `_compile_glob` 与验证器层的匹配器必须同一答案。
+
+    `src/validators/globs.py` 的 docstring 把这条一致性写成「由测试钉住」；
+    Phase 6 的这份实现此前漏了 `**/` 的零层语义，正是 G8 的另一半。
+    """
+
+    from adapters.base import _compile_glob
+    from validators.globs import glob_match
+
+    patterns = (
+        "**/*_controller.py",
+        "**/*_service.py",
+        "**/*_repository.py",
+        "**/*.py",
+        "**/*.md",
+        "src/**/*.py",
+        "**/*",
+        "**",
+        "*.py",
+        "?x.py",
+    )
+    paths = (
+        "README.md",
+        "order.py",
+        "order_service.py",
+        "docs/notes.md",
+        "docs/a/b.md",
+        "src/a.py",
+        "src/pkg/a.py",
+        "x/y/z.bin",
+    )
+    mismatches = [
+        (pattern, path)
+        for pattern in patterns
+        for path in paths
+        if bool(_compile_glob(pattern).match(path)) != glob_match(pattern, path)
+    ]
+    assert not mismatches, mismatches
+    # 对照必须非空转：至少有一条「零层」命中，否则两边全 False 也会通过。
+    assert glob_match("**/*.py", "order.py")
+
+
 # --------------------------------------------------------------------------- 注册表
 
 
@@ -475,3 +538,70 @@ def test_every_scenario_renders_for_every_adapter() -> None:
                 continue
             assert isinstance(raw, dict)
             assert raw
+
+
+# --------------------------------------------------------------------------- 决策翻译
+
+
+def _decision_result(**overrides):
+    """一份最小但完整的决策载荷（含协议 1.1 的三个新通道键）。"""
+
+    from policy.models import ValidationResult
+
+    document = {
+        "request_id": "req-1",
+        "trace_id": "trace-1",
+        "decision": "allow",
+        "rule_set_hash": "sha256:" + "a" * 64,
+        "matched_rules": ["ARCH-001@1"],
+        "skipped_rules": [{"rule_id": "STYLE-001@1", "reasons": ["language 不匹配"]}],
+        "required_action": None,
+    }
+    document.update(overrides)
+    return ValidationResult.model_validate(document)
+
+
+def test_generic_json_response_translates_the_full_decision_payload() -> None:
+    """ValidationResult 与协议载荷 dict 是文档写明的两条主路径，必须都能用。
+
+    字段白名单漏掉 rule_set_hash / skipped_rules / pending_findings 时，
+    两条路径都以「未知字段」抛错——通用 JSON 响应实际上无路可走。
+    """
+
+    from adapters.json_adapter import agent_response_from_decision
+
+    result = _decision_result()
+    from_result = agent_response_from_decision(result)
+    from_payload = agent_response_from_decision(result.to_decision_dict())
+    assert from_result == from_payload
+    assert from_result["decision"] == "allow"
+    assert from_result["executable"] is True
+
+
+def test_generic_json_response_accepts_the_pending_findings_channel() -> None:
+    """pending_findings 是独立通道（不是违规）：它同样不得被当成未知字段拒绝。"""
+
+    from adapters.json_adapter import agent_response_from_decision
+
+    finding = {
+        "rule_id": "TEST-001@1",
+        "rule_version": 1,
+        "severity": "warning",
+        "message": "选中的测试因项目内实现还不存在而未能收集",
+        "evidence": {"kind": "pytest", "subject": "tests/test_x.py", "value": "pending"},
+    }
+    result = _decision_result(decision="allow_with_warnings", pending_findings=[finding])
+    response = agent_response_from_decision(result)
+    assert response["executable"] is True
+
+
+def test_generic_json_response_still_rejects_unknown_decision_field() -> None:
+    """补全白名单不等于放宽：协议之外的字段仍然拒绝，不得静默丢弃。"""
+
+    from adapters.json_adapter import agent_response_from_decision
+
+    payload = _decision_result().to_decision_dict()
+    payload["severity_counts"] = {"warning": 1}
+    with pytest.raises(AdapterEventError) as error:
+        agent_response_from_decision(payload)
+    assert "未知字段" in str(error.value)

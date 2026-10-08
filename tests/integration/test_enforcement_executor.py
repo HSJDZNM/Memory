@@ -22,6 +22,7 @@ from enforcement.models import (
     Decision,
     ExecutionStatus,
     FinalOutcome,
+    LedgerError,
     PostStatus,
     ReasonCode,
     RollbackMode,
@@ -56,6 +57,13 @@ class SpyDriver:
     def execute(self, request, spec, *, workspace=None) -> DriverResult:
         self.calls += 1
         return self.inner.execute(request, spec, workspace=workspace)
+
+
+class FailingExecutionLedger(EnforcementLedger):
+    """execution 记录写不进去的台账：验证失败被如实上报，而不是被 pass 吞掉。"""
+
+    def record_execution(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        raise LedgerError("台账不可写（测试替身）")
 
 
 def edit_params(**overrides):
@@ -144,6 +152,35 @@ def test_allow_executes_exactly_once_and_produces_evidence(enforcement_paths):
     ]
     assert all(item.status.value == "passed" for item in outcome.evidence.validators)
     assert outcome.post.status is PostStatus.VALIDATED
+
+
+def test_ledger_write_failure_after_execution_is_reported_in_notes(enforcement_paths):
+    """执行已经发生、但台账写不进去时，调用方必须读得到"这次执行没被记账"。"""
+
+    seed(enforcement_paths)
+    registry, sink, ledger, executor, _ = build(enforcement_paths)
+    request = make_action(registry, enforcement_paths, "fs.edit", edit_params())
+    pre = pre_execute(request, registry=registry, ledger=ledger, sink=sink)
+    assert pre.decision.decision is Decision.ALLOW
+
+    broken = FailingExecutionLedger(enforcement_paths.ledger)
+    executor = ControlledExecutor(
+        ledger=broken,
+        drivers=executor.drivers,
+        sink=sink,
+        max_grant_ttl_seconds=registry.max_grant_ttl_seconds,
+    )
+    outcome = executor.execute(
+        request,
+        spec=registry.tool("fs.edit"),
+        pre=pre.decision,
+        workspace=enforcement_paths.workspace,
+    )
+
+    # 副作用确实发生了：所以这不是"什么都没做"，而是"做了但没被记账"。
+    assert outcome.record.status is ExecutionStatus.EXECUTED
+    assert any("台账写入失败" in note for note in outcome.notes), outcome.notes
+    assert not EnforcementLedger(enforcement_paths.ledger).of_kind("execution")
 
 
 def test_block_never_calls_the_driver(enforcement_paths):

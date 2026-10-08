@@ -1,0 +1,535 @@
+{
+  "capability_out": null,
+  "coverage_tier_counts": {
+    "definition": 3,
+    "line": 21,
+    "none": 14,
+    "scope": 5
+  },
+  "datasets": [
+    {
+      "annotations": 46,
+      "classification_counts": {
+        "capability_out": 24,
+        "mapped": 22
+      },
+      "id": "bandit-functional",
+      "position_counts": {
+        "line": 46
+      },
+      "revision": "68ebe11ef79263be27ec223184b94a4fc394a622",
+      "scopes_source": "eval_corpus.annotation_scopes"
+    },
+    {
+      "annotations": 657,
+      "classification_counts": {
+        "blank_expectation": 89,
+        "capability_out": 497,
+        "mapped": 71
+      },
+      "id": "pycodestyle-testsuite",
+      "position_counts": {
+        "blank": 89,
+        "line": 272,
+        "scope": 296
+      },
+      "revision": "f39d0999392236970bec1f01cbb670a4f4e088db",
+      "scopes_source": "eval_corpus.annotation_scopes"
+    },
+    {
+      "annotations": 72,
+      "classification_counts": {
+        "capability_out": 63,
+        "mapped": 9
+      },
+      "id": "pydocstyle-testcases",
+      "position_counts": {
+        "file": 72
+      },
+      "revision": "8d0cdfc93e86e096bb5753f07dc5c7c373e63837",
+      "scopes_source": "eval_corpus.annotation_scopes"
+    },
+    {
+      "annotations": 43,
+      "classification_counts": {
+        "capability_out": 16,
+        "mapped": 27
+      },
+      "id": "pep8-naming-testsuite",
+      "position_counts": {
+        "file": 11,
+        "line": 32
+      },
+      "revision": "1587bfe4ca73800d64a067580a8f6eb1b8dad209",
+      "scopes_source": "eval_corpus.annotation_scopes"
+    },
+    {
+      "annotations": 63,
+      "classification_counts": {
+        "capability_out": 62,
+        "mapped": 1
+      },
+      "id": "tryceratops-samples",
+      "position_counts": {
+        "line": 63
+      },
+      "revision": "ca149be9a5c6169b77bf70991d2f87661158d283",
+      "scopes_source": "eval_corpus.annotation_scopes"
+    },
+    {
+      "annotations": 0,
+      "classification_counts": {},
+      "id": "pyflakes-messages",
+      "position_counts": {},
+      "revision": "9f0a7f9c8feb4d086a918a708bb778b38ce7a248",
+      "scopes_source": "annotation.position_fallback"
+    },
+    {
+      "annotations": 0,
+      "classification_counts": {},
+      "id": "flake8-logging-tests",
+      "position_counts": {},
+      "revision": "ee5d482b790ce6b3bddca67f58be9dab8e1e2559",
+      "scopes_source": "annotation.position_fallback"
+    },
+    {
+      "annotations": 0,
+      "classification_counts": {},
+      "id": "isort-tests",
+      "position_counts": {},
+      "revision": "92c56855437785000527b70c1476d1ab75dd78fd",
+      "scopes_source": "annotation.position_fallback"
+    }
+  ],
+  "governance_eval_schema_version": "1.0",
+  "gv04": {
+    "denominator": 65,
+    "platform_attributable": {
+      "definition": "门槛用的分母：标注码在**同一次原始 ruff 诊断里真的出现过**（平台确实拿到过这条阳性证据）",
+      "denominator": 48,
+      "note": "tool_silent 的那部分（= 上游标注了、ruff 自己就没报）属于 L1a 的差，方案明说那不是平台的责任；把它算进门槛就是拿 L1a 解释 L1b",
+      "rate": 0.0,
+      "silent": 0
+    },
+    "rate_including_tool_differences": 0.0
+  },
+  "l1a": {
+    "diagnostics_matched": 187,
+    "diagnostics_total": 818,
+    "diagnostics_unmatched": 631,
+    "expectations_by_position": {
+      "file": {
+        "expectations": 83,
+        "matched": 15,
+        "rate": 0.18072289156626506,
+        "unmatched": 68
+      },
+      "line": {
+        "expectations": 474,
+        "matched": 48,
+        "rate": 0.10126582278481013,
+        "unmatched": 426
+      },
+      "scope": {
+        "expectations": 296,
+        "matched": 33,
+        "rate": 0.11148648648648649,
+        "unmatched": 263
+      }
+    },
+    "precision": 0.22860635696821516,
+    "recall_line": 0.10126582278481013
+  },
+  "l1b": {
+    "actual_pairs": 499,
+    "expected_pairs": 499,
+    "fn": 0,
+    "fp": 0,
+    "gv03_accuracy": 1.0,
+    "per_rule": [
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "DOC-002",
+        "sample_status": "no_external_labels",
+        "tp": 8
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "DOC-003",
+        "sample_status": "no_external_labels",
+        "tp": 4
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "DOC-004",
+        "sample_status": "no_external_labels",
+        "tp": 21
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 1,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "SEC-003",
+        "sample_status": "insufficient_sample",
+        "tp": 9
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 3,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "SEC-004",
+        "sample_status": "insufficient_sample",
+        "tp": 13
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 1,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "SEC-005",
+        "sample_status": "insufficient_sample",
+        "tp": 18
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 1,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "SEC-006",
+        "sample_status": "insufficient_sample",
+        "tp": 2
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 6,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "SEC-007",
+        "sample_status": "ok",
+        "tp": 28
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 1,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "SEC-008",
+        "sample_status": "insufficient_sample",
+        "tp": 18
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 3,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "SEC-012",
+        "sample_status": "insufficient_sample",
+        "tp": 36
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 2,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "SEC-014",
+        "sample_status": "insufficient_sample",
+        "tp": 25
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 2,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "SEC-015",
+        "sample_status": "insufficient_sample",
+        "tp": 16
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 1,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "SEC-018",
+        "sample_status": "insufficient_sample",
+        "tp": 1
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 1,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "SEC-019",
+        "sample_status": "insufficient_sample",
+        "tp": 1
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 1,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "SEC-022",
+        "sample_status": "insufficient_sample",
+        "tp": 1
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 2,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-001",
+        "sample_status": "insufficient_sample",
+        "tp": 3
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-002",
+        "sample_status": "no_external_labels",
+        "tp": 34
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 1,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-003",
+        "sample_status": "insufficient_sample",
+        "tp": 1
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-004",
+        "sample_status": "no_external_labels",
+        "tp": 24
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-006",
+        "sample_status": "no_external_labels",
+        "tp": 8
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-007",
+        "sample_status": "no_external_labels",
+        "tp": 9
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-008",
+        "sample_status": "no_external_labels",
+        "tp": 7
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 9,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-009",
+        "sample_status": "ok",
+        "tp": 12
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-010",
+        "sample_status": "no_external_labels",
+        "tp": 14
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 3,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-011",
+        "sample_status": "insufficient_sample",
+        "tp": 3
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-012",
+        "sample_status": "ok",
+        "tp": 10
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 5,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-014",
+        "sample_status": "ok",
+        "tp": 21
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 2,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-015",
+        "sample_status": "insufficient_sample",
+        "tp": 36
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 2,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-016",
+        "sample_status": "insufficient_sample",
+        "tp": 19
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 12,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-017",
+        "sample_status": "ok",
+        "tp": 63
+      },
+      {
+        "fn": 0,
+        "fp": 0,
+        "l1b_status": "measured",
+        "n": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "rule_id": "STYLE-018",
+        "sample_status": "no_external_labels",
+        "tp": 34
+      }
+    ],
+    "precision": 1.0,
+    "recall": 1.0,
+    "tp": 499
+  },
+  "platform": {
+    "policy_version": "decision-1.1",
+    "ruff_config_digest": "sha256:a047c99e66fa35c57101a3faa34032c870c3a122e326574406906c6b98d4625a",
+    "ruff_version": "0.14.13",
+    "rule_set_hash": "sha256:50202675b6ca401368bdd75ad67b440e66849f27faf237a2265043a8eaa4b33c"
+  },
+  "rules_without_external_labels": [
+    "SEC-001",
+    "SEC-002",
+    "SEC-009",
+    "SEC-010",
+    "SEC-011",
+    "SEC-017",
+    "SEC-021",
+    "STYLE-002",
+    "STYLE-005",
+    "STYLE-018"
+  ],
+  "suite": "fidelity",
+  "thresholds": {
+    "preregistered_on": "2026-10-07",
+    "schema_id": "governance-eval-thresholds/1",
+    "version": 1
+  },
+  "unmapped": null,
+  "verdicts": {
+    "corpus_available": true,
+    "corpus_files_measured": true,
+    "corpus_lock": true,
+    "coverage_tier_reconcile": true,
+    "granularity_declarations": true,
+    "gv01_precision_error": true,
+    "gv01_precision_overall": true,
+    "gv02_recall_per_rule": true,
+    "gv03_attribution_accuracy": true,
+    "gv04_silent_miss_rate": true,
+    "repo_scan_complete": true,
+    "ruff_available": true
+  }
+}

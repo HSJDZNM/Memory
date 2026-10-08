@@ -228,7 +228,10 @@ class EnforcementLedger:
 
         if self.grant_used(grant.grant_id):
             raise GrantError("授权已被使用：单次授权不得重复消费")
-        claim_id = f"{grant.grant_id}:{to_timestamp(now or utc_now())}"
+        # 认领身份必须**每次尝试唯一**：两个并发方可能拿到同一个 now（确定性时钟、
+        # 同一毫秒、测试注入），用时间戳推导会让双方写出逐字节相同的 claim_id，
+        # 于是下面"写入后复核"在两边都判自己赢，单次授权被消费两次。
+        claim_id = f"{grant.grant_id}:{uuid.uuid4().hex}"
         self.append({"kind": "grant_used", "grant_id": grant.grant_id, "claim_id": claim_id})
         winner = [
             item for item in self.of_kind("grant_used") if item.get("grant_id") == grant.grant_id
@@ -327,8 +330,15 @@ class EnforcementLedger:
                 "审批消费记录写入后读不回来：台账状态不可信，拒绝继续执行"
             )
         if index >= max_uses:
+            # 抢输的一方必须把自己的那一行还回去：它没有执行任何动作，却已经追加了一条
+            # approval_used。不释放的话这张审批的额度被永久烧掉一格（"已用 N/M" 的读数
+            # 也与真实执行数不符），修好原因后的重试会被误判成 approval_quota_exhausted。
+            # 归还失败会抛 LedgerError —— 那是失败关闭，调用方按台账不可用处理。
+            self.release_approval_use(
+                approval_id=approval_id, use_id=token, reason="approval_race_lost"
+            )
             return ApprovalUseClaim(
-                claimed=False, uses=index + 1, use_id=token, reason="approval_quota_exhausted"
+                claimed=False, uses=index, use_id=token, reason="approval_quota_exhausted"
             )
         return ApprovalUseClaim(claimed=True, uses=index + 1, use_id=token)
 

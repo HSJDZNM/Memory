@@ -211,11 +211,16 @@ class LangGraphEngine(BaseEngine):
                 config={"recursion_limit": limit},
             )
         except lg.GraphRecursionError:
+            # 进度都在 LangGraph 的通道里，入口状态什么都没有：失败状态必须长在执行器最后保存的
+            # 那份状态上，并落盘，否则恢复时看不见失败（会被读成 RUNNING 接着跑）。
+            base = self.executor.latest_state(state)
             failure = FailureRef(
                 code=FailureCode.LIMIT_NODE_RUNS,
-                node=state.stage,
+                node=base.stage,
                 detail="LangGraph 递归上限触发：停止自调用",
             )
-            return state.replace(status=RunStatus.NEEDS_HUMAN, failure=failure)
+            final = base.replace(status=RunStatus.NEEDS_HUMAN, failure=failure)
+            self.executor.save(final)
+            return final
         payload = channels["state"] if isinstance(channels, Mapping) else channels.state
         return GraphState.model_validate(dict(payload))

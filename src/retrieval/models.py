@@ -53,6 +53,7 @@ __all__ = [
     "QueryError",
     "QueryFilters",
     "QueryPlan",
+    "QuarantineOrigin",
     "QuarantinedChunk",
     "ResolvedEntry",
     "RetrievalError",
@@ -75,7 +76,10 @@ __all__ = [
 ]
 
 # 索引结构版本：SQLite schema 或分块语义变化时必须递增，旧库直接拒绝打开。
-INDEX_SCHEMA_VERSION = "1"
+# 1 -> 2（2026-10-08）：quarantined_chunks 增加 origin 列——隔离记录必须能区分
+# "清单声明"与"运行期操作"，两者的解除条件不同（前者随清单移除释放，后者只能由
+# 运维显式解除）。旧库缺这一列，只能拒绝打开并重建。
+INDEX_SCHEMA_VERSION = "2"
 # 分块器版本：参与 document 的"是否需要重新分块"判断，改动分块语义必须递增。
 CHUNKER_VERSION = "markdown-sections-2"
 
@@ -596,14 +600,27 @@ class IndexRunRecord(StrictModel):
     note: Optional[str] = None
 
 
+class QuarantineOrigin(str, Enum):
+    """隔离记录的来源：清单声明 / 运行期操作。
+
+    两者必须区分：清单是"清单类隔离"的唯一事实来源（清单里删掉就释放），而运行期隔离
+    只能由运维显式解除——否则下一次 ingest 会把安全隔离悄悄放回索引。
+    取值缺省是 RUNTIME（失败关闭）：来源不明的记录按"不可被清单自动释放"处理。
+    """
+
+    MANIFEST = "manifest"
+    RUNTIME = "runtime"
+
+
 class QuarantinedChunk(StrictModel):
-    """被隔离的 chunk 记录：保留原因与当时的文本哈希，供审计与自动失效。"""
+    """被隔离的 chunk 记录：保留原因、当时的文本哈希与来源，供审计与自动失效。"""
 
     chunk_id: str
     document_id: str
     text_hash: str
     reason: str
     quarantined_at: str
+    origin: QuarantineOrigin = QuarantineOrigin.RUNTIME
 
 
 class AccessScope(StrictModel):

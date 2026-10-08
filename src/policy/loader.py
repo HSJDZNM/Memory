@@ -120,8 +120,16 @@ def collect_rule_files(
 
     repo_anchor = Path(repo_root) if repo_root is not None else None
     discovered: list[tuple[str, Path]] = []
+
+    def _on_walk_error(error: OSError) -> None:
+        # os.walk 的 onerror 默认是 None：底层 scandir 失败（无权限、目录刚被删）会被
+        # **静默忽略**，于是"规则目录里少读了几条"和"规则集本来就只有这几条"长得一模一样。
+        # 规则集是判定的唯一依据，读不全就必须失败关闭（AGENTS.md 核心层约束第 3 条：
+        # 未知一律报错，不得静默忽略）。
+        raise LoaderError(f"规则目录不可读: {root_path} ({error})")
+
     try:
-        for directory, dirnames, filenames in os.walk(root_path):
+        for directory, dirnames, filenames in os.walk(root_path, onerror=_on_walk_error):
             dirnames[:] = sorted(name for name in dirnames if not name.startswith("."))
             for filename in sorted(filenames):
                 if filename.startswith("."):

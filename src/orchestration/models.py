@@ -246,12 +246,17 @@ REASON_CODES: Final[frozenset[str]] = frozenset(
     {REASON_APPROVAL_REQUIRED, REASON_POLICY_VIOLATION, REASON_EVIDENCE_UNAVAILABLE}
 )
 
-# 判定侧用这两类 evidence.kind + detail 表达「平台没能查」（不是代码缺陷）：
-# checkers.uncovered_checker_violation 写 kind="validator" + detail="uncovered_checker"，
-# blocker_violation 写 kind="validator" + detail="blocker"。它们改文件改不掉。
-UNREPAIRABLE_VIOLATION_DETAILS: Final[frozenset[str]] = frozenset(
-    {"uncovered_checker", "blocker"}
-)
+# 判定侧用 `evidence.kind` 表达「平台没能查」（不是代码缺陷）。**真实产出**只有两条：
+#   checkers.blocker_violation          → kind="validator"、value=验证器状态、detail=自由文本原因；
+#   checkers.uncovered_checker_violation → kind="validator"、value=checker 名、detail="uncovered_checker"。
+# 真正的规则违规写的是 checker 名（style_lint / failing_tests …）、"dependency"（含「依赖无法证明」）
+# 或 "context"。因此 kind 是"平台没能查"与"规则报了违规"之间**唯一稳定的结构化区别**。
+#
+# 为什么不是 detail：blocker 的 detail 是自由文本原因（checkers.py:399），拿它比受控取值永远比不中；
+# 而且 detail 根本没进 ViolationRef（client 只搬 kind/value）。老实现比的是 evidence_value ∈
+# {"uncovered_checker","blocker"}——两个取值平台都不会写进 value，于是真实载荷恒判 policy_violation：
+# 平台明明说"我没能查"，修复节点却按"规则报了违规"去改文件（H1 要防的正是这件事）。
+UNREPAIRABLE_EVIDENCE_KINDS: Final[frozenset[str]] = frozenset({"validator"})
 
 
 def decision_reason(
@@ -276,7 +281,7 @@ def decision_reason(
         return REASON_APPROVAL_REQUIRED
     if not violations:
         return None
-    if all(item.evidence_value in UNREPAIRABLE_VIOLATION_DETAILS for item in violations):
+    if all(item.evidence_kind in UNREPAIRABLE_EVIDENCE_KINDS for item in violations):
         return REASON_EVIDENCE_UNAVAILABLE
     return REASON_POLICY_VIOLATION
 

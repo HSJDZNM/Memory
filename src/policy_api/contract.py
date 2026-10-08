@@ -18,7 +18,7 @@ from typing import Any, Mapping, Optional, Tuple
 
 from . import __version__
 from .config import ApiConfig
-from .errors import STATUS_BY_CODE, ErrorCode
+from .errors import ApiError, STATUS_BY_CODE, ErrorCode
 from .models import (
     API_SCHEMA_VERSION,
     DECISION_PAYLOAD_SCHEMA_VERSION,
