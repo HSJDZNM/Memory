@@ -276,7 +276,7 @@ for package in PACKAGES:
     assert not hit, f"{package} 反向依赖了入口层（含函数内延迟导入）：{sorted(hit)}"
 
 
-def framework_importers(framework):
+def framework_importers(framework, *, root=SRC):
     """**平台运行时代码（`src/`）**里真的导入了某个框架的文件清单。
 
     含 importlib.import_module("框架…") 这种延迟导入。范围刻意只到 `src/`：`tools/` 与 `tests/`
@@ -284,24 +284,58 @@ def framework_importers(framework):
     框架是**有意为之**，不属于"平台运行时代码不许依赖 Web 框架"这句话的射程。
     """
 
-    def touches(node):
+    def callee_name(func):
+        """把调用目标渲染成点分名（`im` / `importlib.import_module`）。"""
+
+        parts = []
+        current = func
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if isinstance(current, ast.Name):
+            parts.append(current.id)
+        return ".".join(reversed(parts))
+
+    def dynamic_import_names(tree):
+        """本文件里"就是 importlib.import_module"的**本地名字**（含别名）。
+
+        `from importlib import import_module as im` 之后 `im("langgraph")` 同样是延迟导入工作流
+        框架，而只看 `func.id == "import_module"` 会整个漏掉——"框架导入点唯一"于是可能在别名
+        写法下被违反，检查却仍然是绿的。`src/validators/python_ast.py` 的依赖提取早就维护了同一张
+        别名表（`_MODULE_BINDINGS` + 文件内绑定名），这里是它的最小版本。
+        """
+
+        names = {"importlib.import_module"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and (node.module or "") == "importlib":
+                for alias in node.names:
+                    if alias.name == "import_module":
+                        names.add(alias.asname or "import_module")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "importlib":
+                        names.add((alias.asname or "importlib") + ".import_module")
+        return names
+
+    def touches(node, names):
         if isinstance(node, ast.Import):
             return any(alias.name.split(".")[0] == framework for alias in node.names)
         if isinstance(node, ast.ImportFrom):
             return (node.module or "").split(".")[0] == framework
-        if isinstance(node, ast.Call):
-            # import_module(...) 与 importlib.import_module(...) 两种写法都要认：
-            # 延迟导入框架时用的是前一种（from importlib import import_module）。
-            called = getattr(node.func, "attr", "") or getattr(node.func, "id", "")
-            if called == "import_module":
-                first = node.args[0] if node.args else None
-                return isinstance(first, ast.Constant) and str(first.value).startswith(framework)
+        if isinstance(node, ast.Call) and callee_name(node.func) in names:
+            first = node.args[0] if node.args else None
+            if not isinstance(first, ast.Constant) or not isinstance(first.value, str):
+                return False
+            # **按第一段精确比对**：`startswith` 会把 `import_module("langgraphx.graph")` 也算成
+            # 框架导入——将来真出现同前缀的包，就会误报"导入点唯一"被破坏。
+            return first.value.split(".")[0] == framework
         return False
 
     found = []
-    for path in sorted(SRC.rglob("*.py")):
+    for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        if any(touches(node) for node in ast.walk(tree)):
+        names = dynamic_import_names(tree)
+        if any(touches(node, names) for node in ast.walk(tree)):
             found.append(path.relative_to(REPO_ROOT).as_posix())
     return found
 
@@ -314,6 +348,39 @@ print("-" * 88)
 print(pad("Web 框架导入点（src/）", 24) + (", ".join(web) or "（无）"))
 print(pad("工作流框架导入点（src/）", 24) + (", ".join(workflow) or "（无）"))
 print()
+
+# **自证这把尺子**：上面两行是读数，而读数本身也得能被证明是活的——在本次独占的临时目录里造两个
+# 文件：一个用 `from importlib import import_module as im` 的别名写法（必须被认出），一个调用同前缀
+# 的包名 `langgraphx`（必须**不**被误认成 langgraph）。没有这一步，"导入点唯一"只是在今天这棵树上
+# 偶然成立，尺子对别名写法是不是瞎的没人知道。
+probe_root = REPO_ROOT / ".tmp" / "tech-detail" / "00" / "framework-probe"
+probe_pkg = probe_root / "policy_import_probe"
+probe_pkg.mkdir(parents=True, exist_ok=True)
+(probe_pkg / "__init__.py").write_text("", encoding="utf-8", newline="")
+(probe_pkg / "aliased.py").write_text(
+    """from importlib import import_module as im
+
+
+def load():
+    return im("langgraph.graph")
+""",
+    encoding="utf-8",
+    newline="",
+)
+(probe_pkg / "prefixed.py").write_text(
+    """from importlib import import_module
+
+
+def load():
+    return import_module("langgraphx.graph")
+""",
+    encoding="utf-8",
+    newline="",
+)
+probe_hits = framework_importers("langgraph", root=probe_root)
+expected_probe = (probe_pkg / "aliased.py").relative_to(REPO_ROOT).as_posix()
+assert probe_hits == [expected_probe], probe_hits
+print("自证：别名写法被认出、同前缀包名不被误认 →", probe_hits[0])
 
 # **在平台运行时代码（src/）里**：Web 框架只允许出现在传输层（policy_api），
 # 工作流框架只允许出现在编排层的引擎适配文件。这两句话的射程就是上面那次扫描的范围——
