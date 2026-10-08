@@ -10,7 +10,8 @@
     retriever.py  KnowledgeRetriever 端口与 FTS5 实现（来源、排名、方式、索引版本）
     vector.py     可替换的向量检索端口与确定性本地 embedding（对照评测用，默认不启用）
     context.py    Context Builder：去重、优先级重排、预算、引用 ID、"知识不可用"状态
-    cli.py        命令行入口：index / query / context / verify / stats / rules
+    cli.py        命令行入口：index / query / context / verify / stats / rules /
+                  quarantine（隔离已知恶意 chunk）/ vector（向量检索，对照评测用）
 
 约束（与 Phase 1 决策协议同级）：
 
