@@ -147,3 +147,18 @@ def test_long_headings_do_not_inflate_the_long_sentence_ratio(tmp_path, monkeypa
     problems = module.check_docs()
 
     assert not any("长句" in item for item in problems), problems
+
+def test_paragraph_starting_with_a_terminator_does_not_crash(tmp_path, monkeypatch):
+    """段落首字符就是句末标点：不许 AttributeError，照常给出读数。"""
+
+    (tmp_path / "doc.md").write_text(
+        "## 小节" + chr(10) + chr(10) + "。" + ("这一句其实是从标点开始的，很长很长。" * 3) + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+    monkeypatch.setattr(module, "ARCH", tmp_path)
+
+    problems = module.check_docs()  # 旧实现在这里抛 AttributeError
+
+    assert isinstance(problems, list)
+    assert module.SENTENCE.match("。开头") is None, "这条用例的前提：match 在这种输入上确实返回 None"
