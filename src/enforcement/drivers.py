@@ -486,11 +486,21 @@ def _run_process(
     else:
         # POSIX：独立会话 = 独立进程组，超时时 killpg(-pid) 一次带走整组。
         popen_kwargs["start_new_session"] = True
+    if working_directory is not None and not Path(working_directory).is_dir():
+        # 工作目录不存在时 Popen 在子进程里 chdir 失败、回报 ENOENT，旧实现把它说成
+        # "命令不可执行"——归因错了地方（要启动什么与在哪个目录启动必须分开写）。
+        # 自己先证明目录存在，其它启动失败（EACCES / NotADirectoryError …）也一律
+        # 翻成 DriverError，不让裸 OSError 破坏本模块的错误契约。
+        raise DriverError(
+            f"工作目录不存在或不是目录：{working_directory}（拒绝在证明不了的位置执行）"
+        )
     try:
         process = subprocess.Popen(list(argv), **popen_kwargs)
         _assign_windows_job(process)
     except FileNotFoundError as error:
         raise DriverError(f"命令不可执行：{error}") from error
+    except OSError as error:
+        raise DriverError(f"无法启动进程（{type(error).__name__}）：{error}") from error
 
     # 边跑边读、读到上限就只丢不存：communicate() 会先把整份输出缓冲进内存，
     # 一条 verbose（但仍在白名单里）的命令就能把执行进程的内存吃光——超时只限时间、不限产量。
@@ -680,6 +690,18 @@ def _terminate_windows_job(job: int) -> None:
         pass
 
 
+def python_executable() -> str:
+    """当前解释器路径：测试与示例用它构造确定性的 argv，而不是猜系统里有什么。"""
+
+    return sys.executable or "python"
+
+
+def environment_with(extra: Mapping[str, str]) -> dict[str, str]:
+    env = dict(os.environ)
+    env.update(extra)
+    return env
+
+
 def _close_windows_job(process: subprocess.Popen) -> None:
     job = getattr(process, "_enforcement_job_handle", None)
     if not job:
@@ -746,13 +768,4 @@ def default_drivers(*, shell: Sequence[str] | None = None) -> Mapping[DriverKind
     return drivers
 
 
-def python_executable() -> str:
-    """当前解释器路径：测试与示例用它构造确定性的 argv，而不是猜系统里有什么。"""
 
-    return sys.executable or "python"
-
-
-def environment_with(extra: Mapping[str, str]) -> dict[str, str]:
-    env = dict(os.environ)
-    env.update(extra)
-    return env

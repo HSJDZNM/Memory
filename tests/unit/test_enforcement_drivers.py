@@ -159,6 +159,25 @@ def test_timeout_ms_shortens_the_budget(tmp_root):
     assert result.exit_code is None
 
 
+def test_a_missing_workspace_is_reported_as_such_not_as_a_missing_command(tmp_root):
+    """工作目录不存在与命令不存在是两件事：归因必须落在正确的一侧。
+
+    Popen 在子进程里 chdir 失败时回报的是 ENOENT，照抄它会说成"命令不可执行"，
+    把读的人带偏到"运行时没装"。
+    """
+
+    from enforcement.drivers import ProcessDriver
+
+    _, spec, _workspace, build = _probe_setup(tmp_root)
+    request = build({"argv": _python("print(1)"), "description": "probe"})
+
+    with pytest.raises(DriverError) as error:
+        ProcessDriver().execute(request, spec, workspace=tmp_root / "nope")
+
+    assert "工作目录" in str(error.value), str(error.value)
+    assert "不可执行" not in str(error.value), str(error.value)
+
+
 def test_large_output_is_bounded_in_memory(tmp_root):
     """verbose 命令的输出不能先整份进内存再截断：读取时就要有上限。
 
