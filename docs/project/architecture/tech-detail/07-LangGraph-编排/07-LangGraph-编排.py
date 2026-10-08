@@ -936,7 +936,7 @@ print("小结：人工审批绑的是平台口径的 action_hash（覆盖 schema
 #    一律报错（不是忽略）。相同输入得到**逐字节相同**的状态——状态里没有墙钟字段。
 # 3. **checkpoint 是单文件 + 原子替换**：先写 `<task_id>.checkpoint.tmp` 再 `os.replace`，
 #    记录带 `state_digest` 与 `record_digest` 两道校验；它有自己的 `STATE_SCHEMA_VERSION`
-#    （当前 1.0，**不跟随平台阶段**）。副作用之前先写"意图"并立刻刷盘（`NodeContext.commit`），
+#    （**不跟随平台阶段**；具体取值见本章第一格打印的 `STATE_SCHEMA_VERSION`——正文写死版本号会随代码漂移，这里只留口径）。副作用之前先写"意图"并立刻刷盘（`NodeContext.commit`），
 #    恢复时才可能发现"开工未结算"。
 # 4. **恢复比的是"当前平台"的凭据**：规则集 / 索引变了 → `revalidate`（清掉旧 trace 与旧验证
 #    结果，回到检索节点重评，不沿用旧 allow）；工具 schema 变了 → `reapprove`（旧审批作废）；
