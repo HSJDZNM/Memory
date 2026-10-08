@@ -31,7 +31,10 @@ result / exit_code。
 **这一份不带 run**（2026-09-30 裁定①）：run 里是"本次运行"的标识，加上它 --json 就不再是输入的
 纯函数——而 CLI 包装层被要求"相同输入得到逐字节相同的输出"（AGENTS 第 19 条的同一条纪律），
 且当时没有任何消费方读它。所以这里显式 include_run=False：**同一份输入的两次 --json 逐字节相同**，
-由 tests/integration/test_cli.py 的 test_json_output_is_reproducible 钉住；文本输出本来就没有
+由 tests/integration/test_cli.py 的 test_json_output_is_reproducible 钉住——注意那条用例是带
+`--request-id req-fixed` 跑的，而**不给** --request-id 时 request_id 由 cli-<uuid4> 现生成
+（check.py 的 run()），它属于"输入"的一部分：默认路径的两次运行本来就不该逐字节相同，
+别把这条承诺读成"任何情况下都可复现"。文本输出本来就没有
 这两个字段。其余读数（端到端结果、只报告两处）保留 run。证据载荷**不能**带它——
 那两份要求"相同输入得到逐字节相同的证据"（21 号 §2.7）。
 
