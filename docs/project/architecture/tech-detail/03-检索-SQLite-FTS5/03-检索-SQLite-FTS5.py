@@ -395,11 +395,16 @@ from retrieval.query import fts_expression, fts_phrase, normalize_query_text, to
 RAW = '小步提交 NEAR("repo"*) OR secret:* ; DROP TABLE chunks -- 注入尝试'
 
 normalized, truncated = normalize_query_text(RAW, max_chars=policy.max_query_chars)
+# `truncated` 是这次规范化的**显式读数**，不是"没超上限"的推断：这段 RAW 远短于上限
+# （`policy.max_query_chars` = 200），所以它必须是 False。把它断言出来，
+# "该截断却没截"与"不该截断却截了"两个方向都会红；下面长查询那一格的 `was_clipped`
+# 断言的是另一个方向（该截断时必须为 True）。
+assert truncated is False, f"这段查询只有 {len(RAW)} 字符，不该被截断：truncated={truncated}"
 terms = tokenize(normalized)
 expression = fts_expression(terms)
 
 print("原始文本  :", RAW)
-print("规范化后  :", normalized)
+print("规范化后  :", normalized, "| truncated =", truncated)
 print("受控词项  :", terms)
 print("FTS 表达式:", expression)
 print()
