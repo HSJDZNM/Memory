@@ -202,13 +202,32 @@ def start_server(runtime: Any, port: int) -> Any:
     server = uvicorn.Server(
         uvicorn.Config(create_app(runtime), host=HOST, port=port, log_level="warning")
     )
-    thread = threading.Thread(target=server.run, name="phase7-api", daemon=True)
+    # 线程里的异常（最常见的是端口在 free_port() 之后被别的进程抢走 → bind 失败）必须带回
+    # 主线程：否则只能干等 20s 再报"未能在 20s 内启动"，把真正的失败原因吞掉。
+    failure: list[BaseException] = []
+
+    def _serve() -> None:
+        try:
+            server.run()
+        except BaseException as error:  # noqa: BLE001 - 线程边界：异常只作读数，原样再抛
+            failure.append(error)
+            raise
+
+    thread = threading.Thread(target=_serve, name="phase7-api", daemon=True)
     thread.start()
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         if getattr(server, "started", False):
             return server
+        if failure:
+            break
         time.sleep(0.05)
+    if failure:
+        raise RuntimeError(
+            "uvicorn 起不来（%s: %s）——端口 %d 可能在 free_port() 之后被别的进程抢走；"
+            "uvicorn 自己的 ERROR 行在同一次运行的 stderr 里"
+            % (type(failure[0]).__name__, failure[0], port)
+        )
     raise RuntimeError("uvicorn 未能在 20s 内启动")
 
 
