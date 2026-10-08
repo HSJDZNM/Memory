@@ -127,9 +127,19 @@ def catalog():
             para = art.find("p")
             summary = _norm(para.get_text(" ", strip=True)) if para is not None else ""
             summary = re.sub(r"\s*Learn\s*more\s*$", "", summary).strip()
+            slug = link["href"].rstrip("/").rsplit("/", 1)[-1] if link is not None else ""
+            title = _norm(link.get_text(" ", strip=True)) if link is not None else ""
+            if not slug or not title:
+                # 单张卡片畸形（h4 改名、标题链接消失）不能让整页**静默缩水**：rows 少一条，
+                # 而空 slug 还会被 pages() 拼成 https://dora.dev/capabilities// 与 unlabeled/.md，
+                # 既造出不存在的页面、又让"能力清单只剩 N 张"看起来像站点真的少了一张。
+                # 只有整页为空才报错是不够的——那一张卡片才是结构漂移的现场。
+                raise RuntimeError(
+                    "能力目录页有卡片解析不出标题或链接（站点结构可能已变）: " + CATALOG_URL
+                )
             rows.append({
-                "slug": (link["href"].rstrip("/").rsplit("/", 1)[-1] if link is not None else ""),
-                "title": _norm(link.get_text(" ", strip=True)) if link is not None else "",
+                "slug": slug,
+                "title": title,
                 "model": label if label in ("core", "ai") else "",
                 "model_href": (badge["href"] if badge is not None else ""),
                 "summary": summary,
