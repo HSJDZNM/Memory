@@ -575,11 +575,10 @@ class Adapter:
         if file is None:
             # 没有文件维度的动作（执行类工具）：以工作区根为范围，规则按 layer 匹配。
             file = "."
-            layer = self.layer_for(file) or (
-                None
-                if self.config.default_layer is None
-                else canonical_identifier(self.config.default_layer)
-            )
+            # layer_for() 内部已经回落到 default_layer（并做同一套 canonical_identifier），
+            # 这里再抄一遍是死代码：两份实现一旦漂移，声明了 default_layer 的配置就会出现
+            # "同一路径两个层"。默认层只认 layer_for 那一处。
+            layer = self.layer_for(file)
         else:
             layer = self.layer_for(file)
         if layer is None:
