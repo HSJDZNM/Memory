@@ -82,7 +82,10 @@ def tree_digest(root: Path) -> str:
     """树摘要：读不到就写 `unprovable`，绝不静默少算（方案 §3.1 的严格模式）。"""
 
     try:
-        from provenance.worktree import ProvenanceError, workspace_tree_digest
+        # 只导入真正要用的名字：多导入一个 `ProvenanceError`，会让"provenance.worktree 不再导出它"
+        # 这种与本次无关的变化也变成 ImportError，把树摘要记成 unprovable（下面的 except Exception
+        # 本来就能兜住它，所以那个名字既没用、又制造了脆弱耦合）。
+        from provenance.worktree import workspace_tree_digest
 
         return workspace_tree_digest(root).sha256
     except ImportError as error:  # pragma: no cover - 只有 src 不在路径上时
