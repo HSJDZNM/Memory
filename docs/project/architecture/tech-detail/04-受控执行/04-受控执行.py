@@ -399,6 +399,9 @@ approved = pre_execute(
     plain, registry=registry, ledger=ledger, sink=sink, approval=load_approval(APPROVAL_PATH)
 )
 grant = approved.decision.grant
+# `grant` 是 `Optional`（没有审批通过时是 None）：先自证它在，再读它的字段——否则"这次审批的
+# TTL 是多久"会以一句 `AttributeError: 'NoneType' object has no attribute 'expires_at'` 收场。
+assert grant is not None, "这次判定没有带审批（grant 为 None）"
 ttl = (grant.expires_at - grant.issued_at).total_seconds()
 print()
 print("审批通过:", approved.decision.decision.value, "/", approved.decision.reason_code.value,
@@ -461,6 +464,11 @@ outcome = executor.execute(
 effect = None if outcome.evidence is None else outcome.evidence.file("src/order.py")
 content_after = SOURCE_PATH.read_text(encoding="utf-8")
 
+# 两个 `Optional` **先自证再解引用**：`outcome.post`（这次执行有没有事后验证记录）与 `effect`
+# （证据里有没有这份文件的记录）。原来它们只在下文的断言里被检查，而**打印**已经先把字段读了
+# 一遍——读的人看到的会是 AttributeError，而不是"这次执行缺少事后验证"。
+assert outcome.post is not None, "这次执行没有事后验证记录（post 为 None）"
+assert effect is not None, "证据里没有 src/order.py 这份文件的记录"
 print("执行:", outcome.record.status.value, "/", outcome.record.reason_code.value,
       "| 驱动:", outcome.record.driver.value)
 print("事后验证:", outcome.post.status.value, "/", outcome.post.reason_code.value)
@@ -544,6 +552,8 @@ outcome_broken = executor.execute(
     broken, spec=registry.tool("fs.edit"), pre=pre_broken.decision, workspace=WORKSPACE
 )
 post = outcome_broken.post
+assert post is not None, "语法坏掉的那次执行没有事后验证记录（post 为 None）"
+assert post.rollback is not None, "这次执行没有回滚记录（rollback 为 None）"
 print("语法坏掉的一次编辑:", outcome_broken.record.status.value,
       "| 事后验证:", post.status.value, "/", post.reason_code.value)
 print("  回滚:", post.rollback.mode.value, "/", post.rollback.status,
