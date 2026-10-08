@@ -360,6 +360,22 @@ def test_module_index_maps_packages_and_modules() -> None:
     assert index.truncated is False
 
 
+def test_package_initializer_module_name_is_the_package() -> None:
+    """`__init__.py` 的模块名是它所在的包，不是 `pkg.__init__`（复核发现）。"""
+
+    result = dependencies_for("import os" + chr(10), target="src/shop/__init__.py")
+    assert result.module == "shop"
+    assert result.package == ("shop",)
+
+    nested = dependencies_for("import os" + chr(10), target="src/shop/sub/__init__.py")
+    assert nested.module == "shop.sub"
+    assert nested.package == ("shop", "sub")
+
+    # 普通模块照旧。
+    plain = dependencies_for("import os" + chr(10), target="src/shop/order_service.py")
+    assert plain.module == "shop.order_service"
+
+
 def test_relative_import_inside_a_package_initializer_stays_in_that_package() -> None:
     """`__init__.py` 里的相对导入必须展开到**它所在的包**，不是上一层、也不是顶层。
 

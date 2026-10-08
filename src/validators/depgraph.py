@@ -230,6 +230,21 @@ def _resolve_module(
     return DependencyResolution.EXTERNAL, None, "外部包 " + top
 
 
+def _module_name(target_path: str, package: Sequence[str]) -> Optional[str]:
+    """目标文件的模块名：包初始化器（`__init__.py`）的名字**就是它所在的包**。
+
+    旧实现一律用 Path(target_path).stem，于是 src/shop/__init__.py 的模块名成了
+    "shop.__init__"（叠加当时 package_of 的缺陷时甚至只剩 "__init__"）：所有读 module /
+    to_payload() 的消费方都拿到一个根本不存在的模块 id（复核发现）。仓库根的 __init__.py
+    没有包名可给，返回 None（说不出名字，好过编一个）。
+    """
+
+    stem = Path(target_path).stem
+    if stem != "__init__":
+        return ".".join([*package, stem])
+    return ".".join(package) or None
+
+
 def _relative_modules(
     fact_module: str, level: int, names: Sequence[str], package: Sequence[str]
 ) -> Tuple[Tuple[str, ...], Optional[str], str]:
@@ -416,8 +431,6 @@ def build_dependencies(
         unresolved=tuple(sorted(unresolved, key=lambda item: item.sort_key)),
         nodes=tuple(sorted(nodes)),
         edges=tuple(sorted(edges, key=lambda item: (item.source, item.target, item.kind))),
-        module=".".join([*absolute_package, Path(target_path).stem])
-        if package is not None
-        else None,
+        module=_module_name(target_path, absolute_package) if package is not None else None,
         package=absolute_package,
     )
