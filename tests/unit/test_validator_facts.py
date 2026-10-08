@@ -91,6 +91,33 @@ def test_read_source_rejects_paths_outside_the_workspace(tmp_root: Path) -> None
         assert "工作区" in str(error.value) or "逃出" in str(error.value)
 
 
+def test_a_local_module_shadowing_the_stdlib_is_internal() -> None:
+    """本地与标准库同名（types / test / email）时仍必须认成项目内（复核发现）。"""
+
+    from validators.depgraph import ModuleIndex, _resolve_module
+
+    index = ModuleIndex(
+        modules={"types": "src/types.py", "pkg.types": "src/pkg/types.py"},
+        top_levels=frozenset({"types", "pkg"}),
+        scanned=2,
+        truncated=False,
+    )
+    stdlib = frozenset({"types", "email", "test"})
+
+    resolution, path, reason = _resolve_module("types", index=index, stdlib=stdlib)
+    assert resolution.value == "internal", reason
+    assert path == "src/types.py"
+
+    # 子模块形态同样按精确模块名命中。
+    resolution, path, reason = _resolve_module("pkg.types", index=index, stdlib=stdlib)
+    assert resolution.value == "internal", reason
+    assert path == "src/pkg/types.py"
+
+    # 真正的标准库（索引里没有这个名字）照旧。
+    resolution, _, reason = _resolve_module("email", index=index, stdlib=stdlib)
+    assert resolution.value == "stdlib", reason
+
+
 def test_resolve_runtime_error_is_a_source_error(tmp_root: Path, monkeypatch) -> None:
     """resolve() 也会抛 RuntimeError（符号链接成环）：必须落 SourceError（复核发现）。"""
 

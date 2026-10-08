@@ -209,14 +209,18 @@ def _resolve_module(
 ) -> Tuple[DependencyResolution, Optional[str], str]:
     """解析一个绝对模块名。返回 (解析结果, 项目内路径, 原因)。"""
 
+    # **项目内优先**：本地完全可以有 types.py、test/、email/、code/ 这类与标准库同名的
+    # 包/模块，被 import 时那是一条真实的项目内依赖。先查标准库会把它归成 STDLIB、
+    # 静默丢掉这条边，而且连 unresolved 记录都不留（复核发现）。
+    path = index.modules.get(module)
+    if path is not None:
+        return DependencyResolution.INTERNAL, path, "项目内模块 " + module + " 指向 " + path
+
     top = module.split(".")[0]
     if top == "__future__":
         return DependencyResolution.STDLIB, None, "标准库 __future__"
     if top in stdlib:
         return DependencyResolution.STDLIB, None, "标准库 " + top
-    path = index.modules.get(module)
-    if path is not None:
-        return DependencyResolution.INTERNAL, path, "项目内模块 " + module + " 指向 " + path
     if top in index.top_levels:
         return (
             DependencyResolution.UNRESOLVED,
