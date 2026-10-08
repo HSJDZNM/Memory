@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Sequence, Tuple
 
 from policy.evidence import EvidenceLocation, ValidationEvidence, ValidatorStatus
 from policy.models import Rule

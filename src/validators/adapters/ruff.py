@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence, Tuple
+from typing import Any, Mapping, Sequence, Tuple
 
 from policy.evidence import EvidenceLocation, ValidationEvidence, ValidatorStatus
 from policy.models import Rule
