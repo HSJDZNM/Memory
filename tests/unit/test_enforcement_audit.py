@@ -346,6 +346,29 @@ def test_trace_replay_orders_the_chain_and_requires_a_final_decision(tmp_root):
     assert verify_chain(report.records) == ()
 
 
+def test_declared_post_without_pre_records_are_not_chain_defects(tmp_root):
+    """dsh 会为"没有经过 pre-check 的调用"写占位 POST_EVIDENCE：那是合法证据，不是链损坏。
+
+    这些记录（stage_note=post_without_pre / post_without_request）让 load_trace(...).ok
+    变成 False、CLI 以 EXIT_ERROR 收场——把"记下了一次未受治理的调用"读成"链被人动过"。
+    """
+
+    for note in ("post_without_pre", "post_without_request"):
+        sink = sink_for(tmp_root, name=f"{note}.jsonl")
+        sink.append(
+            AuditStage.POST_EVIDENCE,
+            payload={"stage_note": note, "tool": "edit"},
+            action_id="act-1",
+        )
+        assert verify_chain(sink.chain_records()) == (), note
+
+    # 反真空：没有这条声明的 POST_EVIDENCE 仍按"没有决策就不能有证据"拦下。
+    plain = sink_for(tmp_root, name="plain.jsonl")
+    plain.append(AuditStage.POST_EVIDENCE, payload={"status": "validated"}, action_id="act-2")
+    issues = verify_chain(plain.chain_records())
+    assert any("没有决策就不能有执行" in issue for issue in issues), issues
+
+
 def test_unanchored_records_are_not_collapsed_into_one_bucket(tmp_root):
     """同一 trace 下多个请求的记录不能共用一个桶：第二条请求会被误报"阶段顺序倒退"。
 

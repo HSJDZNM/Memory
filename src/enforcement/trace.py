@@ -39,6 +39,11 @@ STAGE_ORDER: tuple[AuditStage, ...] = (
 
 _STAGE_INDEX = {stage: index for index, stage in enumerate(STAGE_ORDER)}
 
+#: dsh 适配器为"没有经过 pre-check 的调用"写下的占位 POST_EVIDENCE 记录（stage_note）。
+#: 它们是**记录一次未受治理的调用**的合法证据（适配器写完还会抛错阻断这次调用），
+#: 不是"链被人动过"。值必须精确匹配——不认识的备注一律按链缺陷处理（失败关闭）。
+_UNGOVERNED_EVIDENCE_NOTES = frozenset({"post_without_pre", "post_without_request"})
+
 
 @dataclass(frozen=True)
 class TraceEntry:
@@ -141,7 +146,18 @@ def verify_chain(records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
         # 或写错的执行记录会从这条不变式下面溜走（旧实现正是白名单，属于失败打开）。
         status = str((record.payload or {}).get("status", ""))
         produced_effect = record.stage is AuditStage.EXECUTION and status != "refused"
-        if (produced_effect or record.stage is AuditStage.POST_EVIDENCE) and group not in decided:
+        # 例外只给"声明过自己是未受治理占位"的 POST_EVIDENCE 记录，且必须精确匹配备注值；
+        # 缺字段 / 拼错 / 未来新增的备注都照旧按"没有决策就不能有证据"报出来。
+        ungoverned_note = str((record.payload or {}).get("stage_note", ""))
+        exempt_evidence = (
+            record.stage is AuditStage.POST_EVIDENCE
+            and ungoverned_note in _UNGOVERNED_EVIDENCE_NOTES
+        )
+        if (
+            (produced_effect or record.stage is AuditStage.POST_EVIDENCE)
+            and group not in decided
+            and not exempt_evidence
+        ):
             issues.append(
                 f"#{index}: {group} 出现 {record.stage.value} 之前没有任何 pre_decision "
                 "（没有决策就不能有执行/证据记录）"
