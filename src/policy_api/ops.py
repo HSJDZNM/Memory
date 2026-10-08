@@ -63,6 +63,12 @@ def _check_tenant(runtime: "ApiRuntime", tenant_id: str) -> Mapping[str, Any]:
         )
     except ApiError as error:
         checks.append({"check": "rule_set", "ok": False, "detail": error.kind})
+    except Exception as error:  # noqa: BLE001 - **未预期**的错误也必须变成一条结论，不是让探针崩
+        # `LoadedTenant.rules()` 只把 LoaderError 包成 ApiError：枚举 / stat 规则文件时的 OSError
+        # （目录权限变了、磁盘掉了、文件被并发删掉）会原样逃出 `_check_tenant`，方向是 `/ready`
+        # 自己 500——运维读不到「哪个租户、哪一步出了问题」，而"探针崩了"与"服务不可用"是两回事。
+        # 与下面索引检查同一形态（那里捕的就是 `Exception`）。
+        checks.append({"check": "rule_set", "ok": False, "detail": type(error).__name__})
 
     if tenant.spec.retrieval is not None and tenant.spec.retrieval.enabled:
         if tenant.store_path is None or not tenant.store_path.is_file():
@@ -105,6 +111,8 @@ def _check_tenant(runtime: "ApiRuntime", tenant_id: str) -> Mapping[str, Any]:
             )
         except ApiError as error:
             checks.append({"check": "validators", "ok": False, "detail": error.kind})
+        except Exception as error:  # noqa: BLE001 - 同上：未预期异常记成结论，不逃给探针
+            checks.append({"check": "validators", "ok": False, "detail": type(error).__name__})
     else:
         # 没有声明验证器 = 该租户不提供"证据 + 判定"这一能力。这是**部署方的显式选择**：
         # 只要部署配置声明了 validators_available，readiness 就接受它；
