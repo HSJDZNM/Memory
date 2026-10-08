@@ -119,11 +119,23 @@ def _generic_event(key: str, text: str, tool: str = "edit") -> dict:
 
 
 def scenario_equivalent_decisions(adapters, runtime) -> Scenario:
-    """同一个语义动作在每个 Adapter 上得到同一个结论。"""
+    """同一个语义动作在每个 Adapter 上得到同一个结论。
 
+    遍历**传进来的** adapters（而不是模块级的 `AGENTS` 常量）：后者让这个参数变成摆设，
+    装配里少了一个适配器时场景照样按常量跑——"没装"于是被读成"通过了"。
+    """
+
+    if not adapters:
+        # 空集合上"每个 Agent 都被阻断"是**空真**：那不是通过，是没有任何可判定的对象。
+        return Scenario(
+            name="blocked-action-never-executes",
+            passed=False,
+            detail="装配里一个适配器都没有：没有可判定的对象（空真不是通过）",
+            facts={"agents": []},
+        )
     facts: dict[str, Any] = {"decisions": {}, "tool_calls": {}}
     ok = True
-    for index, agent in enumerate(AGENTS):
+    for index, agent in enumerate(adapters):
         if agent == "dsh":
             raw = _dsh_event(f"eq-{index}", "c1", VIOLATING)
         elif agent == "generic-json":
@@ -155,6 +167,15 @@ def scenario_equivalent_decisions(adapters, runtime) -> Scenario:
 
 
 def scenario_allow_executes_once(adapters, runtime) -> Scenario:
+    if "dsh" not in adapters:
+        # 这个场景的前提是"装配里真的有 dsh"：旧写法不看 adapters 就往下跑，少装一个适配器
+        # 也照样给出结论。前提不成立时如实报 not-passed，而不是让它撞进别的分支或悄悄通过。
+        return Scenario(
+            name="allowed-action-executes-exactly-once",
+            passed=False,
+            detail="装配里没有 dsh 适配器：本场景的前提不成立（这不是通过）",
+            facts={"agents": sorted(adapters)},
+        )
     calls: list[Any] = []
     outcome = runtime.handle("dsh", _dsh_event("allow-1", "c1", CLEAN), execute=calls.append)
     replay = runtime.handle("dsh", _dsh_event("allow-1", "c1", CLEAN), execute=calls.append)
