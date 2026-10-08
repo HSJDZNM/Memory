@@ -867,8 +867,15 @@ def stale_reason(reports: Sequence[Path]) -> str | None:
     newest = newest_test_input()
     if newest is None:
         return None
-    oldest = min(reports, key=lambda path: path.stat().st_mtime)
-    stamp = oldest.stat().st_mtime
+    stamps: list[tuple[float, Path]] = []
+    for path in reports:
+        try:
+            stamps.append((path.stat().st_mtime, path))
+        except OSError as error:
+            # report_paths() 只证明"当时存在"；到这一步之间报告可能被删或被移走
+            # （CI 产物清理、并发跑）。读不出就退回真跑一遍，而不是让异常打挂调用方。
+            return 'junit 报告读不出（%s）：%s' % (error, _display_path(path))
+    stamp, oldest = min(stamps, key=lambda item: item[0])
     if stamp + FRESHNESS_TOLERANCE_SECONDS < newest[0]:
         return '%s 早于最新的测试输入 %s（报告 %s，输入 %s）' % (
             _display_path(oldest),
