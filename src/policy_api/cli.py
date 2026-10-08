@@ -19,7 +19,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 from .config import ApiConfig, ConfigError, hash_token, load_api_config
 from .errors import ApiError
