@@ -272,3 +272,30 @@ def test_non_canonical_dates_are_refused(tmp_root):
         _write(tmp_root, _document(_entry_with(expires_at="'2026-12-31'")))
     )
     assert scope.as_json()["declared"] == 1
+
+def test_tree_ref_must_be_a_pointer_or_outside_marker(tmp_root):
+    """#9：tree_ref 只放指针（仓库相对路径 / <outside-workspace>），且与 governs_tree 不矛盾。
+
+    修复前这一条只写在注释里：绝对路径、路径穿越、一段说明文字、以及
+    governs_tree=self + tree_ref 的自相矛盾声明都能原样加载。
+    """
+
+    for bad in ("/etc/passwd", "../../etc/passwd", "docs/../etc/passwd", "这是一段说明文字", "has space/x"):
+        with pytest.raises(WiringScopeError) as error:
+            load_wiring_scope(
+                _write(tmp_root, _document(_entry_with(tree_ref=f"'{bad}'", governs_tree="other")))
+            )
+        assert "tree_ref" in str(error.value), error.value
+
+    with pytest.raises(WiringScopeError) as error:
+        load_wiring_scope(
+            _write(tmp_root, _document(_entry_with(tree_ref="'docs/x.md'", governs_tree="self")))
+        )
+    assert "governs_tree" in str(error.value), error.value
+
+    # 反真空：合法指针（仓库相对路径 / 工作区外标记）照常加载。
+    for good in ("docs/policies/x.md", "<outside-workspace>"):
+        scope = load_wiring_scope(
+            _write(tmp_root, _document(_entry_with(tree_ref=f"'{good}'", governs_tree="other")))
+        )
+        assert scope.as_json()["declared"] == 1
