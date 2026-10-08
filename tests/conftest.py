@@ -171,9 +171,11 @@ def write_dsh_config(
         "registry_approved": str(REPO_ROOT / "registry" / "tool-registry.approved.json"),
     }
     document.update(overrides)
+    # overrides 里给 None = "删掉这个键"（某个用例要测"没声明它"时用）。上面那份默认值里
+    # 没有一个是 None，所以 document 里的 None 只可能来自 overrides——旧写法多判了一次
+    # `key in overrides`，那个条件恒真，是死逻辑（读的人还会以为默认值里可能有 None）。
     for key in [key for key, value in document.items() if value is None]:
-        if key in overrides:
-            document.pop(key)
+        document.pop(key)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.safe_dump(document, allow_unicode=True, sort_keys=False), encoding="utf-8"
