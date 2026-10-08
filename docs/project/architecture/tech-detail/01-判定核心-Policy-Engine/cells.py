@@ -247,6 +247,11 @@ print("-" * 118)
 reasons = {item.rule_id: item.reasons[0] for item in verdict.skipped_rules}
 checkers_of = {rule.canonical_id: rule.enforcement.checker for rule in RULES.rules}
 for rule_id in ("DOC-001@1", "STYLE-001@1", "TESTING-001@1"):
+    # 先确认这两张表里真的有它：直接 `checkers_of[rule_id]` / `reasons[rule_id]` 在规则漂移
+    # （改 id、改 checker、改跳过口径）时只给出一句裸的 KeyError，而这里想说的是"这条规则本该
+    # 因为缺验证器证据被跳过"——读的人得先猜是哪张表、哪个键。
+    assert rule_id in checkers_of, (rule_id, sorted(checkers_of))
+    assert rule_id in reasons, (rule_id, sorted(reasons))
     print(pad(rule_id, 14) + pad(checkers_of[rule_id], 22) + reasons[rule_id])
 
 # 四条断言把"跳过"的语义钉住。
