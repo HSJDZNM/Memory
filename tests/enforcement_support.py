@@ -253,6 +253,14 @@ def write_registry(
     registry_path = root / "registry" / "tool-registry.yaml"
     approved_path = root / "registry" / "tool-registry.approved.json"
     registry_path.parent.mkdir(parents=True, exist_ok=True)
+    if document is not None and tools is not None:
+        # 两个来源都给时 document 优先、tools 被静默丢掉：write_registry(root, document=doc,
+        # tools=custom) 会写出一份**不含 custom** 的注册表，而调用方以为它就在里面——
+        # 之后的失败会出现在很远的地方（"这个工具不在注册表里"）。只允许一个来源。
+        raise ValueError(
+            "write_registry 同时收到 document= 与 tools=：document 优先会把 tools 静默丢掉，"
+            "请只给一个（要改默认工具表就传 document=registry_document(tools=...)）"
+        )
     payload = registry_document(tools=tools) if document is None else document
     registry_path.write_text(
         yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8", newline=""
