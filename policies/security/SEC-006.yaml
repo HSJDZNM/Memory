@@ -14,7 +14,8 @@
 #   ① 误报（重要）：`yaml.load(stream, Loader=_StrictLoader)`，其中
 #      `class _StrictLoader(yaml.SafeLoader)`，**仍报** S506——工具只比对 Loader 实参是不是
 #      字面 `SafeLoader`，不看继承关系；而子类化 SafeLoader 再加映射构造钩子，恰恰是本仓库
-#      自己的加固写法（src/enforcement/registry.py:67,375 与 src/adapters/dsh/adapter.py:372,568），
+#      自己的加固写法（实测 2026-10-08：src/enforcement/registry.py:69,466 与
+#      src/adapters/dsh/adapter.py:709,1013——两处的行号都随文件生长移过位），
 #      这两个安全实现会被本规则误判。需要豁免时走 validation/ruff.toml 的 per-file-ignores
 #      显式豁免（本仓库既有的显式豁免口径，见 STYLE-005 的同款说明）。
 #   ② 漏判：`yaml.unsafe_load`、`yaml.full_load`、`yaml.load_all` **都不报**——最危险的
