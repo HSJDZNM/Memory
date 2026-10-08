@@ -145,3 +145,51 @@ def test_install_reports_when_there_is_no_work_tree(tmp_root, monkeypatch, capsy
 
     assert module.main([]) == 2
     assert "不是 git 工作树" in capsys.readouterr().err
+
+
+def _prepare(module, monkeypatch, repo: Path):
+    hooks = repo / ".git" / "hooks"
+    monkeypatch.setattr(module, "ROOT", repo)
+    monkeypatch.setattr(module, "hooks_dir", lambda: hooks)
+    return hooks / "pre-push", hooks / "pre-push.install-hooks.bak"
+
+
+def test_a_foreign_hook_is_backed_up_under_our_own_name(tmp_root, monkeypatch):
+    """备份用**本脚本专用**的名字，且真的存下那份外来钩子（旧写法只认 `pre-push.bak`）。"""
+
+    module = _load()
+    hook, backup = _prepare(module, monkeypatch, _fake_repo(tmp_root))
+    hook.write_text("#!/bin/sh\necho 用户的钩子\n", encoding="utf-8")
+
+    assert module.main([]) == 0
+
+    assert backup.is_file()
+    assert "用户的钩子" in backup.read_text(encoding="utf-8")
+    assert module.MARKER in hook.read_text(encoding="utf-8"), "装上的必须是本脚本生成的钩子"
+
+
+def test_a_second_foreign_hook_is_not_overwritten_when_a_backup_exists(
+    tmp_root, monkeypatch, capsys
+):
+    """备份已存在时**拒绝**覆盖另一份外来钩子：否则备份与"被替换掉的东西"对不上。"""
+
+    module = _load()
+    hook, backup = _prepare(module, monkeypatch, _fake_repo(tmp_root))
+    backup.write_text("#!/bin/sh\necho 更早的一份\n", encoding="utf-8")
+    hook.write_text("#!/bin/sh\necho 另一份外来钩子\n", encoding="utf-8")
+
+    assert module.main([]) == 2
+    assert "备份已存在" in capsys.readouterr().err
+    assert "另一份外来钩子" in hook.read_text(encoding="utf-8"), "不许静默覆盖"
+
+
+def test_uninstall_refuses_to_touch_a_hook_it_did_not_install(tmp_root, monkeypatch, capsys):
+    """卸载只动**自己装的**钩子：旧写法会把不相干的 .bak 搬回来盖住别人的钩子、或直接删掉它。"""
+
+    module = _load()
+    hook, _backup = _prepare(module, monkeypatch, _fake_repo(tmp_root))
+    hook.write_text("#!/bin/sh\necho 别人的钩子\n", encoding="utf-8")
+
+    assert module.main(["--uninstall"]) == 2
+    assert hook.is_file(), "不是本脚本装的钩子不许删"
+    assert "不是本脚本装的" in capsys.readouterr().err

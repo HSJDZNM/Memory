@@ -21,7 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HOOK_NAME = "pre-push"
-BACKUP_NAME = "pre-push.bak"
+BACKUP_NAME = "pre-push.install-hooks.bak"  # 本脚本专用名：不再与用户/别的工具的 pre-push.bak 撞名
 
 SCRIPT = """#!/bin/sh
 # 由 tools/install_hooks.py 生成；不要手改，改 tools/ci_local.py。
@@ -75,6 +75,23 @@ def hooks_dir() -> Path | None:
     return directory if directory.is_absolute() else (ROOT / directory)
 
 
+MARKER = "# 由 tools/install_hooks.py 生成；不要手改，改 tools/ci_local.py。"
+
+
+def is_ours(path: Path) -> bool:
+    """这个钩子是不是**本脚本装的**：只认生成标记，不看文件名、也不看备份在不在。
+
+    旧写法没有任何归属校验：只要存在任意一个 `pre-push.bak` 就跳过备份（于是用户的或别的工具
+    留下的备份会把"当前这个 pre-push 没有被备份"这件事掩盖掉，覆盖后无从还原），卸载时还会把
+    那个不相干的 .bak 搬回来盖住当前钩子、或删掉一个不是本脚本装的钩子。
+    """
+
+    try:
+        return MARKER in path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
 def _sh_double_quoted(value: str) -> str:
     """把要放进 sh 双引号里的字面量转义（路径可能含 $、反引号、" 与反斜杠）。
 
@@ -119,6 +136,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.uninstall:
+        if hook.is_file() and not is_ours(hook):
+            print(
+                "当前 " + hook.name + " 不是本脚本装的：不动它（要删请自行处理）", file=sys.stderr
+            )
+            return 2
         if backup.is_file():
             shutil.move(str(backup), str(hook))
             print("已卸载，并还原了原来的 pre-push")
@@ -129,7 +151,16 @@ def main(argv: list[str] | None = None) -> int:
             print("没有安装钩子")
         return 0
 
-    if hook.is_file() and not backup.is_file():
+    if hook.is_file() and not is_ours(hook):
+        if backup.is_file():
+            # 我们只保存**第一次**看到的那份外来钩子（它就是用户的原始文件）。再遇到一份不同的
+            # 外来钩子时不能默默覆盖：那会让备份描述的东西与"被替换掉的东西"对不上。
+            print(
+                "当前 " + hook.name + " 不是本脚本装的，而备份已存在（" + backup.name + "）："
+                "继续安装会覆盖它，先自行处理后重试",
+                file=sys.stderr,
+            )
+            return 2
         shutil.copy2(str(hook), str(backup))
         print("已备份原来的 pre-push -> " + backup.name)
     hook.parent.mkdir(parents=True, exist_ok=True)
