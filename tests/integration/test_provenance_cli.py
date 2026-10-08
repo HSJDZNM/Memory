@@ -218,3 +218,29 @@ def test_a_non_object_peer_evidence_is_a_usage_error(
 
     assert completed.returncode == 2, completed.stderr
     assert "JSON 对象" in completed.stderr
+
+def test_an_unwritable_receipt_target_is_a_usage_error(
+    tmp_root: Path, sealed_project: Path
+) -> None:
+    """--out 写不出去（这里指向一个目录）= 回执没落地，是用法错误，不是判据 fail。
+
+    修复前：write_text 抛 OSError → traceback + 退出码 1（含义是"判据跑完了、是红的"），
+    而且"seal state:"那一行也一起丢了。
+    """
+
+    project = tmp_root / "project"
+    blocked = tmp_root / "receipt-as-directory"
+    blocked.mkdir()
+
+    completed = run_cli(
+        "seal",
+        "--root", str(project),
+        "--declaration", str(sealed_project),
+        "--out", str(blocked),
+        "--", sys.executable, "-c", "pass",
+    )
+
+    assert completed.returncode == 2, completed.stderr
+    assert "回执写不出去" in completed.stderr
+    # 结论行不能因为回执写不出去而消失：读的人仍然要知道判据的结论。
+    assert "seal state:" in completed.stderr
