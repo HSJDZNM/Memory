@@ -299,3 +299,21 @@ def test_tree_ref_must_be_a_pointer_or_outside_marker(tmp_root):
             _write(tmp_root, _document(_entry_with(tree_ref=f"'{good}'", governs_tree="other")))
         )
         assert scope.as_json()["declared"] == 1
+
+def test_channel_kinds_must_be_non_empty(tmp_root):
+    """#10：channel_kinds 的空键 / 空值会静默落到 undeclared，必须加载期拒绝。
+
+    修复前这个字段没有任何形状校验：空值不会报错，只会让该通道被判成"没有声明覆盖"。
+    """
+
+    for bad in ('{dsh-profile: ""}', '{"": agent_runtime}'):
+        text = _document(_entry_with()) + f"channel_kinds: {bad}\n"
+        with pytest.raises(WiringScopeError) as error:
+            load_wiring_scope(_write(tmp_root, text))
+        assert "channel_kinds" in str(error.value), error.value
+
+    # 反真空：合法映射照常加载（值可以与任何已声明的 kind 不同——那是"映射存在但暂无匹配
+    # 条目"的已承认状态，不在本用例的判据里）。
+    good = _document(_entry_with()) + "channel_kinds:\n  dsh-profile: agent_runtime\n"
+    scope = load_wiring_scope(_write(tmp_root, good))
+    assert scope.as_json()["channel_kinds"] == {"dsh-profile": "agent_runtime"}
