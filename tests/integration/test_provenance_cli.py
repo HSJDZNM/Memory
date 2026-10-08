@@ -194,3 +194,27 @@ def test_digest_still_reports_content_level_unprovable_as_seal_failure(
     assert completed.returncode == 3
     assert "unprovable" in completed.stderr
     assert "Traceback" not in completed.stderr
+
+def test_a_non_object_peer_evidence_is_a_usage_error(
+    tmp_root: Path, sealed_project: Path
+) -> None:
+    """peer-evidence 必须是 JSON 对象：数组 / 字符串形态要走用法错误（2），不是 traceback+1。
+
+    修复前：json.loads 照单收下，下游按映射取键时抛 AttributeError，进程以解释器默认的
+    退出码 1 结束——而 1 的含义是"判据跑完且是红的"，这里连判据都还没跑。
+    """
+
+    project = tmp_root / "project"
+    peer = tmp_root / "peer.json"
+    peer.write_text(json.dumps(["这不是一个对象"]) + chr(10), encoding="utf-8")
+
+    completed = run_cli(
+        "seal",
+        "--root", str(project),
+        "--declaration", str(sealed_project),
+        "--peer-evidence", str(peer),
+        "--", sys.executable, "-c", "pass",
+    )
+
+    assert completed.returncode == 2, completed.stderr
+    assert "JSON 对象" in completed.stderr
