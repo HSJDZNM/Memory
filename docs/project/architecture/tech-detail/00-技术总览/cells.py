@@ -296,9 +296,12 @@ def framework_importers(framework, *, root=SRC):
         框架，而只看 `func.id == "import_module"` 会整个漏掉——"框架导入点唯一"于是可能在别名
         写法下被违反，检查却仍然是绿的。`src/validators/python_ast.py` 的依赖提取早就维护了同一张
         别名表（`_MODULE_BINDINGS` + 文件内绑定名），这里是它的最小版本。
+
+        内置的 `__import__("langgraph")` 也算一条：它是同一件事的另一种写法，漏掉它等于给
+        "只在这一个导入点"留了一个后门。
         """
 
-        names = {"importlib.import_module"}
+        names = {"importlib.import_module", "__import__"}
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and (node.module or "") == "importlib":
                 for alias in node.names:
@@ -370,10 +373,20 @@ def load():
     encoding="utf-8",
     newline="",
 )
+(probe_pkg / "builtin.py").write_text(
+    """def load():
+    return __import__("langgraph.graph")
+""",
+    encoding="utf-8",
+    newline="",
+)
 probe_hits = framework_importers("langgraph", root=probe_root)
-expected_probe = (probe_pkg / "aliased.py").relative_to(REPO_ROOT).as_posix()
-assert probe_hits == [expected_probe], probe_hits
-print("自证：别名写法被认出、同前缀包名不被误认 →", probe_hits[0])
+expected_probe = sorted(
+    (probe_pkg / name).relative_to(REPO_ROOT).as_posix()
+    for name in ("aliased.py", "builtin.py")
+)
+assert probe_hits == expected_probe, probe_hits
+print("自证：别名写法与内置 __import__ 都被认出、同前缀包名不被误认 →", len(probe_hits), "个文件")
 
 # **在平台运行时代码（src/）里**：Web 框架只允许出现在传输层（policy_api），
 # 工作流框架只允许出现在编排层的引擎适配文件。这两句话的射程就是上面那次扫描的范围——
