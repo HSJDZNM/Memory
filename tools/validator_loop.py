@@ -207,7 +207,11 @@ def scenario_missing_tool_fails_closed() -> Scenario:
     (root / "validation" / "validators.yaml").write_text(
         yaml.safe_dump(document, allow_unicode=True, sort_keys=False), encoding="utf-8", newline=""
     )
-    config = load_config(root=REPO_ROOT, registry=root / "validation" / "validators.yaml")
+    # 补丁写在 root 下（copy 过去的 project/test-layout/ruff/mypy/pytest + 改过的 validators.yaml），
+    # 所以**加载也要锚在 root**：旧写法 `root=REPO_ROOT` 会让 `project.yaml` / `test-layout.yaml` /
+    # 各工具配置按仓库根去找——补丁只生效了一半，而场景名说的是"关键外部工具缺失"这一类
+    # 单一变量的实验。
+    config = load_config(root=root, registry=root / "validation" / "validators.yaml")
 
     report, result = decide(workspace, "src/shop/order_controller.py", config=config)
     blockers = [(item.validator, item.status.value) for item in report.blockers]
