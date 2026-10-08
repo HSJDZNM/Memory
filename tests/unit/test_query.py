@@ -199,6 +199,30 @@ def test_term_cap_truncates_and_flags() -> None:
     assert value.fts_expression == '"alpha" OR "beta" OR "gamma" OR "delta"'
 
 
+def test_term_cap_also_trims_the_reported_expansion_and_structural_terms() -> None:
+    """计划里广告的词项集合必须与生效词项一致（截断后不许留"幽灵词项"）。
+
+    旧行为：ordered 被裁到 max_query_terms，而 expanded_terms / structural_terms 原样保留，
+    于是计划里出现一批不在 terms / fts_expression 里的词——用它们做加权或解释的人会以为生效了。
+    """
+
+    policy = CorpusPolicy(max_query_terms=2)
+    value = build_plan(
+        RetrievalQuery(text="代码评审", module="order", language="Python"),
+        scope=SCOPE,
+        policy=policy,
+        lexicon=LEXICON,
+    )
+
+    assert value.truncated is True
+    assert len(value.terms) == 2
+    effective = set(value.terms)
+    assert set(value.expanded_terms) <= effective, value.expanded_terms
+    assert set(value.structural_terms) <= effective, value.structural_terms
+    for term in (*value.expanded_terms, *value.structural_terms):
+        assert f'"{term}"' in value.fts_expression, term
+
+
 def test_empty_text_produces_empty_plan() -> None:
     value = plan("   ")
     assert value.is_empty is True

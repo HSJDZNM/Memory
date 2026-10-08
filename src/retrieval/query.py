@@ -205,6 +205,12 @@ def build_plan(
     if len(ordered) > policy.max_query_terms:
         ordered = ordered[: policy.max_query_terms]
         truncated = True
+    # 截断之后，expanded_terms / structural_terms 必须与**生效的**词项一致：它们是计划的一部分
+    # （消费者用它们做加权、高亮与"为什么搜到这个"，而 fts_expression 只由 ordered 构造）。
+    # 不裁的话计划会广告一批不在 terms / 表达式里的词——读了它的人会以为这些词生效了。
+    effective = set(ordered)
+    expanded = tuple(term for term in expanded if term in effective)
+    structural = tuple(term for term in structural if term in effective)
 
     filters = QueryFilters(
         datasets=query.datasets,
