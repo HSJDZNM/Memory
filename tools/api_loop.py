@@ -46,6 +46,8 @@ FIXTURE_PROJECT = REPO_ROOT / "tests" / "fixtures" / "validators" / "project"
 TOKEN = "loop-alpha-token"
 OPS_TOKEN = "loop-ops-token"
 HOST = "127.0.0.1"
+# 关停时等 uvicorn 线程退出的上限：等它把在途请求做完，而不是睡固定的一小段就往下走。
+SERVER_SHUTDOWN_TIMEOUT_S = 5.0
 
 
 @dataclass
@@ -192,8 +194,12 @@ clients:
     return config
 
 
-def start_server(runtime: Any, port: int) -> Any:
-    """在后台线程起一个真实的 uvicorn（真端口、真协议），返回 server 句柄。"""
+def start_server(runtime: Any, port: int) -> tuple[Any, threading.Thread]:
+    """在后台线程起一个真实的 uvicorn（真端口、真协议），返回 (server, 线程句柄)。
+
+    线程句柄一起交出去：关停时才能真的**等**它把在途请求做完。旧写法只 sleep 0.2s，
+    超时场景留下的那次 0.5s 求值可能还在跑，进程一退就被当成 daemon 线程掐掉。
+    """
 
     import uvicorn
 
@@ -218,7 +224,7 @@ def start_server(runtime: Any, port: int) -> Any:
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         if getattr(server, "started", False):
-            return server
+            return server, thread
         if failure:
             break
         time.sleep(0.05)
@@ -647,7 +653,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     config_path = build_config(port)
     runtime = build_runtime(config_path, root=REPO_ROOT)
     readiness = runtime.readiness(force=True)
-    server = start_server(runtime, port)
+    server, server_thread = start_server(runtime, port)
     scenarios: list[Scenario] = []
     try:
         for scenario in SCENARIOS:
@@ -666,7 +672,14 @@ def main(argv: Optional[list[str]] = None) -> int:
                 )
     finally:
         server.should_exit = True
-        time.sleep(0.2)
+        # 等它真的退出（有上限）：固定睡 0.2s 只是"看起来关了"，在途请求可能还在跑。
+        server_thread.join(timeout=SERVER_SHUTDOWN_TIMEOUT_S)
+        if server_thread.is_alive():
+            print(
+                "提示：uvicorn 线程在 %.1fs 内没有退出（在途请求可能还没跑完），"
+                "进程退出时它会被当成 daemon 线程掐掉" % SERVER_SHUTDOWN_TIMEOUT_S,
+                file=sys.stderr,
+            )
 
     payload = {
         "phase": 7,
