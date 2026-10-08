@@ -197,15 +197,16 @@ def test_timeout_kills_the_whole_process_tree(tmp_root):
     from enforcement.drivers import ProcessDriver
 
     _, spec, workspace, build = _probe_setup(tmp_root)
-    spawned = tmp_root / "grandchild-spawned.txt"
-    marker = tmp_root / "grandchild-alive.txt"
-    grandchild = (
-        f"import time; time.sleep(2.0); open({str(marker)!r}, 'w').write('alive')"
-    )
+    # **片段里只能出现相对文件名**：注册表给 argv 的单个元素定了 max_item_chars=400，
+    # 内联绝对路径会让"这条用例过不过"取决于仓库/临时目录有多长（冻结 worktree 与更深的
+    # 检出目录都会红）。驱动的 cwd 就是受控工作区，相对名字足够。
+    spawned = "grandchild-spawned.txt"
+    marker = "grandchild-alive.txt"
+    grandchild = f"import time; time.sleep(2.0); open({marker!r}, 'w').write('alive')"
     parent = (
         "import subprocess, sys, time; "
         f"subprocess.Popen([sys.executable, '-c', {grandchild!r}]); "
-        f"open({str(spawned)!r}, 'w').write('1'); "
+        f"open({spawned!r}, 'w').write('1'); "
         "time.sleep(300)"
     )
     request = build({"argv": _python(parent), "description": "probe", "timeoutMs": 600})
@@ -214,10 +215,12 @@ def test_timeout_kills_the_whole_process_tree(tmp_root):
 
     assert result.status is ExecutionStatus.FAILED
     assert result.timed_out is True
-    assert spawned.is_file(), "孙子进程根本没起来：这条用例就会变成空测"
+    assert (workspace / spawned).is_file(), "孙子进程根本没起来：这条用例就会变成空测"
     # 比孙子进程的写入时刻再多等一秒：它活着就一定会写出标记文件。
     time.sleep(3.0)
-    assert not marker.exists(), "超时后孙子进程还活着并写了文件：整棵进程树没有被终止"
+    assert not (workspace / marker).exists(), (
+        "超时后孙子进程还活着并写了文件：整棵进程树没有被终止"
+    )
 
 
 def test_timeout_ms_above_the_registry_cap_is_refused(tmp_root):
