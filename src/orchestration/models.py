@@ -66,9 +66,16 @@ _MAX_PATH = 512
 
 
 class StrictModel(BaseModel):
-    """未知字段一律报错：编排状态与平台载荷之间不许有"悄悄多出来"的字段。"""
+    """未知字段一律报错，且**不可变**：编排状态与平台载荷之间不许有"悄悄多出来"或"被就地改掉"的字段。
 
-    model_config = ConfigDict(extra="forbid")
+    为什么 frozen 不是形式主义：本模块的文档一直声称 GraphState「是不可变的」，而
+    pydantic 默认 `validate_assignment=False`、也没有 frozen——`state.task_id = ...` 会**就地改掉**
+    一份已经落盘（或即将落盘）的快照，摘要与 checkpoint 的一致性校验随后对不上，
+    而"状态是值语义"正是整个恢复/重放设计的地基。节点与引擎本来就只用 `replace()` / `model_copy`，
+    所以这里改成真冻结不改变任何合法调用，只是把不合法的那种变成报错。
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 def canonical_digest(value: Any) -> str:

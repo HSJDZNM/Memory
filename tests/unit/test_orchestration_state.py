@@ -734,6 +734,32 @@ def test_client_accepts_plain_relative_paths(value: str) -> None:
     assert _is_relative(value) is True
 
 
+def test_state_models_are_frozen_in_practice() -> None:
+    """状态模型是**真**不可变：就地赋值必须报错。
+
+    文档一直承诺 GraphState「是不可变的」，而 pydantic 默认 `validate_assignment=False`、也没有 frozen——
+    `state.task_id = ...` 会就地改掉一份已经落盘（或即将落盘）的快照，摘要与 checkpoint 的一致性
+    校验随后对不上，而"状态是值语义"正是恢复/重放设计的地基。
+    """
+
+    state = empty_state("task-1")
+
+    with pytest.raises(ValidationError):
+        state.task_id = "task-2"
+    with pytest.raises(ValidationError):
+        state.status = RunStatus.BLOCKED
+    with pytest.raises(ValidationError):
+        state.validation = _summary_for_frozen_probe()
+
+    # 值语义照旧：replace() 返回新实例，原实例不动
+    assert state.replace(task_id="task-2").task_id == "task-2"
+    assert state.task_id == "task-1"
+
+
+def _summary_for_frozen_probe() -> ValidationSummary:
+    return ValidationSummary(decision=Decision.ALLOW, request_id="task-1:validation:0")
+
+
 def _change_artifact(index: int, path: str) -> ArtifactRef:
     return ArtifactRef(
         artifact_id=f"change:{index}",
