@@ -741,7 +741,11 @@ def evaluate(
             "mutation_id 缺失且 gap_note 缺失（含空白串）", str(table_error)
         )
     else:
-        bare = [row for row in rows if row.mutation_id is None and not row.gap_note_present]
+        # 空白串按**缺失**处理（与 gap_note_present、态③ 的 `if row.mutation_id`、
+        # objects.without_either 的 `not row.mutation_id` 同一个谓词）：
+        # 旧写法只判 `is None`，于是 `mutation_id: ""` 在这一格被算成"有自证"、在态③ 与
+        # checks[] 里被算成"没有"，同一份载荷自相矛盾（② 的计数因此少报红行）。
+        bare = [row for row in rows if not row.mutation_id and not row.gap_note_present]
         no_self_proof = _cell(
             status=STATUS_AVAILABLE,
             count=len(bare),

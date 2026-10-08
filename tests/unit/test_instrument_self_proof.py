@@ -139,6 +139,27 @@ def test_state_two_a_row_with_neither_mutation_nor_gap_note_is_red(tmp_root, cap
     restored = _evaluate(tmp_root, rows, capsys)
     assert restored["red_conditions"]["no_mutation_and_no_gap_note"]["count"] == 0
 
+def test_state_two_treats_a_blank_mutation_id_as_missing(tmp_root, capsys):
+    """`mutation_id: ""` 与 null 同口径：否则同一份载荷里三处谓词互相矛盾。
+
+    `_optional_text` 只拒非字符串，空白串会原样存下来；态③（`if row.mutation_id`）、
+    `checks[]` 与 `objects.without_either`（`not row.mutation_id`）都把它当缺失，
+    只有态② 旧写法判 `is None` —— 于是这一格少报红行、载荷自相矛盾。
+    """
+
+    rows = _rows()
+    target = rows[0]["check_id"]
+    mutated = copy.deepcopy(rows)
+    mutated[0]["mutation_id"] = ""  # 空白串：既不是 null，也不是可用的变异 id
+    mutated[0]["gap_note"] = None
+
+    payload = _evaluate(tmp_root, mutated, capsys)
+
+    cell = payload["red_conditions"]["no_mutation_and_no_gap_note"]
+    assert cell["count"] == 1, "空白 mutation_id 必须与 null 同口径"
+    assert [item["check_id"] for item in cell["items"]] == [target]
+    assert payload["objects"]["without_either"] == cell["count"], "对象侧与检查侧不许各说各话"
+
 
 # --- 态③ 按 mutation_id 取的补丁在影子树上打不上 ----------------------------------------
 
