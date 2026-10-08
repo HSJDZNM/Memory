@@ -51,6 +51,10 @@ jobs:
       # 它由验证器探针发现（版本区间在 validation/validators.yaml），这里只负责装一份。
       # 不装也能跑：需要它的规则会以 unavailable 失败关闭（这正是要证明的行为）。
       - name: Install external linter (ruff)
+        # 这个区间在 validation/validators.yaml 的 tool.ruff.version_requirement 里**也**写了一份
+        # （探针按那一份判「版本不符」→ unavailable → 需要它的规则 critical）。两处漂移的失效方式是
+        # 「CI 装了一个探针不认的版本，而本机门禁看不见 CI」。消除它要么让这一步从那份 YAML 读区间，
+        # 要么在一致性检查里加一条比对——两者都不在这条 low 的修复范围里，先把它写在这里。
         run: uv pip install "ruff>=0.6,<1"
 
       # 依赖锁、workflow 引用、工具清单是否漂移（退出码 1 即阻断）
