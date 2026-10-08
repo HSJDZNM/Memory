@@ -367,12 +367,31 @@ def test_an_incomplete_langgraph_is_unavailable_not_an_attribute_error(monkeypat
         _load()
 
 
+def test_the_recursion_limit_never_fires_before_the_budget(tmp_root) -> None:
+    """递归上限必须**大于**配置的节点预算：它不是预算，是后备。
+
+    旧实现写死 `min(max_node_runs + slack, 200)`：RunLimits.max_node_runs 允许到 500，
+    预算是 500 时 LangGraph 会在 ~200 步就抛 GraphRecursionError，被报成 LIMIT_NODE_RUNS /
+    NEEDS_HUMAN——参考引擎在同样输入下会继续跑，两个引擎的 RunReport 因此分叉。
+    """
+
+    executor = step_executor(tmp_root, name="recursion-limit")
+    engine = LangGraphEngine(executor=executor)
+
+    big = empty_state("limit-task", limits=RunLimits(max_node_runs=500))
+    assert engine._recursion_limit(big) > 500, "上限不能小于预算"
+
+    # 余量为负 = 把预算悄悄缩小：构造期就拒绝
+    with pytest.raises(NodeContractError):
+        LangGraphEngine(executor=executor, recursion_slack=-1)
+
+
 def test_a_spec_with_two_static_edges_leaving_one_node_is_rejected() -> None:
     """同源两条静态边必须被自检拒绝：两个引擎对它的行为不同（实测）。
 
     参考引擎按 spec 顺序取第一条（另一条静默丢掉，图变成一条走不通的路），
     LangGraph 因为两条边共用同一个分支名直接编译失败
-    （\`ValueError: Branch with name _static_choice already exists for node 'policy_retrieval'\`）。
+    （ValueError: Branch with name _static_choice already exists for node 'policy_retrieval'）。
     让两个引擎各自决定就等于"同一份 spec 两种语义"。
     """
 

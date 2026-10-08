@@ -126,6 +126,12 @@ class LangGraphEngine(BaseEngine):
         recursion_slack: int = 8,
     ) -> None:
         super().__init__(executor=executor, clock=clock)
+        if recursion_slack < 0:
+            # 负数会把配置好的节点预算**悄悄缩小**：预算是"允许跑多少步"，余量只能是余量。
+            raise NodeContractError(
+                f"recursion_slack 不能为负（得到 {recursion_slack}）："
+                "它会缩小配置的节点预算，而不是留出余量"
+            )
         if checkpointer is not None:
             # 显式拒绝，而不是"收下却跑不起来"：这个参数以前被原样交给 compile，而 invoke 从不带
             # configurable.thread_id——第一次驱动就会抛
@@ -226,10 +232,23 @@ class LangGraphEngine(BaseEngine):
         return choose
 
     # ------------------------------------------------------------------ 驱动
+    def _recursion_limit(self, state: GraphState) -> int:
+        """LangGraph 的递归上限从**配置的节点预算**推导（不再是写死的 200）。
+
+        为什么不能写死：RunLimits.max_node_runs 允许到 500，上限写成 200 会让"预算还没用完"的长任务
+        提前撞 GraphRecursionError，然后被报成 LIMIT_NODE_RUNS / NEEDS_HUMAN——而参考引擎在同样的
+        输入下会继续跑，两个引擎因此分叉（RunReport 应当是同一份）。
+        系数 2 是**实测余量**：一次节点执行在 LangGraph 里最多耗两个 superstep（节点本身 + 它的条件边），
+        实测 2 个节点需要 limit=3（比值 1.5），取 2 留余量。真正的预算仍由 charge_node_run 守——
+        这里是**后备**，只保证它不会比预算先响。
+        """
+
+        return max(1, 2 * (state.limits.max_node_runs + self.recursion_slack))
+
     def _drive(self, state: GraphState) -> GraphState:
         lg = _load()
         graph = self.build()
-        limit = min(state.limits.max_node_runs + self.recursion_slack, 200)
+        limit = self._recursion_limit(state)
         try:
             channels = graph.invoke(
                 {"state": state.payload(), "label": ""},
