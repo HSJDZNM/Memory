@@ -431,7 +431,9 @@ def _run(argv: list[str], *, cwd: Path, timeout: int = 900, env: dict | None = N
                 "stdout": completed.stdout, "stderr": completed.stderr,
                 "stdout_tail": completed.stdout[-4000:], "stderr_tail": completed.stderr[-2000:],
                 "timed_out": False}
-    except subprocess.TimeoutExpired as exc:
+    except subprocess.TimeoutExpired:
+        # 不绑定异常：这一档的理由由**配置的超时值**给出（"timeout after Ns"），比异常原文更准；
+        # 绑定一个没人用的名字只会让 ruff 的 F841 挂着（账外发现，见提交正文）。
         return {"exit_code": None, "seconds": round(time.time() - started, 2),
                 "stdout": "", "stderr": "", "stdout_tail": "",
                 "stderr_tail": "timeout after %ss" % timeout, "timed_out": True}
