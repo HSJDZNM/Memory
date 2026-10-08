@@ -311,9 +311,17 @@ def pre_markdown(res, spec, ctx, to_markdown):
         # 目录页：h1 与导语在 <main> 之外的 banner 区，按原顺序补回正文开头。
         # 源页面的导语写成 <p><p>…</p><p>…</p></p>（浏览器会自行纠正），故只取最内层段落，
         # 否则导语会被重复输出两遍。
+        banner_title = banner.find("h1")
+        if banner_title is None:
+            # 走到这里 = <main> 里没有 h1、banner 里也没有：站点结构漂移（例如标题标签改名）。
+            # 旧写法无条件 deref banner.find("h1")，畸形页面会以 AttributeError 收场——读的人
+            # 拿到的是"哪一行炸了"，而不是"哪一份页面变了"。标题随后要进 manifest，空标题比报错更糟。
+            raise RuntimeError(
+                "目录页的 h1 既不在 <main> 也不在 banner 区（站点结构可能已变）: " + _res_url(res)
+            )
         head = soup.new_tag("div")
         title_tag = soup.new_tag("h1")
-        title_tag.string = _norm(banner.find("h1").get_text(" "))
+        title_tag.string = _norm(banner_title.get_text(" "))
         head.append(title_tag)
         for p in [p for p in banner.find_all("p") if p.find("p") is None]:
             head.append(BeautifulSoup(str(p), "html.parser"))
