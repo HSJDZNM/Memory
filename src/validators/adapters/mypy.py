@@ -98,7 +98,11 @@ def run_mypy(
         tool=invocation,
         unmapped=unmapped,
         findings=len(evidence) + unmapped,
-        reason=None if evidence else "没有类型诊断",
+        # 状态仍是 OK（没有归属的诊断按设计不参与判定），但理由必须与**观测到的输出**一致：
+        # 解析出了诊断、只是没有一条归属到规则时，说"没有类型诊断"会与同一份记录里的 findings
+        # 计数自相矛盾（复核发现）。Ruff 适配器用的正是"有没有解析出诊断"这一口径
+        # （ruff.py：reason=None if document else "没有诊断"），两个适配器对同一种情形必须说同一句话。
+        reason=None if evidence or unmapped else "没有类型诊断",
     )
 
 

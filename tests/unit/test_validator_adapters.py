@@ -467,6 +467,24 @@ def test_ruff_treats_a_missing_tool_as_unavailable(tmp_root: Path) -> None:
         )
 
 
+def test_mypy_with_only_unowned_diagnostics_does_not_claim_there_were_none(tmp_root: Path) -> None:
+    """有诊断、只是没有一条归属到规则时，理由不能说"没有类型诊断"（复核发现）。"""
+
+    rule = make_checker_rule(
+        "TYPES-002",
+        checker="type_check",
+        body={"type_check": {"tool": "mypy", "codes": ["assignment"]}},
+    )
+
+    result = run_adapter("mypy", "findings", tmp_root, rules=(rule,))
+
+    assert result.status is ValidatorStatus.OK  # 没有归属的诊断按设计不参与判定
+    assert result.evidence == ()
+    assert result.unmapped >= 1
+    assert result.findings >= 1
+    assert result.reason is None, result.reason
+
+
 def test_mypy_maps_error_lines_and_counts_unowned_ones(tmp_root: Path) -> None:
     rule = make_checker_rule(
         "TYPES-001", checker="type_check", body={"type_check": {"tool": "mypy", "codes": ["return-value"]}}
