@@ -436,6 +436,12 @@ def unregistered_steps() -> list[str]:
     return sorted(set(missing))
 
 
+def quote_path(value: str) -> str:
+    """把解释器路径包成 shell 能整体识别的形式（cmd 与 POSIX sh 都认双引号）。"""
+
+    return chr(34) + value + chr(34)
+
+
 def _local_lines(run: str) -> list[str]:
     """把 CI 的 run 块翻译成本机可执行的行；顺带做"动作词白名单"。"""
 
@@ -449,7 +455,11 @@ def _local_lines(run: str) -> list[str]:
             continue
         # 只允许"调本项目脚本或模块"的动作，避免把任意 shell 塞进钩子
         if line.startswith(".venv/bin/python "):
-            line = PYTHON + " " + line[len(".venv/bin/python ") :]
+            # 解释器路径**必须带引号**：这一行随后交给 `shell=True`（cmd /c 或 sh -c），
+            # 路径里有空格（`C:\Program Files\...`，或仓库克隆在 `C:\Users\John Doe\...` 下）
+            # 会被 shell 从空格处切开，于是**每一步**都以"不是内部或外部命令"收场——
+            # 门禁红在一个与改动无关的地方，理由还指错对象（AGENTS 第 52 条同一条纪律）。
+            line = quote_path(PYTHON) + " " + line[len(".venv/bin/python ") :]
         lines.append(line)
     return lines
 
@@ -458,7 +468,7 @@ def _looks_unsafe(lines: list[str]) -> bool:
     joined = "\n".join(lines)
     if any(marker in joined for marker in BASH_ONLY_MARKERS):
         return True
-    return any(not line.startswith(PYTHON) for line in lines)
+    return any(not line.startswith((PYTHON, quote_path(PYTHON))) for line in lines)
 
 
 def temp_root() -> Path:
