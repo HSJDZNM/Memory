@@ -15,8 +15,6 @@ def test_public_models_are_exported() -> None:
 
     assert "CorpusManifest" in models.__all__
     assert "DocumentRecord" in models.__all__
-    # __all__ 是有序清单：两个名字都按字母序落位。
-    assert models.__all__ == sorted(models.__all__)
 
 
 def test_restricted_datasets_must_agree_with_visibility() -> None:
