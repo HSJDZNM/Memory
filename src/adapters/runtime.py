@@ -37,7 +37,6 @@ from typing import Any, Callable, Iterator, Mapping, Optional, Tuple
 from policy.evidence import EvidenceBundle
 from policy.engine import EngineError, evaluate
 from policy.models import (
-    SCHEMA_VERSION,
     Decision,
     Operation,
     PolicyContextError,
