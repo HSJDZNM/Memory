@@ -194,13 +194,31 @@ def tags(m):
     if mas.get(m["url"]): out.append("MASVS " + " ".join(sorted(mas[m["url"]])))
     return " | ".join(out) if out else "未收录于 OWASP 四大索引"
 
+# 预检：**先把每一份源文件读出来**，全都读得出来才删旧产物。
+# 旧实现是"先 rmtree(OUT) 再逐篇读 SRC"：SRC 缺失、半截或某一篇读不出来时，已发布的镜像
+# 要么被清空、要么在循环中途停下留半份，而且没有回滚——这正是"失败关闭"要避免的形状。
+sources = {}
+preflight = []
+for slug in sorted(set(sheets_saved) | set(indexes_saved)):
+    path = os.path.join(SRC, slug + ".md")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            sources[slug] = handle.read()
+    except (OSError, UnicodeDecodeError) as error:
+        preflight.append(path + "（" + type(error).__name__ + ": " + str(error) + "）")
+if preflight:
+    print("ERROR: 源文件预检失败（旧镜像保持原样，未删除）：")
+    for item in preflight:
+        print("  - " + item)
+    raise SystemExit(2)
+
 if os.path.isdir(OUT): shutil.rmtree(OUT)
 os.makedirs(OUT)
 
 written = []
 for slug, m in sorted(sheets_saved.items()):
     dst = dest_of(slug); os.makedirs(os.path.dirname(dst), exist_ok=True)
-    raw = open(os.path.join(SRC, slug + ".md"), encoding="utf-8").read()
+    raw = sources[slug]
     body = rewrite(raw, dst)
     folder = P[slug][0] + (os.sep + P[slug][1] if P[slug][1] else "")
     hdr = ("<!--\n" + "source: " + m["url"] + "\nfetched: " + TODAY +
@@ -213,7 +231,7 @@ for slug, m in sorted(sheets_saved.items()):
 
 for slug, m in sorted(indexes_saved.items()):
     dst = dest_of(slug); os.makedirs(os.path.dirname(dst), exist_ok=True)
-    body = rewrite(open(os.path.join(SRC, slug + ".md"), encoding="utf-8").read(), dst)
+    body = rewrite(sources[slug], dst)
     hdr = ("<!--\nsource: " + m["url"] + "\nfetched: " + TODAY + "\nkind: site-index\n-->\n\n")
     open(dst, "w", encoding="utf-8").write(hdr + body)
 
