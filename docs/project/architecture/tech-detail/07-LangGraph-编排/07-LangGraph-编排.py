@@ -89,26 +89,19 @@ TEMP = REPO_ROOT / ".tmp" / "tech-detail" / "07"
 shutil.rmtree(TEMP, ignore_errors=True)
 TEMP.mkdir(parents=True, exist_ok=True)
 
-import orchestration  # noqa: E402
 import orchestration_support as support  # noqa: E402
 from orchestration import langgraph_engine  # noqa: E402
 from orchestration.approvals import ApprovalGate  # noqa: E402
 from orchestration.checkpoint import JsonCheckpointStore, build_record, plan_resume  # noqa: E402
 from orchestration.errors import ResumeError  # noqa: E402
-from orchestration.client import (  # noqa: E402
-    DecisionOutcome,
-    PlatformReadiness,
-    RetrievalOutcome,
-    ScriptedPolicyClient,
-)
 from orchestration.errors import (  # noqa: E402
     STATUS_BY_CODE,
     EngineUnavailableError,
     NodeContractError,
     OrchestrationError,
 )
-from orchestration.graph import DEFAULT_SPEC, END, ROUTERS, GraphSpec, Router  # noqa: E402
-from orchestration.limits import LIMIT_RULES, LimitKind, charge  # noqa: E402
+from orchestration.graph import DEFAULT_SPEC, ROUTERS, GraphSpec, Router  # noqa: E402
+from orchestration.limits import LimitKind, charge  # noqa: E402
 from orchestration.models import (  # noqa: E402
     STATE_SCHEMA_VERSION,
     SUPPORTED_STATE_SCHEMA_VERSIONS,
@@ -121,11 +114,10 @@ from orchestration.models import (  # noqa: E402
     PlatformSnapshot,
     RunLimits,
     RunStatus,
-    StageStatus,
     empty_state,
 )
 from orchestration.nodes import Change, NodeContext, NodeOutcome, ScriptedAuthor, TaskSpec  # noqa: E402
-from orchestration.runtime import OrchestrationConfig, build_assembly, select_engine  # noqa: E402
+from orchestration.runtime import build_assembly, select_engine  # noqa: E402
 from orchestration.tools import PlatformToolRunner, RecordingToolRunner  # noqa: E402
 from policy.models import POLICY_VERSION, SCHEMA_VERSION, Decision  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
