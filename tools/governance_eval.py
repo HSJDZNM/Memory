@@ -2149,12 +2149,24 @@ def run_materialized(
             }
             if suite.context.corpus.operation:
                 context_payload["operation"] = suite.context.corpus.operation
-            context = build_context(context_payload, repo_root=workspace)
-            report = run_pipeline(
-                PipelineRequest(target=name, workspace=workspace, context=context, rules=rules),
-                config=config,
-            )
-            result = evaluate(rules, context, evidence=report.bundle)
+            try:
+                context = build_context(context_payload, repo_root=workspace)
+                report = run_pipeline(
+                    PipelineRequest(target=name, workspace=workspace, context=context, rules=rules),
+                    config=config,
+                )
+                result = evaluate(rules, context, evidence=report.bundle)
+            except Exception as error:  # noqa: BLE001 - 与 run_dataset 同口径：判定链路的异常记成显式读数
+                # 这条路径是**加性/可选**的（片段级语料的文件级读数），一个文件把整轮评测打挂
+                # 会连带丢掉已经测出来的那些数——所以与 run_dataset 一样收口成 per-file 读数。
+                # 记进既有的 failed_closed 桶（前缀区分）而不是加新键：加键就是改协议。
+                failed_closed.append(
+                    {
+                        "file": relative,
+                        "reason": "pipeline_error:" + type(error).__name__ + ": " + str(error)[:160],
+                    }
+                )
+                continue
             platform_codes = {
                 posix(violation.evidence.value).upper()
                 for violation in result.violations
