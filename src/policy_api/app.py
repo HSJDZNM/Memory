@@ -356,14 +356,14 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
         responses={code: {"description": "readiness 报告（state 是权威字段）"} for code in _READINESS_STATUS_CODES},
     )
     async def ready() -> JSONResponse:
-        """能安全提供策略服务：规则 / 索引 / 验证器 / 观测日志逐项检查。
+        """能安全提供策略服务：规则 / 索引 / 验证器 / 观测日志逐项检查。"""
 
-        readiness 做的是**阻塞 I/O**（打开 SQLite + `assert_integrity()` / `stats()` + 文件系统探测）：
-        它跑在事件循环上就会把整个 worker 卡住——一个慢索引能让同进程的 `/live`、`/metrics`、
-        乃至正在处理的 evaluate 全部排队。这里丢进工作线程（`asyncio.to_thread`），
-        同步调用方（CLI / self-check / 闭环工具）仍直接调 `runtime.readiness()`，两不耽误。
-        """
-
+        # 为什么用 to_thread（**不写进 docstring**：FastAPI 会把 handler 的 docstring 放进 OpenAPI
+        # 的 description，而这个函数的说明是**已发布契约**，改它就要显式重写 api/openapi.json）：
+        # readiness 做的是阻塞 I/O（打开 SQLite + `assert_integrity()` / `stats()` + 文件系统探测），
+        # 跑在事件循环上会把整个 worker 卡住——一个慢索引能让同进程的 `/live`、`/metrics`、乃至正在
+        # 处理的 evaluate 一起排队。同步调用方（CLI / self-check / 闭环工具）照旧直接调
+        # `runtime.readiness()`，两不耽误。
         report = await asyncio.to_thread(runtime.readiness)
         return _json(200 if report.get("ready") else 503, report)
 
