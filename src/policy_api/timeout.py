@@ -18,7 +18,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, Generic, Optional, TypeVar
+from typing import Callable, Optional, TypeVar
 
 __all__ = ["Budget", "BudgetExceeded", "Elapsed", "run_with_budget"]
 
