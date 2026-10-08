@@ -512,6 +512,35 @@ class ResolvedEntry(StrictModel):
     manifest_bytes: Optional[int] = None
     mirror_revision: Optional[str] = None
 
+    @field_validator("dataset")
+    @classmethod
+    def _check_dataset(cls, value: str) -> str:
+        # document_id = document_id_for(dataset, source_path) 逐字取自这两个字段：它们没有
+        # 校验时，"./docs/a.md" / "docs\a.md" / "docs/a.md " 会铸出**三个不同的** document_id，
+        # 同一份文档于是被索引成多份（"重爬不换 ID"的承诺随之失效）。与 CorpusDataset/CorpusEntry
+        # 用同一组规范化函数，相等拼写必然得到同一个 id。
+        return normalize_dataset_name(value)
+
+    @field_validator("source_path")
+    @classmethod
+    def _check_source_path(cls, value: str) -> str:
+        return normalize_source_path(value)
+
+    @field_validator("license_source")
+    @classmethod
+    def _check_license_source(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else normalize_source_path(value)
+
+    @field_validator("language")
+    @classmethod
+    def _check_language(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = canonical_identifier(value)
+        if not normalized:
+            raise ValueError("language 不能是空字符串；不知道就写 null")
+        return normalized
+
     @field_validator("manifest_sha256")
     @classmethod
     def _check_manifest_hash(cls, value: Optional[str]) -> Optional[str]:

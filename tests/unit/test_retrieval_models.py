@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from retrieval.models import CorpusManifest, CorpusQuarantine
+from retrieval.models import CorpusError, CorpusManifest, CorpusQuarantine
 
 
 def test_public_models_are_exported() -> None:
@@ -80,6 +80,59 @@ def test_empty_language_entries_are_rejected() -> None:
 
     # 反真空：正常取值仍然规范化 + 去重 + 排序。
     assert RetrievalQuery(languages=("Python", " python ")).languages == ("python",)
+
+
+def _resolved(**overrides):
+    from retrieval.models import ResolvedEntry, Tier, Visibility
+
+    payload = {
+        "dataset": "guides",
+        "source_path": "docs/a.md",
+        "title": "A",
+        "source_url": "https://example.invalid/a.md",
+        "license": "CC-BY-4.0",
+        "tier": Tier.GUIDANCE,
+        "visibility": Visibility.PUBLIC,
+    }
+    payload.update(overrides)
+    return ResolvedEntry(**payload)
+
+
+def test_resolved_entry_normalizes_the_fields_that_mint_the_document_id() -> None:
+    """document_id 逐字来自 (dataset, source_path)：等价拼写必须得到同一个 id。
+
+    旧实现不给这两个字段任何校验（只有 manifest_sha256 有），于是 "./docs/a.md" /
+    "docs\\a.md" / "docs/a.md " 会铸出三个不同 document_id，同一份文档被索引成多份，
+    "重爬不换 ID" 的承诺随之失效。今天唯一的调用方恰好传的是规范值，所以是潜在缺陷。
+    """
+
+    canonical = _resolved()
+
+    for spelling in (
+        {"dataset": "GUIDES"},
+        {"source_path": "./docs/a.md"},
+        {"source_path": "docs\\a.md"},
+        {"source_path": " docs/a.md "},
+    ):
+        assert _resolved(**spelling).document_id == canonical.document_id, spelling
+
+    # 数据集名是标识符不是路径："./Guides" 这种拼写不是"归一"，而是直接拒绝。
+    with pytest.raises(CorpusError):
+        _resolved(dataset="./Guides")
+
+    assert canonical.dataset == "guides"
+    assert canonical.source_path == "docs/a.md"
+
+
+def test_resolved_entry_normalizes_license_source_and_language() -> None:
+    """顺带把 license_source / language 也归一（与 CorpusDataset 同口径）。"""
+
+    entry = _resolved(license_source="./licenses/CC.txt", language=" EN ")
+
+    assert entry.license_source == "licenses/CC.txt"
+    assert entry.language == "en"
+    with pytest.raises(ValidationError):
+        _resolved(language="   ")
 
 
 def test_quarantine_text_hash_must_be_hex_and_is_lowercased() -> None:
