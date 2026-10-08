@@ -70,3 +70,21 @@ def test_main_reports_git_failure_as_environment_error(
     captured = capsys.readouterr()
     assert code == 2
     assert "环境不可用" in captured.err
+
+def test_gate_patterns_are_a_superset_of_the_runtime_definition() -> None:
+    """条目 [63]：门禁的模式集必须**包含**运行期定义，且多出来的部分确实存在。
+
+    模块 docstring 曾经写成"两者共用同一份定义"——那会让人以为门禁拦下的东西运行期也认，
+    而 `EXTRA_PATTERNS`（AKIA/ASIA/JWT）只在门禁这一侧。这里把真实关系（超集）钉住：
+    运行期那一条被删掉、或门禁少用一条，用例都会红。
+    """
+
+    from enforcement.audit import SECRET_VALUE_PATTERNS
+
+    gate = {pattern.pattern for pattern in secret_scan.secret_patterns()}
+    runtime = {pattern.pattern for pattern in SECRET_VALUE_PATTERNS}
+    extras = {pattern.pattern for pattern in secret_scan.EXTRA_PATTERNS}
+
+    assert runtime <= gate, "门禁少了运行期定义里的这些模式：" + repr(sorted(runtime - gate))
+    assert extras <= gate, "门禁自己的补充模式没生效：" + repr(sorted(extras - gate))
+    assert not extras <= runtime, "补充模式若已进运行期定义，docstring 的「超集」说法要一起改"

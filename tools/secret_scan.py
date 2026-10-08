@@ -1,7 +1,11 @@
 """扫描仓库自有文本文件里的真实凭据（阶段验收矩阵里的发布级门禁之一）。
 
-与 enforcement/audit.py 的分工：那边的脱敏是运行期兜底，这里是提交前的门禁；两者共用
-同一份"凭据长什么样"的定义（SECRET_VALUE_PATTERNS），避免口径漂移。
+与 enforcement/audit.py 的分工：那边的脱敏是运行期兜底，这里是提交前的门禁。两者的关系是
+**超集**——本门禁用的是那份运行期定义（`SECRET_VALUE_PATTERNS`）**加上**本文件自己的
+`EXTRA_PATTERNS`（AWS 的 AKIA/ASIA、JWT）。所以"门禁拦下的东西"不保证运行期脱敏也认得：
+一个 `AKIA…` 或 JWT 会在这里被挡住，而 audit 那边的脱敏不认它。
+要让两边完全一致，得把 `EXTRA_PATTERNS` 挪进 `enforcement.audit`（那是运行期改动，不在这里顺手做）；
+在那之前，"门禁 ⊇ 运行期"这条关系由 tests/unit/test_secret_scan.py 的用例钉着。
 
 范围：会被提交的文本文件（git ls-files --cached --others --exclude-standard）。
 第三方离线镜像逐字复制上游原文（通常自带示例密钥），默认跳过，--all 才一起扫。
