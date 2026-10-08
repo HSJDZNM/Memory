@@ -367,6 +367,23 @@ def test_an_incomplete_langgraph_is_unavailable_not_an_attribute_error(monkeypat
         _load()
 
 
+def test_a_checkpointer_is_rejected_with_a_reason(tmp_root) -> None:
+    """checkpointer 参数被**显式拒绝**，而不是"收下却跑不起来"。
+
+    旧实现把它原样交给 compile，而 invoke 从不带 configurable.thread_id——第一次驱动就抛
+    ValueError: Checkpointer requires ... thread_id…；就算补上 thread_id，它也会按自己的线程状态
+    恢复，与本包"跨进程恢复只认自己的 checkpoint 存储"的策略分叉（两套状态源）。
+    """
+
+    executor = step_executor(tmp_root, name="checkpointer")
+
+    with pytest.raises(NodeContractError) as error:
+        LangGraphEngine(executor=executor, checkpointer=object())
+
+    assert "checkpoint 存储" in str(error.value)
+    assert "thread" in str(error.value)
+
+
 def test_the_recursion_error_type_is_the_frameworks_own() -> None:
     """捕获的"递归上限"必须是框架自己的那个类，不能回落到 RuntimeError。
 

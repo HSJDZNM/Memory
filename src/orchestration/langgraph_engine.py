@@ -9,7 +9,9 @@
   节点函数回调 `StepExecutor`，所以两个引擎的语义只有一份实现；
 - **跨进程恢复用的是本包的 checkpoint 存储**，不是 LangGraph 的 checkpointer：
   阶段计划要求 checkpoint 里带"规则集 / 索引 / 工具 schema 的兼容性"，那是领域信息，
-  通用 checkpointer 不提供。若部署方另外装配了 checkpointer，可以通过参数传入。
+  通用 checkpointer 不提供；而它一旦开始工作，还会按自己的 thread 状态恢复，
+  与"规则集变了就退回检索节点重评"这条策略分叉。因此 `checkpointer` 参数被**显式拒绝**
+  （见构造函数）：不做"收下但跑不起来"的选项，也不做两套状态源。
 
 删掉这个文件（以及整个 `orchestration` 包）不影响 Policy Platform 独立运行：
 核心层从不导入本包（`tests/contract/test_orchestration_engine.py` 会检查）。
@@ -23,7 +25,7 @@ from importlib import import_module, metadata
 from typing import Any, Callable, Mapping, Optional, TypedDict
 
 from .engines import BaseEngine, StepExecutor
-from .errors import EngineUnavailableError
+from .errors import EngineUnavailableError, NodeContractError
 from .models import FailureCode, FailureRef, GraphState, NodeId, RunStatus
 
 __all__ = ["MIN_LANGGRAPH_VERSION", "LangGraphEngine", "langgraph_version"]
@@ -124,6 +126,18 @@ class LangGraphEngine(BaseEngine):
         recursion_slack: int = 8,
     ) -> None:
         super().__init__(executor=executor, clock=clock)
+        if checkpointer is not None:
+            # 显式拒绝，而不是"收下却跑不起来"：这个参数以前被原样交给 compile，而 invoke 从不带
+            # configurable.thread_id——第一次驱动就会抛
+            # ValueError: Checkpointer requires one or more of the following 'configurable' keys: thread_id…
+            # 就算补上 thread_id，它也会按自己的线程状态恢复，与本包"跨进程恢复只认自己的
+            # checkpoint 存储（带兼容性凭据 + 规则集变化要重评）"的策略分叉。
+            raise NodeContractError(
+                "不接受 checkpointer：本包的跨进程恢复只认自己的 checkpoint 存储"
+                "（它带规则集 / 索引 / 工具 schema 的兼容性，且规则集变了要退回检索节点重评）；"
+                "LangGraph 的 checkpointer 会按自己的 thread 状态恢复，与这条策略分叉。"
+                "要额外耐久请在部署层做，不要在编排层塞第二套状态源"
+            )
         self.checkpointer = checkpointer
         self.recursion_slack = recursion_slack
         # **构造即校验**：不这样做，`engine="auto"` 在框架缺席时会照样选中本引擎，
