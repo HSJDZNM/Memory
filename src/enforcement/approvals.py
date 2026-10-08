@@ -145,6 +145,13 @@ class ApprovalRecord(StrictModel):
                 re.compile(pattern)
             except re.error as error:
                 raise ApprovalError(f"审批模式 {name!r} 的正则不合法: {error}") from error
+            if name in normalized:
+                # 两个原始键 strip 之后是同一个参数名（"cmd" 与 " cmd "）：后一条会静默
+                # 盖掉前一条，而"互相矛盾 / 重复的声明在加载期拒绝"正是本模块的口径。
+                raise ApprovalError(
+                    f"审批模式出现重复参数名 {raw_name!r}：strip 之后与已有的 {name!r} 相同，"
+                    "同一参数不得声明两次"
+                )
             normalized[name] = pattern
         return normalized
 
