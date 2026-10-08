@@ -574,7 +574,7 @@ shape_only = judge("只改状态形状版本", build_record(
     compatibility=current.model_copy(update={"state_schema_version": "1.0"})), current)
 assert "state_schema_version" not in shape_only.changed, shape_only.changed
 
-print(pad("情形", 22) + pad("结论", 36) + pad("改变的维度", 34) + "恢复后的状态")
+print(pad("情形", 22) + pad("结论", 36) + pad("改变的维度", 28) + "恢复后的状态")
 print("-" * 132)
 for name, mode, changed, state_text in rows:
     print(pad(name, 22) + pad(mode, 36) + pad(changed, 28) + state_text)
@@ -875,7 +875,7 @@ drifted = runner.binding(support.tool_request(
 namespace = Change(path=str(request.params["file_path"]),
                    content=str(request.params["content"]))
 
-print(pad("标识符", 22) + pad("值", 46) + "谁算的")
+print(pad("标识符", 22) + pad("值", 40) + "谁算的")
 print("-" * 124)
 print(pad("action_id（幂等键）", 22) + pad(namespace.digest().split(":")[-1][:16] + "…", 40)
       + "编排层节点：任务:轮次:改动摘要前 16 位")
