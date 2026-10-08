@@ -409,12 +409,15 @@ def executed_outcome(
 
 @dataclass
 class ExecutingToolRunner:
-    """内存 Tool Runner：记录每次调用，按脚本回答，脚本用完默认"已执行且已交付"。
+    """内存 Tool Runner：记录每次调用，按脚本回答。
 
-    与 @@BT@@orchestration.tools.RecordingToolRunner@@BT@@ 的差别只有**用完之后的默认值**：
-    录制版用完即失败关闭（denied），本实现用完按"执行成功"回答。
-    状态机与契约用例只关心"节点有没有动手、动了几次"；真正的副作用与审计链由
-    @@BT@@PlatformToolRunner@@BT@@ 在集成 / 安全用例里跑一遍。
+    两种用法，语义**分开**：
+    - 不给脚本（outcomes 为空）：每次都按"已执行且已交付"回答。状态机与契约用例只关心
+      "节点有没有动手、动了几次"，用这一种；真正的副作用与审计链由 PlatformToolRunner 在
+      集成 / 安全用例里跑一遍。
+    - 给了脚本：按顺序消费，**用完即报错**。脚本用完还默认"执行成功"会让"忘了给后面那次调用
+      写结论"的用例静默通过——它观察到的成功不是被测行为，而是替身的默认值；
+      orchestration.tools.RecordingToolRunner 用完即失败关闭，这里对齐它的严格性。
     """
 
     outcomes: Sequence[ToolOutcome] = ()
@@ -443,6 +446,12 @@ class ExecutingToolRunner:
         taken = len(self.calls) - 1
         if taken < len(self.outcomes):
             return self.outcomes[taken]
+        if self.outcomes:
+            raise AssertionError(
+                "ExecutingToolRunner 的脚本已用完：第 " + str(len(self.calls)) + " 次调用没有对应结论。"
+                "补一个 executed_outcome(...) / 拒绝结论，或改用不带脚本的 ExecutingToolRunner()"
+                "（它的语义是"每次都执行"，写在类 docstring 里）"
+            )
         return executed_outcome(tool_id=request.tool_id, action_id=request.action_id)
 
 
