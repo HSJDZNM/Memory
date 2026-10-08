@@ -46,6 +46,15 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# 非 Python 的运行时资产不会自动进 wheel / sdist：
+# - policy-hook.plugin.mjs 是 dsh 的进程内转发插件（adapters.wiring 的接线清单与
+#   examples/dsh/profile-patch.yml 都指向它）：缺了它，装出来的平台上策略桥起不来；
+# - 两个 README.md 被同目录模块的 docstring 直接引用（"见同目录 README.md"），
+#   装出去以后这些指路必须仍然成立。
+"adapters.dsh" = ["*.mjs", "*.md"]
+"orchestration" = ["*.md"]
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
