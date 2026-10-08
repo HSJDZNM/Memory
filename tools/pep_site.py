@@ -345,12 +345,6 @@ def manifests(url, spec):
     return {"role": "", "why": "", "extra": {}}
 
 
-def _rel(from_path, to_path):
-    import posixpath
-    base = posixpath.dirname(from_path) or "."
-    rel = posixpath.relpath(to_path, base)
-    return rel if rel.startswith(".") else "./" + rel
-
 
 def pathmap():
     """来源 URL -> 本地相对路径。本地目录按「层级语义」命名，而非照抄 URL 数字。"""
