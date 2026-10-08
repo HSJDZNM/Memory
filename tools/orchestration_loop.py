@@ -1249,8 +1249,10 @@ def scenario_human_approval(api: "Api") -> Scenario:
     rule_after = read_text(WORKSPACE / POLICY_FILE)
     write_happened = new_line in rule_after and old_line in rule_text
 
-    # 缺陷探针：真实平台把"需要审批"表达成 block + required_action=approval，
-    # 节点却在 decision.allowed 那一步就返回 policy_blocked，审批门禁根本到不了。
+    # 缺陷探针的**回归钉子**：真实平台把"需要审批"表达成 block + required_action=approval。
+    # 这里曾经有过那个缺陷——节点在 decision.allowed 那一步就返回 policy_blocked，审批门禁根本
+    # 到不了；src/orchestration/nodes.py:691-692 现在用 needs_approval 把它路由进审批门禁，
+    # 所以下面必须断言"真的路由到了门禁"（routed_to_gate），不能只看 facts。
     probe_rule = WORKSPACE / "policies" / "ORCH-APPROVAL-PROBE-001.yaml"
     write_text(probe_rule, "\n".join(APPROVAL_RULE_LINES) + "\n")
     probe_run = make_run(
