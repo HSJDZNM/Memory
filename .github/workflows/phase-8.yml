@@ -35,6 +35,10 @@ jobs:
         uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           enable-cache: true
+          # 缓存失效的键默认是 **/uv.lock，而本仓库**故意没有** uv.lock（见下面的注释）：
+          # 于是 requirements.lock 变了缓存键也不变，旧缓存会被继续还原——装着旧依赖却以为命中了。
+          # 指向真正决定装哪个版本的那个文件。
+          cache-dependency-glob: "requirements.lock"
 
       # 依赖锁定以 requirements.lock 为准：仓库没有 uv.lock，uv sync 会重新解析，不是锁定安装。
       - name: Install pinned dependencies
