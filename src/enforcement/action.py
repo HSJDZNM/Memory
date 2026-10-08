@@ -72,6 +72,26 @@ def _require_identifier(value: Any, *, where: str) -> str:
     return token
 
 
+def _require_token(value: Any, *, where: str) -> str:
+    """角色 / 权限这类标识：必须是非空字符串，规范化（去空白 + 小写）后仍非空。
+
+    与 _require_identifier 分开写：角色的取值面比 action_id 宽（例如中文标签），
+    这里只要求"能进哈希的字符串"，但**不接受**非字符串——旧实现把非字符串交给
+    canonical_identifier，抛的是裸 TypeError，绕过了本模块统一的类型化错误通道。
+    """
+
+    if not isinstance(value, str) or not value.strip():
+        raise _fail(
+            ReasonCode.PARAM_INVALID, f"{where} 的每一项必须是非空字符串，得到 {value!r}"
+        )
+    token = canonical_identifier(value)
+    if not token:
+        raise _fail(
+            ReasonCode.PARAM_INVALID, f"{where} 的每一项规范化后不得为空，得到 {value!r}"
+        )
+    return token
+
+
 def _normalize_path(
     value: Any,
     *,
@@ -361,8 +381,12 @@ def build_action_request(
         params=params,
         param_digest=digest_of({item.name: item.canonical() for item in params}),
         subject=None if subject is None else str(subject).strip() or None,
-        roles=tuple(sorted({canonical_identifier(role) for role in roles if str(role).strip()})),
-        permissions=tuple(sorted(set(permissions))),
+        # 两个集合都进 action_hash：逐项校验类型（非法条目走 ActionRequestError，
+        # 不是裸 TypeError），并统一规范化，同一个主体因此总是映射到同一个哈希。
+        roles=tuple(sorted({_require_token(role, where="roles") for role in roles})),
+        permissions=tuple(
+            sorted({_require_token(item, where="permissions") for item in permissions})
+        ),
         context_digest=context_digest(context, sources=sources, extra=context_extra),
         workspace=None if workspace is None else Path(workspace).as_posix(),
         created_at=moment,

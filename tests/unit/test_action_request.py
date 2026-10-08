@@ -62,6 +62,33 @@ def test_params_are_sorted_and_types_are_checked(enforcement_paths):
     assert file_path.value == "src/shop/order_controller.py"
 
 
+def test_malformed_roles_and_permissions_are_typed_errors(enforcement_paths):
+    """角色/权限里的非法条目必须走 ActionRequestError，而不是裸 TypeError。
+
+    旧实现里 roles=(5,) 会一路走到 canonical_identifier 抛 TypeError，permissions=([],)
+    则在 set() 上抛 TypeError——两者都绕过了这个模块统一的类型化错误通道。
+    """
+
+    registry = enforcement_paths.registry_object()
+    spec = spec_of(registry, "fs.edit")
+    common = dict(action_id="act-roles", request_id="req-roles", agent="dsh")
+
+    with pytest.raises(ActionRequestError) as error:
+        build_action_request(spec, edit_params(), roles=(5,), **common)
+    assert ReasonCode.PARAM_INVALID.value in str(error.value)
+
+    with pytest.raises(ActionRequestError):
+        build_action_request(spec, edit_params(), roles=("",), **common)
+    with pytest.raises(ActionRequestError):
+        build_action_request(spec, edit_params(), permissions=([],), **common)
+
+    # 反真空：大小写/空白变体规范化成同一个主体，哈希也相同。
+    upper = build_action_request(spec, edit_params(), roles=(" Developer ",), **common)
+    lower = build_action_request(spec, edit_params(), roles=("developer",), **common)
+    assert upper.roles == ("developer",)
+    assert upper.action_hash == lower.action_hash
+
+
 def test_agent_is_canonicalised_like_the_other_identity_fields(enforcement_paths):
     """agent 曾经是唯一原样落库的身份字段：大小写/空白会让同一调用方得到不同 action_hash。"""
 
