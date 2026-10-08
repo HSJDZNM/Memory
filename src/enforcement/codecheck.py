@@ -170,7 +170,9 @@ def check_code(source: object, declaration: CodeCheckSpec) -> CodeCheckOutcome:
                 f"代码命中 {len(hits)} 处禁止面（kind={declaration.kind}）：{shown}{more}。"
                 "检查项来自注册表数据，这里是结构性检查而不是沙箱"
             ),
-            hits=described,
+            # hits 与 detail 同一个上限：hits 只保留已上报的那几条（总数在 detail 里），
+            # 否则这个字段就是"单条审计记录有体积上限"这条理由的漏口。
+            hits=described[:_MAX_REPORTED_HITS],
         )
 
     gaps = "；".join(declaration.known_gaps) or "（注册表未登记已知绕过形态，这本身是一个待补项）"

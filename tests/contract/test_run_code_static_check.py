@@ -159,6 +159,15 @@ def test_nested_attribute_hits_are_collapsed():
     assert "1 处" in nested.detail, nested.detail
 
 
+def test_reported_hits_are_capped_like_the_detail():
+    """hits 与 detail 受同一个上限：否则它正是"单条审计记录有体积上限"这条理由的漏口。"""
+
+    many = check_code(chr(10).join(f"os.m{index}" for index in range(20)), _attribute_declaration())
+
+    assert len(many.hits) <= 8, many.hits
+    assert "另有 12 处" in many.detail, many.detail
+
+
 def test_parse_failure_is_a_refusal_not_a_skip():
     declaration = executed_code_spec(repository_registry()).code_check
     for source in ("def (:\n", "", "   "):
