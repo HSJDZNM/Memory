@@ -245,7 +245,9 @@ class ApiRuntime:
         self._decisions: dict[str, Tuple[float, ValidationResult]] = {}
         self._decisions_lock = threading.RLock()
         self._semaphore = threading.BoundedSemaphore(config.limits.max_concurrency)
-        self._readiness: Optional[Tuple[float, Mapping[str, Any], int]] = None
+        # (写入时刻, 报告)：曾经还有一个恒为 0 的第三槽（`int`），没有任何读取点——
+        # 死状态比没有状态更坏：它让人以为"还有一个维度在那儿"。
+        self._readiness: Optional[Tuple[float, Mapping[str, Any]]] = None
         self._readiness_lock = threading.RLock()
         # 最近一次未预期异常的 traceback（只给 CLI / 闭环工具看，不进响应、不进日志）。
         self.last_error: str = ""
@@ -918,7 +920,7 @@ class ApiRuntime:
                 return dict(self._readiness[1])
         report = self._readiness_report()
         with self._readiness_lock:
-            self._readiness = (now, dict(report), 0)
+            self._readiness = (now, dict(report))
         return report
 
     def _readiness_report(self) -> Mapping[str, Any]:
