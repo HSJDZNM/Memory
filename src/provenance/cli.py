@@ -287,7 +287,8 @@ def _run_wiring_scope(args: argparse.Namespace) -> int:
     try:
         scope = load_wiring_scope(args.path)
     except WiringScopeError as error:
-        _emit({"result": "fail", "error": str(error)}, as_json=True)
+        # 失败路径也必须看 --json：否则要解析错误的那一方，恰好拿到的是人类可读格式。
+        _emit({"result": "fail", "error": str(error)}, as_json=args.json)
         return EXIT_FAIL
     _emit({"result": "ok", **scope.as_json()}, as_json=args.json)
     return EXIT_PASS
