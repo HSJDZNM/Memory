@@ -62,6 +62,20 @@ def test_json_flag_works_on_both_sides_of_the_subcommand(capsys) -> None:
     assert not capsys.readouterr().out.lstrip().startswith("{")
 
 
+def test_a_broken_checkpoint_is_an_error_exit_not_an_unhealthy_run(tmp_root) -> None:
+    """退出码跟**终态**走：FAILED（编排 / 状态 / 用法自己坏了）→ 2，NEEDS_HUMAN / BLOCKED → 1。
+
+    旧实现把**任何** OrchestrationError 都算成 1：于是"checkpoint 坏了"与"这一轮需要人来批准"
+    在退出码上分不开，而 run_command 对 RunStatus.FAILED 返回的正是 2——同一类问题两条路径两个码。
+    """
+
+    directory = Path(tmp_root) / "checkpoints"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "bad.checkpoint.json").write_text("{ 不是 JSON", encoding="utf-8", newline="\n")
+
+    assert main(["status", "--task-id", "bad", "--checkpoints", str(directory)]) == EXIT_ERROR
+
+
 def test_cli_exits_two_and_names_the_broken_field(tmp_root, capsys) -> None:
     """端到端：坏任务文件 → 退出码 2 + 一行理由（不是栈回溯，也不是 1）。"""
 

@@ -21,7 +21,7 @@ from typing import Any, Mapping, Optional, Sequence
 from .checkpoint import JsonCheckpointStore, build_record
 from .client import ApiPolicyClient, ResilientPolicyClient
 from .engines import StepExecutor
-from .errors import OrchestrationError
+from .errors import OrchestrationError, status_for
 from .graph import DEFAULT_SPEC, END
 from .models import STATE_SCHEMA_VERSION, GraphState, RunLimits, RunStatus, empty_state
 from .nodes import Change, NODES, ScriptedAuthor, TaskSpec
@@ -423,7 +423,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return int(args.handler(args))
     except OrchestrationError as error:
         print(f"[{error.code.value}] {error.detail}", file=sys.stderr)
-        return EXIT_UNHEALTHY
+        # 退出码跟**终态**走（status_for 就是那份口径），不再"凡是编排错误都算不健康"：
+        #   NEEDS_HUMAN / BLOCKED = 需要人或平台出手 → 1（unhealthy）；
+        #   FAILED = 编排/状态/用法自己坏了 → 2（error）。
+        # 这与 run_command 对 RunStatus 的处理是同一条规则（那边 FAILED 也返回 2），
+        # 此前两条路径自相矛盾：同一类问题走异常是 1、走返回值是 2。
+        status = status_for(error)
+        return (
+            EXIT_UNHEALTHY
+            if status in (RunStatus.NEEDS_HUMAN, RunStatus.BLOCKED)
+            else EXIT_ERROR
+        )
     except (OSError, ValueError, KeyError) as error:
         print(f"配置或用法错误：{type(error).__name__}: {error}", file=sys.stderr)
         return EXIT_ERROR
