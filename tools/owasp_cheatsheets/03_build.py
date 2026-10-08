@@ -115,7 +115,12 @@ extra   = sorted(set(P) - set(sheets_saved))
 print("PLACED:", len(P), "SAVED SHEETS:", len(sheets_saved))
 print("MISSING (saved but unplaced):", missing)
 print("EXTRA (placed but not saved):", extra)
-assert not missing and not extra, "placement mismatch"
+if missing or extra:
+    # **不许写成 assert**：`python -O` / PYTHONOPTIMIZE 会把 assert 整条删掉，而这条门禁
+    # （人工表格 vs meta.json 的一致性）恰恰是"跑在别人机器上、被优化过"时最需要存在的。
+    print("ERROR: placement mismatch：MISSING（保存了但没归类）=" + repr(missing)
+          + " EXTRA（归类了但没保存）=" + repr(extra))
+    raise SystemExit(2)
 
 INDEX_FILES = {
     "index": ("00_索引与标准", "00_OWASP-Cheat-Sheet-Series-总览.md"),
