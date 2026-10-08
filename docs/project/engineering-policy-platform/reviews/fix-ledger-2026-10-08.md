@@ -188,7 +188,10 @@ python tools/check_repo_consistency.py ; python tools/check_text_conventions.py
   - **M9 已收口（台账 85 条 = owasp 13 + 非 owasp 72）**：
     - **owasp_cheatsheets 13 条**（12 bug + 1 performance）＝ **3 改 / 10 已覆盖**；7 条有合成输入树上的真跑读数、6 条只有代码级依据（未联网、未触碰 `docs/mirrors/**`），见 `.tmp/m9-owasp-coverage.md`。
     - **非 owasp 72 行 = 已访问 71 + 未访问 1**（收尾时按 `file:line` 逐条重对齐后更正：此前口报的 61+ 是按批次推算的过程值）。已访问 71 条的判定＝ 成立并修 **37**、不成立（已修，非本线提交）**30**、部分成立 **2**、成立但不改（设计决定）**2**（`ab_arm:407/:791`，另见 `.tmp/not-changed-ledger.md` 第三节）；依据分类：变异自证 9 条、before/after 对照读数 17 条、真跑工具/套件若干（agent_loop 87 项、enforcement_loop 三次收紧后仍绿、api_loop、G13、`--only` 守卫等）、代码级行号 + 历史提交 30 条，见 `.tmp/m9-tools-non-owasp-coverage.md`。
-    - **未访问 1 条（如实列出，不写成已完成）**：`tools/lock_requirements.py:53`——台账里 `:51` 与 `:53` 是两条不同条目，`:51` 是"报告缺文件/坏 JSON/形状不对逃逸"（已修 `148c3e4`），`:53` 是"`pip install --dry-run --report` 也会省略**当前环境已满足**的依赖 ⇒ 只装了一部分时锁里静默缺包、打印的包数看不出来"。**行号 ±2 的匹配曾让它显示成"已覆盖"，是收尾时按 `file:line` 逐条对齐才暴露的**；建议下一轮单独修，读数用"半个环境 + `--dry-run --report`"对照，不要与 `:51` 合并成一条。
+    - **原本未访问的 1 条已在后续补做（成立并修）**：`tools/lock_requirements.py:53`——台账里 `:51` 与 `:53` 是两条不同条目，`:51` 是"报告缺文件/坏 JSON/形状不对逃逸"（已修 `148c3e4`），`:53` 是"`pip install --dry-run --report` 也会省略**当前环境已满足**的依赖 ⇒ 只装了一部分时锁里静默缺包、打印的包数看不出来"。
+      **读数（A/B，同一份报告只含 PyYAML 与 pydantic、`requirements.in` 声明 10 个包）**：旧实现 exit 0、写出锁、打印「共 2 个包」——锁里只有 2 个包（缺 8 个直接依赖）而读数看不出来；
+      新实现 exit 2、**未写出锁**、stderr 点名缺席的 8 个包（coverage, fastapi, httpx, langgraph, pytest, pytest-cov, pytest-xdist, uvicorn）。修复 `3f82a15`（新增 `normalized()` / `declared_names()` / `missing_declared()`，在写出之前拒绝；+1 用例）。
+      它当初被"行号 ±2 匹配"掩盖成"已覆盖"，是收尾按 `file:line` 逐条对齐才暴露的——**M9 至此 85/85 全部有判定**。
     - 六条计数差异如实写在声明里（owasp 13 vs 交办 12；表格行 71 vs 访问 72；"已修"的 30 条不计入本线完成面——那是别人先前修的；与前任 41 条的重叠只是量级估计而非精确计数；台账勾选未回填、按 `- [ ]` 行 + 逐条到代码复核、允许行号 ±2 漂移；两条设计决定未计入"成立并修"）。
 - **low 收口（一律按实际 305 条）**：
   - 逐条核销表覆盖：L1 16/16、L2 35/38、L3 26/28、L7 10/18、L9 58/65、LA 15/15（非 tech-detail 部分）、LB 5/5；
