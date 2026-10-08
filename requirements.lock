@@ -15,6 +15,7 @@ langgraph==1.2.11
 pytest-xdist==3.8.0
 coverage==7.16.2
 pytest-cov==6.3.0
+httpx==0.28.1
 #
 # tools/check_repo_consistency.py 会在 CI 里校验：本文件覆盖全部直接依赖、
 # 固定版本满足 requirements.in 与 pyproject.toml 的区间、三者不漂移。
