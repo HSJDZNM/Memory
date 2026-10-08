@@ -93,8 +93,13 @@ def _collect(tree: ast.AST, declaration: CodeCheckSpec) -> list[tuple[int, str, 
                 if matched is not None:
                     hits.append((node.lineno, "import", node.module))
         elif isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id in declaration.forbidden_calls:
-                hits.append((node.lineno, "call", node.func.id))
+            # 调用名同样走点分还原 + 前缀匹配（与 forbidden_imports / forbidden_attributes
+            # 同一口径）：_check_entries 的正则允许声明 subprocess.run 这类点分条目，
+            # 只认裸 ast.Name 会让这些条目**加载期通过、运行时永远不命中**——
+            # 一条声明了却不起作用的禁止面就是失败打开。
+            candidate = dotted_name(node.func)
+            if candidate is not None and _matches(candidate, declaration.forbidden_calls):
+                hits.append((node.lineno, "call", candidate))
         if isinstance(node, ast.Attribute):
             candidate = dotted_name(node)
             if candidate is not None and _matches(candidate, declaration.forbidden_attributes):

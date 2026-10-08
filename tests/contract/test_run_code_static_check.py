@@ -103,6 +103,37 @@ def test_declared_surfaces_actually_block_the_repository_declaration():
     assert "已知不可覆盖的形态" in clean.detail
 
 
+def test_dotted_forbidden_call_entries_actually_match():
+    """声明的点分调用名必须真的能命中。
+
+    _check_entries 允许 forbidden_calls 写 "subprocess.run" 这类点分条目，而旧实现只在
+    被调用者是裸 ast.Name 时才比对——点分条目加载期通过、运行时永远不命中：
+    一条"声明了却不起作用"的禁止面（失败打开）。
+    """
+
+    from enforcement.models import CodeCheckSpec
+
+    declaration = CodeCheckSpec(
+        kind="python_forbidden_surface",
+        param="code",
+        forbidden_calls=["subprocess.run"],
+        forbidden_imports=[],
+        forbidden_attributes=[],
+        known_gaps=["测试用最小声明"],
+    )
+
+    hit = check_code("import subprocess\nsubprocess.run(['ls'])\n", declaration)
+
+    assert not hit.passed, "点分条目没有命中"
+    assert hit.reason_code is ReasonCode.CODE_BLOCKED
+    assert any("subprocess.run" in item for item in hit.hits), hit.hits
+    assert any("调用" in item for item in hit.hits), hit.hits
+
+    # 反真空：声明别的点分名时不能连坐（前缀匹配只从头比）。
+    clean = check_code("import subprocess\nsubprocess.Popen(['ls'])\n", declaration)
+    assert clean.passed, clean.detail
+
+
 def test_parse_failure_is_a_refusal_not_a_skip():
     declaration = executed_code_spec(repository_registry()).code_check
     for source in ("def (:\n", "", "   "):
