@@ -1228,8 +1228,11 @@ def _level_split(scopes: list[AnnotationScope]) -> tuple[int, int]:
 
     两者测的不是同一件事：行级能对位置，文件级只能对"这个文件里出现了这个码"。任何一个合计数字
     都必须能拆开（契约 v1 把 line == 0 定义为文件级；这里只是把它显式读出来）。
-    刻意不塞进 --json 载荷：那要给 ANNOTATION_SCHEMA_VERSION 升版（AGENTS 第 55 条），
-    而契约把这个常量钉成了 "1"。文本输出不受版本轴约束，所以先落在这里。
+    刻意不塞进 --json 载荷：拆分**可由消费者从 annotations 的 line 直接推出**（line == 0 就是
+    文件级），没必要再加键。注意不要说成"加键就得升 ANNOTATION_SCHEMA_VERSION"——本载荷里
+    已经有 scopes / expected_lines，它们属于 AGENTS 第 55 条登记注里的"首次发布前的形状修正"
+    （2026-10-07 裁定），与 schema_version "1" 并存不算同名两义；这条注释只是在说"这个数不必再进
+    载荷"，不是在复述一条版本规则。
     """
 
     file_level = sum(1 for scope in scopes if scope.annotation.line == 0)
