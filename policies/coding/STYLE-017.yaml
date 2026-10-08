@@ -7,10 +7,18 @@
 #   "mixedCase is allowed only in contexts where that’s already the prevailing style
 #    (e.g. threading.py), to retain backwards compatibility."
 #   §"Global Variable Names"："The conventions are about the same as those for functions."
+# 覆盖边界（2026-10-08 复查后补，写法同 STYLE-016）：N806 的名字是
+# `non-lowercase-variable-in-function`——它判的是**函数内任何非小写名**，
+# 不只是 mixedCase：`L`、`MAX_TRIES`、`TMP_DIR` 都会命中；N815 / N816 在类作用域与模块级同理。
+# 这与 STYLE-012（E741，PEP 8 §Names to Avoid 明确建议**用 L 代替 l**）在 `L` 这个写法上互相矛盾：
+# 实测 tools/mirror_docs.py 因变量 L 被 N806 命中 18 次（覆盖报告 §10.4 也记为「收窄 scope」的候选）。
+# 本条**不做**基于名字形态的例外（规则数据表达不了「只放过 L」这种按标识符的豁免），
+# 只把边界写进 description / message：读者照 description 写全小写就一定不会撞上这条矛盾；
+# 真要收窄，属于覆盖报告 §10.4 的口径变更，要连同 STYLE-012 一起改。
 id: STYLE-017
 version: 1
 name: variable-names-lowercase
-description: 函数内、类作用域与模块级变量都不得大小写混排（mixedCase），统一用小写下划线。
+description: 函数内、类作用域与模块级变量名必须小写（不得大小写混排；N806/N815/N816 实际判的是"非小写"，常量式全大写名同样会命中）。
 scope:
   language: python
 severity: warning
@@ -21,10 +29,11 @@ rule:
   style_lint:
     tool: ruff
     codes: [N806, N815, N816]
-message: 变量名不得大小写混排；请用小写加下划线（Ruff N806 / N815 / N816；PEP 8「Function and Variable Names」）。
+message: '变量名请用小写加下划线（Ruff N806 / N815 / N816；PEP 8「Function and Variable Names」）。这两个码判的是"非小写"，不只是 mixedCase：MAX_TRIES 这类常量式命名与 L 这类单字母名同样命中；L 与 STYLE-012（PEP 8 建议用 L 代替 l）的冲突是已知边界。'
 source:
   kind: standard
   path: docs/mirrors/python-pep-code-style/pep-8-python-code/index.md
   note: >
     PEP 8 只对"已经普遍使用 mixedCase 的历史代码"（如 threading.py）开一个向后兼容口子；
-    那属于既有库的内部一致性取舍，新建代码不适用，所以本规则按 warning 全量检查。
+    那属于既有库的内部一致性取舍，新建代码不适用，所以本规则按 warning 全量检查；
+    代价是 N806 的宽口径会把 L / MAX_TRIES 这类命名一并报出来（见上面的覆盖边界）。
