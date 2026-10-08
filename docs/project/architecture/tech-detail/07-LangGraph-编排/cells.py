@@ -419,9 +419,14 @@ probe_assembly = build_assembly(
     tool_runner=RecordingToolRunner((support.executed_outcome(),)),
 )
 print()
+# 打印行说的是"NodeContext.commit **已绑定**执行器的 save"，而原来的断言只查 `is not None`：
+# 绑到别的 callable 上会打印 False 却照样通过（这一章的前提正是"每句话都被断言钉住"）。
+assert probe_assembly.executor.context.commit == probe_assembly.executor.save, (
+    probe_assembly.executor.context.commit,
+    probe_assembly.executor.save,
+)
 print("写前记账的接线：NodeContext.commit 已绑定执行器的 save →",
       probe_assembly.executor.context.commit == probe_assembly.executor.save)
-assert probe_assembly.executor.context.commit is not None
 print("小结：状态只有引用与计数；checkpoint 是单文件原子替换 + 两道摘要校验；",
       "副作用之前先写意图并立刻刷盘（NodeContext.commit）。")
 '''
