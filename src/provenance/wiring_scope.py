@@ -50,6 +50,8 @@ DECISIONS: Tuple[str, ...] = ("in_scope", "out_of_scope", "expected_absent")
 GOVERNS_TREE_VALUES: Tuple[str, ...] = ("self", "other")
 # 没写 `governs_tree` 时**读取侧**的取值（2026-10-01 裁定④）：不替声明认领 `self`。
 GOVERNS_TREE_UNWRITTEN = "unknown"
+# tree_ref 允许的**唯一**非路径取值：有意治理工作区之外的一棵树（只放指针，不放正文）。
+TREE_REF_OUTSIDE = "<outside-workspace>"
 
 
 class WiringScopeError(Exception):
@@ -156,8 +158,44 @@ class ScopeEntry(BaseModel):
             )
         return value
 
+    @field_validator("tree_ref")
+    @classmethod
+    def _tree_ref(cls, value: str | None) -> str | None:
+        """tree_ref 只放**指针**：仓库相对路径，或 <outside-workspace>。
+
+        第 16/34 条对它的承诺（不放正文、不放绝对路径）必须与相邻字段一样被**校验**，
+        不能只写在注释里：绝对路径 / 路径穿越 / 一段说明文字过去都能原样加载，
+        下游若拿它当路径解析就会被带到工作区之外。
+        """
+
+        if value is None:
+            return None
+        if value == TREE_REF_OUTSIDE:
+            return value
+        if not value.strip() or value != value.strip():
+            raise ValueError(f"tree_ref 不能为空或带首尾空白，得到 {value!r}")
+        # chr(92) 是反斜杠：Windows 形态的绝对路径 / 分隔符不属于"仓库相对路径"。
+        if ":" in value or value.startswith("/") or chr(92) in value:
+            raise ValueError(
+                f"tree_ref 只放仓库相对路径或 {TREE_REF_OUTSIDE}，得到绝对/平台路径 {value!r}"
+            )
+        parts = value.split("/")
+        if any(part in ("", ".", "..") for part in parts):
+            raise ValueError(f"tree_ref 不能含空段 / . / ..（路径穿越），得到 {value!r}")
+        if any(re.fullmatch(r"[A-Za-z0-9._-]+", part) is None for part in parts):
+            raise ValueError(
+                f"tree_ref 只放路径形态的指针，得到 {value!r}："
+                "正文、说明性文字、含空格的写法都不属于这里"
+            )
+        return value
+
     @model_validator(mode="after")
     def _consistent(self) -> "ScopeEntry":
+        if self.governs_tree == "self" and self.tree_ref is not None:
+            raise ValueError(
+                f"{self.id}: governs_tree=self 时不得写 tree_ref——"
+                "本仓库这棵树的指针没有意义，写了就是一条自相矛盾的声明"
+            )
         if self.decision == "in_scope":
             if self.expires_at is not None:
                 raise ValueError(
