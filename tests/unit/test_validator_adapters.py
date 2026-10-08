@@ -275,6 +275,29 @@ def test_run_tool_truncates_oversized_output(tmp_root: Path) -> None:
     assert len(result.stdout) <= 1024
 
 
+def test_truncation_does_not_split_a_multibyte_character(tmp_root: Path) -> None:
+    """按字节截断不许切开多字节字符：合法输出不能被我们自己切成 OUTPUT_INVALID（复核发现）。"""
+
+    spec = fake_tool_spec("ruff", "ok")
+    probed = probe(spec, tmp_root, timeout_ms=TIMEOUT_MS)
+    argv = (sys.executable, "-c", "print('检' * 1000)")  # 3001 字节，截到 1024 会落在字符中间
+    run = run_tool(
+        spec.tool,
+        probed,
+        argv,
+        workspace=VALIDATOR_PROJECT,
+        tmp_dir=tmp_root,
+        timeout_ms=TIMEOUT_MS,
+        max_output_bytes=1024,
+        findings_exit_codes=(1,),
+    )
+
+    assert run.status is not ValidatorStatus.OUTPUT_INVALID, run.reason
+    assert run.truncated is True
+    assert run.stdout
+    assert run.stdout.encode("utf-8")  # 前缀本身是合法 UTF-8（截断点在字符边界上）
+
+
 def test_timeout_kills_the_whole_process_tree(tmp_root: Path) -> None:
     spec = fake_tool_spec("ruff", "slow", timeout_ms=2000)
     started = time.monotonic()
