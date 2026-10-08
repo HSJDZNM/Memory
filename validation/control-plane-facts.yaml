@@ -171,7 +171,10 @@ facts:
     predicate: "adapters.dsh.hooks.budget_inequality_facts"
     severity: advisory
     remedy: "仓库内的示例**没有**声明 pre_evidence：三段不等式因此读作不适用（这是读数，不是缺陷）；要在示例上启用，就与 hooks.json 的 timeout 一起改到满足三段不等式"
-    on_unprovable: unavailable
+    # 这一行的"读不到"**就是设计状态**（示例故意不声明 pre_evidence）：写 unavailable 会与 remedy
+    # 自述的"不适用"打架，也会让 by_on_unprovable 把一条按设计不适用的行算进"读不到"（复核发现）。
+    # 闭集里 not_applicable 才是这句话的表达；形状没变，版本轴不递增。
+    on_unprovable: not_applicable
     expires: null
 
   - key: "budget.dsh_side_limit"
