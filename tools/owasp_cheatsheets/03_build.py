@@ -17,7 +17,7 @@ def chap(t):
     m = re.match(r"^(V\d+)", t)
     return m.group(1) if m else None
 
-asvs_ch = collections.defaultdict(set); asvs_sub = collections.defaultdict(set)
+asvs_ch = collections.defaultdict(set)
 pc = collections.defaultdict(set); t10 = collections.defaultdict(set); mas = collections.defaultdict(set)
 for name, key in [("IndexASVS.html","asvs"),("IndexProactiveControls.html","pc"),
                   ("IndexTopTen.html","t10"),("IndexMASVS.html","mas")]:
@@ -26,7 +26,6 @@ for name, key in [("IndexASVS.html","asvs"),("IndexProactiveControls.html","pc")
             if key == "asvs":
                 c = chap(s["title"])
                 if c: asvs_ch[u].add(c)
-                asvs_sub[u].add(s["title"].split()[0])
             elif key == "pc": pc[u].add(s["title"].split(".")[0])
             elif key == "t10": t10[u].add(s["title"].split(":")[0])
             else: mas[u].add(s["title"].split()[0])
