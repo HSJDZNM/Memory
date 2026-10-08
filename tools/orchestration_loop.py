@@ -1527,6 +1527,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     selected = [
         item for item in SCENARIOS if not args.only or any(key in item.__name__ for key in args.only)
     ]
+    if args.only and not selected:
+        # `--only` 一个都没匹配上时，场景循环跑 0 次，而"全部通过"对空列表**恒真**：打印
+        # `result: pass` 并以 0 退出——一次"什么都没验证"的绿，`--only` 拼错完全无声。
+        # 空输入不是通过（与 ci_local 的选组、cleanup 的空计划同一条口径）。
+        print("--only 没有匹配到任何场景：" + ", ".join(args.only), file=sys.stderr)
+        print("可用场景：" + ", ".join(item.__name__ for item in SCENARIOS), file=sys.stderr)
+        return 2
 
     started = time.monotonic()
     global INDEX_REASON
