@@ -5,8 +5,9 @@ dora.dev（Google Cloud 的 DORA 研究项目站点）与 peps.python.org、lear
 docs.gitlab.com 的页面模板都不同，故独立成模块：
 
 1. 清单与层级都取自站点自身，不做人工归类：
-   - 清单：站点 sitemap 在 /capabilities/ 子树下给出 35 条 URL，与该分区索引页
-     （/capabilities/，下称"能力目录"）栅格里的 34 个能力卡片逐条比对，双向无差集；
+   - 清单：**运行期只解析**「能力目录」页的栅格；建镜像时把站点 sitemap 在 /capabilities/ 子树下
+     给出的 35 条 URL 与该栅格里的 34 个能力卡片逐条比对过，双向无差集（**一次性核验**：
+     本模块不抓 /sitemap.xml，重抓不会复核这一步）；
    - 层级：目录页给每张卡片打了模型徽章 core 或 AI（分别指向 /research/#core-model
      与 /ai/#explore-the-model）。徽章只覆盖 24 篇（core 19、AI 5），另外 10 篇的徽章容器
      是空的（<span class=labels></span>），站点没有给出模型归属，故单列 unlabeled/，
@@ -369,10 +370,13 @@ def findings():
     """STRUCTURE.md 的「范围判定」段：清单来源、层级来源与边界。"""
     n = _counts()
     lines = [
-        "**清单来源：站点自身的 sitemap 与「能力目录」页。** 站点 " + C("/sitemap.xml")
+        "**清单来源：站点自身的「能力目录」页栅格（建镜像时与 " + C("/sitemap.xml") + " 逐条比对过）。**"
+        + " 站点 " + C("/sitemap.xml")
         + " 在 " + C("/capabilities/") + " 子树下给出 " + str(n["caps"] + n["catalog"]) + " 条 URL；"
         + C("/capabilities/") + " 索引页（下称能力目录）栅格里有 " + str(n["caps"]) + " 张能力卡片。",
         "两者逐条比对**双向无差集**：栅格卡片 = sitemap 的能力页，sitemap 多出的 1 条即目录页自身。",
+        "**这是一次性核验，不是运行期检查**：建镜像时做过这一步（时点见 " + C("manifest.json") + " 的 "
+        + C("fetched_at") + "）；本模块运行期**不抓 " + C("/sitemap.xml") + "**，清单只由栅格解析产出。",
         "本镜像按这份清单逐页抓取（" + C("discovery=list") + "），不做逐边 BFS——能力正文的站内链接",
         "遍布 /research、/ai、/guides、/quickcheck 等分区，逐边扩散会把范围带出本分区。",
         "",
@@ -439,7 +443,8 @@ def readme_skipped():
 
 def readme_facts():
     facts = [
-        "- 清单来自站点 sitemap 与能力目录页栅格的比对（双向无差集），并**不是**逐边 BFS 的结果；",
+        "- 清单来自能力目录页栅格；建镜像时与站点 sitemap 逐条比对过一次（双向无差集，**一次性核验**，"
+        "运行期不抓 sitemap），并**不是**逐边 BFS 的结果；",
         "- 层级（core / ai / unlabeled）**不是人工归类**：core 与 AI 取自目录页徽章，unlabeled 表示站点未给徽章；",
         "- 该站为服务端渲染的静态站点，正文在 " + C("<main>") + " 内，用 crawl4ai 的 AsyncHTTPCrawlerStrategy",
         "  （纯 HTTP 通道）即可完整取到，无需启动浏览器；",
