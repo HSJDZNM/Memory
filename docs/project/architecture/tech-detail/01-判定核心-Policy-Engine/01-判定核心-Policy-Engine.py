@@ -504,13 +504,19 @@ assert any(item.severity is models.Severity.CRITICAL for item in mixed.violation
 # 即使**一条违规都没有**，决策也是 `block` 并带上 `required_action=approval`：
 # 授权是前置条件，不能被降级成"提醒一下"。
 #
-# **三值判定（第 9 步）**：决策只有三种取值，映射关系固定：
+# **三值判定（第 9 步）**：决策只有三种取值；映射关系固定，但输入有**两个通道**——`violations`
+# （真违规）与 `pending_findings`（「待实现」：选中的测试因项目内目标还不存在而没能收集，协议 1.1 的
+# 独立通道，severity 在构造期被钉成 `warning`）：
 #
 # | 最高严重级别 | 决策 |
 # | --- | --- |
-# | 没有违规，也没有审批要求 | `allow` |
-# | `info` / `warning` | `allow_with_warnings` |
+# | 没有违规、没有待实现，也没有审批要求 | `allow` |
+# | `info` / `warning`，或存在 `pending_findings` | `allow_with_warnings` |
 # | `error` / `critical`，或者要求人工审批 | `block` |
+#
+# `pending_findings` 只参与**空判定**：两个通道都空才是 `allow`。它造不出 `block`（severity 被钉成
+# warning），所以「把它从 `violations` 搬到 `pending`」不会放宽任何一条阻断——反过来，只看
+# `violations` 的读者会把「先写测试」的调用读成「什么都没发生」。
 #
 # 下面这段用真实的 ARCH-001 复制出几份变体（冻结模型只能 `model_copy`，不能直接改字段）来验证这三步。
 # ----------------------------------------------------------------------------
@@ -589,6 +595,39 @@ assert table["warning"] == ("allow_with_warnings", "allow")
 assert table["error"] == ("block", "allow") and table["critical"] == ("block", "allow")
 print()
 print("三种取值之外没有第四条路：allow_with_warnings 只是「可以继续，但请看一眼」。")
+
+# 第 9 步的另一半：`expected_decision` 还有**第三个输入通道** `pending_findings`（协议 1.1）。
+# 只看上面那张"最高严重级别 → 决策"的表，很容易读成"没有违规就是 allow"；而「待实现」不是违规，
+# 却也不能算"什么都没发生"——它是**独立的**通道（AGENTS 第 51 条：混进 violations 就是同名两义）。
+pending_item = models.Violation(
+    rule_id="TESTING-001",
+    rule_version=1,
+    severity=models.Severity.WARNING,
+    message="待实现（讲解里的最小构造）",
+    evidence=models.Evidence(kind="checker", subject="tests/x_test.py", value="pending_implementation"),
+)
+assert models.expected_decision(()) is models.Decision.ALLOW
+assert (
+    models.expected_decision((), pending=(pending_item,)) is models.Decision.ALLOW_WITH_WARNINGS
+), "pending_findings 必须把 allow 抬成 allow_with_warnings：两个通道都空才是 allow"
+assert models.expected_decision((), required_action=models.RequiredAction.APPROVAL) is models.Decision.BLOCK
+print()
+print(pad("输入通道", 22) + "决策")
+print("-" * 44)
+print(pad("violations=() pending=()", 22) + models.expected_decision(()).value)
+print(pad("violations=() pending=1", 22) + models.expected_decision((), pending=(pending_item,)).value)
+# 构造期不变量：pending 只能是 warning ⇒ 它永远造不出 block（"搬走一条阻断"这条旁路不存在）。
+try:
+    models.ValidationResult(
+        decision=models.Decision.ALLOW,
+        request_id="req-pending",
+        pending_findings=(pending_item.model_copy(update={"severity": models.Severity.ERROR}),),
+    )
+except ValueError as error:
+    print("pending 带 error 会被构造期拒绝:", " ".join(str(error).split())[:56])
+else:
+    raise AssertionError("pending_findings 必须只承载 severity=warning（否则它会绕过阻断判定）")
+print("第三个输入通道：pending_findings 只参与空判定，造不出 block。")
 
 # ----------------------------------------------------------------------------
 # ## 小结
