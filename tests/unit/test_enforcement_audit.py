@@ -346,6 +346,31 @@ def test_trace_replay_orders_the_chain_and_requires_a_final_decision(tmp_root):
     assert verify_chain(report.records) == ()
 
 
+def test_unanchored_records_are_not_collapsed_into_one_bucket(tmp_root):
+    """同一 trace 下多个请求的记录不能共用一个桶：第二条请求会被误报"阶段顺序倒退"。
+
+    旧实现的分组回落到 trace_id，而 demo 会在多个动作间复用 trace_id——那时第二条请求的
+    request 阶段排在第一条请求的 pre_decision 之后，链上明明合法却报倒退。
+    """
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.REQUEST, payload={}, trace_id="trace-1", request_id="req-1")
+    sink.append(
+        AuditStage.PRE_DECISION,
+        payload={"decision": "allow"},
+        trace_id="trace-1",
+        request_id="req-1",
+    )
+    sink.append(AuditStage.REQUEST, payload={}, trace_id="trace-1", request_id="req-2")
+    # 连 request_id 都没有的记录：每条自成一组，同样不互相干扰。
+    sink.append(AuditStage.REQUEST, payload={}, trace_id="trace-1")
+    sink.append(AuditStage.REQUEST, payload={}, trace_id="trace-1")
+
+    issues = verify_chain(sink.chain_records())
+
+    assert not any("阶段顺序倒退" in issue for issue in issues), issues
+
+
 def test_payload_of_returns_the_latest_reading_by_default(tmp_root):
     """重试会重新走一次 pre-check：同一阶段可能有多条，默认取"这次动作的最终说法"。
 

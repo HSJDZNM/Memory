@@ -119,8 +119,15 @@ def verify_chain(records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
         if position is None:
             issues.append(f"#{index}: 未知阶段 {record.stage!r}")
             continue
-        # 以 action_id 为单位分组；没有 action_id 的记录（如请求阶段）单独成组。
-        group = str(record.action_id or record.trace_id or "<unanchored>")
+        # 以 action_id 为单位分组；没有 action_id 的记录按 **request_id** 分，
+        # 两者都没有的每条自成一组（用序号做锚）。
+        #
+        # 旧实现回落到 trace_id：同一个 trace 里不同请求的记录、以及任何丢了 action_id 的
+        # 动作记录全挤进一个桶——第二条请求又从 request 阶段开始，于是被误报成"阶段顺序倒退"
+        # （阶段顺序本来就是**按动作/请求**判断的，全局单调反而是错的）。
+        group = str(
+            record.action_id or record.request_id or f"<unanchored:{record.sequence}>"
+        )
 
         if record.stage is AuditStage.PRE_DECISION:
             # 重试会重新走一次 pre-check：允许它开启新一轮，但之后仍必须按顺序推进。
