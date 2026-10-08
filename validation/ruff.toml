@@ -84,6 +84,17 @@ select = [
   "LOG015", "TRY400",
 ]
 
+# select 的**最低 Ruff 版本**（实证读数，不猜）：用本机 ruff 0.14.13 逐个码读
+#     ruff rule <CODE> --output-format json   ->   status.<Kind>.since
+# 62 个码**全部**读得到，其中最大的是 LOG015 = 0.10.0（Stable）；TRY400 = v0.0.236、
+# S611 = v0.2.0、S602/S605 = v0.0.262 等更早——也就是说这份 select 实际要求 ruff >= 0.10.0，
+# 而 validation/validators.yaml 里 tool.ruff 的 version_requirement 是 ">=0.6,<1"：
+# 0.6~0.9 上 LOG015 还不是 stable，select 里会出现该版本不认识的码。配置与工具区间不自洽，
+# 收紧区间或改 select 必须成对做；本轮只**记录读数**、不动区间（CI 实际装哪个版本要另证）。
+# 口径说明：status.since 是"达到当前状态的版本"，属可用性的**上界**证据、不是首发版本；
+# 但在下界问题上与首发同向——早于它的版本不能假定有这条规则。查不到的码要如实写"查不到"，
+# 本机 62 个码里一个都没有出现这种情况。
+
 [lint.per-file-ignores]
 # 理由（为什么安全）：这一处的 yaml.load 用的 Loader 是 _StrictLoader —— yaml.SafeLoader 的
 # 子类，只加了"重复键即报错"，不构造任意对象。换成 yaml.safe_load 会丢掉重复键拒绝这条
