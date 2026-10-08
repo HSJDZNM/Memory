@@ -19,14 +19,12 @@ Microsoft Learn 的页面模板与 peps.python.org、docs.gitlab.com 都不同�
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 import time
 from urllib.parse import urljoin
 
 import httpx
-from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
