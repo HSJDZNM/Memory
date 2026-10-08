@@ -5,6 +5,8 @@
 #   tier            A=本次已核验（存在性/布局/许可元数据）  B=仅搜索结果可见，未核验  C=只作哨兵，不作门槛
 #                   （2026-10-07 修订）B 现在有两种成因：① 还没核验；② **核验过但不予采信**——
 #                   同构程度 / 许可原文 / 漂移处置未过。两者都**不得进任何门槛**，区别写在各自的 verified 里。
+#                   B 的两半各占一节：tier_b_pending（①，尚未核验）与 tier_b_not_admitted（②）——
+#                   **datasets 里不放 B**，这样按「tier != C」过滤 datasets 的消费者不会误收 B。
 #   role            这条语料服务哪些工作包与指标（W*/GV-*）
 #   entry           入口 URL
 #   kind            git | hf | web | local
@@ -93,20 +95,6 @@ datasets:
     admission_todo: [核验 LICENSE 原文, '抽取 # ruleid 标注并统计与平台码的交集规模']
     cannot_prove: 与平台码集交集为 0（另一套规则语言与引擎）；只作 W2 的 CWE 口径来源，不作 L1 检出标注
 
-  - id: securityeval
-    tier: B
-    role: [W4, 生成侧]
-    title: SecurityEval（121 条 CWE 标注的生成任务）
-    entry: https://huggingface.co/datasets/s2e-lab/SecurityEval
-    kind: hf
-    pin: 钉 dataset revision
-    license: 待核验
-    license_verified: false
-    labels: 任务级提示词 + CWE 编号（**生成任务**，不是检出标注）
-    verified: 2026-10-07 HuggingFace API 核验存在、n<1K、非 gated、最近修改 2023-11-04；**许可元数据未核验**（见上面的 license）→ 按文件头部的 tier 定义改记 B：B 不得进任何门槛，与「本次已核验」不是一回事
-    admission_todo: [核验数据集卡里的许可与来源, 确认可用字段]
-    cannot_prove: 它测的是模型生成时会不会引入 CWE；不能当作平台的检出标注
-
   - id: cuad
     tier: A
     role: [W6, GV-11]
@@ -176,20 +164,6 @@ datasets:
     verified: 2026-10-07 gh api 核验存在、MIT、★172、最后推送 2024-07-02
     admission_todo: [抽取攻击者工具调用并渲染成 AgentEvent]
     cannot_prove: 工具名与 dsh 工具表不同构；多数会落到 capability_unavailable，这本身是设计正确但不能读成规则拦住了
-
-  - id: purplellama-cyberseceval
-    tier: B
-    role: [W4, W5]
-    title: PurpleLlama / CybersecurityBenchmarks（Meta）
-    entry: https://github.com/meta-llama/PurpleLlama
-    kind: git
-    pin: 钉 commit
-    license: NOASSERTION
-    license_verified: false
-    labels: 任务级（不安全代码生成 / agent 任务 / 攻击性场景）
-    verified: 2026-10-07 gh api 核验存在、★4.4k、活跃（最后推送 2026-09-29）；**许可元数据未核验**（见上面的 license）→ 按文件头部的 tier 定义改记 B：B 不得进任何门槛，与「本次已核验」不是一回事
-    admission_todo: [读 LICENSE 与使用条款（含可接受使用政策）, 只取允许用途的套件]
-    cannot_prove: 同上；另有合规风险，取用范围必须显式写下来
 
   - id: bfcl
     tier: A
@@ -408,38 +382,6 @@ datasets:
     cannot_prove: '**本次无外部标签**：不指向任何语料文件内位置；本模块不产出 Annotation。
       另注：isort 的集成用例是 git clone 真实项目（HEAD，钉不住 revision），不符合本文件的 pin 纪律，未采用'
 
-  # ---- 2026-10-07 追加：评论级数据集（R3 判定为「不予采信」，见方案 §4.7）----
-  # 为什么 tier: B 而不是 A：存在性 / 规模 / 字段 / 许可**元数据**都已核验（核验文档 §1–§5），
-  # 但**判据对象与平台判定不同构**（评论级 vs 检出级），加上许可原文缺失、HF 快照与上游当前版在 1 条记录上标签相反。
-  # 按本文件纪律 6：它不得进任何门槛，也不得进 GV-01 / GV-02 分母。
-  - id: aacr-bench
-    tier: B
-    role: [W9, GV-16, 'L2 抽样框（不是标签源）']
-    title: AACR-Bench 评论正确性判别集（2145 条评论级二分类；50 仓库 200 个真实 PR）
-    entry: https://huggingface.co/datasets/Alibaba-Aone/aacr-bench
-    kind: hf
-    pin: '数据集钉 revision 47be1d6df1e7faf222cf531587772d92f79fe6b2（HF main；仓库共 5 个 commit，全在 2026-02-02）；
-      代码侧钉每条记录自带的 pr_source_commit / pr_target_commit —— 但「用 HF 快照还是上游当前版」必须先裁定（见 admission_todo）'
-    license: 'apache-2.0（只在数据集卡 frontmatter 与 HF API cardData 里；HF 仓库内**没有** LICENSE 文件）'
-    license_verified: false
-    labels: '评论级二分类 label（1 = 这条评论正确 / 0 = 错误）+ 位置（path / side / from_line / to_line）
-      + 4 个粗类目 category；**不是**（文件, 行, 码）三元的检出标注，数据集里也没有任何代码或 diff 字段'
-    verified: '2026-10-07 逐条核验，见 related/aacr-bench-数据集核验.md §1–§7 与 §8 的 E01–E27：
-      2145 行 / 16 列 / 唯一 split train（label=1 1505、label=0 640）；50 仓 200 PR；diff / hunk / code / content / patch 命中 0；
-      note 上 CWE / Bandit S### / pydocstyle D### / OWASP / bandit / pycodestyle / PEP 8 命中全为 0（§7.3）；
-      HF 快照与上游当前版在 1 条记录上标签相反（§6.2 缺陷 A，dbeaver#37564）；
-      上游声明的 sha256 与实际不符、会让自带 converter 直接 SystemExit（§6.2 缺陷 B）。
-      R3 另外实测（方案 §4.7.4）：dataset.json 2,101,497 B、sha256 0804505f…；最小可行子集
-      browser-use/browser-use = 3 PR / 16 条 note / 8 个 (PR, 文件) 对，位置连接 16/16 可建立，取数成本 ≈ 2.4 MiB（不 clone）'
-    admission_todo: [许可原文（HF 侧 /resolve/main/LICENSE 与 /raw/main/LICENSE 均 404，需向上游确认 Apache-2.0 是否覆盖这份数据副本）,
-                     裁定用 HF 快照还是上游当前版（两者已在 1 条记录上标签相反，见核验文档 §6.2 缺陷 A）,
-                     把坐标基准写死（实测 3 个 PR 里 2 个 source/target 在 GitHub 上是 diverged，不能用「source = base」）,
-                     写清位置匹配口径与容差（GV-16 的分母 = 该树上平台报出的全部 finding，错位项照留）]
-    cannot_prove: '判据对象不同构：它判「这条评论对不对」，平台判「这条规则在这一点命中」，两个命题互不蕴含
-      （核验文档 §6.3 第 3 条）。因此它不得进 GV-01 / GV-02 分母，也不得作 L2 的 TP / FP / FN 来源：
-      直接当标签是跨层顶替（R2），自造 rule ↔ comment 映射再算一致率是自证（R1）。
-      它能给的只有描述性位置重合计数（GV-16）与人工标注的抽样框（方案 §4.7.3）'
-
 # Tier B 的另一半：**尚未核验**的（只登记入口）。核验清单 = 存在性 -> 许可原文 -> 规模 -> 标注粒度 -> 同构程度。
 tier_b_pending:
   - id: agentdojo
@@ -469,3 +411,67 @@ tier_b_pending:
   - id: github-codereview
     entry: https://huggingface.co/datasets/ronantakizawa/github-codereview
     note: 人工评审评论 vs 未评论代码（10 万–100 万行，license:other）；**来源与许可是硬门槛**，未核验前只作探索
+
+# Tier B 的另一半：**核验过但不予采信**——判据对象不同构 / 许可原文缺失 / 漂移处置未过。
+# 与 tier_b_pending（尚未核验）分开；这一节与那一节都**不得进任何门槛**，也不得进 GV-01 / GV-02 分母。
+# 与 datasets 分开的理由是机器可判的：只按「tier != C」过滤 datasets 的消费者，
+# 会把一条 tier B 的语料当成可进门槛的语料——B 干脆不出现在 datasets 里。
+tier_b_not_admitted:
+  # 许可元数据未核验（存在性核验过，但 license 至今没有来源）：不得进任何门槛，
+  # 也不得进 GV-01 / GV-02 分母。许可一旦有来源，凭 admission_todo 的项目逐条复核后再改回 A。
+  - id: securityeval
+    tier: B
+    role: [W4, 生成侧]
+    title: SecurityEval（121 条 CWE 标注的生成任务）
+    entry: https://huggingface.co/datasets/s2e-lab/SecurityEval
+    kind: hf
+    pin: 钉 dataset revision
+    license: 待核验
+    license_verified: false
+    labels: 任务级提示词 + CWE 编号（**生成任务**，不是检出标注）
+    verified: 2026-10-07 HuggingFace API 核验存在、n<1K、非 gated、最近修改 2023-11-04；**许可元数据未核验**（见上面的 license）→ 按文件头部的 tier 定义改记 B：B 不得进任何门槛，与「本次已核验」不是一回事
+    admission_todo: [核验数据集卡里的许可与来源, 确认可用字段]
+    cannot_prove: 它测的是模型生成时会不会引入 CWE；不能当作平台的检出标注
+
+  # 同上：GitHub API 给的是 NOASSERTION（许可未能判定），且含可接受使用政策需先读。
+  - id: purplellama-cyberseceval
+    tier: B
+    role: [W4, W5]
+    title: PurpleLlama / CybersecurityBenchmarks（Meta）
+    entry: https://github.com/meta-llama/PurpleLlama
+    kind: git
+    pin: 钉 commit
+    license: NOASSERTION
+    license_verified: false
+    labels: 任务级（不安全代码生成 / agent 任务 / 攻击性场景）
+    verified: 2026-10-07 gh api 核验存在、★4.4k、活跃（最后推送 2026-09-29）；**许可元数据未核验**（见上面的 license）→ 按文件头部的 tier 定义改记 B：B 不得进任何门槛，与「本次已核验」不是一回事
+    admission_todo: [读 LICENSE 与使用条款（含可接受使用政策）, 只取允许用途的套件]
+    cannot_prove: 同上；另有合规风险，取用范围必须显式写下来
+
+  - id: aacr-bench
+    tier: B
+    role: [W9, GV-16, 'L2 抽样框（不是标签源）']
+    title: AACR-Bench 评论正确性判别集（2145 条评论级二分类；50 仓库 200 个真实 PR）
+    entry: https://huggingface.co/datasets/Alibaba-Aone/aacr-bench
+    kind: hf
+    pin: '数据集钉 revision 47be1d6df1e7faf222cf531587772d92f79fe6b2（HF main；仓库共 5 个 commit，全在 2026-02-02）；
+      代码侧钉每条记录自带的 pr_source_commit / pr_target_commit —— 但「用 HF 快照还是上游当前版」必须先裁定（见 admission_todo）'
+    license: 'apache-2.0（只在数据集卡 frontmatter 与 HF API cardData 里；HF 仓库内**没有** LICENSE 文件）'
+    license_verified: false
+    labels: '评论级二分类 label（1 = 这条评论正确 / 0 = 错误）+ 位置（path / side / from_line / to_line）
+      + 4 个粗类目 category；**不是**（文件, 行, 码）三元的检出标注，数据集里也没有任何代码或 diff 字段'
+    verified: '2026-10-07 逐条核验，见 related/aacr-bench-数据集核验.md §1–§7 与 §8 的 E01–E27：
+      2145 行 / 16 列 / 唯一 split train（label=1 1505、label=0 640）；50 仓 200 PR；diff / hunk / code / content / patch 命中 0；
+      note 上 CWE / Bandit S### / pydocstyle D### / OWASP / bandit / pycodestyle / PEP 8 命中全为 0（§7.3）；
+      HF 快照与上游当前版在 1 条记录上标签相反（§6.2 缺陷 A，dbeaver#37564）；
+      上游声明的 sha256 与实际不符、会让自带 converter 直接 SystemExit（§6.2 缺陷 B）。
+      R3 另外实测（方案 §4.7.4）：dataset.json 2,101,497 B、sha256 0804505f…；最小可行子集
+      browser-use/browser-use = 3 PR / 16 条 note / 8 个 (PR, 文件) 对，位置连接 16/16 可建立，取数成本 ≈ 2.4 MiB（不 clone）'
+    admission_todo: [许可原文（HF 侧 /resolve/main/LICENSE 与 /raw/main/LICENSE 均 404，需向上游确认 Apache-2.0 是否覆盖这份数据副本）,
+                     裁定用 HF 快照还是上游当前版（两者已在 1 条记录上标签相反，见核验文档 §6.2 缺陷 A）,
+                     把坐标基准写死（实测 3 个 PR 里 2 个 source/target 在 GitHub 上是 diverged，不能用「source = base」）,
+                     写清位置匹配口径与容差（GV-16 的分母 = 该树上平台报出的全部 finding，错位项照留）]
+    cannot_prove: '判据对象不同构：它判「这条评论对不对」，平台判「这条规则在这一点命中」，两个命题互不蕴含
+      （核验文档 §6.3 第 3 条）。因此它不得进 GV-01 / GV-02 分母，也不得作 L2 的 TP / FP / FN 来源：
+      直接当标签是跨层顶替（R2），自造 rule ↔ comment 映射再算一致率是自证（R1）。
+      它能给的只有描述性位置重合计数（GV-16）与人工标注的抽样框（方案 §4.7.3）'
