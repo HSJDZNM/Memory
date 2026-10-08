@@ -367,6 +367,29 @@ def test_an_incomplete_langgraph_is_unavailable_not_an_attribute_error(monkeypat
         _load()
 
 
+def test_a_spec_with_two_static_edges_leaving_one_node_is_rejected() -> None:
+    """同源两条静态边必须被自检拒绝：两个引擎对它的行为不同（实测）。
+
+    参考引擎按 spec 顺序取第一条（另一条静默丢掉，图变成一条走不通的路），
+    LangGraph 因为两条边共用同一个分支名直接编译失败
+    （\`ValueError: Branch with name _static_choice already exists for node 'policy_retrieval'\`）。
+    让两个引擎各自决定就等于"同一份 spec 两种语义"。
+    """
+
+    ambiguous = DEFAULT_SPEC.model_copy(
+        update={
+            "edges": DEFAULT_SPEC.edges
+            + (Edge(source=NodeId.POLICY_RETRIEVAL.value, target=NodeId.IMPLEMENTATION.value),)
+        }
+    )
+
+    issues = ambiguous.problems()
+
+    assert any("2 条静态边" in issue for issue in issues)
+    # 反向不变量：真实图定义仍然一条都不误报
+    assert DEFAULT_SPEC.problems() == ()
+
+
 def test_a_checkpointer_is_rejected_with_a_reason(tmp_root) -> None:
     """checkpointer 参数被**显式拒绝**，而不是"收下却跑不起来"。
 

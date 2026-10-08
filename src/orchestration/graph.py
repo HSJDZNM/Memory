@@ -124,6 +124,17 @@ class GraphSpec(StrictModel):
         for edge in self.edges:
             if not any(edge.source == item.value for item in NodeId):
                 issues.append(f"边 {edge.source!r} 不是已知节点")
+        # 同一个节点挂两条静态边：走哪条**无法确定**。实测两个引擎给出不同结果——
+        # 参考引擎按 spec 顺序取第一条（另一条静默丢掉），LangGraph 因为两条边共用同一个分支名
+        # 直接编译失败（`ValueError: Branch with name _static_choice already exists for node ...`）。
+        # 自检必须在这里拒绝，而不是让两个引擎各自决定。
+        for node in nodes:
+            outgoing = self.outgoing(node)
+            if len(outgoing) > 1:
+                issues.append(
+                    f"节点 {node!r} 有 {len(outgoing)} 条静态边（{list(outgoing)}）："
+                    "走哪条无法确定，两个引擎会给出不同结果"
+                )
         seen_router_sources: set[str] = set()
         for router in self.routers:
             if router.name not in ROUTERS:
