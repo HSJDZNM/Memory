@@ -61,7 +61,9 @@ def test_generated_lock_is_readable_by_the_repo_parser(tmp_root, monkeypatch):
     assert "pydantic==2.13.5 \\" in text
 
     monkeypatch.setattr(check_repo_consistency, "ROOT", tmp_root)
-    assert check_repo_consistency.read_requirements_lock() == {
-        "pyyaml": "6.0.3",
-        "pydantic": "2.13.5",
-    }
+    # 解析器的口径在 97f741b 之后是 (已锁定, 解析不了的行)：跨文件契约因此要同时钉两件事——
+    # 版本逐项读回**并且**没有一行读不懂（后者正是那次修复引入的：不能静默丢掉再报"没有固定 X"）。
+    locked, unparsed = check_repo_consistency.read_requirements_lock()
+
+    assert locked == {"pyyaml": "6.0.3", "pydantic": "2.13.5"}
+    assert unparsed == []
