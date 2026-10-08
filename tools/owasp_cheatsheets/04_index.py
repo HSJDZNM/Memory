@@ -157,7 +157,9 @@ A(""); A("---"); A("")
 A("## 四、判定与排除记录"); A("")
 A("爬取全部 122 个候选链接后逐篇阅读正文，**排除 4 篇**：它们不是安全指南正文，而是指向新位置的废弃占位页。"); A("")
 A("| 已废弃文档 | 抓取到的内容 | 迁移去向 | 处理 |"); A("| --- | --- | --- | --- |")
-u2p = {k: v.replace("docs/mirrors/owasp-cheatsheets" + os.sep, "").replace(os.sep, "/") for k, v in st["url2path"].items()}
+# 前缀取 OUT 本身，不抄第二份字面量：改了 OUT（或写错一个字符）时这里会跟着走，
+# 而不是静默留下一段没被剥掉的路径前缀。
+u2p = {k: v.replace(OUT + os.sep, "").replace(os.sep, "/") for k, v in st["url2path"].items()}
 A("| Access Control Cheat Sheet | 「DEPRECATED: The Access Control cheatsheet has been deprecated.」（约 220 字符） | [Authorization Cheat Sheet](" +
   u2p["https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html"] + ") | 不保存 |")
 A("| TLS Cipher String Cheat Sheet | 「DEPRECATED: ... Please visit the Transport Layer Security Cheat Sheet instead.」（约 250 字符） | [Transport Layer Security Cheat Sheet](" +
