@@ -69,7 +69,9 @@ for root, dirs, files in os.walk(OUT):
             if t.startswith(("http", "#", "mailto:")):
                 continue
             rel_total += 1
-            target = t.split("#")[0]
+            # 查询串不是路径的一部分：`foo.md?plain=1` 原样交给 `os.path.exists` 必然 False，
+            # 合法的站内链接于是被报成断链（旧实现就是只剥了片段）。片段与查询都要剥掉再解析。
+            target = t.split("#")[0].split("?")[0]
             if target.startswith("/"):
                 # 根相对链接指的是**镜像根**，不是文件系统根：os.path.join(root, "/x") 会
                 # 直接丢掉 root，于是它被拿去和文件系统根拼，永远判成断链（或更糟：命中了
