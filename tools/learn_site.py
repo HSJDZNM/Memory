@@ -35,7 +35,6 @@ NL = chr(10)
 BASE = "https://learn.microsoft.com/en-us/dotnet/standard/design-guidelines"
 TOC_URL = BASE + "/toc.json"
 SOURCE_REPO_DIR = "docs/standard/design-guidelines"
-SOURCE_REPO = "https://github.com/dotnet/docs/blob/main/" + SOURCE_REPO_DIR + "/"
 
 # 页面模板里需要整体摘除的块（选择器来自实际 HTML：都位于 <main> 之内）
 CHROME_SELECTORS = (
@@ -108,10 +107,6 @@ def _relpath(url):
     """规范 URL -> 本地文件相对路径（扁平，与 URL 末段一一对应）。"""
     tail = url.rstrip("/")[len(BASE):].strip("/")
     return (tail + ".md") if tail else "index.md"
-
-
-def _source_repo(url):
-    return SOURCE_REPO + (_relpath(url)[:-3] + ".md")
 
 
 def _collect(items, out, parent, path, depth):
