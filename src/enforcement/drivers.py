@@ -690,18 +690,6 @@ def _terminate_windows_job(job: int) -> None:
         pass
 
 
-def python_executable() -> str:
-    """当前解释器路径：测试与示例用它构造确定性的 argv，而不是猜系统里有什么。"""
-
-    return sys.executable or "python"
-
-
-def environment_with(extra: Mapping[str, str]) -> dict[str, str]:
-    env = dict(os.environ)
-    env.update(extra)
-    return env
-
-
 def _close_windows_job(process: subprocess.Popen) -> None:
     job = getattr(process, "_enforcement_job_handle", None)
     if not job:
