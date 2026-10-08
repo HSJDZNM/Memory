@@ -94,7 +94,7 @@ datasets:
     cannot_prove: 与平台码集交集为 0（另一套规则语言与引擎）；只作 W2 的 CWE 口径来源，不作 L1 检出标注
 
   - id: securityeval
-    tier: A
+    tier: B
     role: [W4, 生成侧]
     title: SecurityEval（121 条 CWE 标注的生成任务）
     entry: https://huggingface.co/datasets/s2e-lab/SecurityEval
@@ -103,7 +103,7 @@ datasets:
     license: 待核验
     license_verified: false
     labels: 任务级提示词 + CWE 编号（**生成任务**，不是检出标注）
-    verified: 2026-10-07 HuggingFace API 核验存在、n<1K、非 gated、最近修改 2023-11-04
+    verified: 2026-10-07 HuggingFace API 核验存在、n<1K、非 gated、最近修改 2023-11-04；**许可元数据未核验**（见上面的 license）→ 按文件头部的 tier 定义改记 B：B 不得进任何门槛，与「本次已核验」不是一回事
     admission_todo: [核验数据集卡里的许可与来源, 确认可用字段]
     cannot_prove: 它测的是模型生成时会不会引入 CWE；不能当作平台的检出标注
 
@@ -142,10 +142,10 @@ datasets:
     entry: https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified
     kind: hf
     pin: 钉 dataset revision + 任务子集的显式清单
-    license: 待核验
+    license: MIT（上游代码仓库 princeton-nlp/SWE-bench 的 LICENSE；HF 数据集卡与 API tags 里没有 license:*）
     license_verified: false
     labels: 任务级（issue + 仓库 + 测试）；成功由仓库测试判定，是**外部 oracle**
-    verified: 2026-10-07 HuggingFace API 核验存在、n<1K、非 gated
+    verified: 2026-10-07 HuggingFace API 核验存在、n<1K、非 gated；许可元数据 2026-10-08 记自 tools/ab_tasks.py:74-84 的 gh api 读数（repos/princeton-nlp/SWE-bench -> MIT；HF API tags 无 license:*）
     admission_todo: [核验许可, 固定 50 条子集清单, 估算运行成本]
     cannot_prove: 任务成功不等于规范合规；它只提供良性真实仓库与一个外部成功判据
 
@@ -178,7 +178,7 @@ datasets:
     cannot_prove: 工具名与 dsh 工具表不同构；多数会落到 capability_unavailable，这本身是设计正确但不能读成规则拦住了
 
   - id: purplellama-cyberseceval
-    tier: A
+    tier: B
     role: [W4, W5]
     title: PurpleLlama / CybersecurityBenchmarks（Meta）
     entry: https://github.com/meta-llama/PurpleLlama
@@ -187,7 +187,7 @@ datasets:
     license: NOASSERTION
     license_verified: false
     labels: 任务级（不安全代码生成 / agent 任务 / 攻击性场景）
-    verified: 2026-10-07 gh api 核验存在、★4.4k、活跃（最后推送 2026-09-29）
+    verified: 2026-10-07 gh api 核验存在、★4.4k、活跃（最后推送 2026-09-29）；**许可元数据未核验**（见上面的 license）→ 按文件头部的 tier 定义改记 B：B 不得进任何门槛，与「本次已核验」不是一回事
     admission_todo: [读 LICENSE 与使用条款（含可接受使用政策）, 只取允许用途的套件]
     cannot_prove: 同上；另有合规风险，取用范围必须显式写下来
 
