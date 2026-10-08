@@ -38,7 +38,8 @@ result / exit_code。
 **包装层也有自己的协议版本**（2026-09-30 裁定）：output_schema_version 只描述**外层包装**的形状，
 与决策协议（policy.models.SCHEMA_VERSION）各自演进、谁也不跟随谁。1.0 是**追认**的
 ——它指"台阶 3c 之前的形状"（那时 check_volume 里还没有 obligations_open / obligations_note
-两个键，见台阶 3c 记录 §2.5）；当前形状记为 1.1。给包装加键 / 改语义都要按 AGENTS 第 55 条
+两个键，见台阶 3c 记录 §2.5）；当前形状记为 1.2（与下面的 OUTPUT_SCHEMA_VERSION 同值——
+这一句曾经停在 1.1，而常量已经走到 1.2）。给包装加键 / 改语义都要按 AGENTS 第 55 条
 递增这个版本，因为消费方（脚本、门禁、手册）按它读键集合。
 
 两个**只增不改**的读数（07 号报告 P4 / P5）：
