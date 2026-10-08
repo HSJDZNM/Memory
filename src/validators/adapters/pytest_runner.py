@@ -258,6 +258,8 @@ def run_pytest(
                 diagnosis,
                 rules=rules,
                 target_path=target_path,
+                workspace=workspace,
+                max_message_chars=max_message_chars,
                 tool=invocation,
             )
         )
@@ -614,6 +616,8 @@ def _collection_failure_evidence(
     *,
     rules: Sequence[Rule],
     target_path: str,
+    workspace: Path,
+    max_message_chars: int,
     tool: object,
 ) -> Tuple[ValidationEvidence, ...]:
     """收集失败 → failing_tests 的**真违规**（severity 取规则自己的级别）。
@@ -627,7 +631,27 @@ def _collection_failure_evidence(
         return ()
     evidence: list[ValidationEvidence] = []
     for block in diagnosis.blocks:
-        where = block.test_module or "<未知测试模块>"
+        # test_module 来自 pytest 输出（不可信）：进 message / location 之前必须与同一文件里
+        # 其它 excerpt 同一口径地截断 + 脱敏。**只作用于展示与报账文本**：status、checker、
+        # value（checker 归属）与排序键一字不动。
+        raw = block.test_module or ""
+        where = (
+            sanitize_text(raw, workspace=workspace, limit=max_message_chars) if raw else ""
+        )
+        label = where or "<未知测试模块>"       # 只用于 message
+        # message 的**整体**必须 ≤ max_message_chars：只截模块名不够——固定前缀 + excerpt 也会
+        # 把它顶过上限（实测：只截模块名时 message 仍是 562 > 500）。上限是给"这一条文本"的，
+        # 不是给其中一段的。
+        message = sanitize_text(
+            "测试模块收集失败（不是断言失败）：" + label + "：" + block.excerpt,
+            workspace=workspace,
+            limit=max_message_chars,
+        )
+        location_file = where or target_path     # 只用于 location，保持原来的回退语义
+        try:
+            location = EvidenceLocation(file=location_file, line=None, column=None)
+        except ValueError:
+            location = EvidenceLocation(file=target_path, line=None, column=None)
         for rule in owners:
             evidence.append(
                 ValidationEvidence(
@@ -637,11 +661,12 @@ def _collection_failure_evidence(
                     rule_id=rule.id,
                     rule_version=rule.version,
                     severity=rule.severity,
-                    message="测试模块收集失败（不是断言失败）：" + where + "：" + block.excerpt,
+                    message=message,
                     value=block.test_module or FAILING_TESTS_CHECKER,
-                    location=EvidenceLocation(
-                        file=block.test_module or target_path, line=None, column=None
-                    ),
+                    # location 必须是**合法路径**：脱敏可能把它变成不是路径的东西（截断标记 /
+                    # 占位符），那时退回 target_path（原来的回退语义）。**绝不让展示文本的形态
+                    # 把这条证据构造弄失败**——那会把 status 从 findings 改成 crashed。
+                    location=location,
                     tool=tool,
                 )
             )
