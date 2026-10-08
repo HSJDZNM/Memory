@@ -35,6 +35,31 @@ __all__ = [
 ]
 
 
+# 失败明细的长度上限（与状态自由文本同一口径：`models._MAX_TEXT`）。
+_MAX_DETAIL = 400
+
+
+def _concise_detail(detail: str) -> str:
+    """失败明细必须是**短、无控制字符、无凭据形态**的一段话（模块 docstring 的承诺）。
+
+    此前 `detail` 是原样存下的：`failure_payload()` 会把它整份交给调用方（进而可能进 checkpoint 与
+    审计），而模块 docstring 早就写着「脱敏的短文本，不放正文 / 凭据 / 绝对路径」。这里把承诺变成
+    **执行**：折叠空白与控制字符、超长截断、含凭据形态取值就整体隐去。
+
+    刻意**不抛异常**：在一个错误对象构造成功之前再抛一个错误，会用新错误盖掉正在上报的那次失败——
+    那比明细难看严重得多（第 52 条：拦住只是完成一半，理由还得是能读的那个）。
+    """
+
+    text = " ".join(str(detail).replace("\x00", "").split())
+    from enforcement.audit import contains_secret_value
+
+    if contains_secret_value(text):
+        return "<明细含凭据形态取值：已隐去>"
+    if len(text) > _MAX_DETAIL:
+        return text[:_MAX_DETAIL] + "…（明细已截断）"
+    return text
+
+
 class OrchestrationError(Exception):
     """编排层所有显式失败的基类：带稳定失败码，调用方按码分支。"""
 
@@ -56,8 +81,9 @@ class OrchestrationError(Exception):
         记成"没有审批"、终态也跟着走偏。
         """
 
-        super().__init__(detail)
-        self.detail = detail
+        text = _concise_detail(detail)
+        super().__init__(text)
+        self.detail = text
         self.node = node
         if code is not None:
             self.code = code
