@@ -4,6 +4,19 @@
 #   dsh --profile headless --patch <本文件的绝对路径> "任务描述"
 #
 # patch 语义：顶层是 patch 列表；没有 id 的 insert 表示把条目追加到根条目列表。
+#
+# 用之前必须先替换两处占位符，否则这份文件本身跑不起来：
+#   - name 里的 <仓库绝对路径>：插件文件来自本仓库的 src/adapters/dsh/policy-hook.plugin.mjs；
+#   - config.projectDir 的 <受治理项目的绝对路径>：Hook 的工作目录。它不是一个"无害的占位符"——
+#     插件的 workdir 预检发现路径不存在/不可读时会直接失败关闭（project.workdir_missing /
+#     host.workdir_unreadable），报的是"Hook 起不来"。
+# Hook 命令是 python -m adapters.dsh.hooks，而本仓库**不把 src/ 装进 site-packages**：
+# 受治理项目里要么把本仓库装进环境（pip install -e .），要么让 Hook 进程带上 PYTHONPATH=<仓库>/src
+# （CI 与 README 的安装一节用的就是这条），否则报 No module named adapters。
+# timeoutMs 也不是 dsh 侧唯一的期限：src/adapters/wiring.py:1751-1766 取
+# min(插件 timeoutMs, hooks.json timeout * 1000) 作为实际生效的那个（"进程内插件的 timeoutMs
+# 决定 ctx.shell 何时杀进程"）。两个都要大于 dsh-adapter.yaml 的 timeout_ms（内部预算）——
+# 先被杀掉的那一层会把"阻断"变成"放行"（被杀 = 放行）。
 
 # —— 推荐：进程内插件转发（本仓库本机实测可阻断） ——
 # 它只做转发：组装 PreToolUse 载荷 → 用 ctx.shell 运行 Hook 命令 → exit 2 变 deny。
