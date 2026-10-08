@@ -330,6 +330,25 @@ def test_non_json_content_type_is_rejected_with_415(tmp_root: Path) -> None:
     assert error_code(ops) == "unsupported_media_type"
 
 
+def test_the_content_type_check_is_case_insensitive(tmp_root: Path) -> None:
+    """媒体类型**不区分大小写**（RFC 9110 §8.3）：`Application/JSON` 是合法 JSON 请求。
+
+    旧实现把解析出来的值与字面量 `application/json` 直接比，于是这个合法写法被拒成 415
+    ——传输层说「你的请求不合法」，而它合法。`text/plain` 仍然必须 415（上一条用例继续钉住）。
+    """
+
+    runtime, client, _ = build_api(tmp_root)
+    # 与既有「200」用例同一条路由、同一份上下文：这里要证明的只是**媒体类型的大小写**不影响判定，
+    # 不是这条路由本身的行为（那是别的用例的事）。
+    posted = client.post(
+        "/v1/policy/evaluate",
+        headers={**auth(), "Content-Type": "Application/JSON"},
+        json=envelope("it-content-type-case", context=BAD_CONTEXT),
+    )
+
+    assert posted.status_code == 200, posted.text
+
+
 def test_oversized_body_is_rejected_with_413(tmp_root: Path) -> None:
     """请求体上限是**真的上限**：贴着上限的请求要能过，超过一个字节就 413。
 

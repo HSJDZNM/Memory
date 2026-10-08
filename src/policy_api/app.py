@@ -212,7 +212,12 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
             )
         if raw is None:
             raw = b""  # 运维路由（GET /v1/ops/metrics）按协议没有请求体
-        content_type = (request.headers.get("content-type") or "").split(";")[0].strip()
+        # RFC 9110 §8.3：媒体类型**不区分大小写**，`Application/JSON` 是合法写法。
+        # 只按小写比较会把一个完全合法的请求拒成 415——"传输层说你的请求不合法"，而它合法。
+        content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+        # 明确的边界：`application/*+json`（例如 application/merge-patch+json）**不在**本平台的承诺里。
+        # 这是刻意画在这里的：当前只有 JSON 一种请求体，契约快照与 DTO 都按 `application/json` 描述，
+        # 要支持结构化后缀就得连同契约一起改，而不是在这一行悄悄放宽（那会让契约与实际接受面不一致）。
         if content_type and content_type != "application/json":
             raise ApiError(
                 ErrorCode.UNSUPPORTED_MEDIA_TYPE, "请求体必须是 application/json"
