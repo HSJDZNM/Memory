@@ -551,7 +551,6 @@ def _collect(instance_id: str, *, root: Path, python: str) -> dict:
     result = _run(argv, cwd=directory, timeout=900, env=payload["test_command"]["env"])
     text = result["stdout"] + result["stderr"]
     ids = [line.strip() for line in result["stdout"].splitlines() if "::" in line and not line.startswith(" ")]
-    errors = len([line for line in text.splitlines() if line.startswith("ERROR ") or " error" in line.lower() and "errors" in line.lower()])
     needs: list[str] = []
     for line in text.splitlines():
         marker = "No module named "
