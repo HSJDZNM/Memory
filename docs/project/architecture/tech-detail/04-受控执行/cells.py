@@ -482,9 +482,18 @@ assert unchanged
 fresh_ledger = EnforcementLedger(TEMP / "fresh-ledger.jsonl")
 from_chain = pre_execute(first, registry=registry, ledger=fresh_ledger, sink=sink)
 print("台账被换空之后:", from_chain.decision.decision.value, "/", from_chain.decision.reason_code.value)
+from enforcement.models import CheckStatus
+
 print("  依据:", from_chain.decision.check("ledger").detail[:52])
 assert from_chain.decision.reason_code is ReasonCode.ACTION_REPLAY
-assert from_chain.decision.check("ledger").detail.startswith("该 action_id 已经判定/执行过")
+# **断言只钉结构化事实**：是哪个 check、它的状态与原因码。`detail` 是给人读的措辞（会随文案调整），
+# 原来那条 `detail.startswith("该 action_id 已经判定/执行过")` 会让一次"文案改进"把演示弄红，
+# 而它想证明的（这次调用被台账拦下）本来就有结构化表示。
+# 另外 `decision.check(name)` 返回的是 `Optional[CheckResult]`：先自证这条记录在，再读它的字段。
+ledger_check = from_chain.decision.check("ledger")
+assert ledger_check is not None, "决策里没有 ledger 这条检查记录"
+assert ledger_check.status is CheckStatus.FAILED, ledger_check.status
+assert ledger_check.reason_code is ReasonCode.ACTION_REPLAY, ledger_check.reason_code
 
 # 拿一个"阻断"的执行前决策去执行：执行器拒绝执行，文件一个字节都不动。
 refused = executor.execute(first, spec=registry.tool("fs.edit"), pre=replay.decision, workspace=WORKSPACE)
