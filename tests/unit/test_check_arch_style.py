@@ -10,6 +10,8 @@ from pathlib import Path
 
 import check_arch_style as module  # type: ignore[import-not-found]
 
+BT3 = chr(96) * 3
+
 
 def test_empty_architecture_directory_is_a_problem(monkeypatch, tmp_root, capsys):
     empty = tmp_root / "architecture"
@@ -58,3 +60,45 @@ def test_real_anchors_are_still_recognised():
         "`some_identifier` 在这里",
     ):
         assert module.ANCHOR.search(anchor) is not None, anchor
+
+def test_tilde_fence_hides_a_backtick_fence_inside_it():
+    """`~~~` 块里的 ``` 不许翻转围栏状态（旧实现会把它当成关闭，块内代码变正文/反之）。"""
+
+    text = chr(10).join([
+        "散文一",
+        "~~~",
+        BT3,
+        "code_inside",
+        BT3,
+        "~~~",
+        "散文二",
+    ])
+
+    lines = [line for _number, line in module.prose_lines(text)]
+
+    assert lines == ["散文一", "散文二"]
+
+
+def test_longer_closing_fence_closes_and_shorter_does_not():
+    """关闭标记必须不短于开启标记：块内的短围栏不算关闭。"""
+
+    text = chr(10).join([
+        "散文一",
+        BT3 * 4,
+        BT3,
+        "code_inside",
+        BT3 * 4,
+        "散文二",
+    ])
+
+    lines = [line for _number, line in module.prose_lines(text)]
+
+    assert lines == ["散文一", "散文二"]
+
+
+def test_plain_backtick_fence_still_works():
+    """阳性对照：普通 ``` 块照旧被跳过。"""
+
+    text = chr(10).join(["散文一", BT3, "code_inside", BT3, "散文二"])
+
+    assert [line for _number, line in module.prose_lines(text)] == ["散文一", "散文二"]

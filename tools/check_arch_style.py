@@ -30,19 +30,28 @@ ANCHOR = re.compile(
     + r"|[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+"
     + r"|allow_with_warnings|needs_human|uncovered_checker|action_hash)"
 )
-FENCE_OPEN = "^\\s*(" + BT * 3 + "|~~~)"
+FENCE_OPEN = re.compile(r"^\s*(`{3,}|~{3,})")
 SENTENCE = re.compile(r"[^。；！？\n]+[。；！？]?")
-FENCE = re.compile(FENCE_OPEN)
-
 
 def prose_lines(text: str):
-    """返回 (行号, 内容) 的散文行：跳过围栏代码与表格行。"""
-    inside = False
+    """返回 (行号, 内容) 的散文行：跳过围栏代码与表格行。
+
+    围栏状态按**开启时的标记**跟踪：只有同字符、且不短于开启标记的围栏才算关闭。
+    旧实现"任何围栏行都翻转"——`~~~` 块里出现一个 ``` 就把块内正文当成代码、把块外代码当成
+    正文继续算，既可能假红也可能**假绿**（门禁最怕后者）。
+    """
+
+    inside = None  # 开启中的围栏标记（字符 + 重复长度）
     for index, line in enumerate(text.splitlines(), 1):
-        if FENCE.match(line):
-            inside = not inside
+        match = FENCE_OPEN.match(line)
+        if match:
+            marker = match.group(1)
+            if inside is None:
+                inside = marker
+            elif marker[0] == inside[0] and len(marker) >= len(inside):
+                inside = None
             continue
-        if inside:
+        if inside is not None:
             continue
         stripped = line.strip()
         if stripped.startswith("|") or stripped.startswith("<"):
