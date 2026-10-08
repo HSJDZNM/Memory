@@ -679,7 +679,9 @@ class AccessScope(StrictModel):
         if isinstance(value, str):
             raise TypeError("datasets 必须是数据集名的序列，不能是字符串")
         if isinstance(value, (list, tuple, set, frozenset)):
-            return frozenset(normalize_dataset_name(str(item)) for item in value if str(item).strip())
+            return frozenset(
+                normalize_dataset_name(str(item)) for item in value if str(item).strip()
+            )
         return value
 
     @property
