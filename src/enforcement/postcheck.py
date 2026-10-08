@@ -392,8 +392,6 @@ def _run_post_check(
         if not effect.baseline_recorded:
             # 没有执行前基线时的"变了"是猜测，不是证据：宁可判需要修复。
             return _outcome(name, False, "缺少执行前基线：无法证明这次动作产生了什么效果")
-        if record.status is ExecutionStatus.DELEGATED and evidence.files and effect.changed:
-            return _outcome(name, True, f"{effect.path} 哈希已变化")
         if effect.changed:
             return _outcome(name, True, f"{effect.path} 哈希已变化")
         return _outcome(
