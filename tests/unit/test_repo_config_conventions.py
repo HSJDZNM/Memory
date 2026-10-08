@@ -66,3 +66,18 @@ def test_editorconfig_covers_every_makefile_name_gnu_make_reads() -> None:
     assert int(sections[header].get("tab_width", "0")) > 2, (
         "tab_width 不设就继承 [*] 的 indent_size，TAB 只有两列宽"
     )
+
+
+def test_gitignore_covers_sqlite_sidecar_files() -> None:
+    """WAL / journal 模式下的 SQLite 会留下与主库同名的兄弟文件，只忽略主库等于没忽略。
+
+    为什么必须这样：`foo.sqlite-wal` / `foo.sqlite-shm` / `foo.sqlite3-journal` 不匹配
+    `*.sqlite` 这类后缀模式，可以被直接提交——而它们含有还没 checkpoint 的表内容。
+    反向对照：显式后缀不是通配，`probe.db-archive.tar` 仍应可提交。
+    """
+
+    for base in ("probe.sqlite", "probe.sqlite3", "probe.db"):
+        assert _is_ignored(base), base
+        for suffix in ("-wal", "-shm", "-journal"):
+            assert _is_ignored(base + suffix), base + suffix
+    assert not _is_ignored("probe.db-archive.tar"), "只想盖住兄弟文件，不想吞掉同前缀的其它产物"

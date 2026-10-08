@@ -105,8 +105,20 @@ htmlcov/
 .tmp/
 
 # ---- 数据与产物（按需放开）----
+# WAL / rollback journal 模式下的 SQLite 会生成与主库同名的兄弟文件：只忽略主库时
+# 它们能被提交，而里面有还没 checkpoint 的表内容。逐个后缀写出来，不用 *.db-* 这类通配：
+# 那会把 foo.db-backup 这种真正想留下的文件也一起吞掉。
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
 *.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 *.db
+*.db-wal
+*.db-shm
+*.db-journal
 data/
 artifacts/
