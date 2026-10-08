@@ -253,3 +253,22 @@ def _entry_with(**overrides: str) -> str:
     }
     fields.update(overrides)
     return "  - " + "\n    ".join(f"{key}: {value}" for key, value in fields.items()) + "\n"
+
+def test_non_canonical_dates_are_refused(tmp_root):
+    """#8：YYYYMMDD / 周日期这类 ISO 变体不许进声明文件（口径必须与仓库其余数据一致）。
+
+    修复前 _require_date 只调 date.fromisoformat，它把这些写法一并收下并原样回显进报告。
+    """
+
+    for bad in ("20261231", "2026-W40-1", "2026-12-31T00:00:00"):
+        with pytest.raises(WiringScopeError) as error:
+            load_wiring_scope(
+                _write(tmp_root, _document(_entry_with(expires_at=f"'{bad}'")))
+            )
+        assert "YYYY-MM-DD" in str(error.value), error.value
+
+    # 反真空：规范形态照常加载。
+    scope = load_wiring_scope(
+        _write(tmp_root, _document(_entry_with(expires_at="'2026-12-31'")))
+    )
+    assert scope.as_json()["declared"] == 1
