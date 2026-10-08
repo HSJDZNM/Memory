@@ -161,6 +161,12 @@ def _compatible_release(pinned: str, bound: str) -> bool:
     return candidate + (0,) * (width - len(candidate)) < upper + (0,) * (width - len(upper))
 
 
+def _normalize_specifier(specifier: str) -> str:
+    """比较用的规范化形式：去掉全部空白（界定符之间的空白不改变区间语义）。"""
+
+    return re.sub(r"\s+", "", specifier)
+
+
 def read_requirements_in() -> dict[str, str]:
     result: dict[str, str] = {}
     for line in _read_text("requirements.in").splitlines():
@@ -243,7 +249,9 @@ def check_lock() -> list[str]:
     for name in sorted(set(project) - set(declared)):
         issues.append("pyproject.toml 声明了 %s，requirements.in 里没有" % name)
     for name in sorted(set(declared) & set(project)):
-        if declared[name] != project[name]:
+        # 比的是**区间语义**，不是字符串：`>=2.9,<3` 与 `>=2.9, <3` 描述同一个区间，
+        # 旧实现逐字符比较，于是任何一处空白调整都会把 CI 判红（并诱导人去"改回原样"）。
+        if _normalize_specifier(declared[name]) != _normalize_specifier(project[name]):
             issues.append(
                 "%s 的版本区间不一致：requirements.in=%r，pyproject.toml=%r"
                 % (name, declared[name], project[name])

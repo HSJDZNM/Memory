@@ -156,3 +156,30 @@ def test_check_lock_surfaces_unparsable_lines(monkeypatch):
     issues = module.check_lock()
 
     assert any("无法解析的固定行" in issue for issue in issues), issues
+
+def _lock_of(name: str, version: str):
+    return lambda: ({name: version}, [])
+
+
+def test_specifier_whitespace_is_not_drift(monkeypatch):
+    """`>=2.9,<3` 与 `>=2.9, <3` 是同一个区间：空白差异不许判成漂移。"""
+
+    monkeypatch.setattr(module, "read_requirements_in", lambda: {"demo": ">=2.9,<3"})
+    monkeypatch.setattr(module, "read_pyproject", lambda: {"demo": ">=2.9, <3"})
+    monkeypatch.setattr(module, "read_requirements_lock", _lock_of("demo", "2.9.1"))
+
+    issues = module.check_lock()
+
+    assert not any("版本区间不一致" in issue for issue in issues), issues
+
+
+def test_different_ranges_are_still_drift(monkeypatch):
+    """阳性对照：真的不同区间照旧报（规范化不许把差异也吃掉）。"""
+
+    monkeypatch.setattr(module, "read_requirements_in", lambda: {"demo": ">=2.9,<3"})
+    monkeypatch.setattr(module, "read_pyproject", lambda: {"demo": ">=2.9,<4"})
+    monkeypatch.setattr(module, "read_requirements_lock", _lock_of("demo", "2.9.1"))
+
+    issues = module.check_lock()
+
+    assert any("版本区间不一致" in issue for issue in issues), issues
