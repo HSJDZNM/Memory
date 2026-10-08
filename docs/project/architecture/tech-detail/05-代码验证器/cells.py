@@ -226,6 +226,9 @@ outcomes = {}
 for target, label in CASES:
     report, result = decide(target)
     outcomes[target] = (report, result)
+    # **先自证再取第 0 个**：流水线回归（证据没产出、某个 checker 没跑）时，原来这里先抛的是
+    # 一句裸 `IndexError: list index out of range`，而这一格想说的是"这个场景本该被阻断"。
+    assert report.blockers, (label, target)
     blocker = report.blockers[0]
     print("场景:", label, "→", target)
     print("  决策:", result.decision.value,
