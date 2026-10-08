@@ -68,9 +68,9 @@ for extra in (REPO_ROOT / "src", REPO_ROOT / "tools"):
 TEMP = REPO_ROOT / ".tmp" / "tech-detail" / "02"
 TEMP.mkdir(parents=True, exist_ok=True)
 
+import shutil
 import yaml
 
-from adapters.dsh import adapter as dsh_adapter
 from adapters.dsh.adapter import (
     DSH_AGENT_ID,
     REQUIRED_PAYLOAD_FIELDS,
@@ -105,10 +105,17 @@ PROJECT_ROOT = TEMP / "demo-shop"
 
 
 def fresh(path):
-    """每次运行都从空审计开始：审计文件同时是幂等台账，上一次运行的 event_id 会被判成重放。"""
+    """每次运行都从空台账开始：审计文件同时是幂等台账，上一次运行的 event_id 会被判成重放。"""
     for candidate in (path, path.with_name(path.stem + ".enforcement-ledger" + path.suffix)):
         if candidate.exists():
             candidate.unlink()
+    # **同一 event_id 的原子认领标记**住在 `<审计文件>.claims/`（见 `src/adapters/dsh/hooks.py`
+    # 的 `claims_dir()`：它与审计同处，为的是"一起清理/备份"）。它不算清，本章那些**固定**
+    # event_id 的夹具在第一次运行之后就会被永远判成重放：退出码 2、且**没有 decision**
+    # （重放是"没做判定"，不是"判定为 block"）——于是 block/allow 两个演示一起红。
+    claims = path.with_name(path.name + ".claims")
+    if claims.is_dir():
+        shutil.rmtree(claims)
     return path
 
 
