@@ -16,7 +16,7 @@ import pytest
 from enforcement_support import enforcement_paths, make_action  # noqa: F401 - fixture 再导出
 
 from enforcement.drivers import DriverError, FileDriver
-from enforcement.models import ActionRequest, DriverKind, ExecutionStatus, digest_of
+from enforcement.models import ActionRequest, DriverKind, ExecutionStatus, ParamValue, digest_of
 
 __all__ = ["enforcement_paths"]
 
@@ -354,12 +354,13 @@ def without_param(request: ActionRequest, name: str) -> ActionRequest:
     """
 
     payload = json.loads(request.model_dump_json())
-    payload["params"] = [item for item in payload["params"] if item["name"] != name]
-    # 摘要必须跟着参数走：模型在构造期要求 param_digest 能由 params 复算出来
-    # （"载荷在撒谎"要被拒绝）。这里按生产公式重算，仍然模拟一份自洽的缺参请求文档。
-    payload["param_digest"] = digest_of(
-        {item.name: item.canonical() for item in request.params if item.name != name}
-    )
+    # 摘要必须跟着参数走，而且必须**用 JSON 往返之后的那些值**重算：
+    # 模型在构造期按 `{item.name: item.canonical()}` 复算 param_digest
+    # （"载荷在撒谎"要被拒绝），拿往返前的对象去算会与它逐字节不同——那是夹具算错了，
+    # 不是模型判错了。
+    kept = [ParamValue.model_validate(item) for item in payload["params"] if item["name"] != name]
+    payload["params"] = [item.model_dump(mode="json") for item in kept]
+    payload["param_digest"] = digest_of({item.name: item.canonical() for item in kept})
     payload["action_hash"] = ""
     return ActionRequest.model_validate(payload)
 
