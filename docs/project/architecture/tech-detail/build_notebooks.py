@@ -41,18 +41,33 @@ import sys
 import traceback
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, NoReturn, Sequence
 
 HERE = Path(__file__).resolve().parent
 
 
+def fail(message: str) -> NoReturn:
+    """用法或环境错误：打印到 stderr 并按本文件声明的语义退 **2**。
+
+    `raise SystemExit(字符串)` 会退 **1**——那是「有失败」的档位。用法/环境错误必须是 2
+    （argparse 自己按 2，本文件其余出口——章节目录编号重复、-O、git status 失败——也都按 2），
+    否则调用方分不清「讲解跑挂了」与「我命令敲错了/不在仓库里跑」。
+    """
+
+    print(message, file=sys.stderr)
+    raise SystemExit(2)
+
+
 def find_repo_root(start: Path) -> Path:
-    """往上找仓库根：同时有 pyproject.toml 与 src/policy/ 的那一层。"""
+    """往上找仓库根：同时有 pyproject.toml 与 src/policy/ 的那一层。
+
+    找不到是**环境错误**（不是在仓库里跑），与「有失败」不是同一档：退 2。
+    """
 
     for candidate in (start, *start.parents):
         if (candidate / "pyproject.toml").is_file() and (candidate / "src" / "policy").is_dir():
             return candidate
-    raise SystemExit("没有找到仓库根目录（需要 pyproject.toml 与 src/policy/）")
+    fail(f"没有找到仓库根目录（需要 pyproject.toml 与 src/policy/）：{start}")
 
 
 REPO_ROOT = find_repo_root(HERE)
@@ -138,7 +153,7 @@ def load_spec(number: str):
 
     directory = chapter_dirs().get(number)
     if directory is None:
-        raise SystemExit(f"没有编号 {number} 的章节目录（需要 {number}-*/cells.py）")
+        fail(f"没有编号 {number} 的章节目录（需要 {number}-*/cells.py）")
     if str(HERE) not in sys.path:
         sys.path.insert(0, str(HERE))
     module_name = f"tech_detail_cells_{number}"
@@ -148,14 +163,14 @@ def load_spec(number: str):
     file_spec.loader.exec_module(module)
     spec = getattr(module, "SPEC", None)
     if spec is None:
-        raise SystemExit(f"{directory.name}/cells.py 没有定义 SPEC")
+        fail(f"{directory.name}/cells.py 没有定义 SPEC")
     if spec.stem != directory.name:
-        raise SystemExit(
+        fail(
             f"[{number}] 章节目录与产物名必须逐字相同：目录 {directory.name!r}，SPEC.stem {spec.stem!r}"
             "：一章一个目录，产物就写在它自己那一章里"
         )
     if spec.temp_dir != f".tmp/tech-detail/{number}":
-        raise SystemExit(
+        fail(
             f"[{number}] temp_dir 必须是 .tmp/tech-detail/{number}，得到 {spec.temp_dir!r}"
             "：每个 notebook 只用自己独占的临时目录，才不会被并发的其他闭环干扰"
         )
