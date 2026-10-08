@@ -266,12 +266,6 @@ def normalize_dataset_name(value: str) -> str:
     return normalized
 
 
-def _normalize_path_list(values: Any, *, field: str) -> Any:
-    if not isinstance(values, (list, tuple)):
-        return values
-    return tuple(normalize_repo_path(str(item)) for item in values)
-
-
 class CorpusPolicy(StrictModel):
     """检索策略：预算与阈值写在清单里，代码中不留脱离数据的常数。"""
 
