@@ -42,7 +42,6 @@ from crawl4ai import AsyncWebCrawler, CacheMode, CrawlerRunConfig
 from crawl4ai.async_crawler_strategy import AsyncHTTPCrawlerStrategy
 from crawl4ai.markdown_generation_strategy import CustomHTML2Text
 
-import pep_site
 
 BT = chr(96)
 FENCE = BT * 3
@@ -492,7 +491,11 @@ def url_to_relpath(url, spec):
     path = urlparse(url).path
     prefs = spec_prefixes(spec)
     if prefs and spec.get("strip_prefix", True):
-        rel = path[len(max(prefs, key=len)):]
+        longest = max(prefs, key=len)
+        # 只在前缀**真的**是这个路径的前缀时才剥。in_scope_path() 还认 exact 条目
+        # （dora 的 /guides/... 就是靠 exact 进来的），对这类路径按长度硬切会切出
+        # "etrics/index.md" 这种垃圾相对路径——回退到保留完整站点层级。
+        rel = path[len(longest):] if path.startswith(longest) else path.lstrip("/")
     else:
         # 多根镜像必须保留完整站点层级，否则不同专题根都会落到 index.md 而互相覆盖
         rel = path.lstrip("/")
@@ -1084,7 +1087,6 @@ async def run(site_key):
     mod = importlib.import_module(spec["site_module"]) if spec.get("site_module") else None
     meta = getattr(mod, "manifests", None)
 
-    config = run_config(spec)
     async with AsyncWebCrawler(crawler_strategy=AsyncHTTPCrawlerStrategy()) as crawler:
         pages = await discover(crawler, spec)
         extra = {}
@@ -1181,7 +1183,12 @@ async def run(site_key):
     for dest, reading in extra.items():
         text = reading.get("text") or ""
         if text:
-            (out / dest).write_text(text + chr(10), encoding="utf-8", newline=chr(10))
+            target = out / dest
+            # 这一份不是"页"：它没有经过页面循环的 dest_path.parent.mkdir。本轮一页都没存下来时
+            # out 还不存在（旧产物已在前面 rmtree 掉），直接 write_text 会 FileNotFoundError，
+            # 而后面那句 out.mkdir 来得太晚。
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text + chr(10), encoding="utf-8", newline=chr(10))
             print("  [OK] " + dest + " (" + str(len(text)) + " chars)")
         else:
             # README/STRUCTURE 里写着这份文件已保存——抓不到就必须有人看得见，

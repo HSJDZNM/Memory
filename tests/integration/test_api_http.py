@@ -330,6 +330,25 @@ def test_non_json_content_type_is_rejected_with_415(tmp_root: Path) -> None:
     assert error_code(ops) == "unsupported_media_type"
 
 
+def test_the_content_type_check_is_case_insensitive(tmp_root: Path) -> None:
+    """媒体类型**不区分大小写**（RFC 9110 §8.3）：`Application/JSON` 是合法 JSON 请求。
+
+    旧实现把解析出来的值与字面量 `application/json` 直接比，于是这个合法写法被拒成 415
+    ——传输层说「你的请求不合法」，而它合法。`text/plain` 仍然必须 415（上一条用例继续钉住）。
+    """
+
+    runtime, client, _ = build_api(tmp_root)
+    # 与既有「200」用例同一条路由、同一份上下文：这里要证明的只是**媒体类型的大小写**不影响判定，
+    # 不是这条路由本身的行为（那是别的用例的事）。
+    posted = client.post(
+        "/v1/policy/evaluate",
+        headers={**auth(), "Content-Type": "Application/JSON"},
+        json=envelope("it-content-type-case", context=BAD_CONTEXT),
+    )
+
+    assert posted.status_code == 200, posted.text
+
+
 def test_oversized_body_is_rejected_with_413(tmp_root: Path) -> None:
     """请求体上限是**真的上限**：贴着上限的请求要能过，超过一个字节就 413。
 
@@ -555,6 +574,85 @@ def test_a_tenant_whose_rule_directory_is_empty_is_refused_on_cold_start(
     )
     assert blocked.status_code == 503
     assert error_code(blocked) == "rule_set_unavailable"
+
+
+def test_readiness_does_not_block_the_event_loop(tmp_root: Path, monkeypatch) -> None:
+    """readiness 做的是阻塞 I/O（打开 SQLite + 完整性检查 + 文件系统探测）：必须在工作线程里跑。
+
+    读数方式：在**同一个事件循环**里并发跑一个每 10ms 记一次的 ticker，把 `_readiness_report`
+    换成睡 0.4s 的替身，然后请求 `/v1/health/ready`。阻塞在循环上时 ticker 会被饿住（≈1 次）；
+    丢进线程后照常跳动（≥5 次）。这条用例钉的就是"别把阻塞 I/O 放回循环上"。
+    """
+
+    import asyncio
+    import time as clock
+
+    import httpx
+
+    from policy_api.app import create_app
+
+    runtime, client, _ = build_api(tmp_root)
+    app = create_app(runtime)
+    real_report = runtime._readiness_report
+
+    def slow_report():
+        clock.sleep(0.4)  # 模拟"打开 SQLite + 完整性检查"的真实耗时
+        return real_report()
+
+    monkeypatch.setattr(runtime, "_readiness_report", slow_report)
+
+    async def measure() -> tuple[int, int]:
+        ticks = 0
+        running = True
+
+        async def ticker() -> None:
+            nonlocal ticks
+            while running:
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(ticker())
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://probe") as probe:
+            response = await probe.get("/v1/health/ready")
+        running = False
+        task.cancel()
+        return ticks, response.status_code
+
+    ticks, status = asyncio.run(measure())
+    print(f"ticker 在 readiness 期间跳了 {ticks} 次")
+
+    assert status == 200, status
+    assert ticks >= 5, f"readiness 阻塞了事件循环：ticker 只跳了 {ticks} 次"
+
+
+def test_an_unexpected_error_while_reading_rules_becomes_a_check_not_a_crash(
+    tmp_root: Path, monkeypatch
+) -> None:
+    """读规则文件时的**未预期**异常（例如 OSError）必须变成一条检查结论，而不是让探针 500。
+
+    `LoadedTenant.rules()` 只把 `LoaderError` 包成 `ApiError`；目录权限变化 / 磁盘错误这类 OSError
+    会原样逃出 `_check_tenant`：`/v1/health/ready` 于是以 500 回答，运维读不到「哪个租户、哪一步」，
+    而「探针自己崩了」还会被上游读成「服务不可用」。
+    """
+
+    from policy_api.services import LoadedTenant
+
+    runtime, client, _ = build_api(tmp_root)
+    assert client.get("/v1/health/ready").status_code == 200
+
+    def boom(self):
+        raise OSError("磁盘掉了（用例构造）")
+
+    monkeypatch.setattr(LoadedTenant, "rules", boom)
+
+    degraded = client.get("/v1/health/ready")
+    assert degraded.status_code == 503, degraded.text
+    report = degraded.json()
+    tenants = {item["tenant"]: item for item in report["tenants"]}
+    rule_checks = [item for item in tenants["alpha"]["checks"] if item["check"] == "rule_set"]
+    assert rule_checks and rule_checks[0]["ok"] is False
+    assert rule_checks[0]["detail"] == "OSError"
 
 
 def test_readiness_goes_not_ready_when_the_rule_directory_disappears(tmp_root: Path) -> None:

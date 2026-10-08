@@ -39,7 +39,6 @@ from .indexer import DEFAULT_CORPUS_PATH, IndexReport, ingest, needs_reindex, qu
 from .models import (
     AccessScope,
     CorpusManifest,
-    EngineeringContext,
     Operation,
     PolicyFact,
     RetrievalError,
@@ -96,10 +95,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="项目根目录（清单、镜像与相对路径的锚点）；默认自动探测仓库根",
     )
     common.add_argument(
-        "--corpus", default=argparse.SUPPRESS, help=f"摄取清单，默认 {DEFAULT_CORPUS_PATH}"
+        "--corpus",
+        default=argparse.SUPPRESS,
+        help=f"摄取清单（相对路径按 --root 解析），默认 {DEFAULT_CORPUS_PATH}",
     )
     common.add_argument(
-        "--db", default=argparse.SUPPRESS, help=f"索引库路径，默认 {DEFAULT_DB_PATH}"
+        "--db",
+        default=argparse.SUPPRESS,
+        help=f"索引库路径（相对路径按 --root 解析），默认 {DEFAULT_DB_PATH}",
     )
     common.add_argument(
         "--json", action="store_true", default=argparse.SUPPRESS, help="输出机器可读结果"
@@ -290,10 +293,6 @@ def render_result(result: RetrievalResult) -> str:
     return chr(10).join(lines)
 
 
-def render_context_text(context: EngineeringContext) -> str:
-    return render_context(context)
-
-
 def _decision_facts(path: str) -> tuple[PolicyFact, ...]:
     """从 Phase 1 决策载荷里取违规作为策略事实；协议不认识就拒绝（不降级）。
 
@@ -327,6 +326,13 @@ def _decision_facts(path: str) -> tuple[PolicyFact, ...]:
     return tuple(facts[key] for key in sorted(facts))
 
 
+def _anchored(anchor: Path, requested: str) -> Path:
+    """把命令行给的路径挂到锚点上：相对路径按锚点解析，绝对路径原样保留。"""
+
+    candidate = Path(requested)
+    return candidate if candidate.is_absolute() else anchor / candidate
+
+
 def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -338,8 +344,11 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
         root if root is not None else (Path(requested_root).resolve() if requested_root else repo_root())
     )
     default_corpus, default_db = default_paths(anchor)
-    corpus_path = Path(requested_corpus) if requested_corpus else default_corpus
-    db_path = Path(requested_db) if requested_db else default_db
+    # 相对路径按 --root（锚点）解析，而不是进程 CWD：--root 的帮助文本承诺它是"相对路径的
+    # 锚点"，而"从别的目录调用就悄悄换了一份清单/库"正是这条承诺要防的事。
+    # 绝对路径不受影响：Path(anchor) / "/abs"（或 Windows 的 "D:/x"）仍是那个绝对路径。
+    corpus_path = _anchored(anchor, requested_corpus) if requested_corpus else default_corpus
+    db_path = _anchored(anchor, requested_db) if requested_db else default_db
     if requested_root and not requested_corpus:
         print(
             "config error: 指定 --root 时必须同时给出 --corpus（锚点变了，默认清单不再适用）",
@@ -560,7 +569,10 @@ def _dispatch(
         print(f"config error: {error}", file=sys.stderr)
         return EXIT_ERROR
     except json.JSONDecodeError as error:
-        print(f"config error: 决策载荷不是合法 JSON ({error})", file=sys.stderr)
+        # 决策载荷自己的解析失败在 _decision_facts 里已经转成 CorpusError（上一分支接住它），
+        # 所以能走到这里的是**别处**的 JSON 解析（例如库里 heading_path 列被改坏）。
+        # 理由必须如实：把"某处 JSON 坏了"一律说成"决策载荷不是合法 JSON"会把人带偏。
+        print(f"config error: 读取过程中出现非法 JSON（不一定是决策载荷）: {error}", file=sys.stderr)
         return EXIT_ERROR
 
     if as_json:

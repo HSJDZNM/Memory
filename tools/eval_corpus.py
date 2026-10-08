@@ -67,8 +67,10 @@ line / scope 的口径（契约 v1.1：Annotation 的字段没变，scope 是追
 
 结构自检（不通过即非零退出，不许降级）
 ------------------------------------
-annotation_report() 会对每条保留的注解跑 _self_check()：作用域必须是合法闭区间；上游给的每个
-精确位置必须落在这个闭区间内；锚定行必须在作用域内。自检失败会进 self_check_failures，
+annotation_report() 会对每条保留的注解跑 _self_check()：作用域必须是合法闭区间（[0, 0] 只对
+文件级注解 line == 0 合法）；上游给的每个精确位置必须落在这个闭区间内；**锚定行不要求在作用域内**
+——pycodestyle 的锚定行就是 "#:" 那一行，期望作用的是它之后的块，两者天然相差一行（要求它落在
+域内会把正确解析判成错误，见 _self_check 的 docstring）。自检失败会进 self_check_failures，
 CLI 打印并**以退出码 1 结束**。命令见 README。
 
 注解与作用域怎么配对（别踩这个坑）
@@ -585,6 +587,14 @@ def _load_extra() -> None:
                 raise CorpusError(f"{path}: SCOPE_PARSERS 里的 {kind} 没有对应的 PARSERS 条目")
             if not callable(parser):
                 raise CorpusError(f"{path}: SCOPE_PARSERS[{kind}] 不是可调用的解析器")
+            if kind in SCOPE_PARSERS:
+                # 与上面 SOURCES / PARSERS 两条合并**同一条口径**：`expectation_kind` 冲突一律
+                # 报错。旧写法在这里直接赋值——扩展模块可以静默顶掉内置的
+                # `bandit-plugin-docstring-location` / `pycodestyle-hash-colon`，而文档承诺的
+                # 是"冲突必须显式"（同一个 key 两种解析器 = 同名两义）。
+                raise CorpusError(
+                    f"expectation_kind 冲突：{kind} 的 SCOPE_PARSERS 同时存在于本模块与 {EXTRA_FILENAME}"
+                )
             SCOPE_PARSERS[kind] = parser
 
 
@@ -1226,8 +1236,11 @@ def _level_split(scopes: list[AnnotationScope]) -> tuple[int, int]:
 
     两者测的不是同一件事：行级能对位置，文件级只能对"这个文件里出现了这个码"。任何一个合计数字
     都必须能拆开（契约 v1 把 line == 0 定义为文件级；这里只是把它显式读出来）。
-    刻意不塞进 --json 载荷：那要给 ANNOTATION_SCHEMA_VERSION 升版（AGENTS 第 55 条），
-    而契约把这个常量钉成了 "1"。文本输出不受版本轴约束，所以先落在这里。
+    刻意不塞进 --json 载荷：拆分**可由消费者从 annotations 的 line 直接推出**（line == 0 就是
+    文件级），没必要再加键。注意不要说成"加键就得升 ANNOTATION_SCHEMA_VERSION"——本载荷里
+    已经有 scopes / expected_lines，它们属于 AGENTS 第 55 条登记注里的"首次发布前的形状修正"
+    （2026-10-07 裁定），与 schema_version "1" 并存不算同名两义；这条注释只是在说"这个数不必再进
+    载荷"，不是在复述一条版本规则。
     """
 
     file_level = sum(1 for scope in scopes if scope.annotation.line == 0)
@@ -1449,7 +1462,8 @@ def main(argv: list[str] | None = None) -> int:
     actions.add_argument("--record-lock", metavar="ID|all", dest="record_lock", help="记录 lock")
     actions.add_argument("--verify", action="store_true", help="校验 lock 与本地语料")
     actions.add_argument("--annotations", metavar="ID", help="打印注解（配合 --json）")
-    parser.add_argument("--json", action="store_true", help="与 --annotations/--list 搭配")
+    # --list 走的是纯文本报告（_command_list 不读 args.json）：帮助文本不许承诺它没有的行为。
+    parser.add_argument("--json", action="store_true", help="与 --annotations 搭配（--list 只有文本输出）")
     parser.add_argument("--root", default=str(DEFAULT_ROOT), help=f"语料根（默认 {DEFAULT_ROOT}）")
     parser.add_argument(
         "--lock-dir", default=str(DEFAULT_LOCK_DIR), dest="lock_dir",

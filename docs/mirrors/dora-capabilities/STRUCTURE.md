@@ -6,8 +6,9 @@
 
 ## 1. 范围判定
 
-**清单来源：站点自身的 sitemap 与「能力目录」页。** 站点 `/sitemap.xml` 在 `/capabilities/` 子树下给出 35 条 URL；`/capabilities/` 索引页（下称能力目录）栅格里有 34 张能力卡片。
+**清单来源：站点自身的「能力目录」页栅格（建镜像时与 `/sitemap.xml` 逐条比对过）。** 站点 `/sitemap.xml` 在 `/capabilities/` 子树下给出 35 条 URL；`/capabilities/` 索引页（下称能力目录）栅格里有 34 张能力卡片。
 两者逐条比对**双向无差集**：栅格卡片 = sitemap 的能力页，sitemap 多出的 1 条即目录页自身。
+**这是一次性核验，不是运行期检查**：建镜像时做过这一步（时点见 `manifest.json` 的 `fetched_at`）；本模块运行期**不抓 `/sitemap.xml`**，清单只由栅格解析产出。
 本镜像按这份清单逐页抓取（`discovery=list`），不做逐边 BFS——能力正文的站内链接
 遍布 /research、/ai、/guides、/quickcheck 等分区，逐边扩散会把范围带出本分区。
 

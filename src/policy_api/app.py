@@ -17,6 +17,7 @@ budget 语义）已经在 `policy_api.models` / `runtime` 里固定，并能脱�
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Annotated, Any, Mapping, Optional
 
@@ -45,7 +46,6 @@ route_table = (
     ("/v1/knowledge/retrieve", "retrieve"),
     ("/v1/validation/evaluate", "validate"),
 )
-_OPS_ROUTES = ("/v1/ops/metrics",)
 
 _PERMISSIVE = ConfigDict(extra="ignore")
 
@@ -212,7 +212,12 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
             )
         if raw is None:
             raw = b""  # 运维路由（GET /v1/ops/metrics）按协议没有请求体
-        content_type = (request.headers.get("content-type") or "").split(";")[0].strip()
+        # RFC 9110 §8.3：媒体类型**不区分大小写**，`Application/JSON` 是合法写法。
+        # 只按小写比较会把一个完全合法的请求拒成 415——"传输层说你的请求不合法"，而它合法。
+        content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+        # 明确的边界：`application/*+json`（例如 application/merge-patch+json）**不在**本平台的承诺里。
+        # 这是刻意画在这里的：当前只有 JSON 一种请求体，契约快照与 DTO 都按 `application/json` 描述，
+        # 要支持结构化后缀就得连同契约一起改，而不是在这一行悄悄放宽（那会让契约与实际接受面不一致）。
         if content_type and content_type != "application/json":
             raise ApiError(
                 ErrorCode.UNSUPPORTED_MEDIA_TYPE, "请求体必须是 application/json"
@@ -353,7 +358,13 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
     async def ready() -> JSONResponse:
         """能安全提供策略服务：规则 / 索引 / 验证器 / 观测日志逐项检查。"""
 
-        report = runtime.readiness()
+        # 为什么用 to_thread（**不写进 docstring**：FastAPI 会把 handler 的 docstring 放进 OpenAPI
+        # 的 description，而这个函数的说明是**已发布契约**，改它就要显式重写 api/openapi.json）：
+        # readiness 做的是阻塞 I/O（打开 SQLite + `assert_integrity()` / `stats()` + 文件系统探测），
+        # 跑在事件循环上会把整个 worker 卡住——一个慢索引能让同进程的 `/live`、`/metrics`、乃至正在
+        # 处理的 evaluate 一起排队。同步调用方（CLI / self-check / 闭环工具）照旧直接调
+        # `runtime.readiness()`，两不耽误。
+        report = await asyncio.to_thread(runtime.readiness)
         return _json(200 if report.get("ready") else 503, report)
 
     @app.exception_handler(ApiError)

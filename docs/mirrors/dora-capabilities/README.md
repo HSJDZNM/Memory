@@ -90,7 +90,7 @@
 
 ## 已知事实
 
-- 清单来自站点 sitemap 与能力目录页栅格的比对（双向无差集），并**不是**逐边 BFS 的结果；
+- 清单来自能力目录页栅格；建镜像时与站点 sitemap 逐条比对过一次（双向无差集，**一次性核验**，运行期不抓 sitemap），并**不是**逐边 BFS 的结果；
 - 层级（core / ai / unlabeled）**不是人工归类**：core 与 AI 取自目录页徽章，unlabeled 表示站点未给徽章；
 - 该站为服务端渲染的静态站点，正文在 `<main>` 内，用 crawl4ai 的 AsyncHTTPCrawlerStrategy
   （纯 HTTP 通道）即可完整取到，无需启动浏览器；

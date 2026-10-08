@@ -338,6 +338,9 @@ assert failure_of(developer_metrics) == (403, "metrics_forbidden") and ops_metri
 
 # 观测只记摘要：把字段名列出来，并确认凭据与绝对路径都没进去。
 rows = RUNTIME.request_log.read_back()
+# **先自证日志非空再取 rows[0]**：观测路径一旦回归（没写日志、写到别处），原来这里先抛的是
+# 一句裸 `IndexError: list index out of range`，而这一格想说的是"请求级日志里应该有一条"。
+assert rows, "请求级日志是空的：观测路径没有记录任何请求"
 log_text = json.dumps(rows, ensure_ascii=False)
 print()
 print("请求级日志条数:", len(rows), "| 字段:", ", ".join(sorted(rows[0])))
@@ -515,6 +518,9 @@ assert not ({"budget_ms", "idempotency_key", "api_version"} & set(local_decision
 
 evidence_view = post("policy/evaluate", {**BASE, "request_id": "06:skipped", "include_evidence": True}).json()
 skipped = evidence_view["skipped_rules"]
+# 同一族：先自证**真的产生了 skipped 规则**，再取 `skipped[0]`（原来那条 `assert skipped` 在
+# 打印之后，读的人会先看到 IndexError，而不是"这条路由本该有跳过项"）。
+assert skipped, "这条只提供上下文的路由没有产生任何 skipped 规则：证据视图回归了"
 print()
 print("这条路由只提供上下文: matched =", evidence_view["summary"]["matched"],
       "| skipped =", evidence_view["summary"]["skipped"],
@@ -628,13 +634,26 @@ print("请求级日志条数:", len(rows), "| 锚:", json.dumps(
 print("校验锚:", "一致" if not issues else issues)
 tampered = TEMP / "run" / "audit.tampered.jsonl"
 lines = log.path.read_text(encoding="utf-8").splitlines()
+# `lines[:-1]` 假定至少两行：日志为空或只有一行时，"删尾"得到的是一份**空文件**，而
+# `verify_seal` 对空文件同样报问题（记录数与锚不符）——`tamper_issues > 0` 于是照样被满足，
+# 却什么都没证明。实测三种形态（`.tmp/la-tamper-probe.py`）：0 行 → 删尾后 0 行 / 问题数 2；
+# 1 行 → 删尾后 0 行 / 问题数 2；完整 18 行 → 删尾后 17 行 / 问题数 2。前两种是**退化**。
+assert len(lines) >= 2, (
+    f"请求日志至少要有两行才能演示「删掉尾部一条」（实际 {len(lines)} 行）："
+    "先看观测路径是不是没在写日志"
+)
 tampered.write_text(chr(10).join(lines[:-1]) + chr(10), encoding="utf-8", newline=chr(10))
+tampered_rows = RequestLog(tampered).read_back()
 tamper_issues = len(verify_seal(RequestLog(tampered), seal))
 print("删掉尾部一条后再校验:", tamper_issues, "条问题（删尾是发现得了的）")
+print("  被改的那份日志还剩", len(tampered_rows), "行（原", len(rows), "行）——比锚少一条")
 print("指标（进程内，重启即归零）:",
       json.dumps(RUNTIME.metrics.to_payload()["status_classes"]))
 assert not issues
 assert seal["records"] >= 1 and seal["chain_digest"].startswith("sha256:")
+# "删掉一条能被发现"要真的成立：**被改的那份必须仍然非空、且恰好少一条**——否则上面那条
+# `tamper_issues > 0` 由"空文件与锚不符"满足，读起来却像"删尾被发现了"。
+assert len(tampered_rows) == len(rows) - 1, (len(tampered_rows), len(rows))
 assert tamper_issues > 0
 print("小结：同一份上下文经本地与经 API 得到整份相等的决策载荷；")
 print("      而超时、忙碌、依赖不可用与审计不可写，全部是显式错误码，没有一条被翻译成 allow。")

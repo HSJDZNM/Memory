@@ -33,7 +33,9 @@ REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "src"
 SCRATCH = REPO / ".tmp" / "provenance-loop"
 ARTIFACT = REPO / ".tmp" / "artifacts" / "provenance-loop-result.json"
-SCHEMA_VERSION = "1.0"
+# 读数载荷自己的轴：1.0 = 五个场景的公共记录 + 各自 extra；1.1 = pass 场景多一条
+# digest_present（R-e 的正面读数，与 4 号场景的 digest_absent 成对）。加键就升版。
+SCHEMA_VERSION = "1.1"
 
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -63,6 +65,22 @@ def _read_json(path: Path) -> Dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
         return {}
+
+
+def _fresh_receipt(name: str) -> Path:
+    """本轮的回执路径：**先删掉旧的**，再看 CLI 新写出来的是什么。
+
+    旧写法只有 `scenario_pass_sealed_check` 删旧回执，另外三个场景直接 `_read_json(receipt_path)`
+    ——CLI 万一没写出回执（崩溃 / 参数出错 / 被沙箱拒绝），读到的就是**上一轮**的文件：
+    "这一轮观测到什么"于是变成"上一次留下了什么"，而且它看起来完全正常（state / exit 都对得上）。
+    回执是这几个场景唯一的观测对象，必须保证它属于本轮。
+    """
+
+    path = SCRATCH / "receipts" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+    return path
 
 
 def _run_cli(argv: Sequence[str]) -> subprocess.CompletedProcess:
@@ -134,9 +152,7 @@ def scenario_pass_sealed_check() -> Dict[str, Any]:
         "tests/unit/test_provenance_worktree.py\n",
     )
     _write(platform, "src/provenance/*.py\ntools/provenance_loop.py\n")
-    receipt_path = SCRATCH / "receipts" / "pass.json"
-    if receipt_path.exists():
-        receipt_path.unlink()
+    receipt_path = _fresh_receipt("pass.json")
     completed = _run_cli(
         [
             "seal",
@@ -148,22 +164,30 @@ def scenario_pass_sealed_check() -> Dict[str, Any]:
             sys.executable, "-m", "pytest", "-q", "tests/unit/test_provenance_worktree.py",
         ]
     )
-    return _scenario(
+    receipt = _read_json(receipt_path)
+    record = _scenario(
         scenario_id="pass-sealed-check",
         what="真判据（本台阶单测）跑完，声明输入与工作树都没有变",
         expected_state="pass",
         expected_exit=EXIT_PASS,
-        receipt=_read_json(receipt_path),
+        receipt=receipt,
         exit_code=completed.returncode,
         extra={"receipt": str(receipt_path.relative_to(REPO).as_posix())},
     )
+    # R-e 的**正面**：判 pass 的检查必须真的交出 referenced_inputs_digest。
+    # 旧写法只看 state/exit，回执里没有这个键也照样绿；4 号场景验的是反面
+    # （空壳声明里不许出现它），正反两半都要有读数。
+    digest = receipt.get("referenced_inputs_digest")
+    record["digest_present"] = isinstance(digest, str) and bool(digest)
+    record["ok"] = bool(record["ok"]) and record["digest_present"]
+    return record
 
 
 def scenario_external_write() -> Dict[str, Any]:
     tree = _make_tree("external-write")
     declaration = SCRATCH / "declarations" / "external-write.txt"
     _write(declaration, "declared/*.txt\n")
-    receipt_path = SCRATCH / "receipts" / "external-write.json"
+    receipt_path = _fresh_receipt("external-write.json")
     completed = _run_cli(
         [
             "seal",
@@ -188,7 +212,7 @@ def scenario_unprovable() -> Dict[str, Any]:
     tree = _make_tree("unprovable")
     declaration = SCRATCH / "declarations" / "unprovable.txt"
     _write(declaration, "declared/*.txt\nmissing/**/*.py\n")
-    receipt_path = SCRATCH / "receipts" / "unprovable.json"
+    receipt_path = _fresh_receipt("unprovable.json")
     completed = _run_cli(
         [
             "seal",
@@ -213,7 +237,7 @@ def scenario_no_declaration() -> Dict[str, Any]:
     tree = _make_tree("no-declaration")
     declaration = SCRATCH / "declarations" / "empty.txt"
     _write(declaration, "# 只有注释：这份声明给不出 referenced_inputs_digest\n")
-    receipt_path = SCRATCH / "receipts" / "no-declaration.json"
+    receipt_path = _fresh_receipt("no-declaration.json")
     completed = _run_cli(
         [
             "seal",

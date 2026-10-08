@@ -1,7 +1,11 @@
 """扫描仓库自有文本文件里的真实凭据（阶段验收矩阵里的发布级门禁之一）。
 
-与 enforcement/audit.py 的分工：那边的脱敏是运行期兜底，这里是提交前的门禁；两者共用
-同一份"凭据长什么样"的定义（SECRET_VALUE_PATTERNS），避免口径漂移。
+与 enforcement/audit.py 的分工：那边的脱敏是运行期兜底，这里是提交前的门禁。两者的关系是
+**超集**——本门禁用的是那份运行期定义（`SECRET_VALUE_PATTERNS`）**加上**本文件自己的
+`EXTRA_PATTERNS`（AWS 的 AKIA/ASIA、JWT）。所以"门禁拦下的东西"不保证运行期脱敏也认得：
+一个 `AKIA…` 或 JWT 会在这里被挡住，而 audit 那边的脱敏不认它。
+要让两边完全一致，得把 `EXTRA_PATTERNS` 挪进 `enforcement.audit`（那是运行期改动，不在这里顺手做）；
+在那之前，"门禁 ⊇ 运行期"这条关系由 tests/unit/test_secret_scan.py 的用例钉着。
 
 范围：会被提交的文本文件（git ls-files --cached --others --exclude-standard）。
 第三方离线镜像逐字复制上游原文（通常自带示例密钥），默认跳过，--all 才一起扫。
@@ -47,6 +51,21 @@ MIRRORED_PREFIXES = (
 SELF = "tools/secret_scan.py"
 
 ALLOW_MARKER = "secret-scan: allow"
+
+
+def is_exempt(line: str) -> bool:
+    """命中行是否被显式豁免：标记**必须带理由**（`secret-scan: allow <理由>`）。
+
+    docstring 一直写着"必须写明理由"，而旧实现只判 `ALLOW_MARKER in line`——一个光秃秃的标记
+    与"写明理由的豁免"在读数上完全一样，于是"有没有被复核过"这个要求在评审时无法执行。
+    现在裸标记照旧报命中（想豁免就补一句理由）。
+    """
+
+    index = line.find(ALLOW_MARKER)
+    if index < 0:
+        return False
+    reason = line[index + len(ALLOW_MARKER):].strip().lstrip(":：-—").strip()
+    return bool(reason)
 
 
 class ScanEnvironmentError(RuntimeError):
@@ -106,7 +125,7 @@ def scan(path: str, patterns: tuple[re.Pattern[str], ...]) -> list[str]:
         ) from error
     findings: list[str] = []
     for number, line in enumerate(text.splitlines(), start=1):
-        if ALLOW_MARKER in line:
+        if is_exempt(line):
             continue
         for pattern in patterns:
             match = pattern.search(line)
@@ -127,10 +146,13 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
 
-    patterns = secret_patterns()
     findings: list[str] = []
     unreadable: list[str] = []
     try:
+        # `secret_patterns()` 里的 `from enforcement.audit import …` 也在这一档里：
+        # 它导不进来同样是**环境错误**（退出码 2）。放在 try 外面时，解释器会以退出码 1 收场，
+        # 而 1 与"发现凭据"同码——CI 分不清"没查成"与"查出东西"。
+        patterns = secret_patterns()
         files = tracked_files(include_mirrors=include_mirrors)
     except (OSError, subprocess.SubprocessError, ImportError) as error:
         # git 缺失 / 不在仓库里 / enforcement.audit 导不进来：都是**环境错误**（退出码 2）。

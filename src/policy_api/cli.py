@@ -19,7 +19,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 from .config import ApiConfig, ConfigError, hash_token, load_api_config
 from .errors import ApiError
@@ -65,7 +65,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check", action="store_true", help="openapi：只比较快照，不写文件")
     parser.add_argument("--write", action="store_true", help="openapi：显式重写快照")
     parser.add_argument("--hash", action="store_true", help="clients：从 stdin 读令牌并输出 sha256")
-    parser.add_argument("--token", default=None, help="smoke：使用的令牌（默认取配置里第一个客户端）")
+    # 帮助文本曾写「默认取配置里第一个客户端」——既不是事实（缺省直接报错返回 EXIT_ERROR），
+    # 也不可能实现：配置里只存 `token_sha256` 摘要，恢复不出明文。实测读数：
+    # `python -m policy_api.cli smoke` → exit 2 +「未提供 --token；smoke 需要真实令牌才能走认证链路」。
+    parser.add_argument(
+        "--token", default=None, help="smoke：真实令牌（必填；配置里只有 sha256 摘要，恢复不出明文）"
+    )
     parser.add_argument("--out", default=None, help="seal：锚定文件写到哪里")
     parser.add_argument("--verify", default=None, help="seal：校验哪个锚定文件")
     parser.add_argument("--log-level", default="info", help="serve：uvicorn 日志级别")

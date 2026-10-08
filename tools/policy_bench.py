@@ -105,8 +105,14 @@ def generate_rules(count: int, *, seed: int = DEFAULT_SEED) -> RuleSet:
     return RuleSet(rules=tuple(rules))
 
 
-def generate_contexts(count: int, *, seed: int = DEFAULT_SEED) -> tuple[PolicyContext, ...]:
-    """生成固定的一组上下文；依赖编号与规则编号对齐，保证有真实命中。"""
+def generate_contexts(count: int) -> tuple[PolicyContext, ...]:
+    """生成固定的一组上下文；依赖编号与规则编号对齐，保证有真实命中。
+
+    **没有 seed 参数**：这组上下文是按编号构造的（index → 层 / 模块 / 依赖），本身就是确定的，
+    留一个从不被使用的 `seed=` 只会让调用方以为"换个种子就换一组上下文"（旧实现就是这样：
+    参数收下、函数体里一次都没用到）。规则那边不同——`generate_rules` 真的用 `random.Random(seed)`
+    掷层号，所以它的 seed 是有意义的。
+    """
 
     contexts: list[PolicyContext] = []
     for index in range(count):
@@ -136,21 +142,34 @@ def measure(
 ) -> dict[str, Any]:
     """测量 count 条规则对固定上下文的匹配耗时与内存峰值。"""
 
+    if repeats < 1 or context_count < 1:
+        # 先校验再测量：`evaluations = repeats * len(contexts)` 为 0 时，零除发生在**整轮测量之后**
+        # ——白跑一遍再崩，读数一个也拿不到。空序列不是"测得很快"，是根本没有测量发生。
+        raise ValueError(
+            "repeats 与 context_count 都必须 ≥ 1（现在 repeats=%d, context_count=%d）：没有可测量的评估"
+            % (repeats, context_count)
+        )
+
     rules = generate_rules(count, seed=seed)
-    contexts = generate_contexts(context_count, seed=seed)
+    contexts = generate_contexts(context_count)
 
     tracemalloc.start()
     started = time.perf_counter()
     matched = 0
     violations = 0
-    for _ in range(repeats):
-        for context in contexts:
-            result = evaluate(rules, context)
-            matched += len(result.matched_rules)
-            violations += len(result.violations)
-    elapsed = time.perf_counter() - started
-    _, peak_bytes = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    try:
+        for _ in range(repeats):
+            for context in contexts:
+                result = evaluate(rules, context)
+                matched += len(result.matched_rules)
+                violations += len(result.violations)
+        elapsed = time.perf_counter() - started
+        _, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        # 只在成功路径 stop 的话，`evaluate` 一抛异常（或取内存失败），内存追踪就**全局**留在
+        # 开着的状态：之后每一次分配都多一层开销，同一进程里后续测量全部失真，而且没有人
+        # 看得出来——读数还在，只是不再是"未追踪"时的那个数。
+        tracemalloc.stop()
 
     evaluations = repeats * len(contexts)
     return {
@@ -170,10 +189,14 @@ def measure(
 def run_baseline(
     counts: Iterable[int] = DEFAULT_COUNTS, *, seed: int = DEFAULT_SEED
 ) -> dict[str, Any]:
+    # `counts` 是 Iterable：必须**先物化一次**再取两遍。旧写法把 `list(counts)` 写在 dict 字面量里，
+    # 它先于 `samples` 的推导式求值——一次性迭代器（generator / map / 文件驱动）会被头一次耗尽，
+    # 于是 `samples` 静默变成空列表，而 `counts` 看起来还是满的（"跑了 0 个样本"却像是跑过了）。
+    materialized = list(counts)
     return {
         "seed": seed,
-        "counts": list(counts),
-        "samples": [measure(count, seed=seed) for count in counts],
+        "counts": materialized,
+        "samples": [measure(count, seed=seed) for count in materialized],
     }
 
 

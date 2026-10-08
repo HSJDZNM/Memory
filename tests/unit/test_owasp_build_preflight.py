@@ -50,11 +50,27 @@ def _entry(slug: str, kind: str) -> dict:
     }
 
 
+def _index_slugs() -> list[str]:
+    """脚本里 `INDEX_FILES` 声明的索引页 slug（夹具要按真实产物形状建全，理由见 gate 测试同名助手）。"""
+
+    for node in ast.walk(ast.parse(SCRIPT.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "INDEX_FILES" for target in node.targets
+        ):
+            keys = [key.value for key in node.value.keys if isinstance(key, ast.Constant)]
+            assert keys, "INDEX_FILES 里没有解析到任何 slug"
+            return keys
+    raise AssertionError("没有从 03_build.py 里解析到 INDEX_FILES")
+
+
 def _prepare(tmp_root: Path, *, with_sources: bool) -> None:
     work = _work(tmp_root)
     slugs = _placed_slugs()
     entries = {slug: _entry(slug, "sheet") for slug in slugs}
-    entries[INDEX_SLUG] = _entry(INDEX_SLUG, "index")
+    # 索引页按真实形状建全：`02_fetch.py` 的 `INDEXES` 抓 6 个（含 `Glossary`）。只造 `index`
+    # 一个的话，双向核对会报 `EXTRA=[其余 5 个]`，构建在预检之前就以 exit 2 退出——
+    # 那不是本用例要测的性质（"删旧产物之前先预检源文件"）。
+    entries.update({slug: _entry(slug, "index") for slug in _index_slugs()})
     (work / "meta.json").write_text(_meta(entries), encoding="utf-8", newline="")
     (work / "taxonomy.json").write_text(
         json.dumps({

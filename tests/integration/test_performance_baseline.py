@@ -26,10 +26,13 @@ MS_PER_EVALUATION_CEILING = 400.0
 
 
 def cpu_ms_per_evaluation(count: int, *, context_count: int = 5) -> float:
-    """同一组固定种子的规则 / 上下文，按 CPU 时间量每次匹配的毫秒数（只量 evaluate 本身）。"""
+    """同一组固定的规则 / 上下文，按 CPU 时间量每次匹配的毫秒数（只量 evaluate 本身）。
+
+    规则吃种子；上下文不吃（按编号构造），所以这里只给规则传 seed。
+    """
 
     rules = generate_rules(count, seed=DEFAULT_SEED)
-    contexts = generate_contexts(context_count, seed=DEFAULT_SEED)
+    contexts = generate_contexts(context_count)
     started = time.process_time()
     for context in contexts:
         evaluate(rules, context)
@@ -49,8 +52,8 @@ def test_generator_is_deterministic_and_seed_sensitive() -> None:
 
 
 def test_generated_contexts_are_fixed() -> None:
-    first = generate_contexts(5, seed=DEFAULT_SEED)
-    again = generate_contexts(5, seed=DEFAULT_SEED)
+    first = generate_contexts(5)
+    again = generate_contexts(5)
 
     assert [item.model_dump() for item in first] == [item.model_dump() for item in again]
     assert all(item.dependencies for item in first)
@@ -87,7 +90,7 @@ def test_baseline_is_recorded_for_fixed_sizes(count: int, capsys: pytest.Capture
 
 def test_evaluation_repeats_give_identical_conclusions() -> None:
     rules = generate_rules(200, seed=DEFAULT_SEED)
-    contexts = generate_contexts(5, seed=DEFAULT_SEED)
+    contexts = generate_contexts(5)
 
     first = [evaluate(rules, context).to_decision_dict() for context in contexts]
     second = [evaluate(rules, context).to_decision_dict() for context in contexts]

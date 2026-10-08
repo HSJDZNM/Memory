@@ -103,3 +103,13 @@ def test_stage_start_failure_is_a_controlled_error(monkeypatch, capsys) -> None:
 
     assert module.main() == 2
     assert "起不来" in capsys.readouterr().out
+
+def test_signal_death_is_normalised_to_128_plus_signal(monkeypatch, capsys) -> None:
+    """子进程被信号杀死（POSIX 下 call 返回负值）时按 128+signal 记，别把 -9 传出去。"""
+
+    module = _load()
+    monkeypatch.setattr(module.subprocess, "call", lambda *a, **k: -9)
+    monkeypatch.setattr(sys, "argv", ["pipeline.py", "03"])
+
+    assert module.main() == 137
+    assert "signal 9" in capsys.readouterr().out

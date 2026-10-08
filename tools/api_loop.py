@@ -43,10 +43,11 @@ if str(SRC_DIR) not in sys.path:
 DEMO_ROOT = REPO_ROOT / ".tmp" / "phase-7-api"
 RESULT = REPO_ROOT / ".tmp" / "artifacts" / "phase-7-api-result.json"
 FIXTURE_PROJECT = REPO_ROOT / "tests" / "fixtures" / "validators" / "project"
-AGENT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
 TOKEN = "loop-alpha-token"
 OPS_TOKEN = "loop-ops-token"
 HOST = "127.0.0.1"
+# 关停时等 uvicorn 线程退出的上限：等它把在途请求做完，而不是睡固定的一小段就往下走。
+SERVER_SHUTDOWN_TIMEOUT_S = 5.0
 
 
 @dataclass
@@ -193,8 +194,12 @@ clients:
     return config
 
 
-def start_server(runtime: Any, port: int) -> Any:
-    """在后台线程起一个真实的 uvicorn（真端口、真协议），返回 server 句柄。"""
+def start_server(runtime: Any, port: int) -> tuple[Any, threading.Thread]:
+    """在后台线程起一个真实的 uvicorn（真端口、真协议），返回 (server, 线程句柄)。
+
+    线程句柄一起交出去：关停时才能真的**等**它把在途请求做完。旧写法只 sleep 0.2s，
+    超时场景留下的那次 0.5s 求值可能还在跑，进程一退就被当成 daemon 线程掐掉。
+    """
 
     import uvicorn
 
@@ -203,13 +208,32 @@ def start_server(runtime: Any, port: int) -> Any:
     server = uvicorn.Server(
         uvicorn.Config(create_app(runtime), host=HOST, port=port, log_level="warning")
     )
-    thread = threading.Thread(target=server.run, name="phase7-api", daemon=True)
+    # 线程里的异常（最常见的是端口在 free_port() 之后被别的进程抢走 → bind 失败）必须带回
+    # 主线程：否则只能干等 20s 再报"未能在 20s 内启动"，把真正的失败原因吞掉。
+    failure: list[BaseException] = []
+
+    def _serve() -> None:
+        try:
+            server.run()
+        except BaseException as error:  # noqa: BLE001 - 线程边界：异常只作读数，原样再抛
+            failure.append(error)
+            raise
+
+    thread = threading.Thread(target=_serve, name="phase7-api", daemon=True)
     thread.start()
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         if getattr(server, "started", False):
-            return server
+            return server, thread
+        if failure:
+            break
         time.sleep(0.05)
+    if failure:
+        raise RuntimeError(
+            "uvicorn 起不来（%s: %s）——端口 %d 可能在 free_port() 之后被别的进程抢走；"
+            "uvicorn 自己的 ERROR 行在同一次运行的 stderr 里"
+            % (type(failure[0]).__name__, failure[0], port)
+        )
     raise RuntimeError("uvicorn 未能在 20s 内启动")
 
 
@@ -339,7 +363,10 @@ def scenario_consumers_agree(runtime: Any) -> Scenario:
                 }
             )
 
-    equal = [item for item in divergences if item.get("error") is None]
+    # `divergent` = 真的比出分歧的场景；渲染不出来（error）的那些单独一列。
+    # 旧名字叫 `equal`，而它装的是**分歧**——读判决式 `not equal` 时极易读反。
+    divergent = [item for item in divergences if item.get("error") is None]
+    skipped = [item for item in divergences if item.get("error") is not None]
     facts = {
         "summary": dict(report.summary()),
         "failures": [item.name for item in failures][:5],
@@ -354,8 +381,13 @@ def scenario_consumers_agree(runtime: Any) -> Scenario:
     unexpected = [item.name for item in failures if item.name != "at_least_one_full_adapter"]
     return Scenario(
         "两个协议消费者（进程内 / 经 HTTP）走到同一套结论，且逐场景决定整份相等",
-        not unexpected and not equal and compared >= 4,
-        f"{len(report.checks)} 项检查（read_only 上限 1 项预期内），决定比对 {compared} 例",
+        # 渲染不出来的场景**按设计**不参与比对（见上面 try 的注释：套件已单独报告它们），
+        # 所以这里不把它当红条件；但"少比了几个"必须出现在读数里，不能只有 facts 里一个键——
+        # `skipped` 因此进 detail 文本。要不要把它升级成红条件是一次显式的设计决定：
+        # 实测当前仓库确实有跳过场景，升级会立刻把本闭环判红（见 M9 判定表里这条的判定）。
+        not unexpected and not divergent and compared >= 4,
+        f"{len(report.checks)} 项检查（read_only 上限 1 项预期内），决定比对 {compared} 例"
+        + (f"，跳过 {len(skipped)} 例（渲染不出来，按设计不参与比对）" if skipped else ""),
         {**facts, "unexpected_failures": unexpected},
     )
 
@@ -530,6 +562,21 @@ def scenario_tenant_isolation(runtime: Any) -> Scenario:
     )
 
 
+def restore_rules_dir(backup: Path, rules_dir: Path) -> None:
+    """把规则目录放回原位（恢复失败就抛，绝不假装恢复成功）。
+
+    shutil.move(src, dst) 在 dst 是**已存在的目录**时会把 src 整个搬进 dst **里面**
+    （变成 rules_dir/rules-backup）：规则集其实没恢复，而调用方在 finally 里看不出区别，
+    后面的场景就静默跑在错的状态上。所以先把目标位置清干净再搬。
+    """
+
+    if rules_dir.is_dir():
+        shutil.rmtree(rules_dir)
+    elif rules_dir.exists():
+        rules_dir.unlink()
+    shutil.move(str(backup), str(rules_dir))
+
+
 def scenario_readiness_fails_without_rules(runtime: Any) -> Scenario:
     """规则目录不可用：readiness 失败，evaluate 得到 rule_set_unavailable。"""
 
@@ -557,7 +604,7 @@ def scenario_readiness_fails_without_rules(runtime: Any) -> Scenario:
         )
         code = (response.body.get("error") or {}).get("code")
     finally:
-        shutil.move(str(backup), str(rules_dir))
+        restore_rules_dir(backup, rules_dir)
         runtime.readiness(force=True)
     return Scenario(
         "规则集不可用时 readiness 失败且 evaluate 失败关闭",
@@ -614,7 +661,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     config_path = build_config(port)
     runtime = build_runtime(config_path, root=REPO_ROOT)
     readiness = runtime.readiness(force=True)
-    server = start_server(runtime, port)
+    server, server_thread = start_server(runtime, port)
     scenarios: list[Scenario] = []
     try:
         for scenario in SCENARIOS:
@@ -633,7 +680,14 @@ def main(argv: Optional[list[str]] = None) -> int:
                 )
     finally:
         server.should_exit = True
-        time.sleep(0.2)
+        # 等它真的退出（有上限）：固定睡 0.2s 只是"看起来关了"，在途请求可能还在跑。
+        server_thread.join(timeout=SERVER_SHUTDOWN_TIMEOUT_S)
+        if server_thread.is_alive():
+            print(
+                "提示：uvicorn 线程在 %.1fs 内没有退出（在途请求可能还没跑完），"
+                "进程退出时它会被当成 daemon 线程掐掉" % SERVER_SHUTDOWN_TIMEOUT_S,
+                file=sys.stderr,
+            )
 
     payload = {
         "phase": 7,

@@ -183,35 +183,54 @@ def _resolve_dataset(
                 f"数据集 {dataset.name} 的条目不在镜像 manifest 中: {source_path}"
                 "（清单只能引用镜像里真实存在的页面）"
             )
-        if page.get("saved") is False:
+        saved = page.get("saved")
+        if saved is not True:
+            # 只有精确的 True 才算"已保存"：`saved: 0` / `"false"` / 根本不写这个键（手改过的
+            # manifest）都不能当成"这页存下来了"——旧写法只判 `is False`，那三种形态会被静默
+            # 当成已保存，与模块自述的"报告哪些页没存下来"相反（复核发现）。失败关闭：证明不了
+            # 就报告出来。实测当前语料 255/255 页都是精确 True，所以这条收紧不产生新的假报警。
+            shown = repr(saved) if "saved" in page else "缺键"
             issues.append(
                 EntryIssue(
                     dataset=dataset.name,
                     source_path=source_path,
                     kind="not_saved",
-                    detail="镜像 manifest 把该页标记为 saved=false",
+                    detail="镜像 manifest 没有把该页标记为已保存（saved=" + shown + "）",
                 )
             )
         url = page.get("source_url")
         title = page.get("title")
         if not isinstance(url, str) or not url.strip():
             raise CorpusError(f"{dataset.name}:{source_path} 的镜像 manifest 缺少 source_url")
-        resolved.append(
-            ResolvedEntry(
-                dataset=dataset.name,
-                source_path=source_path,
-                title=str(title) if title else PurePosixPath(source_path).stem,
-                source_url=url.strip(),
-                license=dataset.license,
-                license_source=dataset.license_source,
-                tier=dataset.tier,
-                visibility=dataset.visibility,
-                language=dataset.language,
-                manifest_sha256=_string_or_none(page.get("sha256")),
-                manifest_bytes=_int_or_none(page.get("bytes")),
-                mirror_revision=revision_text,
+        try:
+            resolved.append(
+                ResolvedEntry(
+                    dataset=dataset.name,
+                    source_path=source_path,
+                    title=str(title) if title else PurePosixPath(source_path).stem,
+                    source_url=url.strip(),
+                    license=dataset.license,
+                    license_source=dataset.license_source,
+                    tier=dataset.tier,
+                    visibility=dataset.visibility,
+                    language=dataset.language,
+                    manifest_sha256=_string_or_none(page.get("sha256")),
+                    manifest_bytes=_int_or_none(page.get("bytes")),
+                    mirror_revision=revision_text,
+                )
             )
-        )
+        except ValidationError as error:
+            # 本函数里唯一没有包 CorpusError 的校验点：manifest 里一个被改坏的 sha256
+            # （形态不合法）会让 pydantic 抛 ValidationError，而调用方只接 CorpusError
+            # （cli.py 的 config error 分支），于是它变成一次未捕获的 traceback。
+            details = "; ".join(
+                f"{'.'.join(str(part) for part in item.get('loc', ())) or '<root>'}: "
+                f"{item.get('msg')}"
+                for item in error.errors()
+            )
+            raise CorpusError(
+                f"{dataset.name}:{source_path} 的镜像 manifest 记录校验失败 -> {details}"
+            ) from error
     return tuple(resolved), tuple(issues)
 
 
@@ -343,10 +362,6 @@ class ExpansionTerm(StrictModel):
 
     zh: Tuple[str, ...] = ()
     en: Tuple[str, ...] = ()
-
-    @property
-    def max_zh_length(self) -> int:
-        return max((len(item) for item in self.zh), default=0)
 
 
 class ExpansionLexicon(StrictModel):

@@ -124,7 +124,9 @@ facts:
 
   - key: "tool_tables.approved.registry"
     authority: canonical
-    canonical_ref: "registry/tool-registry.approved.json"
+    # 锚点补上（本表头部要求 "<仓库相对路径>#<锚点>"）：这份 JSON 是"整份文档"级别的权威，
+    # 取它的 identity 字段 registry_version 作锚——它正是"这份已审核清单是哪一版"的那句话（复核发现）。
+    canonical_ref: "registry/tool-registry.approved.json#registry_version"
     consumers: ["enforcement.registry.load_approved_document"]
     predicate: "enforcement.registry.load_approved_document"
     severity: advisory
@@ -171,12 +173,18 @@ facts:
     predicate: "adapters.dsh.hooks.budget_inequality_facts"
     severity: advisory
     remedy: "仓库内的示例**没有**声明 pre_evidence：三段不等式因此读作不适用（这是读数，不是缺陷）；要在示例上启用，就与 hooks.json 的 timeout 一起改到满足三段不等式"
-    on_unprovable: unavailable
+    # 这一行的"读不到"**就是设计状态**（示例故意不声明 pre_evidence）：写 unavailable 会与 remedy
+    # 自述的"不适用"打架，也会让 by_on_unprovable 把一条按设计不适用的行算进"读不到"（复核发现）。
+    # 闭集里 not_applicable 才是这句话的表达；形状没变，版本轴不递增。
+    on_unprovable: not_applicable
     expires: null
 
   - key: "budget.dsh_side_limit"
     authority: canonical
-    canonical_ref: "src/adapters/dsh/hooks.py#check_wiring + src/adapters/wiring.py#timeout_budget"
+    # 单引用纪律：canonical_ref 必须是**一个**指针（"<路径>#<锚点>"）。这一行原本把两处
+    # 拼在一起，既破了形状，也让"唯一权威声明"这件事说不清（复核发现）。权威取 dsh 侧，
+    # 另一处（wiring 的 timeout_budget）本来就已经在 consumers 与 remedy 里点名。
+    canonical_ref: "src/adapters/dsh/hooks.py#check_wiring"
     consumers: ["adapters.dsh.hooks.check_wiring", "adapters.wiring._probe_channel", "tools.control_plane_facts"]
     predicate: "adapters.dsh.hooks.budget_inequality_facts + adapters.wiring._probe_channel"
     severity: advisory

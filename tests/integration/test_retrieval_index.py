@@ -812,6 +812,51 @@ def test_missing_file_fails_closed_and_needs_manifest_removal(tmp_root) -> None:
         store.close()
 
 
+def test_saved_flag_must_be_exactly_true(tmp_root) -> None:
+    """`saved` 不是精确 True 时不许当成已保存（复核发现：旧写法只判 is False）。
+
+    读数（真实语料）：255/255 页都是精确 True，所以这条收紧不产生新的假报警；
+    手改过的 manifest 写 0 / "false" / 缺键，都必须被报告成 not_saved（失败关闭）。
+    """
+
+    import json
+
+    from retrieval.corpus import load_corpus
+
+    loaded = load_fixture_corpus(tmp_root)
+    dataset = loaded.manifest.datasets[0]
+    entry = dataset.entries[0]
+    manifest_path = tmp_root / dataset.mirror / "manifest.json"
+    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    def patch(*, value=0, drop: bool = False):
+        def mutate(page):
+            if page.get("local_path") != entry:
+                return page
+            if drop:
+                return {key: item for key, item in page.items() if key != "saved"}
+            return dict(page, saved=value)
+
+        return mutate
+
+    for label, mutate in (
+        ("saved=0", patch(value=0)),
+        ("saved='false'", patch(value="false")),
+        ("缺键", patch(drop=True)),
+    ):
+        document["pages"] = [mutate(page) for page in document["pages"]]
+        manifest_path.write_text(
+            json.dumps(document, ensure_ascii=False), encoding="utf-8", newline=""
+        )
+        refreshed = load_corpus(tmp_root / loaded.corpus_path, repo_root=tmp_root)
+        # issues 挂在 verification 上（LoadedCorpus 本身没有 issues 字段）。
+        issues = [
+            item for item in refreshed.verification.issues if item.source_path == entry
+        ]
+        assert [item.kind for item in issues] == ["not_saved"], label
+        assert "saved=" in issues[0].detail, label
+
+
 def test_keyboard_interrupt_leaves_the_run_running(tmp_root) -> None:
     """Ctrl-C 不是失败：run 留在 running，由下一次 ingest 标成 interrupted（复核发现）。"""
 

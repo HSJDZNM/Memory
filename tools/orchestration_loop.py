@@ -278,18 +278,33 @@ def read_text(path: Path) -> str:
 
 
 def read_jsonl(path: Path) -> tuple[dict[str, Any], ...]:
+    """读一行一条的 JSONL：**坏行不静默丢**。
+
+    这份文件是 `execution_count(...)` / "零执行" 与台账事实的**证据源**：丢一条就会少算一次执行，
+    而报告照样打印结论。本 harness 会中途 Ctrl-C 杀掉运行，append-only 文件因此可能留一条被截断的
+    尾巴——那一条同样要报出来（行号 + 原因）：读不懂证据源时不许给结论，也不许把"少了一条"
+    静默成"就是没有"。
+    """
+
     if not path.is_file():
         return ()
     records: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
         try:
             decoded = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(decoded, dict):
-            records.append(decoded)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                "%s 第 %d 行不是合法 JSON（%s）：它是执行次数与台账事实的证据源，"
+                "坏行会让结论少算——修好或删掉这一行再重跑" % (path, number, error.msg)
+            ) from error
+        if not isinstance(decoded, dict):
+            raise RuntimeError(
+                "%s 第 %d 行是 %s，不是对象：JSONL 记录必须是映射"
+                % (path, number, type(decoded).__name__)
+            )
+        records.append(decoded)
     return tuple(records)
 
 
@@ -648,7 +663,10 @@ def make_run(
 
     area = DEMO_ROOT / "runs" / tag
     if reset and checkpoint_dir is None:
-        shutil.rmtree(area, ignore_errors=True)
+        # 用 remove_tree()，不要 `ignore_errors=True`：后者会把"删不掉"吞掉，上一轮的
+        # ledger / audit / checkpoints 留在原地，随后被当成本轮读数（`remove_tree` 的 docstring
+        # 记的正是这类事故：删不掉 → 后面的 copytree 撞 FileExistsError，真正的占用原因被盖住）。
+        remove_tree(area)
     area.mkdir(parents=True, exist_ok=True)
     approvals = area / "approvals"
     approvals.mkdir(parents=True, exist_ok=True)
@@ -1249,8 +1267,10 @@ def scenario_human_approval(api: "Api") -> Scenario:
     rule_after = read_text(WORKSPACE / POLICY_FILE)
     write_happened = new_line in rule_after and old_line in rule_text
 
-    # 缺陷探针：真实平台把"需要审批"表达成 block + required_action=approval，
-    # 节点却在 decision.allowed 那一步就返回 policy_blocked，审批门禁根本到不了。
+    # 缺陷探针的**回归钉子**：真实平台把"需要审批"表达成 block + required_action=approval。
+    # 这里曾经有过那个缺陷——节点在 decision.allowed 那一步就返回 policy_blocked，审批门禁根本
+    # 到不了；src/orchestration/nodes.py:691-692 现在用 needs_approval 把它路由进审批门禁，
+    # 所以下面必须断言"真的路由到了门禁"（routed_to_gate），不能只看 facts。
     probe_rule = WORKSPACE / "policies" / "ORCH-APPROVAL-PROBE-001.yaml"
     write_text(probe_rule, "\n".join(APPROVAL_RULE_LINES) + "\n")
     probe_run = make_run(
@@ -1507,6 +1527,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     selected = [
         item for item in SCENARIOS if not args.only or any(key in item.__name__ for key in args.only)
     ]
+    if args.only and not selected:
+        # `--only` 一个都没匹配上时，场景循环跑 0 次，而"全部通过"对空列表**恒真**：打印
+        # `result: pass` 并以 0 退出——一次"什么都没验证"的绿，`--only` 拼错完全无声。
+        # 空输入不是通过（与 ci_local 的选组、cleanup 的空计划同一条口径）。
+        print("--only 没有匹配到任何场景：" + ", ".join(args.only), file=sys.stderr)
+        print("可用场景：" + ", ".join(item.__name__ for item in SCENARIOS), file=sys.stderr)
+        return 2
 
     started = time.monotonic()
     global INDEX_REASON

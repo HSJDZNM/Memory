@@ -17,7 +17,7 @@ def chap(t):
     m = re.match(r"^(V\d+)", t)
     return m.group(1) if m else None
 
-asvs_ch = collections.defaultdict(set); asvs_sub = collections.defaultdict(set)
+asvs_ch = collections.defaultdict(set)
 pc = collections.defaultdict(set); t10 = collections.defaultdict(set); mas = collections.defaultdict(set)
 for name, key in [("IndexASVS.html","asvs"),("IndexProactiveControls.html","pc"),
                   ("IndexTopTen.html","t10"),("IndexMASVS.html","mas")]:
@@ -26,7 +26,6 @@ for name, key in [("IndexASVS.html","asvs"),("IndexProactiveControls.html","pc")
             if key == "asvs":
                 c = chap(s["title"])
                 if c: asvs_ch[u].add(c)
-                asvs_sub[u].add(s["title"].split()[0])
             elif key == "pc": pc[u].add(s["title"].split(".")[0])
             elif key == "t10": t10[u].add(s["title"].split(":")[0])
             else: mas[u].add(s["title"].split()[0])
@@ -131,6 +130,18 @@ INDEX_FILES = {
     "Glossary": ("00_索引与标准", "05_索引-字母顺序总索引.md"),
 }
 
+# 索引页同样要**双向**核对（上面那条只核了 sheet）。理由更硬：`dest_of()` 对未知 slug 返回 `None`，
+# 调用点的 `if d:` 会把 `None` **静默丢掉**，直到 `os.makedirs(os.path.dirname(dst))` 才以
+# `TypeError: expected str, bytes or os.PathLike object, not NoneType` 炸出来；反方向
+# （`INDEX_FILES` 声明了这一页、但这一页没抓到/没落盘）则会让发布出去的镜像少一份索引，而**没有任何人报错**。
+# 与上面那条一样写成显式报错 + 退出码 2：`-O` 不会把它删掉。
+missing_indexes = sorted(set(indexes_saved) - set(INDEX_FILES))
+extra_indexes = sorted(set(INDEX_FILES) - set(indexes_saved))
+if missing_indexes or extra_indexes:
+    print("ERROR: index placement mismatch：MISSING（保存了但 INDEX_FILES 里没有）=" + repr(missing_indexes)
+          + " EXTRA（INDEX_FILES 里有但没保存）=" + repr(extra_indexes))
+    raise SystemExit(2)
+
 def dest_of(slug):
     if slug in P:
         f, sub = P[slug]
@@ -168,7 +179,10 @@ def rewrite(md, src_path):
         tgt = url2path.get(base)
         if not tgt: return m.group(0)
         rel = os.path.relpath(tgt, src_dir).replace("\\", "/")
-        return "[" + m.group(1) + "](" + rel + (("#" + anchor) if anchor else "") + ")"
+        # group(3) 是可选标题（含前导空白，如 ' "标题"'）：LINKRE 特意把它匹配出来，
+        # 重建链接时不带上就等于把它吃掉——生成物与上游原文不一致。
+        title = m.group(3) or ""
+        return "[" + m.group(1) + "](" + rel + (("#" + anchor) if anchor else "") + title + ")"
     out, in_fence = [], False
     for line in md.split("\n"):
         if line.lstrip().startswith(FENCE):

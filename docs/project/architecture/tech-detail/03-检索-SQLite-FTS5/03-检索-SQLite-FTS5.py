@@ -169,6 +169,10 @@ digest = "sha256:" + hashlib.sha256(PAGE.read_bytes()).hexdigest()
                     "title": "示例指南",
                     "sha256": digest,
                     "bytes": PAGE.stat().st_size,
+                    # 真实镜像 manifest 每一页都写这个键（实测 255/255 都是精确 true）；
+                    # 夹具以前省了它，于是"缺键"从"没人管"变成了"没保存"（corpus.py 的
+                    # not_saved 判定线收紧为 `is not True`）。补上才是与真实语料同形。
+                    "saved": True,
                 }
             ],
         },
@@ -284,6 +288,10 @@ front, body = split_front_matter(DOC)
 sections = find_sections(body)
 body_text = "".join(section.body for section in sections)
 DOCUMENT_ID = document_id_for("demo-zh", "guide.md")
+# `chunk_document` 返回的是 `FrontMatter`（带 `metadata` 映射的 dataclass），而 `upsert_document`
+# 要的是 `Sequence[Tuple[str, str]]`——转换口径照 `src/retrieval/indexer.py` 自己的写法
+# （`tuple(front.metadata.items())`）。**不能把这个值丢掉**：front matter 也是文档的一部分，
+# 丢了它，索引里那份文档的元数据就永远为空（今天这份夹具没有 front matter，所以读数是空）。
 front_matter, drafts = chunk_document(DOC, document_id=DOCUMENT_ID, max_chars=120, hard_max_chars=800)
 
 print(pad("#", 4) + pad("heading_anchor", 28) + pad("kind", 8) + pad("字符", 6) + "text_hash")
@@ -312,7 +320,14 @@ from retrieval.store import ChunkStore
 
 DB = TEMP / "index.sqlite3"
 policy = CorpusPolicy(top_k=3, max_query_chars=200, max_query_terms=24)
+# 单元跑在**同一个进程**里，而生成器是**逐单元捕获异常**的：这一格之后某个断言失败时，后面的
+# 单元还会继续跑，而这个连接一直开着（Windows 上会挡住 sqlite 文件的删除/重建）。
+# `ChunkStore.close()` 是幂等的（`store.py` 里由 `_closed` 守着），所以注册 atexit 与最后一格的
+# 显式 close 不冲突：正常收尾、异常收尾都保证关一次。
+import atexit
+
 store = ChunkStore(DB)
+atexit.register(store.close)
 store.upsert_document(
     DocumentRecord(
         document_id=DOCUMENT_ID,
@@ -331,7 +346,7 @@ store.upsert_document(
         mirror_revision="2026-01-01T00:00:00Z",
         ingested_at="2026-01-01T00:00:00Z",
     ),
-    front_matter=(),
+    front_matter=tuple(front_matter.metadata.items()),
 )
 change = store.replace_chunks(DOCUMENT_ID, drafts)
 stats = store.stats()
@@ -380,11 +395,16 @@ from retrieval.query import fts_expression, fts_phrase, normalize_query_text, to
 RAW = '小步提交 NEAR("repo"*) OR secret:* ; DROP TABLE chunks -- 注入尝试'
 
 normalized, truncated = normalize_query_text(RAW, max_chars=policy.max_query_chars)
+# `truncated` 是这次规范化的**显式读数**，不是"没超上限"的推断：这段 RAW 远短于上限
+# （`policy.max_query_chars` = 200），所以它必须是 False。把它断言出来，
+# "该截断却没截"与"不该截断却截了"两个方向都会红；下面长查询那一格的 `was_clipped`
+# 断言的是另一个方向（该截断时必须为 True）。
+assert truncated is False, f"这段查询只有 {len(RAW)} 字符，不该被截断：truncated={truncated}"
 terms = tokenize(normalized)
 expression = fts_expression(terms)
 
 print("原始文本  :", RAW)
-print("规范化后  :", normalized)
+print("规范化后  :", normalized, "| truncated =", truncated)
 print("受控词项  :", terms)
 print("FTS 表达式:", expression)
 print()
@@ -392,9 +412,17 @@ print()
 # FTS5 的语法字符一个都不许活到表达式里。
 for operator in ("(", ")", "*", ":", ";", "^", "-"):
     assert operator not in expression, operator
-assert "NEAR" not in expression, "NEAR 操作符必须已经被丢掉"
+# **原来这里是 `assert "NEAR" not in expression`——恒真**：`tokenize` 会把 ASCII 词小写，
+# 大写写法永远不可能出现在表达式里，它证明不了"操作符被丢掉"。判据要落在两件**能失败**的事上：
+#   ① 操作符的**语法形态**不在了（带括号的 NEAR）；
+#   ② 与操作符**同名**的词只能以**引号词项**形态存在（`"near"` / `"or"`）——FTS5 才按字面量读。
+assert "NEAR(" not in expression.upper(), expression
+assert "near" not in expression.replace('"near"', ""), expression
+assert " or " not in expression, expression  # 连接符只有大写 OR，小写的 or 只能是被引号包住的词项
+assert expression.count(" OR ") == len(terms) - 1, expression
 assert expression.count('"') == 2 * len(expression.split(" OR "))
-print("表达式里只剩被双引号包住的词项与 OR；NEAR / 括号 / 星号 / 冒号 / 分号全部消失。")
+print("表达式里只剩被双引号包住的词项与 OR 连接符；NEAR 的操作符形态（带括号）、星号、冒号、分号全部消失。")
+print("（与操作符同名的 near / or 仍在，但都是引号词项——FTS5 按字面量读，不当操作符。）")
 
 # 注入字符串退化成普通词：不可能形成短语，更不可能形成第二条语句。
 assert "drop table" not in expression
@@ -537,7 +565,9 @@ store.upsert_document(
         mirror_revision="2026-01-01T00:00:00Z",
         ingested_at="2026-01-01T00:00:00Z",
     ),
-    front_matter=(),
+    # 同一件事的第二个落点：这里的分块在 upsert **之后**才做，所以直接从文本取一次 front matter
+    # （`split_front_matter` 已在本章导入），而不是把这条 upsert 挪到分块后面去。
+    front_matter=tuple(split_front_matter(RESTRICTED_TEXT)[0].metadata.items()),
 )
 _, restricted_drafts = chunk_document(
     RESTRICTED_TEXT, document_id=RESTRICTED_ID, max_chars=200, hard_max_chars=800
@@ -610,6 +640,7 @@ for label, query, item_scope in cases:
 
 # 第三种：索引库根本用不了。这里用一个"没有建过表"的空库复现（真实场景是索引还没建或已损坏）。
 empty_store = ChunkStore(TEMP / "empty.sqlite3", initialize=False)
+atexit.register(empty_store.close)
 unavailable = FtsRetriever(empty_store, policy=policy).retrieve(
     RetrievalQuery(text="小步提交", limit=3), scope
 )

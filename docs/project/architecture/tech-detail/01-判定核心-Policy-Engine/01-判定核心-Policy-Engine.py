@@ -170,19 +170,24 @@ def pad(text, width, align="left"):
 ARCH_RULE = next(rule for rule in RULES.rules if rule.id == "ARCH-001")
 ARCH_RULES = models.RuleSet(rules=(ARCH_RULE,))
 
+# 每个用例带一个**名字**：下面的断言按名字查行，不按位置（位置会随这一表增删/换序而错位，
+# 而且读错行时不会有任何提示——见提交信息里的最小构造）。
 matrix = (
-    ({}, "两条规则都要的维度都没给全：operation 缺失"),
-    ({"operation": "edit"}, "edit 落在 [create, edit] 里（同维多值 = OR）"),
-    ({"operation": "create"}, "create 同样落在列表里"),
-    ({"operation": "read"}, "read 不在列表里：范围不匹配"),
-    ({"layer": "service", "operation": "edit"}, "layer 不等：ARCH-001 出局；TESTING-001 的两个维度都满足"),
-    ({"language": "go"}, "language 不等：跨维度 AND，两条都出局"),
+    # 空补充 = 只有基础上下文（`src/order/controller.py`：language=python、layer=controller）。
+    # ARCH-001 的 scope 正需要这两项，**已经满足**（命中）；只有 TESTING-001 因为缺 operation 出局。
+    ("空补充", {}, "operation 缺失：TESTING-001 出局；ARCH-001 的维度由基础上下文给全了"),
+    ("operation=edit", {"operation": "edit"}, "edit 落在 [create, edit] 里（同维多值 = OR）"),
+    ("operation=create", {"operation": "create"}, "create 同样落在列表里"),
+    ("operation=read", {"operation": "read"}, "read 不在列表里：范围不匹配"),
+    ("layer=service", {"layer": "service", "operation": "edit"},
+     "layer 不等：ARCH-001 出局；TESTING-001 的两个维度都满足"),
+    ("language=go", {"language": "go"}, "language 不等：跨维度 AND，两条都出局"),
 )
 
 print(pad("补充的维度", 42) + pad("ARCH-001", 12) + pad("TESTING-001", 14) + "说明")
 print("-" * 118)
-rows = []
-for fields, note in matrix:
+rows = {}
+for case, fields, note in matrix:
     context = build("src/order/controller.py", **fields)
     matched, skipped = engine.matching_rules(RULES, context)
     record = {
@@ -190,7 +195,7 @@ for fields, note in matrix:
         "hits": {rule.id for rule in matched},
         "reasons": {item.rule_id: item.reasons[0] for item in skipped},
     }
-    rows.append(record)
+    rows[case] = record
     print(
         pad(fields or "（什么都不补充）", 42)
         + pad("命中" if "ARCH-001" in record["hits"] else "跳过", 12)
@@ -198,17 +203,40 @@ for fields, note in matrix:
         + note
     )
 
+# **漂移守卫**：表里必须恰好是上面声明的那几个用例。规则表变了、或者这一表增删换序，
+# 这句话会在**读取之前**说出来，而不是让下面的断言去读一个错位的行。
+assert set(rows) == {case for case, _, _ in matrix}, (sorted(rows), [case for case, _, _ in matrix])
+
+
+def hits(case):
+    """按**用例名**取命中集合；名字不在表里就把名字与实际用例一起报出来。"""
+
+    assert case in rows, f"用例 {case!r} 不在表里；实际用例：{sorted(rows)}"
+    return rows[case]["hits"]
+
+
+def skip_reason(case, rule_id):
+    """按**用例名 + 规则 id** 取跳过原因；缺哪个键就说哪个键，不把 KeyError 原样留给读者。"""
+
+    assert case in rows, f"用例 {case!r} 不在表里；实际用例：{sorted(rows)}"
+    reasons = rows[case]["reasons"]
+    assert rule_id in reasons, f"用例 {case!r} 的跳过表里没有 {rule_id}；实际键：{sorted(reasons)}"
+    return reasons[rule_id]
+
+
 # 同一张表用 assert 钉死：OR、AND、"声明了维度但上下文缺值"三种语义各一条。
-assert "ARCH-001" in rows[0]["hits"] and "TESTING-001" not in rows[0]["hits"]
-assert "<missing>" in rows[0]["reasons"]["TESTING-001@1"], rows[0]["reasons"]
-assert {"ARCH-001", "TESTING-001"} <= rows[1]["hits"]
-assert {"ARCH-001", "TESTING-001"} <= rows[2]["hits"]
-assert "TESTING-001" not in rows[3]["hits"]
-assert "ARCH-001" not in rows[4]["hits"] and "TESTING-001" in rows[4]["hits"]
-assert not ({"ARCH-001", "TESTING-001"} & rows[5]["hits"])
+# 全部按**用例名**读（原来是 `rows[0]` / `rows[3]` …）：位置读到错行时不会有任何提示，
+# 而这四条断言的用意正是"AGENTS 里那些语义没漂"。
+assert "ARCH-001" in hits("空补充") and "TESTING-001" not in hits("空补充")
+assert "<missing>" in skip_reason("空补充", "TESTING-001@1"), rows["空补充"]["reasons"]
+assert {"ARCH-001", "TESTING-001"} <= hits("operation=edit")
+assert {"ARCH-001", "TESTING-001"} <= hits("operation=create")
+assert "TESTING-001" not in hits("operation=read")
+assert "ARCH-001" not in hits("layer=service") and "TESTING-001" in hits("layer=service")
+assert not ({"ARCH-001", "TESTING-001"} & hits("language=go"))
 print()
-print("上下文缺 operation 时的跳过原因:", rows[0]["reasons"]["TESTING-001@1"])
-print("只写 read 时的跳过原因:", rows[3]["reasons"]["TESTING-001@1"])
+print("上下文缺 operation 时的跳过原因:", skip_reason("空补充", "TESTING-001@1"))
+print("只写 read 时的跳过原因:", skip_reason("operation=read", "TESTING-001@1"))
 
 # 未知 checker 有两道闸。第一道在模型层：连"手工造的规则对象"都进不了 RuleSet。
 from pydantic import ValidationError
@@ -261,6 +289,11 @@ print("-" * 118)
 reasons = {item.rule_id: item.reasons[0] for item in verdict.skipped_rules}
 checkers_of = {rule.canonical_id: rule.enforcement.checker for rule in RULES.rules}
 for rule_id in ("DOC-001@1", "STYLE-001@1", "TESTING-001@1"):
+    # 先确认这两张表里真的有它：直接 `checkers_of[rule_id]` / `reasons[rule_id]` 在规则漂移
+    # （改 id、改 checker、改跳过口径）时只给出一句裸的 KeyError，而这里想说的是"这条规则本该
+    # 因为缺验证器证据被跳过"——读的人得先猜是哪张表、哪个键。
+    assert rule_id in checkers_of, (rule_id, sorted(checkers_of))
+    assert rule_id in reasons, (rule_id, sorted(reasons))
     print(pad(rule_id, 14) + pad(checkers_of[rule_id], 22) + reasons[rule_id])
 
 # 四条断言把"跳过"的语义钉住。
@@ -373,7 +406,12 @@ for name in sorted(checkers.SUPPORTED_CHECKERS):
     kind = "上下文类" if name in checkers.CONTEXT_CHECKERS else "证据类"
     print(pad(name, 24) + pad(kind, 12) + checkers.checker_handler(name).__name__)
 
-assert set(checkers.CONTEXT_CHECKERS) | set(checkers.EVIDENCE_CHECKERS) == set(checkers.SUPPORTED_CHECKERS)
+# 原来这里有一条 `SUPPORTED_CHECKERS == CONTEXT_CHECKERS | EVIDENCE_CHECKERS`：而源码里
+# `SUPPORTED_CHECKERS` **就是**那两个集合的并集，这条断言永远为真——它不是检查，只是把定义
+# 抄了一遍（旁边那条"互不重叠"才是有内容的）。要钉住的是这两个族**各自非空**：哪一族被清空，
+# "证据类 checker 缺证据就必须阻断"这条纪律就会静默失效（没有成员再需要它）。
+assert checkers.CONTEXT_CHECKERS, "上下文类 checker 一族不能为空"
+assert checkers.EVIDENCE_CHECKERS, "证据类 checker 一族不能为空"
 assert not (set(checkers.CONTEXT_CHECKERS) & set(checkers.EVIDENCE_CHECKERS))
 used_checkers = {rule.enforcement.checker for rule in RULES.rules}
 assert used_checkers <= set(checkers.SUPPORTED_CHECKERS)
@@ -466,13 +504,19 @@ assert any(item.severity is models.Severity.CRITICAL for item in mixed.violation
 # 即使**一条违规都没有**，决策也是 `block` 并带上 `required_action=approval`：
 # 授权是前置条件，不能被降级成"提醒一下"。
 #
-# **三值判定（第 9 步）**：决策只有三种取值，映射关系固定：
+# **三值判定（第 9 步）**：决策只有三种取值；映射关系固定，但输入有**两个通道**——`violations`
+# （真违规）与 `pending_findings`（「待实现」：选中的测试因项目内目标还不存在而没能收集，协议 1.1 的
+# 独立通道，severity 在构造期被钉成 `warning`）：
 #
 # | 最高严重级别 | 决策 |
 # | --- | --- |
-# | 没有违规，也没有审批要求 | `allow` |
-# | `info` / `warning` | `allow_with_warnings` |
+# | 没有违规、没有待实现，也没有审批要求 | `allow` |
+# | `info` / `warning`，或存在 `pending_findings` | `allow_with_warnings` |
 # | `error` / `critical`，或者要求人工审批 | `block` |
+#
+# `pending_findings` 只参与**空判定**：两个通道都空才是 `allow`。它造不出 `block`（severity 被钉成
+# warning），所以「把它从 `violations` 搬到 `pending`」不会放宽任何一条阻断——反过来，只看
+# `violations` 的读者会把「先写测试」的调用读成「什么都没发生」。
 #
 # 下面这段用真实的 ARCH-001 复制出几份变体（冻结模型只能 `model_copy`，不能直接改字段）来验证这三步。
 # ----------------------------------------------------------------------------
@@ -551,6 +595,39 @@ assert table["warning"] == ("allow_with_warnings", "allow")
 assert table["error"] == ("block", "allow") and table["critical"] == ("block", "allow")
 print()
 print("三种取值之外没有第四条路：allow_with_warnings 只是「可以继续，但请看一眼」。")
+
+# 第 9 步的另一半：`expected_decision` 还有**第三个输入通道** `pending_findings`（协议 1.1）。
+# 只看上面那张"最高严重级别 → 决策"的表，很容易读成"没有违规就是 allow"；而「待实现」不是违规，
+# 却也不能算"什么都没发生"——它是**独立的**通道（AGENTS 第 51 条：混进 violations 就是同名两义）。
+pending_item = models.Violation(
+    rule_id="TESTING-001",
+    rule_version=1,
+    severity=models.Severity.WARNING,
+    message="待实现（讲解里的最小构造）",
+    evidence=models.Evidence(kind="checker", subject="tests/x_test.py", value="pending_implementation"),
+)
+assert models.expected_decision(()) is models.Decision.ALLOW
+assert (
+    models.expected_decision((), pending=(pending_item,)) is models.Decision.ALLOW_WITH_WARNINGS
+), "pending_findings 必须把 allow 抬成 allow_with_warnings：两个通道都空才是 allow"
+assert models.expected_decision((), required_action=models.RequiredAction.APPROVAL) is models.Decision.BLOCK
+print()
+print(pad("输入通道", 22) + "决策")
+print("-" * 44)
+print(pad("violations=() pending=()", 22) + models.expected_decision(()).value)
+print(pad("violations=() pending=1", 22) + models.expected_decision((), pending=(pending_item,)).value)
+# 构造期不变量：pending 只能是 warning ⇒ 它永远造不出 block（"搬走一条阻断"这条旁路不存在）。
+try:
+    models.ValidationResult(
+        decision=models.Decision.ALLOW,
+        request_id="req-pending",
+        pending_findings=(pending_item.model_copy(update={"severity": models.Severity.ERROR}),),
+    )
+except ValueError as error:
+    print("pending 带 error 会被构造期拒绝:", " ".join(str(error).split())[:56])
+else:
+    raise AssertionError("pending_findings 必须只承载 severity=warning（否则它会绕过阻断判定）")
+print("第三个输入通道：pending_findings 只参与空判定，造不出 block。")
 
 # ----------------------------------------------------------------------------
 # ## 小结

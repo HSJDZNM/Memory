@@ -64,9 +64,9 @@ for extra in (REPO_ROOT / "src", REPO_ROOT / "tools"):
 TEMP = REPO_ROOT / ".tmp" / "tech-detail" / "02"
 TEMP.mkdir(parents=True, exist_ok=True)
 
+import shutil
 import yaml
 
-from adapters.dsh import adapter as dsh_adapter
 from adapters.dsh.adapter import (
     DSH_AGENT_ID,
     REQUIRED_PAYLOAD_FIELDS,
@@ -101,10 +101,17 @@ PROJECT_ROOT = TEMP / "demo-shop"
 
 
 def fresh(path):
-    """每次运行都从空审计开始：审计文件同时是幂等台账，上一次运行的 event_id 会被判成重放。"""
+    """每次运行都从空台账开始：审计文件同时是幂等台账，上一次运行的 event_id 会被判成重放。"""
     for candidate in (path, path.with_name(path.stem + ".enforcement-ledger" + path.suffix)):
         if candidate.exists():
             candidate.unlink()
+    # **同一 event_id 的原子认领标记**住在 `<审计文件>.claims/`（见 `src/adapters/dsh/hooks.py`
+    # 的 `claims_dir()`：它与审计同处，为的是"一起清理/备份"）。它不算清，本章那些**固定**
+    # event_id 的夹具在第一次运行之后就会被永远判成重放：退出码 2、且**没有 decision**
+    # （重放是"没做判定"，不是"判定为 block"）——于是 block/allow 两个演示一起红。
+    claims = path.with_name(path.name + ".claims")
+    if claims.is_dir():
+        shutil.rmtree(claims)
     return path
 
 
@@ -369,8 +376,11 @@ assert any(item.get("reason_code") == "allow" for item in allow_records)
 2. **任何异常都转成退出码 2**：连 stdin 不是合法 JSON 也一样，绝不让解释器以退出码 1 结束；
 3. **接线自检**：hooks.json 不存在 / 不可解析 / 没指向本 Hook / 超时不等式不满足，一律阻断并给出可诊断信息。
 
-下面把六条失败路径各跑一次，全部应当阻断（exit 2），并且每条都要给出原因码：
-未知工具、未知事件、越界路径、判定超时、重放同一次调用，以及**上一次已经放行过的那次调用再来一遍**。
+下面把**五条**失败路径各跑一次，全部应当阻断（exit 2），并且每条都要给出原因码：
+未知工具、未知事件、越界路径、判定超时、重放（同一个 `event_id` 的**第二次**投递）。
+
+第六条"接线不等式不满足"**不在这一格**：那条要的是"hooks.json 自己有问题"的场景，放在下一格
+`wiring_cases` 里跑。两个矩阵各自跑满、各自数自己的条数——把它们混成一句话，读者会按六条去核对五条。
 '''
         ),
         code(
@@ -437,6 +447,8 @@ cases = (
     ("判定超时", timeout_outcome),
     ("重放 event_id", replay_second),
 )
+# 正文说的条数由**数据**核对（不是靠读者数）：矩阵增删一条而正文没改，这一格立刻红。
+assert len(cases) == 5, f"正文写的是五条失败路径，实际 {len(cases)} 条：改矩阵要同步改正文"
 print(pad("失败路径", 18) + pad("退出码", 8) + pad("原因码", 20) + "写给模型的细节")
 print("-" * 118)
 for label, outcome in cases:
@@ -450,6 +462,13 @@ assert {outcome.reason_code for _, outcome in cases} == {
     "policy_timeout",
     "event_replay",
 }, sorted(outcome.reason_code for _, outcome in cases)
+# 集合相等只证明"这三个码出现过"，**没有**证明"哪条路径给出哪个码"：把超时与重放的码对调，
+# 上面那条断言照样通过——而矩阵要证明的恰恰是"每条路径都给得出**它自己**的原因码"
+# （第 52 条：拦住之外还得说得出对的原因）。逐个绑定，才能让"理由写错"变成会失败的事。
+reasons = {label: outcome.reason_code for label, outcome in cases}
+assert reasons["判定超时"] == "policy_timeout", reasons
+assert reasons["重放 event_id"] == "event_replay", reasons
+assert reasons["未知工具"] == reasons["未知事件"] == reasons["越界路径"] == "context_error", reasons
 assert replay_first.exit_code == EXIT_ALLOW and len(replay_executor.calls) == 1
 assert len(slow_executor.calls) == 0
 print()

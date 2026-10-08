@@ -21,6 +21,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # 一次"什么都没提出来"的运行：status=blocked + 平台不可用，且 runner.requests 为空。
@@ -103,3 +105,35 @@ def test_human_approval_scenario_reports_fail_instead_of_index_error(monkeypatch
     assert "IndexError" not in scenario.detail
     assert scenario.facts["first_status"] == "blocked"
     assert scenario.facts["first_failure"] == "policy_unavailable"
+
+
+def test_a_malformed_ledger_line_is_not_silently_dropped(tmp_path: Path) -> None:
+    """坏行是"证据缺失"，不是"没有这条"：必须报出行号与原因。
+
+    `read_jsonl` 是 `execution_count(...)` / "零执行" 与台账事实的证据源：静默跳过一条被截断的
+    记录（本 harness 会中途 Ctrl-C，append-only 文件因此可能留尾巴）会让结论**少算一次执行**，
+    而报告照样打印。
+    """
+
+    module = _load_loop()
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text('{"a": 1}\nnot json\n{"a": 2}\n', encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as error:
+        module.read_jsonl(ledger)
+
+    assert "第 2 行" in str(error.value)
+    assert "不是合法 JSON" in str(error.value)
+
+
+def test_a_jsonl_line_that_is_not_an_object_is_reported(tmp_path: Path) -> None:
+    """合法 JSON 但不是对象（数组 / 数字）同样是"这条记录读不出来"。"""
+
+    module = _load_loop()
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text('{"a": 1}\n[1, 2]\n', encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as error:
+        module.read_jsonl(ledger)
+
+    assert "不是对象" in str(error.value)

@@ -55,6 +55,15 @@ def test_prose_links_are_rewritten() -> None:
     assert rewrite(md, SRC_PATH) == "见 [目标](" + _rel() + ")。" + chr(10)
 
 
+def test_link_titles_survive_the_rewrite() -> None:
+    """LINKRE 特意匹配了可选标题：重建链接时必须带上，不许吃掉。"""
+
+    rewrite = _load_rewrite(SOURCE.read_text(encoding="utf-8"))
+    md = '见 [目标](' + TARGET_URL + ' "标题")。' + chr(10)
+
+    assert rewrite(md, SRC_PATH) == '见 [目标](' + _rel() + ' "标题")。' + chr(10)
+
+
 def test_fenced_code_is_left_alone() -> None:
     """围栏里的链接是示例代码：一个字都不许改。"""
 

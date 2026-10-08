@@ -70,3 +70,50 @@ def test_main_reports_git_failure_as_environment_error(
     captured = capsys.readouterr()
     assert code == 2
     assert "环境不可用" in captured.err
+
+def test_gate_patterns_are_a_superset_of_the_runtime_definition() -> None:
+    """条目 [63]：门禁的模式集必须**包含**运行期定义，且多出来的部分确实存在。
+
+    模块 docstring 曾经写成"两者共用同一份定义"——那会让人以为门禁拦下的东西运行期也认，
+    而 `EXTRA_PATTERNS`（AKIA/ASIA/JWT）只在门禁这一侧。这里把真实关系（超集）钉住：
+    运行期那一条被删掉、或门禁少用一条，用例都会红。
+    """
+
+    from enforcement.audit import SECRET_VALUE_PATTERNS
+
+    gate = {pattern.pattern for pattern in secret_scan.secret_patterns()}
+    runtime = {pattern.pattern for pattern in SECRET_VALUE_PATTERNS}
+    extras = {pattern.pattern for pattern in secret_scan.EXTRA_PATTERNS}
+
+    assert runtime <= gate, "门禁少了运行期定义里的这些模式：" + repr(sorted(runtime - gate))
+    assert extras <= gate, "门禁自己的补充模式没生效：" + repr(sorted(extras - gate))
+    assert not extras <= runtime, "补充模式若已进运行期定义，docstring 的「超集」说法要一起改"
+
+SECRET_LINE = "Authorization: Bearer sk-live-abcdefgh12345678"  # secret-scan: allow（合成值：本文件用例的夹具串，不是真凭据）
+
+
+def test_bare_allow_marker_is_still_a_hit(tmp_root: Path) -> None:
+    """条目 [64]：光秃秃的 `secret-scan: allow` 不算豁免——docstring 说"必须写明理由"，
+    旧实现却只判标记是否出现，于是"没写理由的豁免"与"复核过的豁免"在读数上无法区分。"""
+
+    target = tmp_root / "bare_marker.py"
+    target.write_text(
+        SECRET_LINE + "  # secret-scan: allow" + chr(10), encoding="utf-8", newline=chr(10)
+    )
+
+    findings = secret_scan.scan(_relative(target), secret_scan.secret_patterns())
+
+    assert findings, "裸标记不该被豁免：这行仍然要报命中"
+
+
+def test_marker_with_a_reason_is_exempt(tmp_root: Path) -> None:
+    """阳性对照：写明理由的豁免照旧生效（收口不是把豁免取消）。"""
+
+    target = tmp_root / "justified.py"
+    target.write_text(
+        SECRET_LINE + "  # secret-scan: allow（合成值：只用于验证脱敏，不是真凭据）" + chr(10),
+        encoding="utf-8",
+        newline=chr(10),
+    )
+
+    assert secret_scan.scan(_relative(target), secret_scan.secret_patterns()) == []

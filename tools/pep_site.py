@@ -345,20 +345,6 @@ def manifests(url, spec):
     return {"role": "", "why": "", "extra": {}}
 
 
-def _rel(from_path, to_path):
-    import posixpath
-    base = posixpath.dirname(from_path) or "."
-    rel = posixpath.relpath(to_path, base)
-    return rel if rel.startswith(".") else "./" + rel
-
-
-def urlmap_extra(spec):
-    """根文档在其它站点的等价地址：让站外引用也能落到本地文件。"""
-    out = {}
-    for item in targets():
-        if item["source"] != item["url"]:
-            out[item["source"]] = item["path"]
-    return out
 
 def pathmap():
     """来源 URL -> 本地相对路径。本地目录按「层级语义」命名，而非照抄 URL 数字。"""
@@ -366,5 +352,12 @@ def pathmap():
 
 
 def urlmap_extra(spec):
-    """根文档在其它站点的等价地址：让站外引用也能落到本地文件。"""
+    """站外引用的等价地址映射：**本镜像目前恒为空**。
+
+    `targets()` 里每一项的 `source` 都与 `url` 相同（这些页面本来就是 peps.python.org /
+    docutils / doc-sig 的正式地址），所以下面 `source != url` 的过滤永远不成立、返回值恒为 {}。
+    保留这个函数是为了与 mirror_docs 的通用钩子（`hasattr(mod, "urlmap_extra")`）对齐——
+    哪天真出现"同一份文档的另一个站点地址"，在这里补映射即可。
+    把这句写下来的原因：读代码的人会以为它真的在映射什么（旧版本还因为重复定义让前一份成了死代码）。
+    """
     return {item["source"]: item["path"] for item in targets() if item["source"] != item["url"]}

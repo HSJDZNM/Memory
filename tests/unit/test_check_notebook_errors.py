@@ -125,3 +125,16 @@ def test_syntax_error_keeps_its_line_number(tmp_root: Path) -> None:
     problems = module.check(path)
 
     assert any("第 1 行" in item for item in problems), problems
+
+def test_cell_level_messages_carry_the_file_path(tmp_root: Path) -> None:
+    """单元级消息必须自带文件位置：main() 汇总多份 notebook 的问题，只写"单元 N"没法归属。"""
+
+    module = _load()
+    path = tmp_root / "loc.ipynb"
+    path.write_text(_notebook([_code_cell(["def broken(:"])]), encoding="utf-8", newline="")
+
+    problems = module.check(path)
+
+    assert problems, "这份 notebook 应当报出问题"
+    assert all(str(path) in item for item in problems), problems
+    assert not any(item.startswith("单元 ") for item in problems), problems

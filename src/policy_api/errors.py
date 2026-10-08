@@ -16,7 +16,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from types import MappingProxyType
+from typing import Mapping, Optional, Tuple
 
 __all__ = [
     "STATUS_BY_CODE",
@@ -71,7 +72,12 @@ class ErrorCode(str, Enum):
 
 
 # 错误码 → HTTP 状态。跨租户与"不存在"共用 404：错误码本身不能成为存在的探针。
-STATUS_BY_CODE: dict[ErrorCode, int] = {
+#
+# 对外**只读**（`MappingProxyType`）：这张表是契约（"认证失败永远 401"），而它此前是普通 dict——
+# 任何 import 点、任何一次手滑的赋值（`STATUS_BY_CODE[ErrorCode.FORBIDDEN] = 200`）都能**进程级**
+# 改写 HTTP 状态，而且没有任何测试会发现"这次响应为什么变成 200"。
+# 测试要做变异时替换模块属性（`monkeypatch.setattr(errors, "STATUS_BY_CODE", …)`），不要就地改。
+_STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.SCHEMA_VERSION_MISSING: 400,
     ErrorCode.SCHEMA_VERSION_UNKNOWN: 400,
     ErrorCode.BODY_INVALID: 400,
@@ -106,8 +112,34 @@ STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.NOT_FOUND: 404,
     ErrorCode.METHOD_NOT_ALLOWED: 405,
 }
+STATUS_BY_CODE: Mapping[ErrorCode, int] = MappingProxyType(_STATUS_BY_CODE)
+
+# 「稍后重试是合理的」那一档状态码：限流与暂时不可用。其余（400/401/403/404/409/415/500）
+# 重试同一个请求只会得到同样的拒绝——把它们标成 retryable 会教客户端做无用的重试。
+_TRANSIENT_STATUSES = frozenset({429, 503, 504})
 
 _MAX_DETAIL_CHARS = 240
+
+
+def missing_status_codes() -> Tuple[ErrorCode, ...]:
+    """有码无状态码的清单（模块加载时用它做**执行**的不变量检查）。
+
+    「新增一个码就要同时给它一个状态码」这句话此前只被**测试**钉住（`tests/unit/test_api_contract.py`
+    的 `test_every_error_code_has_a_status_and_api_error_derives_it`）。测试是纪律，但纪律要能拦住
+    "跳过测试的那一刻"：这里把它变成**加载期**检查——漏一行就 import 失败，而不是等到某个请求
+    走到错误处理里再炸。
+    """
+
+    return tuple(code for code in ErrorCode if code not in STATUS_BY_CODE)
+
+
+_missing = missing_status_codes()
+if _missing:  # pragma: no cover - 走到这里说明常量表漏了一行（加载期就拒绝，不进运行时）
+    raise RuntimeError(
+        "STATUS_BY_CODE 缺少状态码映射："
+        + "、".join(code.value for code in _missing)
+        + "；新增错误码必须在同一次改动里给出它的状态码"
+    )
 
 # 控制字符（除 \t\n\r 这些"空白"外）：ESC / NUL / DEL / BEL …
 # `str.split()` 按定义只折叠**空白**，所以它们会原样穿过——ANSI 转义序列能在终端上
@@ -137,7 +169,8 @@ class ApiError(Exception):
 
     code: ErrorCode
     detail: str = ""
-    retryable: bool = False
+    # None = 调用方没有明说 → 由状态码推导（见 `_TRANSIENT_STATUSES`）；显式 True/False 以调用方为准。
+    retryable: Optional[bool] = None
     # 仅供**本地诊断**：CLI / 闭环工具打印用，绝不进 HTTP 响应体（error_payload 只取
     # code/detail/retryable）。把它带在异常上，是为了让"内部错误"能被查清楚，
     # 而不是只留下一句"internal_error"。
@@ -146,10 +179,24 @@ class ApiError(Exception):
     def __post_init__(self) -> None:
         # Exception 的 __init__ 不参与 dataclass 生成，这里显式补上一次，日志里才有可读文本。
         Exception.__init__(self, f"{self.code.value}: {self.detail}" if self.detail else self.code.value)
+        # 「可重试」此前默认 False 且完全由调用方随手给：一个 503（服务暂时不可用）只要忘了写
+        # `retryable=True`，客户端就会把它读成"重试也没用"——而协议里 429/503/504 本身就是
+        # "稍后再试"的意思。默认值改为**从状态码推导**；显式传入仍然优先（服务端最清楚这次
+        # 是不是"等一下就好"，所以保留这个逃生口）。
+        if self.retryable is None:
+            self.retryable = STATUS_BY_CODE.get(self.code, 500) in _TRANSIENT_STATUSES
 
     @property
     def status(self) -> int:
-        return STATUS_BY_CODE[self.code]
+        try:
+            return STATUS_BY_CODE[self.code]
+        except KeyError:  # pragma: no cover - 加载期已拦一道，这里兜运行期被改脏的表
+            # **不在错误处理内部抛 KeyError**：那会让框架把一次本该 4xx 的拒绝兜成裸 500，
+            # 连结构化错误码都发不出去（第 52 条：拦住之外还得说得出理由）。用 500 回答，
+            # 响应体里仍然是这次真实的 `code`——失败关闭，且理由可读。
+            # 第一手读数（修前）：删掉映射后 `ApiError(ErrorCode.FORBIDDEN, "跨租户").status`
+            # 抛 `KeyError: <ErrorCode.FORBIDDEN: 'forbidden'>`。
+            return 500
 
     @property
     def kind(self) -> str:

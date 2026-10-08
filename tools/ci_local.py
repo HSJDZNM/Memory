@@ -81,7 +81,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import IO, Any, NamedTuple, Optional, Sequence
+from typing import IO, Any, NamedTuple, Sequence
 
 import yaml
 
@@ -254,6 +254,11 @@ HANDBOOK_STEPS = (
     # 按阶段的学习手册（docs/project/learning/**）与其生成器已下线：学习材料不再进仓库，
     # "手册同步 / 手册结构"这两步随之删除。这里只剩按技术的讲解 notebook。
     "Tech-detail notebooks are in sync",
+    # 第二类检验：**真的把讲解的代码单元跑一遍**。--check 只比对产物与内容源，
+    # 上游改了落盘布局 / 环境依赖而讲解是第二个消费者时，它会绿着看讲解跑不通
+    # （2026-10-08 的 6917b81：02 章 8 个单元红、仓库测试全绿）。同组同前缀触发：
+    # src/ 一改就该问"讲解还跑得动吗"。本机实测全量 53 秒（单章 02 为 29.6 秒）。
+    "Tech-detail notebooks execute",
 )
 # 检索语料只在 docs/mirrors/ 下（knowledge/corpus.yaml 的每个 dataset 都指向镜像目录），
 # 所以这一组由 mirrors 与检索代码触发；本项目自产的 docs/project/** 改动与语料无关，
@@ -431,6 +436,12 @@ def unregistered_steps() -> list[str]:
     return sorted(set(missing))
 
 
+def quote_path(value: str) -> str:
+    """把解释器路径包成 shell 能整体识别的形式（cmd 与 POSIX sh 都认双引号）。"""
+
+    return chr(34) + value + chr(34)
+
+
 def _local_lines(run: str) -> list[str]:
     """把 CI 的 run 块翻译成本机可执行的行；顺带做"动作词白名单"。"""
 
@@ -444,7 +455,11 @@ def _local_lines(run: str) -> list[str]:
             continue
         # 只允许"调本项目脚本或模块"的动作，避免把任意 shell 塞进钩子
         if line.startswith(".venv/bin/python "):
-            line = PYTHON + " " + line[len(".venv/bin/python ") :]
+            # 解释器路径**必须带引号**：这一行随后交给 `shell=True`（cmd /c 或 sh -c），
+            # 路径里有空格（`C:\Program Files\...`，或仓库克隆在 `C:\Users\John Doe\...` 下）
+            # 会被 shell 从空格处切开，于是**每一步**都以"不是内部或外部命令"收场——
+            # 门禁红在一个与改动无关的地方，理由还指错对象（AGENTS 第 52 条同一条纪律）。
+            line = quote_path(PYTHON) + " " + line[len(".venv/bin/python ") :]
         lines.append(line)
     return lines
 
@@ -453,7 +468,7 @@ def _looks_unsafe(lines: list[str]) -> bool:
     joined = "\n".join(lines)
     if any(marker in joined for marker in BASH_ONLY_MARKERS):
         return True
-    return any(not line.startswith(PYTHON) for line in lines)
+    return any(not line.startswith((PYTHON, quote_path(PYTHON))) for line in lines)
 
 
 def temp_root() -> Path:
@@ -910,30 +925,32 @@ def json_objects(output: str) -> list[dict]:
     为什么不能逐行 `json.loads`：`obligations_gate.py --json` 打的是
     `json.dumps(..., indent=2)` 的**多行**载荷，第一行只有一个 `{` —— 逐行解析**永远**
     读不到它，读数于是退化成"读不出命中数"（2026-09-30 第 17 轮门禁运行里实测就是这一行）。
-    这里按花括号配平把对象切出来整体解析；解析不了就跳过 —— 读不到不许被写成结论。
+    这里交给 json.JSONDecoder().raw_decode：它按 JSON 语法走，字符串与转义都算它的事。
+    **不能数花括号**：字符串值里的 { } 是内容不是结构（notes / paths / reason 里很常见），
+    数出来的深度会提前归零或永不归零——整段被跳过，读数退化成"读不出命中数"。
+    解析不了就跳过 —— 读不到不许被写成结论。
     """
 
+    decoder = json.JSONDecoder()
     found: list[dict] = []
-    lines = output.splitlines()
-    index = 0
-    while index < len(lines):
-        if not lines[index].strip().startswith("{"):
-            index += 1
+    position = 0
+    while True:
+        start = output.find("{", position)
+        if start < 0:
+            break
+        # 只认"行首（允许缩进）就是 {"的位置：输出里别处的 { 多半是正文。
+        line_start = output.rfind(chr(10), 0, start) + 1
+        if output[line_start:start].strip():
+            position = start + 1
             continue
-        depth = 0
-        chunk: list[str] = []
-        for line in lines[index:]:
-            chunk.append(line)
-            depth += line.count("{") - line.count("}")
-            if depth <= 0:
-                break
         try:
-            payload = json.loads("\n".join(chunk))
+            payload, end = decoder.raw_decode(output, start)
         except ValueError:
-            payload = None
+            position = start + 1
+            continue
         if isinstance(payload, dict):
             found.append(payload)
-        index += max(1, len(chunk))
+        position = max(end, start + 1)
     return found
 
 

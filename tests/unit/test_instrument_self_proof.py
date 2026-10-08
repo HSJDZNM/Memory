@@ -139,6 +139,27 @@ def test_state_two_a_row_with_neither_mutation_nor_gap_note_is_red(tmp_root, cap
     restored = _evaluate(tmp_root, rows, capsys)
     assert restored["red_conditions"]["no_mutation_and_no_gap_note"]["count"] == 0
 
+def test_state_two_treats_a_blank_mutation_id_as_missing(tmp_root, capsys):
+    """`mutation_id: ""` 与 null 同口径：否则同一份载荷里三处谓词互相矛盾。
+
+    `_optional_text` 只拒非字符串，空白串会原样存下来；态③（`if row.mutation_id`）、
+    `checks[]` 与 `objects.without_either`（`not row.mutation_id`）都把它当缺失，
+    只有态② 旧写法判 `is None` —— 于是这一格少报红行、载荷自相矛盾。
+    """
+
+    rows = _rows()
+    target = rows[0]["check_id"]
+    mutated = copy.deepcopy(rows)
+    mutated[0]["mutation_id"] = ""  # 空白串：既不是 null，也不是可用的变异 id
+    mutated[0]["gap_note"] = None
+
+    payload = _evaluate(tmp_root, mutated, capsys)
+
+    cell = payload["red_conditions"]["no_mutation_and_no_gap_note"]
+    assert cell["count"] == 1, "空白 mutation_id 必须与 null 同口径"
+    assert [item["check_id"] for item in cell["items"]] == [target]
+    assert payload["objects"]["without_either"] == cell["count"], "对象侧与检查侧不许各说各话"
+
 
 # --- 态③ 按 mutation_id 取的补丁在影子树上打不上 ----------------------------------------
 
@@ -420,3 +441,40 @@ def test_the_default_output_carries_a_hits_line_the_gate_can_read(tmp_root, caps
     count, text = ci_local.report_only_reading(step, capsys.readouterr().out)
     assert text.startswith("HITS: unavailable"), text
     assert count is None, text
+
+def test_unavailable_cells_do_not_print_as_ok(tmp_root, capsys):
+    """未评的格子要有自己的标签：人类输出里不许出现 "[ok] <key>: unavailable"。"""
+
+    module = _load()
+    assert module.run(["--checks", str(tmp_root / "missing.yaml")]) == 0
+    out = capsys.readouterr().out
+
+    assert "[ok]" not in out, out
+    assert "[未评]" in out
+    for key in (
+        "no_check_id",
+        "no_mutation_and_no_gap_note",
+        "patch_not_applicable",
+        "check_id_without_object",
+    ):
+        assert "[未评] " + key + ": unavailable" in out, out
+
+
+def test_a_malformed_workflow_shape_is_an_explicit_unavailable_not_a_traceback(tmp_root):
+    """workflow 形状漂移（jobs 是列表 / job 不是映射）要走"读不出来"这一档，不许抛 AttributeError。
+
+    `enumerate_objects` 只把 InstrumentChecksError 转成显式降级；形状漂移若以 AttributeError 逃出去，
+    整支仪器会以 traceback + 非 0 退出收场，破坏"退出码恒 0、读不出来是显式状态"的契约。
+    """
+
+    module = _load()
+    repo = tmp_root / "repo"
+    workflows = repo / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "bad.yml").write_text("jobs:\n  - not-a-mapping\n", encoding="utf-8")
+
+    with pytest.raises(module.InstrumentChecksError) as error:
+        module._gate_steps(repo)
+
+    assert "jobs 不是映射" in str(error.value)
+    assert "bad.yml" in str(error.value)

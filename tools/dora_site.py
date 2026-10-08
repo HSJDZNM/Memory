@@ -5,8 +5,9 @@ dora.dev（Google Cloud 的 DORA 研究项目站点）与 peps.python.org、lear
 docs.gitlab.com 的页面模板都不同，故独立成模块：
 
 1. 清单与层级都取自站点自身，不做人工归类：
-   - 清单：站点 sitemap 在 /capabilities/ 子树下给出 35 条 URL，与该分区索引页
-     （/capabilities/，下称"能力目录"）栅格里的 34 个能力卡片逐条比对，双向无差集；
+   - 清单：**运行期只解析**「能力目录」页的栅格；建镜像时把站点 sitemap 在 /capabilities/ 子树下
+     给出的 35 条 URL 与该栅格里的 34 个能力卡片逐条比对过，双向无差集（**一次性核验**：
+     本模块不抓 /sitemap.xml，重抓不会复核这一步）；
    - 层级：目录页给每张卡片打了模型徽章 core 或 AI（分别指向 /research/#core-model
      与 /ai/#explore-the-model）。徽章只覆盖 24 篇（core 19、AI 5），另外 10 篇的徽章容器
      是空的（<span class=labels></span>），站点没有给出模型归属，故单列 unlabeled/，
@@ -34,14 +35,11 @@ import httpx
 from bs4 import BeautifulSoup
 
 BT = chr(96)
-FENCE = BT * 3
 NL = chr(10)
 
 SITE = "https://dora.dev"
 CATALOG_URL = SITE + "/capabilities/"
 GUIDES_INDEX = SITE + "/guides/"
-CORE_MODEL = SITE + "/research/#core-model"
-AI_MODEL = SITE + "/ai/#explore-the-model"
 
 # 被能力正文实际引用（共 11 处）的两篇指南；其余 3 篇指南未被能力正文引用，不收录。
 GUIDE_URLS = (SITE + "/guides/dora-metrics/", SITE + "/guides/how-to-transform/")
@@ -49,7 +47,6 @@ GUIDE_URLS = (SITE + "/guides/dora-metrics/", SITE + "/guides/how-to-transform/"
 MODEL_DIR = {"core": "core", "ai": "ai", "": "unlabeled"}
 MODEL_NAME = {"core": "core", "ai": "AI", "": "站点未标注模型"}
 MODEL_ZH = {"core": "DORA Core 模型", "ai": "DORA AI 能力模型", "": "站点未标注模型归属"}
-LICENSE = "CC BY 4.0（Google LLC，站点页脚声明）"
 
 _catalog_cache = None
 _guides_cache = None
@@ -75,7 +72,9 @@ def _get(url):
             except Exception as exc:  # noqa: BLE001 - 重试后统一抛出
                 last = exc
                 time.sleep(1.0)
-    raise RuntimeError("页面抓取失败: " + url + " -> " + repr(last))
+    # 带上 from：这条 raise 在两个循环都退出之后执行，没有隐式 __context__ 链，
+    # 不显式绑因的话原始异常（TLS/网络那一类，docstring 说要能诊断的东西）只剩 repr。
+    raise RuntimeError("页面抓取失败: " + url + " -> " + repr(last)) from last
 
 
 def _norm(text):
@@ -128,9 +127,19 @@ def catalog():
             para = art.find("p")
             summary = _norm(para.get_text(" ", strip=True)) if para is not None else ""
             summary = re.sub(r"\s*Learn\s*more\s*$", "", summary).strip()
+            slug = link["href"].rstrip("/").rsplit("/", 1)[-1] if link is not None else ""
+            title = _norm(link.get_text(" ", strip=True)) if link is not None else ""
+            if not slug or not title:
+                # 单张卡片畸形（h4 改名、标题链接消失）不能让整页**静默缩水**：rows 少一条，
+                # 而空 slug 还会被 pages() 拼成 https://dora.dev/capabilities// 与 unlabeled/.md，
+                # 既造出不存在的页面、又让"能力清单只剩 N 张"看起来像站点真的少了一张。
+                # 只有整页为空才报错是不够的——那一张卡片才是结构漂移的现场。
+                raise RuntimeError(
+                    "能力目录页有卡片解析不出标题或链接（站点结构可能已变）: " + CATALOG_URL
+                )
             rows.append({
-                "slug": (link["href"].rstrip("/").rsplit("/", 1)[-1] if link is not None else ""),
-                "title": _norm(link.get_text(" ", strip=True)) if link is not None else "",
+                "slug": slug,
+                "title": title,
                 "model": label if label in ("core", "ai") else "",
                 "model_href": (badge["href"] if badge is not None else ""),
                 "summary": summary,
@@ -312,9 +321,17 @@ def pre_markdown(res, spec, ctx, to_markdown):
         # 目录页：h1 与导语在 <main> 之外的 banner 区，按原顺序补回正文开头。
         # 源页面的导语写成 <p><p>…</p><p>…</p></p>（浏览器会自行纠正），故只取最内层段落，
         # 否则导语会被重复输出两遍。
+        banner_title = banner.find("h1")
+        if banner_title is None:
+            # 走到这里 = <main> 里没有 h1、banner 里也没有：站点结构漂移（例如标题标签改名）。
+            # 旧写法无条件 deref banner.find("h1")，畸形页面会以 AttributeError 收场——读的人
+            # 拿到的是"哪一行炸了"，而不是"哪一份页面变了"。标题随后要进 manifest，空标题比报错更糟。
+            raise RuntimeError(
+                "目录页的 h1 既不在 <main> 也不在 banner 区（站点结构可能已变）: " + _res_url(res)
+            )
         head = soup.new_tag("div")
         title_tag = soup.new_tag("h1")
-        title_tag.string = _norm(banner.find("h1").get_text(" "))
+        title_tag.string = _norm(banner_title.get_text(" "))
         head.append(title_tag)
         for p in [p for p in banner.find_all("p") if p.find("p") is None]:
             head.append(BeautifulSoup(str(p), "html.parser"))
@@ -371,10 +388,13 @@ def findings():
     """STRUCTURE.md 的「范围判定」段：清单来源、层级来源与边界。"""
     n = _counts()
     lines = [
-        "**清单来源：站点自身的 sitemap 与「能力目录」页。** 站点 " + C("/sitemap.xml")
+        "**清单来源：站点自身的「能力目录」页栅格（建镜像时与 " + C("/sitemap.xml") + " 逐条比对过）。**"
+        + " 站点 " + C("/sitemap.xml")
         + " 在 " + C("/capabilities/") + " 子树下给出 " + str(n["caps"] + n["catalog"]) + " 条 URL；"
         + C("/capabilities/") + " 索引页（下称能力目录）栅格里有 " + str(n["caps"]) + " 张能力卡片。",
         "两者逐条比对**双向无差集**：栅格卡片 = sitemap 的能力页，sitemap 多出的 1 条即目录页自身。",
+        "**这是一次性核验，不是运行期检查**：建镜像时做过这一步（时点见 " + C("manifest.json") + " 的 "
+        + C("fetched_at") + "）；本模块运行期**不抓 " + C("/sitemap.xml") + "**，清单只由栅格解析产出。",
         "本镜像按这份清单逐页抓取（" + C("discovery=list") + "），不做逐边 BFS——能力正文的站内链接",
         "遍布 /research、/ai、/guides、/quickcheck 等分区，逐边扩散会把范围带出本分区。",
         "",
@@ -403,7 +423,7 @@ def readme_saved():
     n = _counts()
     return [
         "- **能力目录页 1 篇**：" + C("index.md") + "（Capability catalog），站点对 /capabilities/ 分区的索引，",
-        "  34 张卡片各带一句话摘要与模型徽章——本镜像的清单与层级都取自这一页；",
+        "  " + str(n["caps"]) + " 张卡片各带一句话摘要与模型徽章——本镜像的清单与层级都取自这一页；",
         "- **core 模型能力 " + str(n["core"]) + " 篇**：站点标注 " + C("core") + " 徽章的能力，含本次抓取的入口",
         "  " + C("core/continuous-integration.md") + "（Continuous integration）；",
         "- **AI 能力模型 " + str(n["ai"]) + " 篇**：" + "、".join(
@@ -441,7 +461,8 @@ def readme_skipped():
 
 def readme_facts():
     facts = [
-        "- 清单来自站点 sitemap 与能力目录页栅格的比对（双向无差集），并**不是**逐边 BFS 的结果；",
+        "- 清单来自能力目录页栅格；建镜像时与站点 sitemap 逐条比对过一次（双向无差集，**一次性核验**，"
+        "运行期不抓 sitemap），并**不是**逐边 BFS 的结果；",
         "- 层级（core / ai / unlabeled）**不是人工归类**：core 与 AI 取自目录页徽章，unlabeled 表示站点未给徽章；",
         "- 该站为服务端渲染的静态站点，正文在 " + C("<main>") + " 内，用 crawl4ai 的 AsyncHTTPCrawlerStrategy",
         "  （纯 HTTP 通道）即可完整取到，无需启动浏览器；",

@@ -128,7 +128,11 @@ def check_docs() -> list:
             paragraph = first_paragraph(body)
             if not paragraph:
                 continue
-            first = SENTENCE.match(paragraph).group(0).strip()
+            # 段落首字符本身是句末标点（`。；！？`）时 `SENTENCE.match()` 返回 None：
+            # 旧写法直接 `.group(0)`，畸形一行就能让整轮检查以 AttributeError 收场。
+            # 拿不到"第一句"就退回整段原文——宁可量得保守，也不能让检查崩掉。
+            matched = SENTENCE.match(paragraph)
+            first = (matched.group(0) if matched else paragraph).strip()
             if len(first) > 45:
                 problems.append(path.name + " §" + title[:18] + " 概括句过长（" + str(len(first)) + " 字）：" + first[:34] + "…")
             if not ANCHOR.search(" ".join(body)):

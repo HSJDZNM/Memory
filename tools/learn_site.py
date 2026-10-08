@@ -19,14 +19,12 @@ Microsoft Learn 的页面模板与 peps.python.org、docs.gitlab.com 都不同�
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 import time
 from urllib.parse import urljoin
 
 import httpx
-from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
@@ -37,7 +35,6 @@ NL = chr(10)
 BASE = "https://learn.microsoft.com/en-us/dotnet/standard/design-guidelines"
 TOC_URL = BASE + "/toc.json"
 SOURCE_REPO_DIR = "docs/standard/design-guidelines"
-SOURCE_REPO = "https://github.com/dotnet/docs/blob/main/" + SOURCE_REPO_DIR + "/"
 
 # 页面模板里需要整体摘除的块（选择器来自实际 HTML：都位于 <main> 之内）
 CHROME_SELECTORS = (
@@ -96,7 +93,9 @@ def _fetch_toc():
             except Exception as exc:
                 last = exc
                 time.sleep(1.0)
-    raise RuntimeError("目录接口抓取失败: " + TOC_URL + " -> " + repr(last))
+    # `from last` 保留最后一次失败的原始 traceback：只把 repr 拼进消息会丢掉"在哪一行炸的"，
+    # 而这条异常正是排障入口（网络问题 / 代理 / 站点改版都从这里冒出来）。
+    raise RuntimeError("目录接口抓取失败: " + TOC_URL + " -> " + repr(last)) from last
 
 
 def _canon(href):
@@ -108,10 +107,6 @@ def _relpath(url):
     """规范 URL -> 本地文件相对路径（扁平，与 URL 末段一一对应）。"""
     tail = url.rstrip("/")[len(BASE):].strip("/")
     return (tail + ".md") if tail else "index.md"
-
-
-def _source_repo(url):
-    return SOURCE_REPO + (_relpath(url)[:-3] + ".md")
 
 
 def _collect(items, out, parent, path, depth):
@@ -243,15 +238,16 @@ def pre_markdown(res, spec, ctx, to_markdown):
 
 
 def _absolutize(art, page_url):
-    # 引擎传入的 URL 是归一化后的目录式写法（带尾斜杠），直接用来 urljoin 会把同级链接
-    # 解析成子目录（naming-guidelines/capitalization-conventions），故先还原 canonical 形式
-    page_url = (page_url or BASE).rstrip("/")
     """把正文中的相对链接补全为绝对 URL。
 
     该站正文里的链接有两种相对形式：根相对（/en-us/...，指向 API 参考等）与同级相对
     （capitalization-conventions、./，指向本章其它页面）。引擎的链接改写只认绝对地址，
     相对地址既无法改写成本地路径，离线后也不可点，故统一按当前页 URL 解析。
     """
+
+    # 引擎传入的 URL 是归一化后的目录式写法（带尾斜杠），直接用来 urljoin 会把同级链接
+    # 解析成子目录（naming-guidelines/capitalization-conventions），故先还原 canonical 形式
+    page_url = (page_url or BASE).rstrip("/")
     for a in art.find_all("a", href=True):
         href = a["href"].strip()
         if not href or href.startswith(("#", "mailto:", "javascript:")):
@@ -322,6 +318,10 @@ def tree_lines():
             walk(kids, pad)
 
     walk(_fetch_toc().get("items", []), "")
+    if not rows:
+        # 目录接口给了空清单（`items` 缺失或为空）时，`max()` 空序列会以 ValueError 打挂整个
+        # `findings()`。空清单不是"层级树是空的"：如实写一行说明，让产物里看得见这件事。
+        return ["（" + TOC_URL + " 没有给出任何目录条目：层级树读不出来）"]
     width = max(len(a) for a, _ in rows) + 2
     return [a.ljust(width) + "# " + b for a, b in rows]
 

@@ -588,10 +588,17 @@ def test_forged_parent_trace_is_refused(runtime) -> None:
 
 
 def test_breaker_terminates_a_cross_agent_loop(runtime) -> None:
-    """A 与 B 互相触发：窗口内的事件数到上限就必须终止。"""
+    """A 与 B 互相触发：窗口内的事件数到上限就必须终止，而且**各算各的**。
 
+    判据是"每个 Agent 前 limit 条不熔断、之后每一条都熔断"。只断言"出现过 dsh:request_busy"
+    的话，全局熔断（B 被 A 的计数连坐）与"熔断一次又放行"都能保持绿——同形的 A/B 见
+    tools/agent_loop.py 的 scenario_breaker。
+    """
+
+    limit = runtime.breaker_limit
     codes: list[str] = []
-    for index in range(8):
+    # 每个 Agent 发 limit + 2 条：多发两条才看得见"熔断之后又放行"。
+    for index in range(2 * (limit + 2)):
         agent = "dsh" if index % 2 == 0 else "generic-json"
         raw = (
             _dsh_edit(f"loop-dsh-{index}", f"call-{index}")
@@ -600,7 +607,12 @@ def test_breaker_terminates_a_cross_agent_loop(runtime) -> None:
         )
         outcome = runtime.handle(agent, raw, execute=lambda event: None)
         codes.append(f"{agent}:{outcome.outcome_code}")
-    assert any(code == "dsh:request_busy" for code in codes), codes
+
+    for agent in ("dsh", "generic-json"):
+        sequence = [code.split(":", 1)[1] for code in codes if code.startswith(agent + ":")]
+        assert len(sequence) == limit + 2, codes
+        assert all(code != "request_busy" for code in sequence[:limit]), codes
+        assert all(code == "request_busy" for code in sequence[limit:]), codes
 
 
 def test_breaker_is_per_agent_and_window_bounded(rules, registry, tmp_root: Path) -> None:

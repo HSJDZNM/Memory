@@ -283,3 +283,18 @@ def test_two_ledgers_are_both_named_in_the_reading_context(tmp_root: Path) -> No
         "两个账本各自留一块：读的人要知道这份读数读的是哪几份输入"
     )
     assert all(item["status"] == "available" for item in declarations.values())
+
+
+def test_an_undecodable_ledger_exits_two_not_one(tmp_root: Path) -> None:
+    """读不懂的账本 → 退出码 2（不是 1）。
+
+    1 在本文件里的含义是「读到了命中」：让 UnicodeDecodeError / OSError 逃出去的话，
+    "账本读不出来"会被当成一次命中记进升格判据，而文档承诺的是「账本读不懂 → 2」。
+    """
+
+    ledger = tmp_root / "gbk.jsonl"
+    ledger.write_bytes('{"rule_id": "\u98ce\u683c-001"}\n'.encode("gbk"))
+    completed = run_gate("--ledger", str(ledger))
+
+    assert completed.returncode == 2, completed.stdout + completed.stderr
+    assert "\u4e49\u52a1\u8d26\u672c\u8bfb\u4e0d\u51fa\u6765" in (completed.stdout + completed.stderr)

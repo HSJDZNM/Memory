@@ -39,9 +39,11 @@ __all__ = [
     "CorpusDataset",
     "CorpusEntry",
     "CorpusError",
+    "CorpusManifest",
     "CorpusPolicy",
     "CorpusQuarantine",
     "CorpusRuleSource",
+    "DocumentRecord",
     "DroppedSnippet",
     "EngineeringContext",
     "IndexRunRecord",
@@ -266,12 +268,6 @@ def normalize_dataset_name(value: str) -> str:
     return normalized
 
 
-def _normalize_path_list(values: Any, *, field: str) -> Any:
-    if not isinstance(values, (list, tuple)):
-        return values
-    return tuple(normalize_repo_path(str(item)) for item in values)
-
-
 class CorpusPolicy(StrictModel):
     """检索策略：预算与阈值写在清单里，代码中不留脱离数据的常数。"""
 
@@ -463,7 +459,11 @@ class CorpusManifest(StrictModel):
         # 登记成受限而 visibility 还是 public = 按清单作者的意思该受限、实际任何人都能检索
         # （fail-open）；反过来漏登记 = 这份"哪些数据集受限"的声明在骗读者。
         # 一致的写法只有一种：登记 ∩ restricted == visibility==restricted 的数据集集合。
-        restricted = {dataset.name for dataset in self.datasets if dataset.visibility is Visibility.RESTRICTED}
+        restricted = {
+            dataset.name
+            for dataset in self.datasets
+            if dataset.visibility is Visibility.RESTRICTED
+        }
         listed = set(self.restricted_datasets)
         fail_open = sorted(listed - restricted)
         if fail_open:
@@ -511,6 +511,35 @@ class ResolvedEntry(StrictModel):
     manifest_sha256: Optional[str] = None
     manifest_bytes: Optional[int] = None
     mirror_revision: Optional[str] = None
+
+    @field_validator("dataset")
+    @classmethod
+    def _check_dataset(cls, value: str) -> str:
+        # document_id = document_id_for(dataset, source_path) 逐字取自这两个字段：它们没有
+        # 校验时，"./docs/a.md" / "docs\a.md" / "docs/a.md " 会铸出**三个不同的** document_id，
+        # 同一份文档于是被索引成多份（"重爬不换 ID"的承诺随之失效）。与 CorpusDataset/CorpusEntry
+        # 用同一组规范化函数，相等拼写必然得到同一个 id。
+        return normalize_dataset_name(value)
+
+    @field_validator("source_path")
+    @classmethod
+    def _check_source_path(cls, value: str) -> str:
+        return normalize_source_path(value)
+
+    @field_validator("license_source")
+    @classmethod
+    def _check_license_source(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else normalize_source_path(value)
+
+    @field_validator("language")
+    @classmethod
+    def _check_language(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = canonical_identifier(value)
+        if not normalized:
+            raise ValueError("language 不能是空字符串；不知道就写 null")
+        return normalized
 
     @field_validator("manifest_sha256")
     @classmethod
@@ -681,7 +710,9 @@ class AccessScope(StrictModel):
         if isinstance(value, str):
             raise TypeError("datasets 必须是数据集名的序列，不能是字符串")
         if isinstance(value, (list, tuple, set, frozenset)):
-            return frozenset(normalize_dataset_name(str(item)) for item in value if str(item).strip())
+            return frozenset(
+                normalize_dataset_name(str(item)) for item in value if str(item).strip()
+            )
         return value
 
     @property
@@ -733,7 +764,12 @@ class RetrievalQuery(StrictModel):
     @field_validator("languages")
     @classmethod
     def _check_languages(cls, values: Tuple[str, ...]) -> Tuple[str, ...]:
-        return tuple(sorted({canonical_identifier(item) for item in values}))
+        normalized = {canonical_identifier(item) for item in values}
+        if "" in normalized:
+            # 与 _check_dimension 同口径（空字符串直接拒绝）：空串会变成 language IN ('')
+            # 这样的过滤条件，静默匹配不到任何东西——调用方的笔误表现成"没有结果"。
+            raise ValueError("languages 不能含空字符串；不知道就写 null / 不传这个字段")
+        return tuple(sorted(normalized))
 
     @classmethod
     def from_context(
@@ -821,7 +857,11 @@ class RetrievedChunk(StrictModel):
 
     @property
     def citation_source(self) -> str:
-        return f"{self.source_path}#{self.heading_anchor}" if self.heading_anchor else self.source_path
+        return (
+            f"{self.source_path}#{self.heading_anchor}"
+            if self.heading_anchor
+            else self.source_path
+        )
 
 
 class RetrievalResult(StrictModel):
@@ -941,7 +981,9 @@ class EngineeringContext(StrictModel):
         """
 
         if self.status is ContextStatus.OK and not self.snippets:
-            raise ValueError("status=ok 必须带至少一条片段：没有可追溯来源时只能是 knowledge_unavailable")
+            raise ValueError(
+                "status=ok 必须带至少一条片段：没有可追溯来源时只能是 knowledge_unavailable"
+            )
         if self.status is ContextStatus.KNOWLEDGE_UNAVAILABLE and self.reason is None:
             raise ValueError("status=knowledge_unavailable 必须说明 reason（受控原因）")
         return self

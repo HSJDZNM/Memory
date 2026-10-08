@@ -40,6 +40,10 @@ WORKSPACE = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
 
 AGENTS = ("dsh", "generic-json", "legacy-post-only")
 
+# 本闭环用的熔断上限：场景、驱动它的 runtime 与一致性套件必须是同一个数，
+# 否则"到上限即熔断"这个判据会跟着某一处的改动悄悄失真。
+BREAKER_LIMIT = 3
+
 # 语义动作：在 Controller 里直接依赖 Repository（ARCH-001 禁止的那件事）。
 VIOLATING = "from repository import OrderRepository"
 CLEAN = "value = 1"
@@ -115,11 +119,23 @@ def _generic_event(key: str, text: str, tool: str = "edit") -> dict:
 
 
 def scenario_equivalent_decisions(adapters, runtime) -> Scenario:
-    """同一个语义动作在每个 Adapter 上得到同一个结论。"""
+    """同一个语义动作在每个 Adapter 上得到同一个结论。
 
+    遍历**传进来的** adapters（而不是模块级的 `AGENTS` 常量）：后者让这个参数变成摆设，
+    装配里少了一个适配器时场景照样按常量跑——"没装"于是被读成"通过了"。
+    """
+
+    if not adapters:
+        # 空集合上"每个 Agent 都被阻断"是**空真**：那不是通过，是没有任何可判定的对象。
+        return Scenario(
+            name="blocked-action-never-executes",
+            passed=False,
+            detail="装配里一个适配器都没有：没有可判定的对象（空真不是通过）",
+            facts={"agents": []},
+        )
     facts: dict[str, Any] = {"decisions": {}, "tool_calls": {}}
     ok = True
-    for index, agent in enumerate(AGENTS):
+    for index, agent in enumerate(adapters):
         if agent == "dsh":
             raw = _dsh_event(f"eq-{index}", "c1", VIOLATING)
         elif agent == "generic-json":
@@ -151,6 +167,15 @@ def scenario_equivalent_decisions(adapters, runtime) -> Scenario:
 
 
 def scenario_allow_executes_once(adapters, runtime) -> Scenario:
+    if "dsh" not in adapters:
+        # 这个场景的前提是"装配里真的有 dsh"：旧写法不看 adapters 就往下跑，少装一个适配器
+        # 也照样给出结论。前提不成立时如实报 not-passed，而不是让它撞进别的分支或悄悄通过。
+        return Scenario(
+            name="allowed-action-executes-exactly-once",
+            passed=False,
+            detail="装配里没有 dsh 适配器：本场景的前提不成立（这不是通过）",
+            facts={"agents": sorted(adapters)},
+        )
     calls: list[Any] = []
     outcome = runtime.handle("dsh", _dsh_event("allow-1", "c1", CLEAN), execute=calls.append)
     replay = runtime.handle("dsh", _dsh_event("allow-1", "c1", CLEAN), execute=calls.append)
@@ -203,7 +228,14 @@ def scenario_capability_degradation(registry, runtime) -> Scenario:
 
 def scenario_cross_agent_isolation(runtime) -> Scenario:
     first = runtime.handle("dsh", _dsh_event("iso-1", "c1", CLEAN), execute=lambda e: None)
-    second = runtime.handle("generic-json", _generic_event("iso-1", CLEAN), execute=lambda e: None)
+    # 第二条**逐字复用**同一个 event_id（不是"另一个 id 恰好也不一样"），而且换成 generic-json
+    # 真能服务的只读动作：写类动作会被能力上限挡下（实测 capability_unavailable），那样即使
+    # 命名空间没有隔离也照样"不是 event_replay"——旧写法因此是恒真的。
+    # 只读动作走得到幂等那一步：命名空间一旦被合并，这里必须变成 event_replay 才判红。
+    raw = _generic_event("iso-1", CLEAN, tool="read")
+    raw["event_id"] = "iso-1:c1"
+    raw["request_id"] = "iso-1:c1"
+    second = runtime.handle("generic-json", raw, execute=lambda e: None)
     keys = {
         item.get("ledger_key") for item in runtime._entries() if item.get("ledger_key")  # noqa: SLF001
     }
@@ -211,10 +243,10 @@ def scenario_cross_agent_isolation(runtime) -> Scenario:
         name="cross-agent-namespaces-are-separate",
         passed=(
             "dsh:iso-1:c1" in keys
-            and "generic-json:iso-1:call" in keys
-            and second.outcome_code != "event_replay"
+            and "generic-json:iso-1:c1" in keys
+            and second.outcome_code in ("allow", "allow_with_warnings")
         ),
-        detail="同一个 event_id 在两个 Agent 下互不影响（命名空间隔离）",
+        detail="同一个 event_id 在两个 Agent 下互不影响（命名空间隔离），B 的只读动作真的被判成放行",
         facts={
             "dsh": first.outcome_code,
             "generic-json": second.outcome_code,
@@ -245,9 +277,16 @@ def scenario_trace_provenance(runtime) -> Scenario:
     )
 
 
-def scenario_breaker(runtime) -> Scenario:
+def scenario_breaker(runtime, limit: int) -> Scenario:
+    """窗口内到上限即熔断——而且要**按 Agent 各算各的**、熔断之后不许再放行。
+
+    旧判据是 any(code == "dsh:request_busy")：全局熔断（B 被 A 的计数连坐）与"只熔断一次
+    又放行"都能让它保持绿。这里给每个 Agent 各发 limit + 2 条，要求前 limit 条不熔断、
+    之后每一条都熔断——多发两条才看得见"熔断之后又放行"。
+    """
+
     codes: list[str] = []
-    for index in range(8):
+    for index in range(2 * (limit + 2)):
         agent = "dsh" if index % 2 == 0 else "generic-json"
         raw = (
             _dsh_event(f"loop-{index}", f"c{index}", CLEAN)
@@ -255,10 +294,23 @@ def scenario_breaker(runtime) -> Scenario:
             else _generic_event(f"loop-{index}", CLEAN, tool="read")
         )
         codes.append(f"{agent}:{runtime.handle(agent, raw, execute=lambda e: None).outcome_code}")
+
+    by_agent = {
+        agent: [code.split(":", 1)[1] for code in codes if code.startswith(agent + ":")]
+        for agent in ("dsh", "generic-json")
+    }
+
+    def trips_at_its_own_limit(sequence: list[str]) -> bool:
+        return (
+            len(sequence) == limit + 2
+            and all(code != "request_busy" for code in sequence[:limit])
+            and all(code == "request_busy" for code in sequence[limit:])
+        )
+
     return Scenario(
         name="cross-agent-loop-is-terminated",
-        passed=any(code == "dsh:request_busy" for code in codes),
-        detail="窗口内事件数到上限即熔断（互相触发的循环不会烧完预算）",
+        passed=all(trips_at_its_own_limit(sequence) for sequence in by_agent.values()),
+        detail="窗口内事件数到上限即熔断，且熔断按 Agent 各算各的（互相触发的循环不会烧完预算）",
         facts={"sequence": codes},
     )
 
@@ -306,7 +358,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     shutil.rmtree(DEMO_ROOT, ignore_errors=True)
 
     registry, rules, adapters, runtime = _load()
-    loop_runtime = _load(state_name="breaker", breaker_limit=3)[3]
+    loop_runtime = _load(state_name="breaker", breaker_limit=BREAKER_LIMIT)[3]
     conformance = run_conformance(
         adapters=adapters,
         rules=rules,
@@ -314,7 +366,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         outside=WORKSPACE.parent / "outside-workspace.py",
         ledger_dir=DEMO_ROOT / "conformance-ledger",
         trace_path=DEMO_ROOT / "conformance-traces.jsonl",
-        breaker_limit=3,
+        breaker_limit=BREAKER_LIMIT,
     )
 
     scenarios = [
@@ -323,7 +375,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         scenario_capability_degradation(registry, runtime),
         scenario_cross_agent_isolation(runtime),
         scenario_trace_provenance(runtime),
-        scenario_breaker(loop_runtime),
+        scenario_breaker(loop_runtime, BREAKER_LIMIT),
         scenario_support_matrix(registry, conformance),
     ]
     passed = all(item.passed for item in scenarios)

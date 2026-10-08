@@ -127,6 +127,92 @@ def test_every_error_code_has_a_status_and_api_error_derives_it() -> None:
     assert {code for code, status in STATUS_BY_CODE.items() if status < 400} == set()
 
 
+def test_retryable_defaults_follow_the_status_code_and_explicit_still_wins() -> None:
+    """「可重试」的默认值由状态码推导：429/503/504 是暂时性失败；显式传入仍然优先。
+
+    此前 `retryable` 默认 `False` 且完全由调用方随手给：一个 503 只要忘了写 `retryable=True`，
+    客户端就会把它读成「重试也没用」——而 503/504/429 本身就是「稍后再试」的意思。
+    """
+
+    from policy_api.errors import ApiError, ErrorCode, error_payload
+
+    # 暂时性：默认 True
+    assert ApiError(ErrorCode.POLICY_BUSY, "繁忙").retryable is True
+    assert ApiError(ErrorCode.EVALUATE_TIMEOUT, "超时").retryable is True
+    assert ApiError(ErrorCode.RATE_LIMITED, "限流").retryable is True
+    assert ApiError(ErrorCode.KNOWLEDGE_UNAVAILABLE, "索引不可用").retryable is True
+
+    # 非暂时性：默认 False（重试只会得到同样的拒绝）
+    assert ApiError(ErrorCode.FORBIDDEN, "越权").retryable is False
+    assert ApiError(ErrorCode.NOT_FOUND, "不存在").retryable is False
+    assert ApiError(ErrorCode.IDEMPOTENCY_KEY_CONFLICT, "幂等键冲突").retryable is False
+    assert ApiError(ErrorCode.INTERNAL_ERROR, "内部错误").retryable is False
+
+    # 显式值优先（逃生口，也是既有的调用形态）
+    assert ApiError(ErrorCode.POLICY_BUSY, "繁忙", retryable=False).retryable is False
+    assert ApiError(ErrorCode.FORBIDDEN, "越权", retryable=True).retryable is True
+
+    # 载荷里永远是布尔值（不是 None）
+    assert error_payload(ApiError(ErrorCode.POLICY_BUSY, "繁忙"))["error"]["retryable"] is True
+
+
+def test_the_status_map_cannot_be_rewritten_at_runtime() -> None:
+    """状态码表对外**只读**：任何 import 点都不能进程级改写 HTTP 状态。
+
+    这张表是契约（「认证失败永远 401」「跨租户与不存在共用 404」）。它此前是普通 dict，
+    一次手滑的 `STATUS_BY_CODE[ErrorCode.FORBIDDEN] = 200` 就能改掉整个进程的状态码，
+    而且没有任何测试会发现「这次响应为什么变成 200」。
+    """
+
+    import pytest
+
+    from policy_api.errors import ErrorCode, STATUS_BY_CODE
+
+    with pytest.raises(TypeError):
+        STATUS_BY_CODE[ErrorCode.FORBIDDEN] = 200  # type: ignore[index]
+
+    # 读取面不受影响：索引 / 成员判断 / 迭代 / get 都照旧
+    assert STATUS_BY_CODE[ErrorCode.FORBIDDEN] == 403
+    assert ErrorCode.RATE_LIMITED in STATUS_BY_CODE
+    assert STATUS_BY_CODE.get(ErrorCode.NOT_FOUND) == 404
+    assert {item.value for item in STATUS_BY_CODE} >= {"forbidden", "rate_limited"}
+
+
+def test_a_missing_status_mapping_degrades_readably_instead_of_raising_keyerror(monkeypatch) -> None:
+    """映射表漏一行时：加载期就拒绝；万一运行期被改脏，也不许把 4xx 变成"没有理由的 500"。
+
+    修前读数（第一手）：删掉映射后 `ApiError(ErrorCode.FORBIDDEN, "跨租户").status` 抛
+    `KeyError: <ErrorCode.FORBIDDEN: 'forbidden'>`——它发生在**错误处理内部**，框架只会兜成裸 500，
+    结构化错误码一起丢掉。
+    """
+
+    import policy_api.errors as errors_module
+    from policy_api.errors import ApiError, ErrorCode, error_payload, missing_status_codes
+
+    # ① 现在的表是完整的（加载期守卫用的就是这个函数）
+    assert missing_status_codes() == ()
+
+    # ② 变异：替换成一份缺条目的表 → 清单立刻报出来（守卫因此会在 import 期拒绝）。
+    #   表对外只读，所以这里替换的是**模块属性**，不是就地改（见上一条用例）。
+    monkeypatch.setattr(
+        errors_module,
+        "STATUS_BY_CODE",
+        {
+            code: status
+            for code, status in errors_module.STATUS_BY_CODE.items()
+            if code is not ErrorCode.FORBIDDEN
+        },
+    )
+    assert missing_status_codes() == (ErrorCode.FORBIDDEN,)
+
+    # ③ 运行期真的漏了：按 500 失败关闭，且响应体里仍然是这次真实的错误码
+    error = ApiError(ErrorCode.FORBIDDEN, "该凭据没有被授权")
+    assert error.status == 500
+    payload = error_payload(error)["error"]
+    assert payload["code"] == "forbidden"
+    assert payload["detail"] == "该凭据没有被授权"
+
+
 def test_error_payload_shape_is_fixed_and_hides_debug() -> None:
     """错误响应只有一个形状：`{"error": {code, detail, retryable, request_id, trace_id}}`。
 

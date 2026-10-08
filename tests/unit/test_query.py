@@ -28,6 +28,32 @@ def plan(text: str | None, **overrides):
     return build_plan(query, scope=SCOPE, policy=CorpusPolicy(), lexicon=LEXICON)
 
 
+def test_non_ascii_words_are_kept_whole() -> None:
+    """非 ASCII 词不再被切成碎片（复核发现 L4 query.py:41）。
+
+    旧词表只有 [0-9A-Za-z_]：tokenize("café") == ("caf",)、tokenize("naïve") == ("na","ve")
+    （"ï" 整个丢掉），碎片照样进 OR 表达式、照样能匹配到无关文本。索引侧本来就把整篇原文
+    交给 FTS5 的 unicode61（按 Unicode 字母切词），两端口径一致才谈得上"命中"。
+    """
+
+    assert tokenize("café") == ("café",)
+    assert tokenize("über checklist") == ("über", "checklist")
+    assert tokenize("naïve") == ("naïve",)
+    assert tokenize("Réglé: 规则") == ("Réglé", "规则")
+
+    # 旧口径会产生这些碎片，它们不许再出现。
+    for fragment in ("caf", "ber", "na", "ve", "gl"):
+        assert fragment not in tokenize("café über naïve Réglé")
+
+
+def test_mixed_script_runs_stay_symmetric_with_the_index_side() -> None:
+    """中英混排整段取成一个词项时，查询与索引两侧仍走同一套 CJK 切分（口径一致才可能命中）。"""
+
+    from retrieval.chunker import search_text
+
+    assert fts_phrase("中文abc") == '"' + search_text("中文abc") + '"'
+
+
 def test_over_long_token_is_reported_as_truncated() -> None:
     """超长词项被丢弃必须记 truncated（复核发现：整条查询可能因此一个词都不剩）。"""
 
@@ -197,6 +223,30 @@ def test_term_cap_truncates_and_flags() -> None:
     assert value.terms == ("alpha", "beta", "gamma", "delta")
     assert value.truncated is True
     assert value.fts_expression == '"alpha" OR "beta" OR "gamma" OR "delta"'
+
+
+def test_term_cap_also_trims_the_reported_expansion_and_structural_terms() -> None:
+    """计划里广告的词项集合必须与生效词项一致（截断后不许留"幽灵词项"）。
+
+    旧行为：ordered 被裁到 max_query_terms，而 expanded_terms / structural_terms 原样保留，
+    于是计划里出现一批不在 terms / fts_expression 里的词——用它们做加权或解释的人会以为生效了。
+    """
+
+    policy = CorpusPolicy(max_query_terms=2)
+    value = build_plan(
+        RetrievalQuery(text="代码评审", module="order", language="Python"),
+        scope=SCOPE,
+        policy=policy,
+        lexicon=LEXICON,
+    )
+
+    assert value.truncated is True
+    assert len(value.terms) == 2
+    effective = set(value.terms)
+    assert set(value.expanded_terms) <= effective, value.expanded_terms
+    assert set(value.structural_terms) <= effective, value.structural_terms
+    for term in (*value.expanded_terms, *value.structural_terms):
+        assert f'"{term}"' in value.fts_expression, term
 
 
 def test_empty_text_produces_empty_plan() -> None:

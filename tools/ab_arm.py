@@ -79,9 +79,9 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Any, Mapping, Optional, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
@@ -104,7 +104,10 @@ ARM_ENFORCED = "enforced"
 ARMS = (ARM_OFF, ARM_ADVISORY, ARM_ENFORCED)
 
 ENTRY_NONE = "none"
-ENTRY_DSH_PLUGIN = "dsh-plugin"
+# 只声明本工具**真的会记录**的那一种入口。曾经还有一个 ENTRY_DSH_PLUGIN = "dsh-plugin"，
+# 但 run_one 无论走成哪条路都记 ENTRY_DSH_HOOK_CLI，那个值从没被写进读数——一个"声明了却永远
+# 不会出现"的枚举值，只会让读 run.json 的人以为两种入口可区分（实际不能）。
+# 真要区分产品路径与回退路径，得改 run_one 的判定与载荷（那是另一次改动，不在这里顺手做）。
 ENTRY_DSH_HOOK_CLI = "dsh-hook-cli"
 
 ACTION_APPLIED = "applied"
@@ -287,8 +290,10 @@ TEXT_SUFFIXES = {
 }
 
 HOOK_MODULE = "adapters.dsh.hooks"
-VERDICT_PREFIX = "[policy] VERDICT "
-
+# 这里曾经把 hooks.py 的 VERDICT_PREFIX = "[policy] VERDICT " 又抄了一份（从未被引用）。
+# 真值源是 src/adapters/dsh/hooks.py；而漏检那一侧（leak_assertions）刻意用**更宽**的 "[policy]"
+# 子串判"控制臂有没有看到策略标记"——对漏检来说从宽才是保守方向（收紧会把"只打了前缀一部分"的泄露漏掉），
+# 所以那处不改用这个常量，也不留第二份拷贝。
 PATCH_TEMPLATE = """# 由 tools/ab_arm.py 生成：把进程内策略 Hook 插件挂到 profile 上。
 - insert:
     - id: policy-hook
@@ -410,6 +415,26 @@ def prepare_arm(*, baseline: Path, arm_dir: Path, arm: str, rules_root: Path) ->
     }
     write_json(arm_dir / "arm.json", manifest)
     return manifest
+
+
+def write_action_counts(*, arm: str, decision: str, action: str) -> dict:
+    """三个写动作计数的**唯一口径**（run.json 的 counts.bypass_definition 必须与它逐字一致）。
+
+    - write_actions：真的尝试过写（应用成功或应用失败）；
+    - governed_write_actions：这次写**经过了能给出判定的治理入口**（入口跑成 allow/block，
+      被拒也算——"被治理地拒了"与"没被治理"是两件事）；
+    - bypass_actions：写动作没经过治理入口就落到树上——唯一来源是
+      「入口没跑成（decision=unavailable）而改动仍然应用」。off 臂不算：它按构造就没有治理路径。
+    """
+
+    entry_governed = arm != ARM_OFF and decision in ("allow", "block")
+    touched = action in (ACTION_APPLIED, ACTION_REFUSED, "apply_failed")
+    landed = action == ACTION_APPLIED
+    return {
+        "write_actions": 1 if action in (ACTION_APPLIED, "apply_failed") else 0,
+        "governed_write_actions": 1 if (entry_governed and touched) else 0,
+        "bypass_actions": 1 if (landed and not entry_governed and arm != ARM_OFF) else 0,
+    }
 
 
 def run_one(
@@ -588,7 +613,9 @@ def run_one(
         "task_id": task_id,
         "preset": preset or None,
         "expect": spec.get("expect"),
-        "baseline": {"path": display(baseline), "digest": sha256_file(baseline)},
+        # digest 用**树摘要**（tree_digest：相对路径 + 逐文件哈希）：baseline 是目录，
+        # sha256_file 对目录恒返回 None（吞掉 IsADirectoryError），这个字段于是"可填却永远填不上"。
+        "baseline": {"path": display(baseline), "digest": tree_digest(baseline)},
         "sanitization": {"profile": "default", "removed": manifest["sanitization"], "seeded_fixture": manifest["seeded_fixture"], "kept_note": manifest["kept_note"]},
         "arm_tree": {"path": display(tree), "digest": digest_tree, "clean": cleanliness["clean"]},
         "rules_root": {"path": display(REPO_ROOT), "inside_arm_tree": cleanliness["rules_root"]["inside_arm_tree"]},
@@ -681,15 +708,14 @@ def run_one(
                 "本工具的计数是**装置自检**（三臂的构造差异读得出来），不是结局变量："
                 "off 臂 governed_write_actions=0 是构造出来的，不是测出来的"
             ),
-            "write_actions": 1 if action in (ACTION_APPLIED, "apply_failed") else 0,
-            "governed_write_actions": 1 if (arm != ARM_OFF and action in (ACTION_APPLIED, ACTION_REFUSED, "apply_failed")) else 0,
-            "bypass_actions": 0,
+            **write_action_counts(arm=arm, decision=decision, action=action),
             "human_interventions": 0,
             "retries": 0,
             "bypass_definition": (
                 "bypass = 写动作没有经过治理入口就落到树上。off 臂恒为 0（构造上没有治理路径）；"
-                "advisory/enforced 的每次写动作都先过入口，所以也是 0；"
-                "非 0 只可能来自「入口没跑成但改动仍然应用」——那种情况记 action=apply_failed + unavailable，不记 0-1 计数"
+                "advisory/enforced 的写动作先过入口，所以也是 0——除非入口没跑成"
+                "（decision=unavailable）而改动仍然应用：那种情况 unavailable 里有 entry 条目、"
+                "action=applied，计数落在 bypass_actions，并且不再计入 governed_write_actions。"
             ),
         },
         "oracle": {
@@ -1036,6 +1062,14 @@ def sanitize_tree(tree: Path) -> list[Mapping[str, Any]]:
         ]
         for relative in sorted(candidates):
             target = tree / relative
+            if not target.exists():
+                # `dir/**` 会**连目录本身一起命中**（matches_pattern 让 "policies" == 前缀），
+                # 而 candidates 是删除**前**的快照：目录先被 rmtree 掉之后，同一批里的子项
+                # 在这里必然已经不存在。旧写法照样 unlink() → FileNotFoundError → 记成
+                # removed:false + error，于是 sanitization 与"删除 N 项"里混进一堆"删除失败"
+                # （其实是被上级目录带走的），仪器读数因此虚高。
+                handled.add(relative)
+                continue
             try:
                 if target.is_dir():
                     shutil.rmtree(target)
@@ -1874,7 +1908,9 @@ def self_proof(*, baseline: Path, out_root: Path) -> Mapping[str, Any]:
         "kind": "self-proof",
         "run_id": run_id,
         "run_dir": display(run_dir),
-        "baseline": {"path": display(baseline), "digest": sha256_file(baseline)},
+        # digest 用**树摘要**（tree_digest：相对路径 + 逐文件哈希）：baseline 是目录，
+        # sha256_file 对目录恒返回 None（吞掉 IsADirectoryError），这个字段于是"可填却永远填不上"。
+        "baseline": {"path": display(baseline), "digest": tree_digest(baseline)},
         "mutation": {
             "A_path": "往臂树里放回 policies/ARCH-001.yaml（路径删除层必须挡住）",
             "B_content": "往臂树里放 notes.md，正文含 ARCH-001@1（内容扫描层必须挡住）",

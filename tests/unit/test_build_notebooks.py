@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -162,3 +163,45 @@ def test_unique_chapter_numbers_still_load(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(module, "HERE", tmp_path)
 
     assert sorted(module.chapter_dirs()) == ["00", "01"]
+
+def _run_builder(*arguments: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(TOOL), *arguments],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+
+def test_check_summary_does_not_claim_execution() -> None:
+    """`--check` 不执行单元：收尾读数不许出现"代码单元执行"这种暗示执行过的措辞。
+
+    2026-10-08 裁定：「把自己的局限说成查过了」是同一族缺陷——`--check`（不执行）与
+    `--no-exec`（不执行）都曾打印「代码单元执行: 全部通过」。这一条把措辞钉住，改回去就红。
+    """
+
+    completed = _run_builder("--check", "--only", "00")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    assert "未执行单元" in completed.stdout, completed.stdout
+    assert "代码单元执行" not in completed.stdout, "`--check` 不许声称执行过单元：" + completed.stdout
+
+
+def test_no_exec_summary_does_not_claim_execution() -> None:
+    """`--no-exec` 同样不执行单元：读数里也要写明（它写的是"已写入"）。"""
+
+    completed = _run_builder("--no-exec", "--only", "00")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    assert "未执行单元" in completed.stdout, completed.stdout
+    assert "代码单元执行" not in completed.stdout, "`--no-exec` 不许声称执行过单元：" + completed.stdout
+
+
+def test_executing_mode_still_reports_the_execution_result() -> None:
+    """阳性对照：真执行的那一档照旧报"代码单元执行"——收口不是把这句话删掉了事。"""
+
+    completed = _run_builder("--only", "00")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    assert "代码单元执行: 全部通过" in completed.stdout, completed.stdout

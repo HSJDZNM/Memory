@@ -82,7 +82,10 @@ def tree_digest(root: Path) -> str:
     """树摘要：读不到就写 `unprovable`，绝不静默少算（方案 §3.1 的严格模式）。"""
 
     try:
-        from provenance.worktree import ProvenanceError, workspace_tree_digest
+        # 只导入真正要用的名字：多导入一个 `ProvenanceError`，会让"provenance.worktree 不再导出它"
+        # 这种与本次无关的变化也变成 ImportError，把树摘要记成 unprovable（下面的 except Exception
+        # 本来就能兜住它，所以那个名字既没用、又制造了脆弱耦合）。
+        from provenance.worktree import workspace_tree_digest
 
         return workspace_tree_digest(root).sha256
     except ImportError as error:  # pragma: no cover - 只有 src 不在路径上时
@@ -188,6 +191,16 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             report = ledger_report(item, tree=tree, digest=digest)
         except ObligationsError as error:
             print("义务账本读不懂：" + str(error), file=sys.stderr)
+            return 2
+        except (OSError, UnicodeDecodeError) as error:
+            # `obligations.load()` 是直接 `path.open(..., encoding="utf-8")`：非 UTF-8 的账本
+            # 抛 UnicodeDecodeError、权限 / 竞态抛 OSError，二者都不在 ObligationsError 里。
+            # 让它们逃出去的话进程以 **1** 退出——而 1 在本文件里的含义是"读到了命中"，
+            # 于是"读不懂账本"会被当成一次命中记进升格判据（还带着 traceback）。契约是 2。
+            print(
+                "义务账本读不出来（" + type(error).__name__ + "）：" + str(path),
+                file=sys.stderr,
+            )
             return 2
         if not report["applicable"]:
             not_applicable += 1

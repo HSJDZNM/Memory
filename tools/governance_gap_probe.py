@@ -463,7 +463,14 @@ def _wiring_command(
         # 没有 --dsh-home 开关时退回环境变量（两条路都试，避免"接口没接上"被误判成缺陷）。
         extra_env = {} if (dsh_home is None or use_flag) else {"DSH_HOME": str(dsh_home)}
         run = env.run(argv, cwd=env.work, extra_env=extra_env)
-        if run.exit in (0, 1) and run.json() is not None:
+        # 判据只有一条：这条调用**真的跑起来了，并给出可解析的报告**。
+        # 旧写法额外要求 `exit in (0, 1)`——但 G13 自己的口径是"任何非 0 都算拦住/失败关闭"
+        # （check_nonzero_without_wiring / broken_config_blocks / missing_config_blocks），
+        # 于是一个用退 2 表达"配置读不到"的合规 CLI 不会被认成入口：G01/G13 报
+        # "没有可用的接线清点入口"（假阴性，还把 after 阶段整段带偏）。
+        # 基础设施失败不必在这里排除：Env.run 给超时 / spawn 失败的是 124 / 125 且 stdout 为空，
+        # run.json() 自然为 None。
+        if run.json() is not None:
             return run, run.command, shape
     return None, "", None
 
@@ -862,9 +869,19 @@ def _node_path() -> Optional[str]:
 
 # dsh 实现包（第三方）里的静态事实：事件名与回调形参个数。
 # 它只用于把"对 dsh 运行期签名的假设"降级为"已核对实现里的字符串事实"。
-DSH_IMPL_ASAR = Path(
-    "C:/Users/ZNM/AppData/Local/Programs/DeepSeek Harness/resources/app.asar"
-)
+#
+# **路径不由仓库常量给出**（2026-10-08 更正）：旧写法写死了作者本机的 Windows 路径，并用
+# "这个文件存不存在"在运行期改写**评分预期表**（下面两处 `check.after[...] = True`）——
+# 于是在别人机器上那两条"修后声明"会静默消失，**同一棵树按不同契约评分**，`--phase after`
+# 也不再可复现。现在由环境变量显式给出；没给就如实记成"没有实现包可核对"（不猜、也不牵动其它判据）。
+DSH_IMPL_ASAR_ENV = "DSH_IMPL_ASAR"
+
+
+def dsh_impl_asar() -> Optional[Path]:
+    """第三方 dsh 实现包的位置：只认环境变量 `DSH_IMPL_ASAR`；没给返回 None。"""
+
+    raw = os.environ.get(DSH_IMPL_ASAR_ENV, "").strip()
+    return Path(raw) if raw else None
 
 
 def _dsh_impl_signature(asar: Path) -> dict[str, Any]:
@@ -1044,18 +1061,25 @@ def check_g02(env: Env) -> Check:
 
     # 第三层（静态）：与 dsh 实现包里的字符串事实比对事件名与回调形参个数。
     # 这条断言只在实现包存在时进入"修后预期"（否则它在别的机器上会变成环境失败）。
-    impl = _dsh_impl_signature(DSH_IMPL_ASAR)
-    check.facts["dsh_impl_asar"] = str(DSH_IMPL_ASAR)
-    check.facts["dsh_impl_asar_exists"] = DSH_IMPL_ASAR.is_file()
+    asar = dsh_impl_asar()
+    impl = _dsh_impl_signature(asar) if asar is not None else {
+        "present": False, "arity_three": False, "pre_present": False, "sample": "",
+    }
+    # 来源写进 facts：读数必须说得出"这两条声明是从哪来的"，否则它在别人机器上消失时无从解释。
+    check.facts["dsh_impl_asar"] = str(asar) if asar is not None else ""
+    check.facts["dsh_impl_asar_source"] = (
+        ("env:" + DSH_IMPL_ASAR_ENV) if asar is not None else "absent"
+    )
+    check.facts["dsh_impl_asar_exists"] = bool(asar is not None and asar.is_file())
     check.facts["dsh_impl_post_event_present"] = impl["present"]
     check.facts["dsh_impl_post_arity_three"] = impl["arity_three"]
     if impl["sample"]:
         check.facts["dsh_impl_sample"] = " ".join(impl["sample"].split())[:220]
     check.evidence.append(
-        f"dsh 实现包静态检索：tools/post-execute 存在={impl['present']}，"
+        f"dsh 实现包静态检索（来源 {check.facts['dsh_impl_asar_source']}）：tools/post-execute 存在={impl['present']}，"
         f"三参回调形态={impl['arity_three']}，tools/pre-execute 存在={impl['pre_present']}"
     )
-    if DSH_IMPL_ASAR.is_file():
+    if asar is not None and asar.is_file():
         check.after["dsh_impl_post_event_present"] = True
         check.after["dsh_impl_post_arity_three"] = True
 
@@ -2329,6 +2353,22 @@ def _render(report: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _check_id_of(factory: Callable[[Env], Check]) -> str:
+    """从工厂函数名推出缺口 id（check_g07 -> "G07"）；推不出来就返回空串。
+
+    过滤必须发生在 factory(env) **之前**：13 个探针各自要起子进程、改探针项目里的文件，
+    在调用之后才 continue 等于"只报告指定缺口"而不是"只跑指定缺口"（--only 的帮助文本
+    写的是后者）。命名约定由 tests/unit/test_governance_gap_probe_only.py 静态守住
+    （AST 读每个 check_gNN 里 Check(id=...) 的字面量），推不出来时**不跳过**（宁可多跑）。
+    """
+
+    name = getattr(factory, "__name__", "")
+    prefix = "check_g"
+    if not name.startswith(prefix):
+        return ""
+    return "G" + name[len(prefix):].upper()  # check_g07 -> G07
+
+
 def _run_once(root: Path, phase: str, work: Path, *, only: Sequence[str],
               timeout: int) -> dict[str, Any]:
     """跑一遍全部（或指定）缺口：每次都用全新的工作目录，因此调用之间没有共享状态。"""
@@ -2338,6 +2378,10 @@ def _run_once(root: Path, phase: str, work: Path, *, only: Sequence[str],
     checks: list[dict[str, Any]] = []
     wanted = {item.upper() for item in only}
     for factory in CHECKS:
+        if wanted:
+            derived = _check_id_of(factory)
+            if derived and derived not in wanted:
+                continue  # 调用**之前**就跳过：--only 真的不跑没点名的缺口
         probe = Check(id="", title="", before={}, after={})
         try:
             probe = factory(env)

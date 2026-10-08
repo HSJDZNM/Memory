@@ -45,7 +45,7 @@ from policy.models import (
 )
 
 from .auth import AuthContext, authorize, parse_authorization
-from .config import ApiConfig, ConfigError, RateLimitConfig, load_api_config
+from .config import ApiConfig, RateLimitConfig, load_api_config
 from .errors import ApiError, ErrorCode, error_payload
 from .idempotency import IdempotencyLedger, request_digest
 from .models import (
@@ -245,7 +245,9 @@ class ApiRuntime:
         self._decisions: dict[str, Tuple[float, ValidationResult]] = {}
         self._decisions_lock = threading.RLock()
         self._semaphore = threading.BoundedSemaphore(config.limits.max_concurrency)
-        self._readiness: Optional[Tuple[float, Mapping[str, Any], int]] = None
+        # (写入时刻, 报告)：曾经还有一个恒为 0 的第三槽（`int`），没有任何读取点——
+        # 死状态比没有状态更坏：它让人以为"还有一个维度在那儿"。
+        self._readiness: Optional[Tuple[float, Mapping[str, Any]]] = None
         self._readiness_lock = threading.RLock()
         # 最近一次未预期异常的 traceback（只给 CLI / 闭环工具看，不进响应、不进日志）。
         self.last_error: str = ""
@@ -918,7 +920,7 @@ class ApiRuntime:
                 return dict(self._readiness[1])
         report = self._readiness_report()
         with self._readiness_lock:
-            self._readiness = (now, dict(report), 0)
+            self._readiness = (now, dict(report))
         return report
 
     def _readiness_report(self) -> Mapping[str, Any]:
@@ -1085,9 +1087,10 @@ def _evidence_limit(config: ApiConfig) -> int:
 
 
 def load_runtime_config(path: Path | str, *, root: Optional[Path | str] = None) -> ApiConfig:
-    """便捷函数：加载配置并把 `ConfigError` 原样抛出（CLI 负责翻译成退出码）。"""
+    """便捷函数：加载配置并把 `ConfigError` 原样抛出（CLI 负责翻译成退出码）。
 
-    try:
-        return load_api_config(path, root=root)
-    except ConfigError:
-        raise
+    这里**没有** try/except：曾经有一条 `except ConfigError: raise`——它一个字节都没改变行为，
+    却让读的人以为这一层做了翻译或补偿（真正的翻译在 CLI 的退出码映射里）。
+    """
+
+    return load_api_config(path, root=root)

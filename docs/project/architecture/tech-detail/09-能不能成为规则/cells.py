@@ -115,13 +115,17 @@ for name, count in sorted(by_checker.items()):
 print()
 print(pad("source.kind", 22) + "条数")
 print("-" * 40)
+# 词表**从模型自己的声明取**（`policy.models.SOURCE_KINDS`），不在讲解里手抄一份——手抄的那份会在
+# 模型新增一种来源时静默过期，而下面那条断言正是"来源类型读得懂"的判据。
+from policy.models import SOURCE_KINDS
+
 by_kind = Counter(item.source.kind for item in RULES)
 for name, count in sorted(by_kind.items()):
     print(pad(name, 22) + str(count))
 
 # 空规则集会让后面所有判据变成空转，先拦住。
 assert RULES, "policies/ 下一条规则都没有加载到"
-assert set(by_kind) <= {"project-policy", "standard"}, by_kind
+assert set(by_kind) <= set(SOURCE_KINDS), (sorted(by_kind), sorted(SOURCE_KINDS))
 print()
 print("加载通过：每条规则都有一个确定的 checker 与一个本地来源类别。")
 '''
@@ -220,7 +224,7 @@ for spec in REGISTRY.validators:
     for checker in spec.checkers:
         providers.setdefault(checker, []).append(spec.id)
 
-print(pad("checker", 22) + pad("产证据的验证器", 16) + "仓库里在用的规则数")
+print(pad("checker", 22) + pad("产证据的验证器", 24) + "仓库里在用的规则数")
 print("-" * 78)
 for checker in sorted(SUPPORTED_CHECKERS):
     owners = ", ".join(sorted(providers.get(checker, ()))) or "<无>"
@@ -264,30 +268,29 @@ print("（type_check 就是这种：验证器与规则体都写好了，但装�
         code(
             '''
 # 判据三：6 个已知维度 + 每维取值从哪里来。
-from policy.models import KNOWN_SCOPE_DIMENSIONS, Operation, ScopeExtraPolicy
+from policy.models import KNOWN_SCOPE_DIMENSIONS, ScopeExtraPolicy
 
 from validators.registry import load_project
 
 PROJECT = load_project(root=REPO_ROOT)  # validation/project.yaml：语言识别与"路径 → 组件（层）"映射
 language_values = tuple(spec.language for spec in PROJECT.languages)
-layer_values = tuple(component.name for component in PROJECT.components)
 declared_values = {}
 for item in RULES:
     for dimension, value in item.scope.declared_dimensions.items():
         values = value if isinstance(value, tuple) else (value,)
         declared_values.setdefault(dimension, set()).update(values)
 
-print(pad("维度", 12) + pad("取值从哪里来", 26) + "规则实际用到")
+print(pad("维度", 12) + pad("取值从哪里来", 30) + "规则实际用到")
 print("-" * 84)
 for dimension in KNOWN_SCOPE_DIMENSIONS:
     if dimension == "language":
-        origin, known = "validation/project.yaml", language_values
+        origin = "validation/project.yaml"
     elif dimension == "layer":
-        origin, known = "validation/project.yaml", layer_values
+        origin = "validation/project.yaml"
     elif dimension == "operation":
-        origin, known = "policy.models.Operation 枚举", tuple(x.value for x in Operation)
+        origin = "policy.models.Operation 枚举"
     else:
-        origin, known = "上下文显式字段", ()
+        origin = "上下文显式字段"
     used = sorted(declared_values.get(dimension, ()))
     print(pad(dimension, 12) + pad(origin, 30) + (", ".join(used) if used else "（没有规则声明）"))
 print()
@@ -404,13 +407,16 @@ print("  仓库里 " + str(allowed_total) + " 条规则命中后只告警（含 
             '''
 # 变异实验：把真实规则逐个改坏，记录加载器拦在哪。
 from policy.loader import LoaderError, RuleFileError, load_rule_file, load_rules
-from policy.models import EnforcementType, SOURCE_KINDS
+from policy.models import EnforcementType
 
 BASE = yaml.safe_load((REPO_ROOT / "policies" / "coding" / "DOC-001.yaml").read_text(encoding="utf-8"))
 
 
 def mutate(name, change):
-    """复制真实规则 → 改一处 → 写进临时目录 → 试着加载；返回 (异常名, 出错的字段)。"""
+    """复制真实规则 → 改一处 → 写进临时目录 → 试着加载。
+
+    返回**三元组** `(写出的文件路径, 异常名或「加载成功（没拦住）」, 出错的字段)`：第二个元素是
+    **字符串**而不是异常类（表格直接打印它），第三个元素在整个模型级错误时是占位文本。"""
     document = yaml.safe_load(yaml.safe_dump(BASE, allow_unicode=True, sort_keys=False))
     change(document)
     path = TEMP / (name + ".yaml")
@@ -451,7 +457,7 @@ CASES = (
 )
 
 measured = {}
-print(pad("变异", 20) + pad("拦住的异常", 16) + pad("出错字段", 16) + "对应判据")
+print(pad("变异", 20) + pad("拦住的异常", 14) + pad("出错字段", 20) + "对应判据")
 print("-" * 96)
 for name, why, expected_field, change in CASES:
     path, kind, field = mutate(name, change)
@@ -467,7 +473,7 @@ measured["typecheck-rule"] = (path, kind, field)
 loaded = load_rule_file(path, repo_root=REPO_ROOT)
 assert loaded.rule.enforcement.checker == "type_check"
 assert loaded.rule.enforcement.type is EnforcementType.DETERMINISTIC
-print(pad("typecheck-rule", 20) + pad("加载成功（没拦住）", 16) + pad("<无>", 16) + "shape 合法、但当前判不了")
+print(pad("typecheck-rule", 20) + pad("加载成功（没拦住）", 14) + pad("<无>", 20) + "shape 合法、但当前判不了")
 print()
 
 # 原子性：目录里**一条好 + 一条坏**，整批都不加载（错的顺序不影响结论）。
@@ -495,8 +501,14 @@ assert atomic_files == sorted([good.name, bad.name]), atomic_files
 try:
     load_rules(atomic_dir, repo_root=REPO_ROOT)
     raise AssertionError("目录里有一条坏规则，整批加载本该失败")
-except RuleFileError as error:
-    blamed = str(error.repo_path).rsplit("/", 1)[-1]
+# 捕获**基类** `LoaderError`（`RuleFileError` 是它的子类）：这一格要证明的是"整批不加载"这条
+# 契约，而加载器在更早的步骤上也会抛基类——文件读不出来（`_read_mapping`）、目录读不出来
+# （`collect_rule_files`）、路径逃出仓库根（`_relative_to_root`）同样是"整批不成"。只接子类会让
+# 那些情形穿出去变成一段 traceback，读者还以为"演示写错了"。
+except LoaderError as error:
+    # 基类不一定带 `repo_path`（那三个来源就没有）：取不到就留空串，让下面的断言把
+    # "抱怨的不是那条坏文件"这件事说清楚。
+    blamed = str(getattr(error, "repo_path", "")).rsplit("/", 1)[-1]
     print("原子加载：" + str(len(atomic_files)) + " 个规则文件（1 好 + 1 坏）→ 整批不加载（"
           + type(error).__name__ + "）")
     print("  它抱怨的是 " + blamed + " —— 一条坏，整批不成。")
@@ -582,8 +594,7 @@ print("  删掉 bad.py → 覆盖率门禁会 FAIL 并指名道姓，但那也�
         code(
             '''
 # 结构性淘汰：语言包口径 + 外部工具探针。
-from pathlib import Path
-
+# 这一格不需要 pathlib：镜像与规则目录都通过 REGISTRY / 项目档案的接口拿到，不自己拼路径。
 from validators.adapters.base import probe_tool
 packs = {pack.id: pack.language for pack in REGISTRY.rule_packs}
 print(pad("规则包", 22) + pad("语言", 10) + "包含的验证器")

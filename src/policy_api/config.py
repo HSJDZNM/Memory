@@ -19,7 +19,7 @@ import datetime
 import hashlib
 import re
 from pathlib import Path
-from typing import Any, Mapping, Optional, Tuple
+from typing import Mapping, Optional, Tuple
 
 import yaml
 from pydantic import Field, ValidationError, field_validator, model_validator

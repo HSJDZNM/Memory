@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Mapping, Optional
 
 from .config import ApiConfig, load_api_config
 from .runtime import ApiRuntime, RuntimeResponse

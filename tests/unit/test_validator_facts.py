@@ -473,6 +473,22 @@ def test_package_of_prefers_the_most_specific_python_root() -> None:
     assert package_of("docs/readme.txt", CONFIG.project) is None
 
 
+def test_model_component_covers_the_suffix_convention_like_its_siblings() -> None:
+    """组件 glob 对称：`*_model.py` 与 `models/` 目录要和兄弟组件一样命中（复核发现）。"""
+
+    project = CONFIG.project
+
+    assert project.component_for("src/shop/order_model.py") == "model"
+    assert project.component_for("src/shop/models/order.py") == "model"
+    assert project.component_for("src/shop/domain/models.py") == "model"
+
+    # 兄弟组件的既有口径不变（后缀 + 复数目录）。
+    assert project.component_for("src/shop/order_repository.py") == "repository"
+    assert project.component_for("src/shop/repositories/order.py") == "repository"
+    assert project.component_for("src/shop/order_service.py") == "service"
+    assert project.component_for("src/shop/order_controller.py") == "controller"
+
+
 def test_internal_dependency_is_named_after_its_component() -> None:
     result = dependencies_for("from shop.order_repository import OrderRepository" + chr(10))
 

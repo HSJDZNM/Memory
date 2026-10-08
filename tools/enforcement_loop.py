@@ -10,7 +10,9 @@
 3. 事后验证失败会回滚（声明了 file_snapshot 的工具），并给出 repair_required；
 4. 一条 trace 从 pre-check 到终态可被重放出来。
 
-所有产物都写在 .tmp/phase-4-demo/ 下，不触碰仓库真实文件。
+受控工作区、审计与台账在 `.tmp/phase-4-demo/`（`workspace/` + `audit.jsonl` + `ledger.jsonl`）下，
+**结论 JSON 不在这里**——它写到 `.tmp/artifacts/phase-4-enforcement-result.json`（见 RESULT，与上面用法说明一致）。
+这些路径都在 `.tmp/` 内，不触碰仓库真实文件。
 """
 
 from __future__ import annotations
@@ -206,7 +208,11 @@ def run() -> list[Scenario]:
         Scenario(
             name="high_risk_needs_an_approval",
             passed=needs_approval.decision.decision.value == "block"
-            and needs_approval.decision.reason_code.value in {"approval_required", "permission_denied"},
+            # 只认 `approval_required`：把 `permission_denied` 也算通过会掩盖审批门禁回归
+            # （例如"角色没权限所以挡住"被读成"审批门禁起作用"），而本场景声称的正是
+            # "缺少绑定审批时被阻断"——理由码必须是那一个。
+            and needs_approval.decision.reason_code.value == "approval_required"
+            and needs_approval.decision.required_action is not None,
             detail="高权限动作缺少绑定审批时被阻断；审批由人工门禁签发（approve 子命令）",
             facts={
                 "reason_code": needs_approval.decision.reason_code.value,
@@ -218,7 +224,9 @@ def run() -> list[Scenario]:
     )
 
     # 5) trace 可重放
-    report = load_trace(AUDIT, trace_id="phase-4-demo", require_final=False)
+    # `require_final=True`：场景名字与 docstring 都写着链条要走到 final_decision，
+    # 而 `require_final=False` 恰好关掉"该 trace 有没有终态"这条检查——声称与判据对不上。
+    report = load_trace(AUDIT, trace_id="phase-4-demo", require_final=True)
     stages = [entry.stage.value for entry in report.entries]
     scenarios.append(
         Scenario(
@@ -253,7 +261,11 @@ def _high_risk_request(registry):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Phase 4 受控执行闭环")
     parser.add_argument("--json", action="store_true", help="只打印结论 JSON")
-    parser.add_argument("--keep", action="store_true", help="保留演示目录（默认保留）")
+    # 这里曾经有一个 `--keep`（帮助写着"保留演示目录（默认保留）"），但 `args.keep` 全文件没人读、
+    # `prepare()` 也无条件 `shutil.rmtree(DEMO_ROOT)`——一个"声明了却永远不生效"的开关，
+    # 而且帮助文本说的默认值正好与实现相反（条目 [30]）。删掉它，让 CLI 与行为一致。
+    # 真要支持"保留上一轮"得给出明确语义（dsh_sandbox_loop.py 的 --keep 是现成先例：
+    # 只重置被治理的源文件、保留审计与采集），那是另一次改动，不在这里顺手发明。
     args = parser.parse_args(argv)
 
     prepare()

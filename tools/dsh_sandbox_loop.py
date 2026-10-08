@@ -907,14 +907,19 @@ def acl_temp_root_reason(failure: ConfigFailure) -> str:
 
 
 def isolated_home_env() -> dict[str, str]:
-    """`--isolated-home` 要设的三条环境变量（**只给 dsh 子进程**，不改进程自己的环境）。
+    """`--isolated-home` 要设的四条环境变量（**只给 dsh 子进程**，不改进程自己的环境）。
 
     两个隔离根与受控项目 demo-shop 平级：dsh 的 Windows ACL 沙箱要求临时根在工作区之外，
     把隔离根放进项目里面会被 dsh 拒绝启动（见 `classify_acl_temp_root()`）。
+
+    **三条临时根变量都要设**：Node/libuv 在 POSIX 上**优先**读 `TMPDIR`，只有它不存在才退回
+    `TMP`/`TEMP`。只设后两个时，子进程仍带着父进程的 `TMPDIR`（门禁里那是仓库内的 `.tmp/tmp`），
+    隔离等于没生效——这正是模块 docstring 想避免的"系统 temp 下的 mkdtemp 被拒"场景。
+    本仓库自己的工具链也是三个都设（`tools/ci_local.py` 的每个步骤子进程）。
     """
 
     temp = str(ISOLATED_TMP)
-    return {"DSH_HOME": str(ISOLATED_HOME), "TEMP": temp, "TMP": temp}
+    return {"DSH_HOME": str(ISOLATED_HOME), "TEMP": temp, "TMP": temp, "TMPDIR": temp}
 
 
 def sandbox_state(
@@ -944,7 +949,7 @@ def sandbox_state(
 
 
 def host_facts(*, isolated_home: bool) -> dict:
-    """端到端读数专有的宿主事实（21 号 §2.4）：隔离开关 + 本次子进程实际拿到的三个根。
+    """端到端读数专有的宿主事实（21 号 §2.4）：隔离开关 + 本次子进程实际拿到的四个环境变量。
 
     默认（不给 `--isolated-home`）时子进程继承父进程的环境，三个根通常在工作区之外 →
     按统一口径写成 `<outside-workspace>`；给了开关就是仓库内的 `.tmp/phase-2-sandbox/...`。
@@ -962,6 +967,7 @@ def host_facts(*, isolated_home: bool) -> dict:
         "temp_roots": [
             reading.display_path(os.environ.get("TEMP"), root=REPO_ROOT),
             reading.display_path(os.environ.get("TMP"), root=REPO_ROOT),
+            reading.display_path(os.environ.get("TMPDIR"), root=REPO_ROOT),
         ],
     }
 
@@ -1164,6 +1170,37 @@ def audit_records() -> list[dict]:
     return records
 
 
+def audit_mark() -> int:
+    """本轮开始前的审计记录数：`--keep` 会保留上一轮的 `.policy/audit.jsonl`。"""
+
+    return len(audit_records())
+
+
+def new_audit_records(mark: int) -> list[dict]:
+    """本轮**新增**的审计记录（本轮的判定只许用这一批）。
+
+    `--keep` 保留上一轮审计文件时，把**整个文件**当本轮证据会同时出三个后果：
+    (1) 本轮 Hook 没跑（或 edit 没发生）时 `last_governed` 返回上一轮的 block 记录，`block_ok`
+        于是用一个陈旧记录给出 pass —— "这一轮没验证过"被写成"已验证"；
+    (2) `if not records:` 这个门（"审计里一条记录都没有 = Hook 根本没被执行"）在 `--keep` 下
+        永远打不开，受限宿主不再产生 `environment_skipped` 与对应 reason；
+    (3) `sandbox_state(ran=bool(records), ...)` 会把上一轮的事实算成本轮读数。
+    快照取在本轮任何 dsh 运行之前（见 `main`），三个读数因此都属于"这一轮"。
+    """
+
+    return audit_records()[mark:]
+
+
+def capture_names(before: Iterable[str]) -> list[str]:
+    """本轮**新增**的采集文件：与审计同一条口径（`--keep` 不把上一轮的算作本轮读数）。"""
+
+    directory = PROJECT / ".policy" / "captures"
+    if not directory.is_dir():
+        return []
+    known = set(before)
+    return sorted(item.name for item in directory.glob("*.json") if item.name not in known)
+
+
 def last_governed(records: list[dict], tool: str) -> dict | None:
     found = None
     for record in records:
@@ -1246,11 +1283,18 @@ def main(argv: list[str] | None = None) -> int:
     build_project(keep=args.keep)
     controller = PROJECT / "src" / "shop" / "order_controller.py"
 
+    # `--keep` 保留上一轮的审计与采集：本轮只认**新增**的那一批（见 new_audit_records 的三个后果）。
+    audit_start = audit_mark()
+    captures_dir = PROJECT / ".policy" / "captures"
+    captures_start = (
+        {item.name for item in captures_dir.glob("*.json")} if captures_dir.is_dir() else set()
+    )
+
     # ---- 场景 1：bad 编辑必须被阻断，文件哈希不变 -------------------------------
     block_before = sha256(controller)
     block_exit = run_dsh(BLOCK_PROMPT, "block-run.txt", isolated_home=args.isolated_home)
     block_after = sha256(controller)
-    records = audit_records()
+    records = new_audit_records(audit_start)
     block_record = last_governed(records, "edit")
 
     block_ok = (
@@ -1266,7 +1310,7 @@ def main(argv: list[str] | None = None) -> int:
     allow_before = sha256(controller)
     allow_exit = run_dsh(ALLOW_PROMPT, "allow-run.txt", isolated_home=args.isolated_home)
     allow_after = sha256(controller)
-    records = audit_records()
+    records = new_audit_records(audit_start)
     allow_record = last_governed(records, "edit")
 
     allow_ok = (
@@ -1302,11 +1346,7 @@ def main(argv: list[str] | None = None) -> int:
             "file_sha256_after": allow_after,
             "audit": describe(allow_record),
         },
-        "captured_payloads": sorted(
-            item.name for item in (PROJECT / ".policy" / "captures").glob("*.json")
-        )
-        if (PROJECT / ".policy" / "captures").is_dir()
-        else [],
+        "captured_payloads": capture_names(captures_start),
         "logs": sorted(item.name for item in LOGS.glob("*.txt")),
         "timestamp": clock.datetime.now(clock.timezone.utc).isoformat().replace("+00:00", "Z"),
     }

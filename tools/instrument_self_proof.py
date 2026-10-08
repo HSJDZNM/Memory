@@ -464,9 +464,31 @@ def _gate_steps(repo: Path) -> tuple:
             document = yaml.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as error:
             raise InstrumentChecksError(str(path) + " 读不出来：" + str(error)) from error
+        # 形状守卫：`document` 是列表、`jobs` 是列表、job/step 不是映射，都会让下面这几行抛
+        # AttributeError——`enumerate_objects` 只把 InstrumentChecksError 转成"读不出来"这一档，
+        # 于是整支仪器以 traceback + 非 0 退出收场，破坏"退出码恒 0"的契约。
+        # 这里把形状漂移显式抬成 InstrumentChecksError（同一档降级，读数里说得清是哪份文件）。
+        if document is not None and not isinstance(document, dict):
+            raise InstrumentChecksError(
+                str(path) + " 的顶层不是映射（得到 " + type(document).__name__ + "）：读不出步骤清单"
+            )
         jobs = (document or {}).get("jobs") or {}
-        for job in jobs.values():
+        if not isinstance(jobs, dict):
+            raise InstrumentChecksError(
+                str(path) + " 的 jobs 不是映射（得到 " + type(jobs).__name__ + "）：读不出步骤清单"
+            )
+        for job_name, job in jobs.items():
+            if not isinstance(job, dict):
+                raise InstrumentChecksError(
+                    str(path) + " 的 job " + str(job_name) + " 不是映射（得到 "
+                    + type(job).__name__ + "）"
+                )
             for step in job.get("steps") or []:
+                if not isinstance(step, dict):
+                    raise InstrumentChecksError(
+                        str(path) + " 的 job " + str(job_name) + " 里有非映射的步骤（得到 "
+                        + type(step).__name__ + "）"
+                    )
                 run = step.get("run")
                 if isinstance(run, str) and run.strip():
                     name = str(step.get("name", "")) or "<未命名步骤>"
@@ -741,7 +763,11 @@ def evaluate(
             "mutation_id 缺失且 gap_note 缺失（含空白串）", str(table_error)
         )
     else:
-        bare = [row for row in rows if row.mutation_id is None and not row.gap_note_present]
+        # 空白串按**缺失**处理（与 gap_note_present、态③ 的 `if row.mutation_id`、
+        # objects.without_either 的 `not row.mutation_id` 同一个谓词）：
+        # 旧写法只判 `is None`，于是 `mutation_id: ""` 在这一格被算成"有自证"、在态③ 与
+        # checks[] 里被算成"没有"，同一份载荷自相矛盾（② 的计数因此少报红行）。
+        bare = [row for row in rows if not row.mutation_id and not row.gap_note_present]
         no_self_proof = _cell(
             status=STATUS_AVAILABLE,
             count=len(bare),
@@ -1016,8 +1042,13 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     # 人类输出只报计数（2026-10-03 裁定第 3 条）：逐条明细只在 --json 里。
     for key in RED_KEYS:
         cell = payload["red_conditions"][key]
-        mark = "unavailable" if cell["status"] != STATUS_AVAILABLE else str(cell["count"])
-        print("  [" + ("红" if cell["is_red"] else "ok") + "] " + key + ": " + mark)
+        if cell["status"] != STATUS_AVAILABLE:
+            # "未评"要有自己的标签：`is_red` 为 False 只表示"没有证据说它红"，印成 `[ok]` 就是
+            # 把"未评"说成了"通过"（与同一行的 unavailable、机器行里的 unavailable 自相矛盾），
+            # 正是本模块"未评不是不红"这条纪律要防的读法。
+            print("  [未评] " + key + ": unavailable")
+            continue
+        print("  [" + ("红" if cell["is_red"] else "ok") + "] " + key + ": " + str(cell["count"]))
     print("  " + payload["headline"]["machine_line"])
     # 跨文件契约：ci_local 的 report_only_hits() 读这条 HITS: 行（同 exemption_expiry）。
     print("  " + hits_line(payload))

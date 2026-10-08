@@ -149,3 +149,65 @@ def test_manifest_entry_without_fields_is_reported(tmp_root: Path) -> None:
     assert "manifest 校验失败" in completed.stdout
     assert "字节数不符" in completed.stdout, output
     assert completed.returncode == 1
+
+def test_indented_fence_hides_its_links(tmp_root: Path) -> None:
+    """缩进 0–3 空格的围栏（列表里很常见）同样要剥掉：块内的断链不算断链。
+
+    这里刻意用 `~~~`：缩进的反引号围栏会被行内代码规则（`` `[^`]*` ``）顺带吃掉，
+    测不到"围栏没剥"这条路径；波浪号围栏没有这个副作用，能真正区分修前修后。
+    """
+
+    root = _mirror(tmp_root)
+    (root / "bad.md").unlink()
+    _write(root / "target.md", "# 目标" + chr(10))
+    (root / "good.md").write_text(
+        "# 好文件" + chr(10) + chr(10)
+        + "   ~~~" + chr(10)
+        + "   [示例](/definitely-missing.md)" + chr(10)
+        + "   ~~~" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    completed = _run(tmp_root)
+
+    assert "断链" not in completed.stdout, completed.stdout
+
+
+def test_four_backtick_fence_containing_a_triple_backtick_line(tmp_root: Path) -> None:
+    """四反引号围栏里的 ``` 行不算关闭：块内的断链不许被查出来。"""
+
+    root = _mirror(tmp_root)
+    (root / "bad.md").unlink()
+    _write(root / "target.md", "# 目标" + chr(10))
+    (root / "good.md").write_text(
+        "# 好文件" + chr(10) + chr(10)
+        + chr(96) * 4 + chr(10)
+        + chr(96) * 3 + chr(10)
+        + "[示例](/definitely-missing.md)" + chr(10)
+        + chr(96) * 4 + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    completed = _run(tmp_root)
+
+    assert "断链" not in completed.stdout, completed.stdout
+
+
+def test_a_real_broken_link_is_still_reported(tmp_root: Path) -> None:
+    """阳性对照：正文里的断链照旧报出来（这次收口不许把真问题一起吃掉）。"""
+
+    root = _mirror(tmp_root)
+    (root / "bad.md").unlink()
+    _write(root / "target.md", "# 目标" + chr(10))
+    (root / "good.md").write_text(
+        "# 好文件" + chr(10) + chr(10) + "[真断链](/nope.md)" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    completed = _run(tmp_root)
+
+    assert "断链" in completed.stdout, completed.stdout
+    assert "/nope.md" in completed.stdout

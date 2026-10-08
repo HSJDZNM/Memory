@@ -458,7 +458,7 @@ def test_feedback_and_audit_contain_no_absolute_paths_or_secrets(dsh_config_path
                 "file_path": outside.as_posix(),
                 "old_string": "a",
                 # 合成值：这里验证的是"凭据被脱敏"与"越界被拒绝"，不是真凭据
-                "new_string": "import repository  # sk-livekey000000000000",  # secret-scan: allow
+                "new_string": "import repository  # sk-livekey000000000000",  # secret-scan: allow（合成值：验证凭据脱敏与越界拒绝，不是真凭据）
             },
         )
     )

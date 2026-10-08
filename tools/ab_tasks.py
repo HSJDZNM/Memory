@@ -431,7 +431,9 @@ def _run(argv: list[str], *, cwd: Path, timeout: int = 900, env: dict | None = N
                 "stdout": completed.stdout, "stderr": completed.stderr,
                 "stdout_tail": completed.stdout[-4000:], "stderr_tail": completed.stderr[-2000:],
                 "timed_out": False}
-    except subprocess.TimeoutExpired as exc:
+    except subprocess.TimeoutExpired:
+        # 不绑定异常：这一档的理由由**配置的超时值**给出（"timeout after Ns"），比异常原文更准；
+        # 绑定一个没人用的名字只会让 ruff 的 F841 挂着（账外发现，见提交正文）。
         return {"exit_code": None, "seconds": round(time.time() - started, 2),
                 "stdout": "", "stderr": "", "stdout_tail": "",
                 "stderr_tail": "timeout after %ss" % timeout, "timed_out": True}
@@ -526,9 +528,6 @@ def run_oracle(instance_id: str, *, root: Path, phase: str, python: str = DEFAUL
 
 
 
-OUTCOME_RE = None  # 延迟构造：见 _outcomes()
-
-
 def _outcomes(text: str) -> dict[str, str]:
     """从 pytest -rA 的短摘要里解析 node id → 结果（PASSED / FAILED / ERROR / SKIPPED）。"""
 
@@ -551,7 +550,6 @@ def _collect(instance_id: str, *, root: Path, python: str) -> dict:
     result = _run(argv, cwd=directory, timeout=900, env=payload["test_command"]["env"])
     text = result["stdout"] + result["stderr"]
     ids = [line.strip() for line in result["stdout"].splitlines() if "::" in line and not line.startswith(" ")]
-    errors = len([line for line in text.splitlines() if line.startswith("ERROR ") or " error" in line.lower() and "errors" in line.lower()])
     needs: list[str] = []
     for line in text.splitlines():
         marker = "No module named "

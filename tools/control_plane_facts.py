@@ -88,8 +88,16 @@ FACTS_TABLE_SCHEMA_VERSION = "1"
 
 DEFAULT_FACTS = REPO / "validation" / "control-plane-facts.yaml"
 DEFAULT_CHECKS = isp.DEFAULT_CHECKS
-EXAMPLE_CONFIG = REPO / "examples" / "dsh" / "dsh-adapter.yaml"
-EXAMPLE_HOOKS = REPO / "examples" / "dsh" / "hooks.json"
+def _example_paths(root: Path) -> tuple[Path, Path]:
+    """`examples/dsh` 的两个文件**相对被检根**取（旧写法把 REPO 的绝对路径写死成模块常量）。
+
+    混用两个基准会让 `evaluate(repo=…)` 的读数变成**从两棵树缝出来的**：枚举 `root/tests`，
+    却读 REPO 的 adapter 配置与示例预算；而 `_display(EXAMPLE_HOOKS, root=root)` 在 `root != REPO`
+    时把示例路径折成"工作区之外"的占位符，本地通道的 `matched` 永远对不上。
+    """
+
+    base = root / "examples" / "dsh"
+    return base / "dsh-adapter.yaml", base / "hooks.json"
 
 STATUS_AVAILABLE = reading.STATUS_AVAILABLE
 STATUS_UNAVAILABLE = reading.STATUS_UNAVAILABLE
@@ -279,8 +287,13 @@ def load_facts(path: Path, *, display: Optional[str] = None) -> FactsTable:
     label = display if display is not None else path.name
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise FactsTableError("facts 表读不到：" + label + "：" + str(error)) from error
+    except (OSError, UnicodeDecodeError) as error:
+        # UnicodeDecodeError 是 ValueError 子类，不属于 OSError：非 UTF-8 的 facts 表会**逃出**
+        # 这条声明式错误通道，变成一段栈回溯（本文件 _readers_of 早就按 (OSError,
+        # UnicodeDecodeError) 兜了，这里是同一口径的补齐）。
+        raise FactsTableError(
+            "facts 表读不到（或不是 UTF-8）：" + label + "：" + str(error)
+        ) from error
     try:
         document = yaml.safe_load(text)
     except yaml.YAMLError as error:
@@ -394,7 +407,7 @@ def cross_source_test_paths(root: Path) -> dict:
             path.relative_to(root).as_posix() for path in (root / "tests").rglob("*.py")
         )
         layout = load_test_layout(root=root)
-        config = load_config(EXAMPLE_CONFIG)
+        config = load_config(_example_paths(root)[0])
     except (RegistryError, DshEventError, OSError) as error:
         return {
             "status": STATUS_UNAVAILABLE,
@@ -544,6 +557,11 @@ def cross_source_tool_tables(root: Path) -> dict:
             (root / "registry" / "tool-registry.yaml").read_text(encoding="utf-8")
         )
         registry_tools = registry_document["tools"]
+        # 这条提取必须留在同一个 try 里：它是本函数**唯一**直接 item["id"] 的地方（下面 by_agent /
+        # orchestrator 两处都用 .get 防御）。放在 try 之外时，一条缺 id 的注册表条目会以 KeyError
+        # 逃出去 —— CLI 变成 traceback + 非 0 退出，与本模块"退出码恒 0、读不出来降级为 unavailable"
+        # 的口径相反（读数读不出来是显式状态，不是崩溃）。
+        registry_ids = [str(item["id"]) for item in registry_tools]
         manifests: dict = {}
         manifest_paths: dict = {}
         for path in sorted((root / "adapters").glob("*/manifest.yaml")):
@@ -556,13 +574,21 @@ def cross_source_tool_tables(root: Path) -> dict:
         approved_adapters = json.loads(
             (root / "adapters" / "approved.json").read_text(encoding="utf-8")
         )
-    except (OSError, KeyError, TypeError, yaml.YAMLError, json.JSONDecodeError) as error:
+    except (
+        OSError,
+        UnicodeDecodeError,
+        KeyError,
+        TypeError,
+        yaml.YAMLError,
+        json.JSONDecodeError,
+    ) as error:
+        # 非 UTF-8 的注册表 / manifest / 已审核清单同样要落到"读不出来"这一档，
+        # 而不是以 UnicodeDecodeError 逃出去（C2 的其余读取都在这一个 try 里）。
         return {
             "status": STATUS_UNAVAILABLE,
             "reason": "工具表读不出来：" + type(error).__name__ + "：" + str(error),
         }
 
-    registry_ids = [str(item["id"]) for item in registry_tools]
     by_agent: dict = {}
     for item in registry_tools:
         by_agent.setdefault(str(item.get("agent")), []).append(str(item.get("tool_name")))
@@ -807,12 +833,12 @@ def budget_inventory(root: Path, hooks_rel: str) -> dict:
 def cross_source_budget(root: Path, *, extra_instances: Sequence[tuple]) -> dict:
     """C3：预算不等式两套结论（仓库内 examples/dsh 恒读 + 显式给的实例）。"""
 
-    pairs = [(EXAMPLE_CONFIG, EXAMPLE_HOOKS), *extra_instances]
+    pairs = [_example_paths(root), *extra_instances]
     rendered = [
         budget_instance(config_path, hooks_path, root=root)
         for config_path, hooks_path in pairs
     ]
-    inventory = budget_inventory(root, _display(EXAMPLE_HOOKS, root=root))
+    inventory = budget_inventory(root, _display(_example_paths(root)[1], root=root))
     violated = [
         {
             "instance": item["instance"],
@@ -1319,8 +1345,12 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     # 人类输出只报计数（2026-10-03 裁定第 3 条的同一条口径）：逐条明细只在 --json 里。
     for key in RED_KEYS:
         cell = payload["red_conditions"][key]
-        mark = "unavailable" if cell["status"] != STATUS_AVAILABLE else str(cell["count"])
-        print("  [" + ("红" if cell["is_red"] else "ok") + "] " + key + ": " + mark)
+        if cell["status"] != STATUS_AVAILABLE:
+            # "未评"要有自己的标签：`is_red` 在未评时恒为 False（本文件第 894 行就是这么算的），
+            # 印成 `[ok]` 会把"没有证据说它红"读成"通过"——与机器行里的 unavailable 自相矛盾。
+            print("  [未评] " + key + ": unavailable")
+            continue
+        print("  [" + ("红" if cell["is_red"] else "ok") + "] " + key + ": " + str(cell["count"]))
     print("  " + payload["headline"]["machine_line"])
     print("  " + hits_line(payload))
     print("  " + payload["headline"]["text"])

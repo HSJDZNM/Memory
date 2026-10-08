@@ -180,6 +180,30 @@ def tmp_children() -> list[Path]:
     )
 
 
+def _tmp_identity() -> tuple[int, int, int] | None:
+    """`.tmp/` 自身的身份读数 `(st_dev, st_ino, st_ctime_ns)`（**不跟随**链接）；读不到返回 None。
+
+    为什么带上创建时间：前两个数是设备 + 文件索引，足以区分"换了另一个目录"；再把 `st_ctime_ns`
+    一并记上，是为了让"原地删掉再建一个"这种（索引可能被复用的）情形也多一道区分。
+    这道复核的**边界**要说清：它只能发现"路径现在指的东西与枚举时不同"；若攻击者能让三者全部
+    保持一致，路径式复核就看不出来——那种情形要靠 POSIX 的 fd 相对删除（见下）才能从根上堵住。
+
+    用途：枚举 `.tmp/` 的子项之后、真正删除之前复核同一个身份。`.tmp` 若在这两步之间被换成
+    junction / 符号链接，子项路径会**解析到仓库外**，而 `_remove()` 只复核叶子是不是链接——
+    它看不到"祖先被换了"。身份不一致就一项都不删（并计入既有 blocked 账）。
+
+    更强的是 POSIX 上以目录 fd 为基准删除（`os.open(dir, os.O_DIRECTORY | os.O_NOFOLLOW)` +
+    `os.unlink(name, dir_fd=…)` / `os.rmdir(name, dir_fd=…)`）：那条路本机（Windows）验证不了，
+    所以这里只实现可移植的 stat 复核，不写一个本机无法验证的实现。
+    """
+
+    try:
+        info = os.stat(tmp_dir(), follow_symlinks=False)
+    except OSError:
+        return None
+    return (info.st_dev, info.st_ino, info.st_ctime_ns)
+
+
 def _touches_tmp(path: Path) -> bool:
     """这个候选是不是“共享状态”：就是 `.tmp/` 本身，或者落在它里面。
 
@@ -375,7 +399,26 @@ def _clean(dry_run: bool, plan: list[Path], *, include_venv: bool = False) -> in
             print("跳过（不在白名单）:", relative)
             skipped += 1
             continue
-        for target in removal_targets(path):
+        # 枚举 `.tmp/` 之前先记下它的身份，删除前逐项复核（[22]：枚举 → 删除之间的窗口）。
+        guard = _tmp_identity() if path == tmp_dir() else None
+        if path == tmp_dir() and guard is None:
+            print(f"展开失败（读不到 .tmp 的身份）: {relative}")
+            blocked += 1
+            continue
+        try:
+            targets = removal_targets(path)
+        except OSError as error:
+            # `.tmp/` 的展开要 iterdir()：权限错误、或扫描中条目消失，都会在这里抛 OSError。
+            # 其余删除步骤（`_remove`）都把自己的错误交回来入账，展开这一步不能例外——
+            # 否则整轮清理以栈回溯收场，连"共删了几项、失败几项"的汇总都不打印（条目 [23]）。
+            print(f"展开失败（{type(error).__name__}）: {relative}")
+            blocked += 1
+            continue
+        for target in targets:
+            if guard is not None and _tmp_identity() != guard:
+                print(f"展开目标已变化（.tmp 在枚举后被替换，一项都不删）: {relative}")
+                blocked += 1
+                break
             target_relative = target.relative_to(REPO_ROOT).as_posix()
             if dry_run:
                 print("将删除:", target_relative)

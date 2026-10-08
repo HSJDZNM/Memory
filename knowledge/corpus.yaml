@@ -146,7 +146,11 @@ quarantine: []
 # 这里登记的是"这条规则是哪一段镜像原文提炼来的"：`(dataset, source_path, heading_path)` 由索引器
 # 解析成稳定的 chunk_id 写入 rule_sources 表（按标题路径**前缀**匹配；解析不到则索引 run 失败，不静默）。
 #
-# 现状（2026-09）：`policies/**` 里有 39 条规则来自 6 篇 PEP 与 15 篇 OWASP Cheat Sheet 镜像。
+# 现状（2026-10-08 实测）：`policies/**` 共 43 条规则，其中 38 条由镜像原文提炼（source.kind=standard）
+# 并登记在下面：DOC 4 + STYLE 15 = 19 条来自 python-pep-code-style 的 2 篇 PEP
+# （pep-8-python-code / pep-257-docstrings），SEC 19 条来自 owasp-cheatsheets 的 15 篇 Cheat Sheet；
+# 其余 5 条（ARCH-001 / STYLE-001 / STYLE-002 / TESTING-001 / TESTING-002）是项目自订规则，没有镜像出处。
+# 老注释里的"39 条规则来自 6 篇 PEP"与数据不符：条数是 38，规则引用到的 PEP 只有 2 篇。
 # 登记它把"文档 → 规则"这条链路接通：`python -m retrieval.cli rules --rule SEC-008` 能查回出处，
 # `--chunk <chunk_id>` 能反向查出"这段原文被哪条规则引用了"。
 #

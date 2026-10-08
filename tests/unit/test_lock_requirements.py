@@ -7,6 +7,7 @@ pip 当成"没有依赖的选项行"丢弃（pip 只给一句 warning）——�
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import check_repo_consistency
@@ -41,12 +42,25 @@ def test_hash_lines_are_continuations_of_their_pin():
         assert all(line.lstrip().startswith("--hash=") for line in lines[1:])
 
 
-def test_a_package_without_hashes_stays_a_single_line():
-    entries = lock_requirements.lock_entries(
-        {"install": [{"metadata": {"name": "demo", "version": "1.0"}}]}
-    )
+def test_a_package_without_hashes_is_refused_not_written_as_a_bare_pin():
+    """没有哈希的条目**拒绝出锁**（2026-10-08 口径推翻，带证据）。
 
-    assert entries == [("demo", ["demo==1.0"])]
+    旧用例断言"没有哈希就写成一条单行 pin"。但本文件产出的锁是给 `pip install --require-hashes`
+    用的（头部就写着这条用法）：混进一条没有哈希的 pin，pip 会**整份拒绝**，而读文件的人看不出
+    哪一条没被校验——"看起来带了哈希的锁"比没有锁更糟。因此该行为判为缺陷，改成显式报错。
+    旧行为来自可编辑 / VCS / 本地安装在 pip 报告里带 `dir_info` / `vcs_info` 而不是
+    `archive_info.hashes` 的真实形态，不是假设。
+    """
+
+    import pytest
+
+    with pytest.raises(lock_requirements.LockError) as error:
+        lock_requirements.lock_entries(
+            {"install": [{"metadata": {"name": "demo", "version": "1.0"}}]}
+        )
+
+    assert "demo" in str(error.value)
+    assert "没有哈希" in str(error.value)
 
 
 def test_generated_lock_is_readable_by_the_repo_parser(tmp_root, monkeypatch):
@@ -55,6 +69,11 @@ def test_generated_lock_is_readable_by_the_repo_parser(tmp_root, monkeypatch):
     output = tmp_root / "requirements.lock"
     report_path = tmp_root / "report.json"
     report_path.write_text(json.dumps(REPORT), encoding="utf-8", newline="\n")
+    # 声明一份只含这两个包的 requirements.in：本用例测的是「锁与解析器」的跨文件契约，
+    # 不测「报告是否覆盖声明」（那是下一个用例的事）。
+    declared = tmp_root / "requirements.in"
+    declared.write_text("pydantic>=2.9,<3\nPyYAML>=6.0,<7\n", encoding="utf-8", newline="\n")
+    monkeypatch.setattr(lock_requirements, "REQUIREMENTS_IN", declared)
 
     assert lock_requirements.main(["lock_requirements.py", str(report_path), str(output)]) == 0
     text = output.read_text(encoding="utf-8")
@@ -67,3 +86,64 @@ def test_generated_lock_is_readable_by_the_repo_parser(tmp_root, monkeypatch):
 
     assert locked == {"pyyaml": "6.0.3", "pydantic": "2.13.5"}
     assert unparsed == []
+
+
+def test_requirements_in_is_anchored_to_the_repo(monkeypatch, tmp_root):
+    """`requirements.in` 锚在仓库根：换 cwd 不能读不到、更不能读到别处的同名文件。
+
+    旧写法是 `Path("requirements.in")`（相对 cwd）：从 tools/ 等目录跑会 FileNotFoundError，
+    而 cwd 里恰好有另一份 requirements.in 时，锁文件头部记的摘要描述的是**错的那一份**。
+    """
+
+    monkeypatch.chdir(tmp_root)
+
+    assert lock_requirements.REQUIREMENTS_IN.is_absolute()
+    assert lock_requirements.REQUIREMENTS_IN.is_file()
+    assert lock_requirements.requirements_digest() == hashlib.sha256(
+        lock_requirements.REQUIREMENTS_IN.read_bytes()
+    ).hexdigest()
+
+
+def test_the_singular_archive_info_hash_is_understood():
+    """老版本 pip 只给单数 `archive_info.hash`：认它，别当成「没有哈希」。"""
+
+    report = {
+        "install": [
+            {
+                "metadata": {"name": "PyYAML", "version": "6.0.3"},
+                "download_info": {"archive_info": {"hash": "sha256=" + "aa" * 32}},
+            }
+        ]
+    }
+
+    entries = lock_requirements.lock_entries(report)
+
+    assert [name for name, _lines in entries] == ["pyyaml"]
+    assert any("--hash=sha256:" + "aa" * 32 in line for line in entries[0][1])
+
+
+def test_a_report_missing_a_declared_requirement_is_refused(tmp_root, monkeypatch, capsys):
+    """`--dry-run --report` 省略「当前环境已满足」的依赖：缺席即拒绝出锁。
+
+    对应审查结论 tools/lock_requirements.py:53——旧实现只检测「一个包都不用装」这一种形态：
+    环境里已经装了一部分时，pip 报告里那部分依赖根本不出现，锁于是**静默缺包**，
+    而 `已写入 …，共 N 个包` 那行读数看不出来（N 只反映报告里有什么）。
+    本用例同时是 A/B 的 B 侧：旧实现下这份报告退出 0 并写出 2 个包的锁。
+    """
+
+    declared = tmp_root / "requirements.in"
+    declared.write_text(
+        "pydantic>=2.9,<3\nPyYAML>=6.0,<7\nhttpx>=0.27,<1\n", encoding="utf-8", newline="\n"
+    )
+    monkeypatch.setattr(lock_requirements, "REQUIREMENTS_IN", declared)
+
+    report_path = tmp_root / "report.json"
+    # REPORT 里只有 pydantic 与 PyYAML：httpx 已满足于当前环境，pip 不会列它。
+    report_path.write_text(json.dumps(REPORT), encoding="utf-8", newline="\n")
+    output = tmp_root / "requirements.lock"
+
+    assert lock_requirements.declared_names() == ["pydantic", "pyyaml", "httpx"]
+    assert lock_requirements.missing_declared(REPORT) == ["httpx"]
+    assert lock_requirements.main(["lock_requirements.py", str(report_path), str(output)]) == 2
+    assert not output.exists(), "拒绝出锁时不许留下半份锁"
+    assert "httpx" in capsys.readouterr().err

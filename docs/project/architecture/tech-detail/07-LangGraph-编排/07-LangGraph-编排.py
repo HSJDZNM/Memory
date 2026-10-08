@@ -89,44 +89,39 @@ TEMP = REPO_ROOT / ".tmp" / "tech-detail" / "07"
 shutil.rmtree(TEMP, ignore_errors=True)
 TEMP.mkdir(parents=True, exist_ok=True)
 
-import orchestration  # noqa: E402
 import orchestration_support as support  # noqa: E402
 from orchestration import langgraph_engine  # noqa: E402
 from orchestration.approvals import ApprovalGate  # noqa: E402
 from orchestration.checkpoint import JsonCheckpointStore, build_record, plan_resume  # noqa: E402
 from orchestration.errors import ResumeError  # noqa: E402
-from orchestration.client import (  # noqa: E402
-    DecisionOutcome,
-    PlatformReadiness,
-    RetrievalOutcome,
-    ScriptedPolicyClient,
-)
 from orchestration.errors import (  # noqa: E402
     STATUS_BY_CODE,
     EngineUnavailableError,
     NodeContractError,
     OrchestrationError,
 )
-from orchestration.graph import DEFAULT_SPEC, END, ROUTERS, GraphSpec, Router  # noqa: E402
-from orchestration.limits import LIMIT_RULES, LimitKind, charge  # noqa: E402
+from orchestration.graph import DEFAULT_SPEC, ROUTERS, GraphSpec, Router  # noqa: E402
+from orchestration.limits import LimitKind, charge  # noqa: E402
 from orchestration.models import (  # noqa: E402
     STATE_SCHEMA_VERSION,
     SUPPORTED_STATE_SCHEMA_VERSIONS,
     ArtifactKind,
     ArtifactRef,
     FailureCode,
+    FailureRef,
     GraphState,
     NodeId,
     PlatformSnapshot,
     RunLimits,
     RunStatus,
-    StageStatus,
     empty_state,
 )
-from orchestration.nodes import Change, NodeContext, NodeOutcome, ScriptedAuthor, TaskSpec  # noqa: E402
-from orchestration.runtime import OrchestrationConfig, build_assembly, select_engine  # noqa: E402
+# 只导入**被执行单元真正引用**的名字：讲解里提到的其它名字写在正文的反引号里，不由 import 提供——
+# 留着一批没人用的 import，读者会去找一个并不存在的用法（章首清单承诺"每条都能落到代码上"）。
+from orchestration.nodes import Change, ScriptedAuthor  # noqa: E402
+from orchestration.runtime import build_assembly, select_engine  # noqa: E402
 from orchestration.tools import PlatformToolRunner, RecordingToolRunner  # noqa: E402
-from policy.models import POLICY_VERSION, SCHEMA_VERSION, Decision  # noqa: E402
+from policy.models import POLICY_VERSION, SCHEMA_VERSION  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
 print("仓库根:", REPO_ROOT.name)
@@ -161,6 +156,13 @@ class RetryStore:
     def save(self, record):
         import time
 
+        # `range(self.attempts)` 在 `attempts <= 0` 时是**空的**：函数会掉出末尾返回 None——
+        # 调用方（引擎的写前记账：副作用之前先把意图刷盘）以为意图已经落盘，实际一个字节都没写。
+        # 这种构造要在入口就被拒绝，而不是留一句"静默成功"。
+        if self.attempts <= 0:
+            raise ValueError(
+                f"attempts 必须 >= 1（收到 {self.attempts}）：否则 save 不会写任何东西"
+            )
         for attempt in range(self.attempts):
             try:
                 return self.inner.save(record)
@@ -242,10 +244,16 @@ def importers_of(package):
         if isinstance(node, ast.ImportFrom):
             return (node.module or "").split(".")[0] == package
         if isinstance(node, ast.Call):
+            # 同 00 章那把尺子的两个毛病，这里是**另一份拷贝**（两份实现要一起改）：
+            # ① 只看 `import_module`：`__import__("langgraph")` 与
+            #    `from importlib import import_module as im` 之后的 `im(...)` 都会漏判；
+            # ② `startswith(package)` 会把 `import_module("langgraph_extras")` 当成本包。
+            # 判据统一成"末段是 import_module / 内置 __import__，且**第一段**精确等于包名"。
             called = getattr(node.func, "attr", "") or getattr(node.func, "id", "")
-            if called == "import_module" and node.args:
+            tail = called.split(".")[-1]
+            if tail in ("import_module", "__import__") and node.args:
                 first = node.args[0]
-                return isinstance(first, ast.Constant) and str(first.value).startswith(package)
+                return isinstance(first, ast.Constant) and str(first.value).split(".")[0] == package
         return False
 
     found = []
@@ -275,7 +283,7 @@ print()
 
 # 第三条：引擎不可用时必须失败关闭，而不是"回落之后还说自己是 LangGraph"。
 installed = langgraph_engine.langgraph_version()
-reference_engine, reference_name = select_engine(
+_, reference_name = select_engine(
     "reference", executor=shell_executor("engine-reference"))
 auto_name = select_engine("auto", executor=shell_executor("engine-auto"))[1]
 assert reference_name == "reference"
@@ -436,9 +444,14 @@ probe_assembly = build_assembly(
     tool_runner=RecordingToolRunner((support.executed_outcome(),)),
 )
 print()
+# 打印行说的是"NodeContext.commit **已绑定**执行器的 save"，而原来的断言只查 `is not None`：
+# 绑到别的 callable 上会打印 False 却照样通过（这一章的前提正是"每句话都被断言钉住"）。
+assert probe_assembly.executor.context.commit == probe_assembly.executor.save, (
+    probe_assembly.executor.context.commit,
+    probe_assembly.executor.save,
+)
 print("写前记账的接线：NodeContext.commit 已绑定执行器的 save →",
       probe_assembly.executor.context.commit == probe_assembly.executor.save)
-assert probe_assembly.executor.context.commit is not None
 print("小结：状态只有引用与计数；checkpoint 是单文件原子替换 + 两道摘要校验；",
       "副作用之前先写意图并立刻刷盘（NodeContext.commit）。")
 
@@ -468,11 +481,24 @@ print("小结：状态只有引用与计数；checkpoint 是单文件原子替�
 # 4. 恢复：四种结论 + "拿不到凭据按变了处理"
 fresh = empty_state("phase8-task", limits=RunLimits(max_repair_rounds=2),
                     trace_id="trace-8", requirements=("target 满足规则集",))
-fresh = fresh.replace(stage=NodeId.TESTING, status=RunStatus.BLOCKED, failure=None,
-                      notes=("上一轮停在这里",))
+# **夹具里要带一个失败码**：这一节要说的是"恢复会清掉上一轮的失败码"，而 fixture 原来写的是
+# `failure=None`——`assert same.state.failure is None` 于是恒真（没有可清的东西）。带上一个与
+# `RunStatus.BLOCKED` 同档的真实码（`EVIDENCE_UNAVAILABLE` → blocked，见下面 STATUS_BY_CODE 那格）。
+fresh = fresh.replace(
+    stage=NodeId.TESTING,
+    status=RunStatus.BLOCKED,
+    failure=FailureRef(code=FailureCode.EVIDENCE_UNAVAILABLE, detail="上一轮证据不可用，停在验证前"),
+    notes=("上一轮停在这里",),
+)
 current = PlatformSnapshot(rule_set_hash=support.RULE_SET_HASH,
                            index_version=support.INDEX_VERSION, tool_schema_hash=None)
 base = build_record(fresh, engine="reference", sequence=9, compatibility=current)
+# 自证夹具**真的有失败码**：没有它，下面那条 `same.state.failure is None` 就是恒真断言
+# （"恢复了所以清掉了"与"本来就没有"读数相同）。
+# `build_record` 会把状态**序列化**进记录（`base.state` 是 dict），所以这里断言模型那份
+# （`fresh`）：夹具真的带上了失败码，"恢复了所以清掉了"与"本来就没有"才区分得开。
+assert fresh.failure is not None, fresh.failure
+assert base.state["failure"] is not None, base.state["failure"]
 
 rows = []
 
@@ -517,7 +543,7 @@ def judge(name, record, snapshot, *, expect_error=None):
 
 
 same = judge("凭据没变", base, current)
-assert same.mode.value == "resume" and same.state.failure is None
+assert same.mode.value == "resume" and same.state.failure is None, same.state.failure
 assert same.state.status is RunStatus.RUNNING and same.state.stage is NodeId.TESTING
 
 changed_rules = current.model_copy(update={"rule_set_hash": support.CHANGED_RULE_SET_HASH})
@@ -550,7 +576,7 @@ shape_only = judge("只改状态形状版本", build_record(
     compatibility=current.model_copy(update={"state_schema_version": "1.0"})), current)
 assert "state_schema_version" not in shape_only.changed, shape_only.changed
 
-print(pad("情形", 22) + pad("结论", 36) + pad("改变的维度", 34) + "恢复后的状态")
+print(pad("情形", 22) + pad("结论", 36) + pad("改变的维度", 28) + "恢复后的状态")
 print("-" * 132)
 for name, mode, changed, state_text in rows:
     print(pad(name, 22) + pad(mode, 36) + pad(changed, 28) + state_text)
@@ -739,7 +765,7 @@ repair_client = support.scripted_client(
     readiness_value=support.readiness(),
 )
 repair_runner = RecordingToolRunner((support.executed_outcome(), support.executed_outcome()))
-report, assembly, config, task = run_mini(
+report, _, _, _ = run_mini(
     "mini-repair", client=repair_client, runner=repair_runner, name="mini-repair")
 
 print(pad("节点", 24) + pad("标签", 8) + pad("状态", 9) + "输出摘要")
@@ -753,7 +779,10 @@ print("终态:", report.status.value, "| 报告里的引擎名:", report.engine,
 print("工具端口真的被调用了几次:", len(repair_runner.calls),
       "| 每次的工具:", [call.tool_id for call in repair_runner.calls])
 assert report.status is RunStatus.COMPLETED
-assert report.engine in ("reference", "langgraph")
+# §6 的说法是"报告里的引擎名**如实**：装配时声明 `engine="auto"`，报告就写它实际用的那个"，
+# 而原来这条 `in ("reference", "langgraph")` **两个都接受**：报告写死 reference、实际跑的是
+# langgraph 也照样绿（"如实"从未被验证）。判据要与 §2 选出来的那个名字对齐（`auto_name`）。
+assert report.engine == auto_name, (report.engine, auto_name)
 assert [step.node for step in report.steps] == [
     "requirement_analysis", "policy_retrieval", "architecture_planning", "implementation",
     "validation", "repair", "validation", "testing", "review",
@@ -828,7 +857,7 @@ print("小结：同一份图，第 0 轮被验证挡住就自动进入修复；�
 # 审计与台账各写在自己那个临时目录里，并**不执行**任何工具调用（只算绑定）。
 #
 # 输出怎么读：表格把同一件事的两种标识符并排打出来；接着是"参数改一个字符"之后两个值
-# 的变化（都变了 → 旧审批自动作废）；最后用 Phase 4 的 `ApprovalRecord` 写一份真审批，
+# 的变化——**`action_hash` 变了（旧审批自动作废），而编排层那把幂等键 `action_id` 不变**，这正是两者不能混为一谈的地方；最后用 Phase 4 的 `ApprovalRecord` 写一份真审批，
 # 交给门禁校验并消费一次。
 # ----------------------------------------------------------------------------
 
@@ -848,13 +877,15 @@ drifted = runner.binding(support.tool_request(
 namespace = Change(path=str(request.params["file_path"]),
                    content=str(request.params["content"]))
 
-print(pad("标识符", 22) + pad("值", 46) + "谁算的")
-print("-" * 124)
-print(pad("action_id（幂等键）", 22) + pad(namespace.digest().split(":")[-1][:16] + "…", 40)
+# 表宽按**最宽的值**取（action_hash 是 71 列：sha256: + 64 位十六进制）：表头与数据行共用同一个宽度，
+# 越宽的值不许把后一列顶走。
+print(pad("标识符", 22) + pad("值", 72) + "谁算的")
+print("-" * 132)
+print(pad("action_id（幂等键）", 22) + pad(namespace.digest().split(":")[-1][:16] + "…", 72)
       + "编排层节点：任务:轮次:改动摘要前 16 位")
-print(pad("action_id（平台侧）", 22) + pad(request.action_id, 40)
+print(pad("action_id（平台侧）", 22) + pad(request.action_id, 72)
       + "Phase 4 的动作 id：就是请求里的那个名字")
-print(pad("action_hash", 22) + pad(binding.action_hash, 40)
+print(pad("action_hash", 22) + pad(binding.action_hash, 72)
       + "Phase 4：schema + 参数 + 主体 + 权限 + 上下文摘要")
 print("-" * 124)
 assert binding.action_hash != binding.action_id
@@ -912,7 +943,7 @@ print("小结：人工审批绑的是平台口径的 action_hash（覆盖 schema
 #    一律报错（不是忽略）。相同输入得到**逐字节相同**的状态——状态里没有墙钟字段。
 # 3. **checkpoint 是单文件 + 原子替换**：先写 `<task_id>.checkpoint.tmp` 再 `os.replace`，
 #    记录带 `state_digest` 与 `record_digest` 两道校验；它有自己的 `STATE_SCHEMA_VERSION`
-#    （当前 1.0，**不跟随平台阶段**）。副作用之前先写"意图"并立刻刷盘（`NodeContext.commit`），
+#    （**不跟随平台阶段**；具体取值见本章第一格打印的 `STATE_SCHEMA_VERSION`——正文写死版本号会随代码漂移，这里只留口径）。副作用之前先写"意图"并立刻刷盘（`NodeContext.commit`），
 #    恢复时才可能发现"开工未结算"。
 # 4. **恢复比的是"当前平台"的凭据**：规则集 / 索引变了 → `revalidate`（清掉旧 trace 与旧验证
 #    结果，回到检索节点重评，不沿用旧 allow）；工具 schema 变了 → `reapprove`（旧审批作废）；

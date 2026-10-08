@@ -54,6 +54,26 @@ def is_mirrored(path: Path) -> bool:
     return any(normalized.startswith(prefix) for prefix in MIRRORED_PREFIXES)
 
 
+def repo_root() -> Path | None:
+    """仓库根：`git rev-parse --show-toplevel`（**不靠 cwd**）；失败返回 None（调用方失败关闭）。
+
+    为什么必须显式取：`git ls-files` 不带 `--full-name` 时把输出**限制在当前目录**、路径也相对它，
+    于是从 `docs/` 跑一次只检查 363 个文件（全仓 619），`MIRRORED_PREFIXES`（仓库相对）全部匹配不上，
+    上游镜像被当成本仓库文本报出一堆假问题——而汇总照样打印成一次"全仓"结论。
+    """
+
+    completed = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return None
+    return Path(completed.stdout.strip())
+
+
 def _git_listed(args: list[str]) -> set[str] | None:
     """跑一次 `git ls-files` 并返回路径集合；**git 失败返回 None**（调用方必须失败关闭）。
 
@@ -62,8 +82,11 @@ def _git_listed(args: list[str]) -> set[str] | None:
     门禁放行（pre-push 钩子继承调用方环境）。
     """
 
+    root = repo_root()
     completed = subprocess.run(
-        ["git", "ls-files", "-z", *args],
+        # `--full-name` + `cwd=仓库根`：清单恒为仓库相对，也与从哪个目录调用无关。
+        ["git", "ls-files", "-z", "--full-name", *args],
+        cwd=str(root) if root is not None else None,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -102,11 +125,22 @@ def main(argv: list[str]) -> int:
     # 两个 git 清单都必须成功：失败时不能退化成「没有文件可查」，也不能把被跟踪的文件当成
     # 未跟踪（见 _git_listed 的说明）。
     known = committed_paths()
-    if known is None:
-        print("git ls-files --cached 执行失败：无法区分仓库内容与临时文件，按失败关闭处理")
+    if known is None or not known:
+        # **空清单同样要失败关闭**：`GIT_INDEX_FILE` 指向不存在的索引时，`git ls-files --cached`
+        # 会空手而归**且退出 0**（`_git_listed` 只按退出码返回 None，看不出这一种）。
+        # 放它过去的话，被跟踪文件会被当成未跟踪：读不到就记一次跳过、门禁放行——
+        # 而"没东西可查"从来不等于"查过了"。
+        print("git ls-files --cached 清单为空或执行失败：没东西可查不等于查过了，按失败关闭处理")
+        return 1
+    # 仓库根是这一轮所有路径的基准：清单是仓库相对的（`--full-name`），读取也要按同一个根解析——
+    # 否则从子目录调用时读的是"子目录下的同名路径"，或者干脆读不到。
+    root = repo_root()
+    if root is None:
+        print("git rev-parse --show-toplevel 执行失败：无法确定仓库根，按失败关闭处理")
         return 1
     if explicit:
-        targets = [Path(item) for item in explicit]
+        # 显式路径按调用者的 cwd 解析（那是命令行语义），**打印仍用调用者写的那个字符串**。
+        targets = [(Path(item).resolve(), str(Path(item))) for item in explicit]
     else:
         listed = tracked_files()
         if listed is None:
@@ -115,24 +149,38 @@ def main(argv: list[str]) -> int:
         if not listed:
             print("git 没有列出任何文件：不把「没东西可查」当成「查过了」")
             return 1
-        targets = [Path(item) for item in sorted(listed)]
+        # 读的是**按仓库根解析**的绝对路径（从子目录调用也读得到），打印仍用 git 给的仓库相对路径。
+        targets = [((root / item).resolve(), str(Path(item))) for item in sorted(listed)]
     problems: list[str] = []
     unreadable: list[str] = []
+    vanished: list[str] = []
     checked = 0
     skipped = 0
+    binary = 0
 
-    for path in targets:
+    for path, display in targets:
         if path.suffix.lower() in BINARY_SUFFIXES:
+            # 二进制既不是"查过"也不是"跳过第三方镜像"：单独计数，否则汇总里"检查 N 个"会把
+            # 它藏起来——`check_text_conventions.py some/file.bin`（哪怕名字敲错）会打印
+            # "检查 0 个文本文件，问题 0 处"并退 0，读起来像"查过了"。
+            binary += 1
             continue
-        if not explicit and not include_mirrors and is_mirrored(path):
+        if not explicit and not include_mirrors and is_mirrored(Path(display)):
             skipped += 1
             continue
         if not path.is_file():
             # 工作树里没有这个文件。被跟踪 / 显式指定的路径**不是「没有违规」，而是「无法证明」**：
             # 内容可能仍在索引与即将推送的提交里（实测：提交一个带行尾空白的文件、再从工作树
             # rm 掉，旧实现会打印「检查 0 个文本文件、问题 0 处」并放行推送）。
-            if explicit or path.as_posix() in known:
-                problems.append(f"{path}: 工作树里不存在，无法检查文本约定")
+            # 清单里的路径与实际路径可能一个是仓库相对、一个是绝对（用例注入的就是绝对路径），
+            # 两种写法都认：这里问的是"这个文件在不在提交清单里"，不是"字符串长什么样"。
+            if explicit or display in known or path.as_posix() in known:
+                problems.append(f"{display}: 工作树里不存在，无法检查文本约定")
+            else:
+                # 未跟踪、且此刻在工作树里找不到（"先列出、后消失"的窗口，或悬空链接）：
+                # 旧实现这里什么都不记——文件**无痕消失**，与模块 docstring 的"绝不静默"相反。
+                # 与"未跟踪且读取失败"同类（都是"没查成"），但原因要写清是"不存在"而非"读失败"。
+                vanished.append(path.as_posix())
             continue
         # 只检查文本文件：含 NUL 视为二进制
         try:
@@ -142,12 +190,13 @@ def main(argv: list[str]) -> int:
             #   - 被跟踪文件 / 显式指定的路径是门禁的责任对象 → 记问题，失败关闭；
             #   - 未跟踪文件（常是别的进程握着的临时文件，本仓库也要求它不该落在工作树里）
             #     不是仓库内容 → 单独记一条跳过，连同原因打进报告。
-            if explicit or path.as_posix() in known:
-                problems.append(f"{path}: 读取失败（{type(error).__name__}）")
+            if explicit or display in known or path.as_posix() in known:
+                problems.append(f"{display}: 读取失败（{type(error).__name__}）")
             else:
-                unreadable.append(f"{path}: {type(error).__name__}")
+                unreadable.append(f"{display}: {type(error).__name__}")
             continue
         if b"\x00" in data[:4096]:
+            binary += 1
             continue
         checked += 1
         # .bat / .cmd / .ps1 只豁免**行尾**：.editorconfig/.gitattributes 对这三个后缀
@@ -174,9 +223,15 @@ def main(argv: list[str]) -> int:
         print(problem)
     for item in unreadable:
         print(f"跳过（未跟踪且读取失败）: {item}")
+    for item in vanished:
+        print(f"跳过（未跟踪且工作树里不存在）: {item}")
     suffix = f"，跳过第三方镜像 {skipped} 个" if skipped else ""
+    if binary:
+        suffix += f"，跳过二进制 {binary} 个"
     if unreadable:
         suffix += f"，跳过未跟踪且读取失败 {len(unreadable)} 个"
+    if vanished:
+        suffix += f"，跳过未跟踪且工作树里不存在 {len(vanished)} 个"
     print(f"检查 {checked} 个文本文件，问题 {len(problems)} 处{suffix}")
     return 1 if problems else 0
 

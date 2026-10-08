@@ -630,3 +630,69 @@ def test_dedup_scales_with_the_candidate_count() -> None:
 
     assert len(kept) == 1000
     assert elapsed < 1.0, "3000 条候选不该要一秒以上（旧实现实测 1.9s）"
+
+def test_tmp_expansion_failure_is_accounted_not_a_traceback(monkeypatch, capsys, tmp_root):
+    """`.tmp/` 展开时的 OSError 必须入账（失败 1 项 + 退出码 1），不许整轮栈回溯。
+
+    条目 [23]（L9/task-22）：`removal_targets()` 是**唯一**没被计入错误账的删除步骤——
+    `tmp_children()` 的 `root.iterdir()` 没有 OSError 处理，权限错误会让清理直接崩掉，
+    而模块契约是"计失败项、打汇总、退出 1"。
+    """
+
+    cleanup = _load_cleanup_with_tmp_root(monkeypatch, tmp_root)
+    _make_candidate(tmp_root, "artifacts")
+    real_iterdir = Path.iterdir
+
+    def flaky_iterdir(self):
+        if self == cleanup.tmp_dir():
+            raise PermissionError("denied by test")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", flaky_iterdir)
+
+    assert cleanup._clean(False, [cleanup.tmp_dir()]) == 1
+    out = capsys.readouterr().out
+
+    assert "展开失败（PermissionError）: .tmp" in out, out
+    assert "失败 1 项" in out, "汇总必须照常打印（旧实现根本走不到这一行）：" + out
+    assert (tmp_root / ".tmp" / "artifacts").is_dir(), "展开失败时一个子项都不该被删"
+
+def test_tmp_swapped_after_enumeration_deletes_nothing(monkeypatch, capsys, tmp_root):
+    """`.tmp` 在枚举之后被换成另一个真实目录：一项都不删、计入失败账、退出 1（条目 [22]）。
+
+    本机建不了 junction / 符号链接（Windows 上 `os.symlink` 要权限、`mklink /J` 要起 shell），
+    所以用**等价形态**制造同一个窗口：枚举完把 `.tmp` 换成另一个真实目录、并在新 `.tmp` 里
+    重建同名子项——没有身份复核时，删除会落到"刚枚举到、但已是另一个东西"的那个路径上。
+    """
+
+    cleanup = _load_cleanup_with_tmp_root(monkeypatch, tmp_root)
+    _make_candidate(tmp_root, "artifacts")
+    real_removal_targets = cleanup.removal_targets
+    swapped: list[bool] = []
+    identities: list[tuple] = []
+
+    def swapping_targets(path):
+        targets = real_removal_targets(path)
+        if path == cleanup.tmp_dir() and not swapped:
+            swapped.append(True)
+            identities.append(cleanup._tmp_identity())  # 换之前
+            os.rename(tmp_root / ".tmp", tmp_root / ".tmp-replaced")
+            rebuild = tmp_root / ".tmp" / "artifacts"
+            rebuild.mkdir(parents=True)
+            (rebuild / "keep.json").write_text("{}", encoding="utf-8")
+            identities.append(cleanup._tmp_identity())  # 换之后（新目录）
+        return targets
+
+    monkeypatch.setattr(cleanup, "removal_targets", swapping_targets)
+
+    assert cleanup._clean(False, [cleanup.tmp_dir()]) == 1
+    out = capsys.readouterr().out
+
+    assert len(identities) == 2 and identities[0] != identities[1], (
+        "这条用例的前提：换掉之后 `.tmp` 的身份必须真的变了（否则复核无从谈起）：" + repr(identities)
+    )
+    assert "展开目标已变化" in out, out
+    assert "失败 1 项" in out, out
+    assert (tmp_root / ".tmp" / "artifacts" / "keep.json").is_file(), (
+        "复核不通过时一项都不许删——这正是 [22] 要堵的那个窗口"
+    )

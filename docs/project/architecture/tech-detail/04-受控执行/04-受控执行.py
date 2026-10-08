@@ -199,9 +199,17 @@ assert first.tool_schema_hash == registry.tool("fs.edit").schema_hash
 assert [item.name for item in first.params] == sorted(item.name for item in first.params)
 
 # ---- 2) 注册表被改一个字符：工具立刻不可使用 ----
+# `str.replace` 找不到那个字面量时**静默返回原串**：注册表哪天被评审改了 max_chars（或改了写法），
+# 这里就什么都没改，而下面那条"哈希变了"的断言会以一句**误导性**的消息失败（读起来像"漂移检测
+# 坏了"，实际是"替换没发生"）。先自证替换真的改了文字。
+registry_text = REGISTRY_PATH.read_text(encoding="utf-8")
+drifted_text = registry_text.replace("max_chars: 20000", "max_chars: 20001")
+assert drifted_text != registry_text, (
+    "注册表里没有 max_chars: 20000 这个字面量：本次漂移演示的替换没有生效"
+)
 drift_path = TEMP / "tool-registry.yaml"
 drift_path.write_text(
-    REGISTRY_PATH.read_text(encoding="utf-8").replace("max_chars: 20000", "max_chars: 20001"),
+    drifted_text,
     encoding="utf-8",
     newline="\n",
 )
@@ -391,6 +399,9 @@ approved = pre_execute(
     plain, registry=registry, ledger=ledger, sink=sink, approval=load_approval(APPROVAL_PATH)
 )
 grant = approved.decision.grant
+# `grant` 是 `Optional`（没有审批通过时是 None）：先自证它在，再读它的字段——否则"这次审批的
+# TTL 是多久"会以一句 `AttributeError: 'NoneType' object has no attribute 'expires_at'` 收场。
+assert grant is not None, "这次判定没有带审批（grant 为 None）"
 ttl = (grant.expires_at - grant.issued_at).total_seconds()
 print()
 print("审批通过:", approved.decision.decision.value, "/", approved.decision.reason_code.value,
@@ -453,6 +464,11 @@ outcome = executor.execute(
 effect = None if outcome.evidence is None else outcome.evidence.file("src/order.py")
 content_after = SOURCE_PATH.read_text(encoding="utf-8")
 
+# 两个 `Optional` **先自证再解引用**：`outcome.post`（这次执行有没有事后验证记录）与 `effect`
+# （证据里有没有这份文件的记录）。原来它们只在下文的断言里被检查，而**打印**已经先把字段读了
+# 一遍——读的人看到的会是 AttributeError，而不是"这次执行缺少事后验证"。
+assert outcome.post is not None, "这次执行没有事后验证记录（post 为 None）"
+assert effect is not None, "证据里没有 src/order.py 这份文件的记录"
 print("执行:", outcome.record.status.value, "/", outcome.record.reason_code.value,
       "| 驱动:", outcome.record.driver.value)
 print("事后验证:", outcome.post.status.value, "/", outcome.post.reason_code.value)
@@ -483,9 +499,18 @@ assert unchanged
 fresh_ledger = EnforcementLedger(TEMP / "fresh-ledger.jsonl")
 from_chain = pre_execute(first, registry=registry, ledger=fresh_ledger, sink=sink)
 print("台账被换空之后:", from_chain.decision.decision.value, "/", from_chain.decision.reason_code.value)
+from enforcement.models import CheckStatus
+
 print("  依据:", from_chain.decision.check("ledger").detail[:52])
 assert from_chain.decision.reason_code is ReasonCode.ACTION_REPLAY
-assert from_chain.decision.check("ledger").detail.startswith("该 action_id 已经判定/执行过")
+# **断言只钉结构化事实**：是哪个 check、它的状态与原因码。`detail` 是给人读的措辞（会随文案调整），
+# 原来那条 `detail.startswith("该 action_id 已经判定/执行过")` 会让一次"文案改进"把演示弄红，
+# 而它想证明的（这次调用被台账拦下）本来就有结构化表示。
+# 另外 `decision.check(name)` 返回的是 `Optional[CheckResult]`：先自证这条记录在，再读它的字段。
+ledger_check = from_chain.decision.check("ledger")
+assert ledger_check is not None, "决策里没有 ledger 这条检查记录"
+assert ledger_check.status is CheckStatus.FAILED, ledger_check.status
+assert ledger_check.reason_code is ReasonCode.ACTION_REPLAY, ledger_check.reason_code
 
 # 拿一个"阻断"的执行前决策去执行：执行器拒绝执行，文件一个字节都不动。
 refused = executor.execute(first, spec=registry.tool("fs.edit"), pre=replay.decision, workspace=WORKSPACE)
@@ -527,6 +552,8 @@ outcome_broken = executor.execute(
     broken, spec=registry.tool("fs.edit"), pre=pre_broken.decision, workspace=WORKSPACE
 )
 post = outcome_broken.post
+assert post is not None, "语法坏掉的那次执行没有事后验证记录（post 为 None）"
+assert post.rollback is not None, "这次执行没有回滚记录（rollback 为 None）"
 print("语法坏掉的一次编辑:", outcome_broken.record.status.value,
       "| 事后验证:", post.status.value, "/", post.reason_code.value)
 print("  回滚:", post.rollback.mode.value, "/", post.rollback.status,

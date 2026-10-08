@@ -221,7 +221,8 @@ print(pad("字节 / 行数", 24) + str(source_file.stat().st_size) + " / "
 # - `knowledge/corpus.yaml` 的 `entries` 与 `rule_sources` 都写 `pep-257-docstrings/index.md`；
 # - 而**规则 YAML** 的 `source.path` 写的是**仓库相对**的完整路径
 #   （`docs/mirrors/python-pep-code-style/pep-257-docstrings/index.md`）——两者必须指向同一份文档，
-#   所以下面用 `rule.source.path.endswith(registered.source_path)` 把它们对齐。
+#   所以下面把两者**精确对齐**：数据集声明的镜像根 + 登记里的相对路径 == `rule.source.path`
+#   （只查 `endswith` 是不够的——指到另一个镜像根的同名文件也会通过）。
 #
 # 下面把两条都查出来对一遍：登记存在、数据集存在、条目的镜像文件在仓库里、
 # 本地内容的 sha256 等于镜像 manifest 记录的哈希（哈希漂移会被 `verify` 报出来，退出码 1）。
@@ -251,7 +252,11 @@ print(pad("dataset", 22) + registered.dataset)
 print(pad("source_path（镜像内）", 22) + registered.source_path)
 print(pad("heading_path", 22) + " > ".join(registered.heading_path))
 assert registered.rule_version == rule.version, "溯源登记与规则的 version 必须一致"
-assert str(source.path).endswith(registered.source_path), "两处的 source_path 必须指向同一份文档"
+# `endswith` 只证明"以 `pep-257-docstrings/index.md` 结尾"：来源指到**另一个镜像根**
+# （例如 `docs/mirrors/some-other-set/pep-257-docstrings/index.md`）也会通过，而"两处指向同一份文档"
+# 恰恰是这一节要钉的。判据改成**精确相等**：数据集声明的镜像根 + 登记里的相对路径。
+expected_source = corpus.dataset(registered.dataset).mirror.rstrip("/") + "/" + registered.source_path
+assert str(source.path) == expected_source, (str(source.path), expected_source)
 assert registered.heading_path, "没有 heading_path 会退化成'整篇文档都算来源'，这里必须写具体小节"
 
 # 第 2 件事：这个 dataset + source_path 真的是一个语料条目，且本地哈希与 manifest 一致。
@@ -390,8 +395,11 @@ for feed in ("bad", "good"):
               + pad(where, 48) + violation.evidence.value)
     print()
 
-bad_report, bad_context, bad_result = observations["bad"]
-good_report, good_context, good_result = observations["good"]
+# 只解包**真的会被引用**的部分：`bad_context` / `good_context` 下面的断言一次都没用（上下文在
+# 构造时已经断言过），`good_report` 也没有（正例那边只看结论与 matched / violations / skipped）。
+# 用 `_` 保留位置，读者仍然看得出两个观测的形状相同。
+bad_report, _, bad_result = observations["bad"]
+_, _, good_result = observations["good"]
 
 # 1) 反例必须命中，而且命中的是三个目标对象（模块 + 类 + 函数）。
 assert bad_result.decision is Decision.ALLOW_WITH_WARNINGS, bad_result.decision.value
@@ -545,20 +553,26 @@ mini_digest = "sha256:" + hashlib.sha256(mini_doc.read_bytes()).hexdigest()
     ) + chr(10),
     encoding="utf-8", newline="",
 )
+real_dataset = corpus.dataset(registered.dataset)
 mini_corpus = TEMP / "corpus.yaml"
 mini_corpus.write_text(
     yaml.safe_dump(
         {
             "version": 1,
             "policy": policy.model_dump(mode="json"),
+            # 数据集级字段**照真实 manifest 抄**（`corpus.dataset(...)` 拿到的那一份），不是借用
+            # 页级 `entry` 上的同名字段：`entry.title` 是**页面**标题（"PEP 257 – Docstring
+            # Conventions"），而数据集级 `title` 是清单里声明的数据集名；`license_source` 同理
+            # （页级那份是来源路径，数据集级是许可出处）。唯一的例外是 `mirror`——它必须指向本次
+            # 的临时镜像目录，这正是这个最小语料存在的意义。
             "datasets": [{
-                "name": registered.dataset,
-                "title": entry.title,
+                "name": real_dataset.name,
+                "title": real_dataset.title,
                 "mirror": mini_root.relative_to(REPO_ROOT).as_posix(),
-                "license": entry.license,
-                "license_source": str(source.path),
-                "tier": entry.tier.value,
-                "visibility": entry.visibility.value,
+                "license": real_dataset.license,
+                "license_source": real_dataset.license_source,
+                "tier": real_dataset.tier.value,
+                "visibility": real_dataset.visibility.value,
                 "entries": [registered.source_path],
             }],
             "restricted_datasets": [],

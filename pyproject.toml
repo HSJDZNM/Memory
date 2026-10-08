@@ -4,7 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "engineering-policy-platform"
-version = "0.0.0"
+# 版本只有**一个**来源：`src/policy_api/__init__.py` 的 `__version__`（服务自报的也是它）。
+# 此前这里写死 `0.0.0`，与模块里的 `0.1.0` 各说各话：装出来的发行版元数据说 0.0.0，
+# 而 `policy_api.contract` 自报 0.1.0。`dynamic` 让打包在构建期从模块取值
+# （setuptools 静态读字面量，不需要导入包），两边从此不可能再漂移。
+dynamic = ["version"]
 description = "独立于 Coding Agent 的软件工程治理层：机器可执行规则、策略决策与确定性验证"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -51,6 +55,9 @@ policy-check = "policy.check:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "policy_api.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
