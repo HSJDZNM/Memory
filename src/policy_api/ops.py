@@ -16,9 +16,9 @@ from __future__ import annotations
 import os
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping
 
-from .errors import ApiError, ErrorCode
+from .errors import ApiError
 
 if TYPE_CHECKING:  # pragma: no cover - 仅为类型检查
     from .auth import AuthContext
