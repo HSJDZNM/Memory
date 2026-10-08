@@ -64,6 +64,24 @@ def test_restricted_datasets_must_agree_with_visibility() -> None:
     assert manifest.restricted_datasets == ()
 
 
+def test_empty_language_entries_are_rejected() -> None:
+    """languages 里的空串必须直接拒绝：它会变成 language IN ('') 的静默空过滤。
+
+    与 _check_dimension（空字符串报错）同口径；旧实现只做 canonical_identifier，
+    ("",) 于是原样落进 QueryFilters.languages，调用方的笔误表现成"没有结果"。
+    """
+
+    from retrieval.models import RetrievalQuery
+
+    with pytest.raises(ValidationError):
+        RetrievalQuery(languages=("",))
+    with pytest.raises(ValidationError):
+        RetrievalQuery(languages=("Python", "   "))
+
+    # 反真空：正常取值仍然规范化 + 去重 + 排序。
+    assert RetrievalQuery(languages=("Python", " python ")).languages == ("python",)
+
+
 def test_quarantine_text_hash_must_be_hex_and_is_lowercased() -> None:
     """隔离登记的 text_hash 必须是 64 位十六进制，且归一成小写（复核发现）。
 

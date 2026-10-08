@@ -735,7 +735,12 @@ class RetrievalQuery(StrictModel):
     @field_validator("languages")
     @classmethod
     def _check_languages(cls, values: Tuple[str, ...]) -> Tuple[str, ...]:
-        return tuple(sorted({canonical_identifier(item) for item in values}))
+        normalized = {canonical_identifier(item) for item in values}
+        if "" in normalized:
+            # 与 _check_dimension 同口径（空字符串直接拒绝）：空串会变成 language IN ('')
+            # 这样的过滤条件，静默匹配不到任何东西——调用方的笔误表现成"没有结果"。
+            raise ValueError("languages 不能含空字符串；不知道就写 null / 不传这个字段")
+        return tuple(sorted(normalized))
 
     @classmethod
     def from_context(
