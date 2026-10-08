@@ -184,10 +184,14 @@ def measure(
 def run_baseline(
     counts: Iterable[int] = DEFAULT_COUNTS, *, seed: int = DEFAULT_SEED
 ) -> dict[str, Any]:
+    # `counts` 是 Iterable：必须**先物化一次**再取两遍。旧写法把 `list(counts)` 写在 dict 字面量里，
+    # 它先于 `samples` 的推导式求值——一次性迭代器（generator / map / 文件驱动）会被头一次耗尽，
+    # 于是 `samples` 静默变成空列表，而 `counts` 看起来还是满的（"跑了 0 个样本"却像是跑过了）。
+    materialized = list(counts)
     return {
         "seed": seed,
-        "counts": list(counts),
-        "samples": [measure(count, seed=seed) for count in counts],
+        "counts": materialized,
+        "samples": [measure(count, seed=seed) for count in materialized],
     }
 
 
