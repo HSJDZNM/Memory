@@ -24,10 +24,15 @@ $RECYCLE.BIN/
 .classpath
 .settings/
 
-# ---- 密钥与本地配置（优先级最高，务必不要提交）----
+# ---- 密钥与本地配置（务必不要提交）----
+# 生效靠**位置**，不靠这句话：gitignore 是最后匹配者胜，本节之后的任何 ! 规则都会
+# 覆盖这里的忽略。新增忽略写在本节之前、需要放行的写在这里。
 .env
 .env.*
+# 放行的是**模板**：.env.example 与带环境名的变体（.env.production.example 等）要能被
+# 提交、也要在 git status 里看得见——只否定一个精确名字时，新写的变体会静默消失。
 !.env.example
+!.env.*.example
 *.pem
 *.key
 *.p12

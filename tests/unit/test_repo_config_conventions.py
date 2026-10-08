@@ -81,3 +81,17 @@ def test_gitignore_covers_sqlite_sidecar_files() -> None:
         for suffix in ("-wal", "-shm", "-journal"):
             assert _is_ignored(base + suffix), base + suffix
     assert not _is_ignored("probe.db-archive.tar"), "只想盖住兄弟文件，不想吞掉同前缀的其它产物"
+
+
+def test_gitignore_keeps_env_templates_visible_and_secrets_ignored() -> None:
+    """密钥配置继续忽略，但**模板**（含带环境名的变体）必须能被看见、能被提交。
+
+    为什么必须这样：旧规则只否定精确的 `.env.example`，于是新写的
+    `.env.production.example` / `.env.local.example` 落在 `.env.*` 里静默消失——
+    既不报错也不出现在 git status 里，最容易在"复制一份改改"时被漏掉。
+    """
+
+    for name in (".env", ".env.local", ".env.production"):
+        assert _is_ignored(name), f"{name} 是真实配置：必须继续忽略"
+    for name in (".env.example", ".env.production.example", ".env.local.example"):
+        assert not _is_ignored(name), f"{name} 是模板：必须能在 git status 里看见"
