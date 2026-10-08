@@ -157,3 +157,20 @@ def test_summary_line_names_the_result_and_which_suites_failed(tmp_root: Path) -
     assert "tests/unit" not in line  # 只列有失败的套件
     assert "source=junit-report" in line
     assert line.endswith("-> .tmp/artifacts/phase-8-evidence.json")
+
+
+def test_the_agent_payload_reports_the_declared_agent_version() -> None:
+    """证据载荷里的 agent_version 必须与声明处一致，不许写死。
+
+    旧写法在 `agent_adapter()` 里写死 "0.1.5-rc.1"，而 `adapters/dsh/manifest.yaml` 早已声明
+    0.1.6-alpha.2——证据载荷于是长期与它自己要证明的东西对不上（还与同一份载荷里 agent_adapter()
+    的取值矛盾）。这里同时钉住函数取值与**载荷**取值：只钉函数的话，把载荷改回字面量测试照样绿。
+    """
+
+    import yaml
+
+    manifest = Path(__file__).resolve().parents[2] / "adapters" / "dsh" / "manifest.yaml"
+    declared = yaml.safe_load(manifest.read_text(encoding="utf-8"))["agent_version"]
+
+    assert pe._declared_agent_version() == declared
+    assert pe.agent_adapter()["agent_version"] == declared

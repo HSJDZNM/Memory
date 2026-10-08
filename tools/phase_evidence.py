@@ -27,6 +27,8 @@ import platform
 import subprocess
 import sys
 import xml.etree.ElementTree as elementtree
+
+import yaml
 from pathlib import Path
 from typing import Sequence
 
@@ -109,6 +111,27 @@ def decision_protocol() -> dict[str, object]:
     }
 
 
+def _declared_agent_version() -> object:
+    """dsh 的 `agent_version` **从声明处读**，不写死在证据载荷里。
+
+    旧写法在这里写死 "0.1.5-rc.1"，而 `adapters/dsh/manifest.yaml` 早已声明 0.1.6-alpha.2
+    （README 记的就是那个实机核验过的值）——证据载荷于是长期与它自己要证明的东西对不上，
+    还与同一份载荷里 `agent_adapter()` 的取值互相矛盾。
+    读不出来就如实记 None 并出声：证据要写得下来，读不到不许编一个。
+    """
+
+    path = REPO_ROOT / "adapters" / "dsh" / "manifest.yaml"
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as error:
+        print(
+            "警告：%s 读不出（%s），agent_version 记 None" % (_display_path(path), error),
+            file=sys.stderr,
+        )
+        return None
+    version = (document or {}).get("agent_version") if isinstance(document, dict) else None
+    return version if isinstance(version, str) and version.strip() else None
+
 def agent_adapter() -> dict[str, object]:
     """dsh Adapter 的契约事实：版本、Hook 协议、工具表与预算。
 
@@ -146,7 +169,7 @@ def agent_adapter() -> dict[str, object]:
     governed = sorted(name for name, spec in TOOL_TABLE.items() if spec.kind is ToolKind.WRITE)
     return {
         "agent": DSH_AGENT_ID,
-        "agent_version": "0.1.5-rc.1",
+        "agent_version": _declared_agent_version(),
         "hook_bridge": "@deepseek-ai/dsh-hooks-claude-code",
         "hook_events": list(SUPPORTED_HOOK_EVENTS),
         "block_protocol": "exit 2（stderr 作为阻断理由）",
