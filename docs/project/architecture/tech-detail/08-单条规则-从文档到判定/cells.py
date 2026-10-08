@@ -148,11 +148,15 @@ print(pad("source.path", 20) + str(source.path))
 print(pad("source.note", 20) + str(source.note))
 print()
 
-# 下面两次调用故意写坏，验证"拦得住"的边界在哪：
+# 下面两次调用故意写坏，验证"拦得住"的边界在哪。捕获的异常类型**写窄**：`except Exception`
+# 会把"模型抛了别的错（例如 TypeError、签名改了）"也算成"边界拦住了"——而那正是这条演示要
+# 证明的反面。期望的就是 pydantic 的 ValidationError。
+from pydantic import ValidationError
+
 try:
     SourceRef(kind="conversation", path="chat/2026-09-01.md")
-except Exception as error:  # pydantic 的校验错误：字段校验失败会包成 ValidationError
-    detail = error.errors()[0]["msg"] if hasattr(error, "errors") else str(error)
+except ValidationError as error:  # 字段校验失败：pydantic 包成 ValidationError
+    detail = error.errors()[0]["msg"]
     assert "source.kind 必须是本地来源" in detail, detail
     print("× kind 写成共享对话 →", detail.split("；")[0][:96])
 else:
@@ -161,7 +165,7 @@ else:
     raise AssertionError("SourceRef 接受了 kind='conversation'：本地来源的边界破了")
 try:
     SourceRef(kind="standard", path="../../etc/passwd")
-except Exception as error:  # 域异常 PolicyContextError 会被 pydantic 包成 ValidationError
+except ValidationError as error:  # 域异常 PolicyContextError 被 pydantic 包成 ValidationError
     assert "路径逃出仓库根目录" in str(error), error
     print("× path 用 .. 逃出仓库 → 路径逃出仓库根目录，拒绝处理（来自 normalize_repo_path）")
 else:
