@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -65,7 +64,6 @@ _PIN_RE = re.compile(
 )
 _SPEC_RE = re.compile(r"^(>=|<=|==|!=|~=|>|<)?\s*([0-9][0-9A-Za-z.\-+]*)$")
 _WORKFLOW_REF_RE = re.compile(r"\.github/workflows/([A-Za-z0-9._-]+\.ya?ml)")
-_SCRIPT_RE = re.compile(r"([a-z0-9_]+\.py)")
 _UV_SYNC_RE = re.compile(r"^\s*uv sync\b")
 # README 里提到的测试**目录**：`tests/<名字>` 后面不能再跟 `.` 或名字字符——`tests/test_cli.py`
 # 是文件不是目录（旧写法 `tests/([a-z_]+)\b` 在点号前也成立，于是把文件名报成"目录不存在"）。
