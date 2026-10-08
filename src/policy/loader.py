@@ -241,7 +241,13 @@ def load_rule_file(
     repo_path: str | None = None,
     repo_root: Path | str | None = None,
 ) -> LoadedRule:
-    """加载单个规则文件。任何问题都抛出 RuleFileError。"""
+    """加载单个规则文件。
+
+    错误分两类（调用方按类型分流时别踩空）：**读不出来**（文件不存在 / OSError / 解码失败）
+    抛基类 LoaderError——这时没有可归属的字段；**内容不合法**（pydantic 校验、规则集约束）
+    抛 RuleFileError，它带 path / repo_path / field / rule_id。测试
+    tests/unit/test_loader.py::test_load_rule_file_missing_path_is_loader_error 钉的就是前者。
+    """
 
     file_path = Path(path)
     if repo_path is None:
