@@ -185,7 +185,10 @@ python tools/check_repo_consistency.py ; python tools/check_text_conventions.py
     **M7（provenance 10 条，task-11 已 completed）此前漏在收口清单外，现补入。**
   - **口径待查（不替它们选一个数）**：草稿曾写 **M2 29/29**，而台账 M2 节与 task-14 标题都是 **39**（差 10）；
     草稿曾写 **MA1 18/18**，而台账 MA1 节是 **14**（ma-judgments 另有 Lead 追加 1 条）。两处都没在 `.tmp` 里找到解释。
-  - 在跑：**M9**（余量见占位 <!-- PENDING: 见 .tmp/final-ledger-draft.md -->；收官后补最终数字）。
+  - **M9 已收口（台账 85 条 = owasp 13 + 非 owasp 72）**：
+    - **owasp_cheatsheets 13 条**（12 bug + 1 performance）＝ **3 改 / 10 已覆盖**；7 条有合成输入树上的真跑读数、6 条只有代码级依据（未联网、未触碰 `docs/mirrors/**`），见 `.tmp/m9-owasp-coverage.md`。
+    - **非 owasp 72 行全部访问完毕**＝ 成立并修 **37**、不成立（已修）**30**、部分成立 **2**、成立但不改（设计决定）**2**（`ab_arm:407/:791`，另见 `.tmp/not-changed-ledger.md` 第三节）；依据分类：变异自证 9 条、before/after 对照读数 17 条、真跑工具/套件若干（agent_loop 87 项、enforcement_loop 三次收紧后仍绿、api_loop、G13、`--only` 守卫等）、代码级行号 + 历史提交 30 条，见 `.tmp/m9-tools-non-owasp-coverage.md`。
+    - 六条计数差异如实写在声明里（owasp 13 vs 交办 12；表格行 71 vs 访问 72；"已修"的 30 条不计入本线完成面——那是别人先前修的；与前任 41 条的重叠只是量级估计而非精确计数；台账勾选未回填、按 `- [ ]` 行 + 逐条到代码复核、允许行号 ±2 漂移；两条设计决定未计入"成立并修"）。
 - **low 收口（一律按实际 305 条）**：
   - 逐条核销表覆盖：L1 16/16、L2 35/38、L3 26/28、L7 10/18、L9 58/65、LA 15/15（非 tech-detail 部分）、LB 5/5；
     其余条目要么是「判定结案」（不改、无提交），要么**判定存在但未逐条落盘**（L2 3、L3 2、L7 8、L9 7、LA 3）。
