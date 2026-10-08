@@ -296,17 +296,28 @@ def write_rule(path: Path, document: dict[str, Any], *, yaml_module: Any) -> Pat
     return path
 
 
-@pytest.fixture(scope="module")
-def module_tmp_root() -> Any:
-    """模块级临时目录（同样只用 mkdir，不依赖 mkdtemp/chmod）。
+def _new_tmp_root() -> Path:
+    """TMP_ROOT 下的一个唯一目录（只 mkdir，不用 mkdtemp/chmod）。
 
-    一致性套件这类"跑一次、多个用例共用结论"的夹具需要模块级作用域，
-    而 tmp_root 是函数级的；两者的实现必须一致，否则沙箱里会出现
-    "有的用例能跑、有的用例因为权限失败"这种与被测行为无关的差异。
+    三个作用域不同的临时目录夹具（module / factory / function）共用这一份实现：
+    原先各抄一遍，靠两处 docstring 里的"两者的实现必须一致"维持——那是靠人记住的约定，
+    而它们的差异会以"有的用例能跑、有的用例因为权限失败"这种与被测行为无关的形式出现。
     """
 
     directory = TMP_ROOT / uuid.uuid4().hex
     directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+@pytest.fixture(scope="module")
+def module_tmp_root() -> Any:
+    """模块级临时目录（同样只用 mkdir，不依赖 mkdtemp/chmod）。
+
+    一致性套件这类"跑一次、多个用例共用结论"的夹具需要模块级作用域，而 tmp_root 是函数级的；
+    作用域不同、实现同一份（见 _new_tmp_root）。
+    """
+
+    directory = _new_tmp_root()
     try:
         yield directory
     finally:
@@ -324,8 +335,7 @@ def tmp_root_factory() -> Any:
     created: list[Path] = []
 
     def make() -> Path:
-        directory = TMP_ROOT / uuid.uuid4().hex
-        directory.mkdir(parents=True, exist_ok=True)
+        directory = _new_tmp_root()
         created.append(directory)
         return directory
 
@@ -345,8 +355,7 @@ def tmp_root() -> Any:
     因此在普通开发机和沙箱里行为一致。
     """
 
-    directory = TMP_ROOT / uuid.uuid4().hex
-    directory.mkdir(parents=True, exist_ok=True)
+    directory = _new_tmp_root()
     try:
         yield directory
     finally:
