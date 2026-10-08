@@ -166,7 +166,14 @@ print()
 # 判据一的两半：kind 是强制的（代码拦），path 指到真实文件是本仓库自己守住的（评审 + 现场核对）。
 assert not without_path, "本仓库的规则都写了 source.path：" + repr(without_path[:5])
 assert not ghost_paths, "有规则的来源指向了不存在的文件：" + repr(ghost_paths[:5])
-print("本仓库 43 条规则的来源都写得出来、都指向真实文件。")
+# 说明单元里的数字是**写死**的（markdown 不能插值），所以在这里让数据去核对正文：规则数或级别
+# 分布一变，这一格就红——把"正文与数据不许漂移"从纪律变成会失败的检查。
+assert len(RULES) == 43, f"本章正文写的是 43 条规则，实际 {len(RULES)} 条：改规则要同步改正文"
+advisory = [item.canonical_id for item in RULES if item.severity.value != "error"]
+assert len(advisory) == 19, (
+    f"本章正文写的是 19 条只告警的规则，实际 {len(advisory)} 条：" + repr(advisory[:5])
+)
+print(f"本仓库 {len(RULES)} 条规则的来源都写得出来、都指向真实文件。")
 
 # —— 对照实验：把 source.path 换成一个不存在的路径，加载器**照样放行**。
 document = yaml.safe_load((REPO_ROOT / "policies" / "coding" / "DOC-001.yaml").read_text(encoding="utf-8"))
@@ -296,7 +303,7 @@ assert len(KNOWN_SCOPE_DIMENSIONS) == 6, KNOWN_SCOPE_DIMENSIONS
 # 取值范围也不是随便写的：语言取值必须来自项目档案。
 declared_languages = declared_values.get("language", set())
 assert declared_languages <= set(language_values), (declared_languages, language_values)
-print("43 条规则声明的维度只有", ", ".join(sorted(declared_values)), "，全部落在 6 个已知维度里；")
+print(str(len(RULES)) + " 条规则声明的维度只有", ", ".join(sorted(declared_values)), "，全部落在 6 个已知维度里；")
 print("声明的 language 取值", sorted(declared_languages), "也都在项目档案里登记过。")
 '''
         ),
