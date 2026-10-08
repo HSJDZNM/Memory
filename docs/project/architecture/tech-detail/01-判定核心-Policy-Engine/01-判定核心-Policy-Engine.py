@@ -170,22 +170,24 @@ def pad(text, width, align="left"):
 ARCH_RULE = next(rule for rule in RULES.rules if rule.id == "ARCH-001")
 ARCH_RULES = models.RuleSet(rules=(ARCH_RULE,))
 
+# 每个用例带一个**名字**：下面的断言按名字查行，不按位置（位置会随这一表增删/换序而错位，
+# 而且读错行时不会有任何提示——见提交信息里的最小构造）。
 matrix = (
     # 空补充 = 只有基础上下文（`src/order/controller.py`：language=python、layer=controller）。
     # ARCH-001 的 scope 正需要这两项，**已经满足**（命中）；只有 TESTING-001 因为缺 operation 出局。
-    # 原文写的是"两条规则都要的维度都没给全"，与这一行自己的读数相反。
-    ({}, "operation 缺失：TESTING-001 出局；ARCH-001 的维度由基础上下文给全了"),
-    ({"operation": "edit"}, "edit 落在 [create, edit] 里（同维多值 = OR）"),
-    ({"operation": "create"}, "create 同样落在列表里"),
-    ({"operation": "read"}, "read 不在列表里：范围不匹配"),
-    ({"layer": "service", "operation": "edit"}, "layer 不等：ARCH-001 出局；TESTING-001 的两个维度都满足"),
-    ({"language": "go"}, "language 不等：跨维度 AND，两条都出局"),
+    ("空补充", {}, "operation 缺失：TESTING-001 出局；ARCH-001 的维度由基础上下文给全了"),
+    ("operation=edit", {"operation": "edit"}, "edit 落在 [create, edit] 里（同维多值 = OR）"),
+    ("operation=create", {"operation": "create"}, "create 同样落在列表里"),
+    ("operation=read", {"operation": "read"}, "read 不在列表里：范围不匹配"),
+    ("layer=service", {"layer": "service", "operation": "edit"},
+     "layer 不等：ARCH-001 出局；TESTING-001 的两个维度都满足"),
+    ("language=go", {"language": "go"}, "language 不等：跨维度 AND，两条都出局"),
 )
 
 print(pad("补充的维度", 42) + pad("ARCH-001", 12) + pad("TESTING-001", 14) + "说明")
 print("-" * 118)
-rows = []
-for fields, note in matrix:
+rows = {}
+for case, fields, note in matrix:
     context = build("src/order/controller.py", **fields)
     matched, skipped = engine.matching_rules(RULES, context)
     record = {
@@ -193,7 +195,7 @@ for fields, note in matrix:
         "hits": {rule.id for rule in matched},
         "reasons": {item.rule_id: item.reasons[0] for item in skipped},
     }
-    rows.append(record)
+    rows[case] = record
     print(
         pad(fields or "（什么都不补充）", 42)
         + pad("命中" if "ARCH-001" in record["hits"] else "跳过", 12)
@@ -201,17 +203,40 @@ for fields, note in matrix:
         + note
     )
 
+# **漂移守卫**：表里必须恰好是上面声明的那几个用例。规则表变了、或者这一表增删换序，
+# 这句话会在**读取之前**说出来，而不是让下面的断言去读一个错位的行。
+assert set(rows) == {case for case, _, _ in matrix}, (sorted(rows), [case for case, _, _ in matrix])
+
+
+def hits(case):
+    """按**用例名**取命中集合；名字不在表里就把名字与实际用例一起报出来。"""
+
+    assert case in rows, f"用例 {case!r} 不在表里；实际用例：{sorted(rows)}"
+    return rows[case]["hits"]
+
+
+def skip_reason(case, rule_id):
+    """按**用例名 + 规则 id** 取跳过原因；缺哪个键就说哪个键，不把 KeyError 原样留给读者。"""
+
+    assert case in rows, f"用例 {case!r} 不在表里；实际用例：{sorted(rows)}"
+    reasons = rows[case]["reasons"]
+    assert rule_id in reasons, f"用例 {case!r} 的跳过表里没有 {rule_id}；实际键：{sorted(reasons)}"
+    return reasons[rule_id]
+
+
 # 同一张表用 assert 钉死：OR、AND、"声明了维度但上下文缺值"三种语义各一条。
-assert "ARCH-001" in rows[0]["hits"] and "TESTING-001" not in rows[0]["hits"]
-assert "<missing>" in rows[0]["reasons"]["TESTING-001@1"], rows[0]["reasons"]
-assert {"ARCH-001", "TESTING-001"} <= rows[1]["hits"]
-assert {"ARCH-001", "TESTING-001"} <= rows[2]["hits"]
-assert "TESTING-001" not in rows[3]["hits"]
-assert "ARCH-001" not in rows[4]["hits"] and "TESTING-001" in rows[4]["hits"]
-assert not ({"ARCH-001", "TESTING-001"} & rows[5]["hits"])
+# 全部按**用例名**读（原来是 `rows[0]` / `rows[3]` …）：位置读到错行时不会有任何提示，
+# 而这四条断言的用意正是"AGENTS 里那些语义没漂"。
+assert "ARCH-001" in hits("空补充") and "TESTING-001" not in hits("空补充")
+assert "<missing>" in skip_reason("空补充", "TESTING-001@1"), rows["空补充"]["reasons"]
+assert {"ARCH-001", "TESTING-001"} <= hits("operation=edit")
+assert {"ARCH-001", "TESTING-001"} <= hits("operation=create")
+assert "TESTING-001" not in hits("operation=read")
+assert "ARCH-001" not in hits("layer=service") and "TESTING-001" in hits("layer=service")
+assert not ({"ARCH-001", "TESTING-001"} & hits("language=go"))
 print()
-print("上下文缺 operation 时的跳过原因:", rows[0]["reasons"]["TESTING-001@1"])
-print("只写 read 时的跳过原因:", rows[3]["reasons"]["TESTING-001@1"])
+print("上下文缺 operation 时的跳过原因:", skip_reason("空补充", "TESTING-001@1"))
+print("只写 read 时的跳过原因:", skip_reason("operation=read", "TESTING-001@1"))
 
 # 未知 checker 有两道闸。第一道在模型层：连"手工造的规则对象"都进不了 RuleSet。
 from pydantic import ValidationError
