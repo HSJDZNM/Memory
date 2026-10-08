@@ -45,7 +45,6 @@ route_table = (
     ("/v1/knowledge/retrieve", "retrieve"),
     ("/v1/validation/evaluate", "validate"),
 )
-_OPS_ROUTES = ("/v1/ops/metrics",)
 
 _PERMISSIVE = ConfigDict(extra="ignore")
 
