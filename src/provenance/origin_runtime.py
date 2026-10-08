@@ -171,9 +171,9 @@ def verification_of_config(config_path: Optional[Path | str], *, source: str) ->
 
     - `stat` 说它不在 → `platform.config_unreadable`（`causal_link=proven`：证伪判据成立，
       理由指着的对象确实是这一位）；
-    - `stat` 说它在、但读不到 / 不是 UTF-8 → `host.config_unreadable` 之下的
-      `platform.config_unreadable`（**不是**"不存在"）——两者都是配置输入的问题，
-      但理由必须说得出是哪一种；
+    - `stat` 说它在、但读不到 / 不是 UTF-8 → 仍然 `platform.config_unreadable`
+      （**不是**"不存在"）——闭集里没有 `host.config_unreadable` 这一项，别把这里读成
+      两级分类；两种情形靠 `method`（stat / read）与 `result` 的原文分开，
     - 读得到（UTF-8）→ **核验证伪了"读不到"这条指控** → `unknown_origin`，`method="read"`；
       这一步只做了读观测、**没有解析**内容，所以结论只说"不是读不到这一侧"，
       不声称内容层面没问题（那要另一次核验，`causal_link=unproven`）。
