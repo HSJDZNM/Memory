@@ -312,7 +312,14 @@ from retrieval.store import ChunkStore
 
 DB = TEMP / "index.sqlite3"
 policy = CorpusPolicy(top_k=3, max_query_chars=200, max_query_terms=24)
+# 单元跑在**同一个进程**里，而生成器是**逐单元捕获异常**的：这一格之后某个断言失败时，后面的
+# 单元还会继续跑，而这个连接一直开着（Windows 上会挡住 sqlite 文件的删除/重建）。
+# `ChunkStore.close()` 是幂等的（`store.py` 里由 `_closed` 守着），所以注册 atexit 与最后一格的
+# 显式 close 不冲突：正常收尾、异常收尾都保证关一次。
+import atexit
+
 store = ChunkStore(DB)
+atexit.register(store.close)
 store.upsert_document(
     DocumentRecord(
         document_id=DOCUMENT_ID,
@@ -618,6 +625,7 @@ for label, query, item_scope in cases:
 
 # 第三种：索引库根本用不了。这里用一个"没有建过表"的空库复现（真实场景是索引还没建或已损坏）。
 empty_store = ChunkStore(TEMP / "empty.sqlite3", initialize=False)
+atexit.register(empty_store.close)
 unavailable = FtsRetriever(empty_store, policy=policy).retrieve(
     RetrievalQuery(text="小步提交", limit=3), scope
 )
