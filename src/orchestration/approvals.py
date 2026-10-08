@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
@@ -30,7 +29,7 @@ from enforcement.approvals import (
 from .errors import ApprovalError
 from .models import ApprovalUse, FailureCode, GraphState, NodeId
 
-__all__ = ["ApprovalDecision", "ApprovalGate", "approval_binding_digest"]
+__all__ = ["ApprovalGate", "approval_binding_digest"]
 
 
 def approval_binding_digest(action_hash: str, action_id: str) -> str:
@@ -44,14 +43,6 @@ def approval_binding_digest(action_hash: str, action_id: str) -> str:
     """
 
     return f"{action_hash}|{action_id}"
-
-
-@dataclass(frozen=True)
-class ApprovalDecision:
-    granted: bool
-    approval_id: Optional[str] = None
-    detail: str = ""
-    code: Optional[FailureCode] = None
 
 
 class ApprovalGate:
