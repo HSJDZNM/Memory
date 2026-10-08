@@ -48,7 +48,7 @@ from policy.evidence import (
 )
 from policy.models import PolicyContext, Rule, RuleSet, canonical_identifier
 
-from .adapters.base import AdapterResult, Probe, probe_tool
+from .adapters.base import AdapterResult, probe_tool
 from .adapters.mypy import run_mypy
 from .adapters.pytest_runner import run_pytest
 from .adapters.ruff import run_ruff
