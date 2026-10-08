@@ -576,6 +576,56 @@ def test_a_tenant_whose_rule_directory_is_empty_is_refused_on_cold_start(
     assert error_code(blocked) == "rule_set_unavailable"
 
 
+def test_readiness_does_not_block_the_event_loop(tmp_root: Path, monkeypatch) -> None:
+    """readiness 做的是阻塞 I/O（打开 SQLite + 完整性检查 + 文件系统探测）：必须在工作线程里跑。
+
+    读数方式：在**同一个事件循环**里并发跑一个每 10ms 记一次的 ticker，把 `_readiness_report`
+    换成睡 0.4s 的替身，然后请求 `/v1/health/ready`。阻塞在循环上时 ticker 会被饿住（≈1 次）；
+    丢进线程后照常跳动（≥5 次）。这条用例钉的就是"别把阻塞 I/O 放回循环上"。
+    """
+
+    import asyncio
+    import time as clock
+
+    import httpx
+
+    from policy_api.app import create_app
+
+    runtime, client, _ = build_api(tmp_root)
+    app = create_app(runtime)
+    real_report = runtime._readiness_report
+
+    def slow_report():
+        clock.sleep(0.4)  # 模拟"打开 SQLite + 完整性检查"的真实耗时
+        return real_report()
+
+    monkeypatch.setattr(runtime, "_readiness_report", slow_report)
+
+    async def measure() -> tuple[int, int]:
+        ticks = 0
+        running = True
+
+        async def ticker() -> None:
+            nonlocal ticks
+            while running:
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(ticker())
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://probe") as probe:
+            response = await probe.get("/v1/health/ready")
+        running = False
+        task.cancel()
+        return ticks, response.status_code
+
+    ticks, status = asyncio.run(measure())
+    print(f"ticker 在 readiness 期间跳了 {ticks} 次")
+
+    assert status == 200, status
+    assert ticks >= 5, f"readiness 阻塞了事件循环：ticker 只跳了 {ticks} 次"
+
+
 def test_an_unexpected_error_while_reading_rules_becomes_a_check_not_a_crash(
     tmp_root: Path, monkeypatch
 ) -> None:
