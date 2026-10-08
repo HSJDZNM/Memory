@@ -96,9 +96,26 @@ def test_payload_container_limits_are_applied(tmp_root):
     payload = {f"k{index}": index for index in range(100)}
     sanitized = sanitize_payload(payload, workspace=tmp_root)
 
-    assert len(sanitized) <= 64
+    # 64 条内容 + 一条显式截断标记：超限的条目只能"标出来"，不能无声消失。
+    assert len(sanitized) == 65
+    assert sanitized["<truncated-items>"] == 36
     nested = {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": 1}}}}}}}}
     assert sanitize_payload(nested, workspace=tmp_root)
+
+
+def test_sanitize_payload_does_not_silently_drop_values(tmp_root):
+    """脱敏/截断撞名与超限条目都不能静默消失：审计里"少了一条"必须看得出来。"""
+
+    # 两个长键截断后是同一个字符串：旧实现的字典推导会吞掉其中一个值。
+    collided = sanitize_payload(
+        {"k" * 250 + "A": 1, "k" * 250 + "B": 2}, workspace=tmp_root
+    )
+    assert sorted(collided.values()) == [1, 2], collided
+
+    # 列表超限时也要有显式标记。
+    truncated = sanitize_payload(list(range(70)), workspace=tmp_root)
+    assert len(truncated) == 65
+    assert truncated[-1] == "<truncated-items:6>"
 
 
 def test_oversized_record_fails_closed(tmp_root):

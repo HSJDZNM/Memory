@@ -151,16 +151,37 @@ def sanitize_payload(
     if isinstance(value, str):
         return redact_text(value, workspace=workspace)
     if isinstance(value, Mapping):
-        items = list(value.items())[:_MAX_ITEMS]
-        return {
-            redact_text(key, workspace=workspace, limit=200): sanitize_payload(
-                item, workspace=workspace, depth=depth + 1
+        items = list(value.items())
+        payload: dict[str, Any] = {}
+
+        def place(key_text: str, item_value: Any) -> None:
+            # 脱敏 / 截断会让两个不同的键落成同一个字符串：不能静默丢掉其中一个值
+            # （被丢掉的正是"这次到底测了什么"），换个后缀把两条都留下。
+            candidate = key_text
+            suffix = 2
+            while candidate in payload:
+                candidate = f"{key_text}#{suffix}"
+                suffix += 1
+            payload[candidate] = item_value
+
+        for key, item in items[:_MAX_ITEMS]:
+            place(
+                redact_text(key, workspace=workspace, limit=200),
+                sanitize_payload(item, workspace=workspace, depth=depth + 1),
             )
-            for key, item in items
-        }
+        if len(items) > _MAX_ITEMS:
+            # 超限的条目不能无声消失：留一个显式的截断标记，读者才知道"这份证据不完整"。
+            place("<truncated-items>", len(items) - _MAX_ITEMS)
+        return payload
     if isinstance(value, (list, tuple, set, frozenset)):
-        items = list(value)[:_MAX_ITEMS]
-        return [sanitize_payload(item, workspace=workspace, depth=depth + 1) for item in items]
+        items = list(value)
+        kept = [
+            sanitize_payload(item, workspace=workspace, depth=depth + 1)
+            for item in items[:_MAX_ITEMS]
+        ]
+        if len(items) > _MAX_ITEMS:
+            kept.append(f"<truncated-items:{len(items) - _MAX_ITEMS}>")
+        return kept
     return redact_text(value, workspace=workspace, limit=500)
 
 
