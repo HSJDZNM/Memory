@@ -43,7 +43,6 @@ if str(SRC_DIR) not in sys.path:
 DEMO_ROOT = REPO_ROOT / ".tmp" / "phase-7-api"
 RESULT = REPO_ROOT / ".tmp" / "artifacts" / "phase-7-api-result.json"
 FIXTURE_PROJECT = REPO_ROOT / "tests" / "fixtures" / "validators" / "project"
-AGENT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
 TOKEN = "loop-alpha-token"
 OPS_TOKEN = "loop-ops-token"
 HOST = "127.0.0.1"
