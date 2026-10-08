@@ -82,11 +82,21 @@ class TraceReport:
     def has_final(self) -> bool:
         return any(entry.stage is AuditStage.FINAL_DECISION for entry in self.entries)
 
-    def payload_of(self, stage: AuditStage) -> Optional[Mapping[str, Any]]:
-        for entry in self.entries:
-            if entry.stage is stage:
-                return entry.payload
-        return None
+    def payload_of(
+        self, stage: AuditStage, *, latest: bool = True
+    ) -> Optional[Mapping[str, Any]]:
+        """某个阶段的载荷；同一阶段有多条时默认取**最后**一条。
+
+        verify_chain 明确允许重试重新开启一轮 pre-check，因此 pre_decision /
+        final_decision 完全可能出现多条。旧实现无条件返回**第一条**——那是已经被取代的
+        说法（例如"第一次 allow、重试后 block"），调用方问"这次动作的结论"却拿到旧结论。
+        要读第一次尝试就显式传 latest=False，取舍写在签名上。
+        """
+
+        matches = [entry for entry in self.entries if entry.stage is stage]
+        if not matches:
+            return None
+        return matches[-1].payload if latest else matches[0].payload
 
 
 def verify_chain(records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:

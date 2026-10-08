@@ -346,6 +346,25 @@ def test_trace_replay_orders_the_chain_and_requires_a_final_decision(tmp_root):
     assert verify_chain(report.records) == ()
 
 
+def test_payload_of_returns_the_latest_reading_by_default(tmp_root):
+    """重试会重新走一次 pre-check：同一阶段可能有多条，默认取"这次动作的最终说法"。
+
+    旧实现无条件返回第一条，调用方拿到的是已经被取代的结论（allow → block 的重试）。
+    """
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.PRE_DECISION, payload={"decision": "allow"}, action_id="act-1")
+    sink.append(AuditStage.EXECUTION, payload={"status": "refused"}, action_id="act-1")
+    sink.append(AuditStage.PRE_DECISION, payload={"decision": "block"}, action_id="act-1")
+    sink.append(AuditStage.FINAL_DECISION, payload={"outcome": "blocked"}, action_id="act-1")
+
+    report = load_trace(tmp_root / "audit.jsonl", action_id="act-1")
+
+    assert report.payload_of(AuditStage.PRE_DECISION)["decision"] == "block"
+    assert report.payload_of(AuditStage.PRE_DECISION, latest=False)["decision"] == "allow"
+    assert report.payload_of(AuditStage.POST_EVIDENCE) is None
+
+
 def test_trace_replay_reports_an_unparsable_record_instead_of_raising(tmp_root):
     """链上有一条读不出来的记录时，重放要给出诊断，而不是把 AuditError 抛给 CLI。
 
