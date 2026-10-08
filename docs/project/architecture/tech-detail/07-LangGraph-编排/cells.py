@@ -112,10 +112,12 @@ from orchestration.models import (  # noqa: E402
     RunStatus,
     empty_state,
 )
-from orchestration.nodes import Change, NodeContext, NodeOutcome, ScriptedAuthor, TaskSpec  # noqa: E402
+# 只导入**被执行单元真正引用**的名字：讲解里提到的其它名字写在正文的反引号里，不由 import 提供——
+# 留着一批没人用的 import，读者会去找一个并不存在的用法（章首清单承诺"每条都能落到代码上"）。
+from orchestration.nodes import Change, ScriptedAuthor  # noqa: E402
 from orchestration.runtime import build_assembly, select_engine  # noqa: E402
 from orchestration.tools import PlatformToolRunner, RecordingToolRunner  # noqa: E402
-from policy.models import POLICY_VERSION, SCHEMA_VERSION, Decision  # noqa: E402
+from policy.models import POLICY_VERSION, SCHEMA_VERSION  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
 print("仓库根:", REPO_ROOT.name)
@@ -260,7 +262,7 @@ print()
 
 # 第三条：引擎不可用时必须失败关闭，而不是"回落之后还说自己是 LangGraph"。
 installed = langgraph_engine.langgraph_version()
-reference_engine, reference_name = select_engine(
+_, reference_name = select_engine(
     "reference", executor=shell_executor("engine-reference"))
 auto_name = select_engine("auto", executor=shell_executor("engine-auto"))[1]
 assert reference_name == "reference"
@@ -758,7 +760,7 @@ repair_client = support.scripted_client(
     readiness_value=support.readiness(),
 )
 repair_runner = RecordingToolRunner((support.executed_outcome(), support.executed_outcome()))
-report, assembly, config, task = run_mini(
+report, _, _, _ = run_mini(
     "mini-repair", client=repair_client, runner=repair_runner, name="mini-repair")
 
 print(pad("节点", 24) + pad("标签", 8) + pad("状态", 9) + "输出摘要")
