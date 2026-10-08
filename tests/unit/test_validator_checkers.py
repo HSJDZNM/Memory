@@ -167,7 +167,38 @@ def test_package_derivation_handles_glob_roots_and_root_level_files() -> None:
     assert _patterns_for("package", CONFIG.layout, stem="main", package=None) == ()
     assert _patterns_for("package", CONFIG.layout, stem="main", package="shop") == (
         "tests/**/shop/**/test_*.py",
+        "tests/**/shop/**/*_test.py",
     )
+
+
+def test_escalation_covers_both_test_naming_conventions(tmp_path: Path) -> None:
+    """每一级都要覆盖 test_*.py 与 *_test.py 两种约定（复核发现：后缀约定整级选不中）。"""
+
+    workspace = tmp_path / "workspace"
+    (workspace / "src" / "shop").mkdir(parents=True)
+    (workspace / "src" / "shop" / "order_widget.py").write_text(
+        "x = 1" + chr(10), encoding="utf-8", newline=""
+    )
+    package_tests = workspace / "tests" / "shop"
+    package_tests.mkdir(parents=True)
+    # 后缀约定、且文件名与生产文件不同名：只有 package 级能选中它。
+    (package_tests / "something_else_test.py").write_text(
+        "def test_x():" + chr(10) + "    assert True" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    selection = select_tests(
+        target_path="src/shop/order_widget.py",
+        changed_files=("src/shop/order_widget.py",),
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=10,
+    )
+
+    assert selection.level == "package", selection.reason
+    assert selection.nodeids == ("tests/shop/something_else_test.py",)
+    assert selection.missing == ()
 
 
 def test_truncation_keeps_the_most_relevant_candidates(tmp_root: Path) -> None:
