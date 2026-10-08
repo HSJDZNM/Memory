@@ -31,23 +31,54 @@ def _placed_slugs() -> list[str]:
     return slugs
 
 
+def _index_slugs() -> list[str]:
+    """脚本里 `INDEX_FILES` 声明的索引页 slug。
+
+    夹具要按**真实产物形状**建树：`02_fetch.py` 的 `INDEXES` 会抓全部 6 个索引页（含 `Glossary`），
+    发布镜像里就有 6 份索引（`docs/mirrors/owasp-cheatsheets/00_索引与标准/` 下 6 个文件）。
+    夹具只造 sheet 的话，`03_build.py` 的"落位表 vs 产物"双向核对会**正确地**报
+    `EXTRA=[...索引页]`——那是夹具不像真实产物，不是核对写错了。
+    """
+
+    for node in ast.walk(ast.parse(SCRIPT.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "INDEX_FILES" for target in node.targets
+        ):
+            keys = [key.value for key in node.value.keys if isinstance(key, ast.Constant)]
+            assert keys, "INDEX_FILES 里没有解析到任何 slug"
+            return keys
+    raise AssertionError("没有从 03_build.py 里解析到 INDEX_FILES")
+
+
 def _fixture(tmp_root: Path, slugs: list[str]) -> None:
     work = tmp_root / "_work" / "owasp-cheatsheets"
     work.mkdir(parents=True, exist_ok=True)
+
+    def record(slug: str, kind: str) -> dict:
+        return {
+            "slug": slug,
+            "saved": True,
+            "kind": kind,
+            "url": "https://cheatsheetseries.owasp.org/cheatsheets/" + slug + ".html",
+            "title": slug.replace("_", " "),
+        }
+
+    entries = {slug: record(slug, "sheet") for slug in slugs}
+    entries.update({slug: record(slug, "index") for slug in _index_slugs()})
     (work / "meta.json").write_text(
-        json.dumps({
-            slug: {
-                "slug": slug,
-                "saved": True,
-                "kind": "sheet",
-                "url": "https://cheatsheetseries.owasp.org/cheatsheets/" + slug + ".html",
-                "title": slug.replace("_", " "),
-            }
-            for slug in slugs
-        }),
+        json.dumps(entries),
         encoding="utf-8",
         newline="",
     )
+    # 源文件也写齐：这样阳性对照能一路走到 `BUILD OK`（不留"夹具本来就没法跑完"的模糊地带）。
+    content = work / "content"
+    content.mkdir(parents=True, exist_ok=True)
+    for slug in entries:
+        (content / (slug + ".md")).write_text(
+            "# " + slug + chr(10) + chr(10) + "正文。" + chr(10),
+            encoding="utf-8",
+            newline="",
+        )
     (work / "taxonomy.json").write_text(
         json.dumps({
             "indexes": {
@@ -102,4 +133,34 @@ def test_matching_table_does_not_trip_the_gate(tmp_root: Path) -> None:
     completed = _run_optimized(tmp_root)
     output = completed.stdout + completed.stderr
 
+    assert completed.returncode == 0, output
     assert "placement mismatch" not in output, output
+
+
+def test_index_table_drift_fails_even_under_optimize(tmp_root: Path) -> None:
+    """索引页落位表同样双向核对：`meta.json` 里出现 `INDEX_FILES` 没有的索引页必须显式拒绝。
+
+    旧实现只有 sheet 那一半核对，索引页漂移会一路走到 `dest_of()` 返回 `None`，
+    再以 `TypeError: expected str, bytes or os.PathLike object, not NoneType` 炸出来。
+    """
+
+    _fixture(tmp_root, _placed_slugs())
+    meta_path = tmp_root / "_work" / "owasp-cheatsheets" / "meta.json"
+    entries = json.loads(meta_path.read_text(encoding="utf-8"))
+    drifted = "Not_An_Index_File"
+    entries[drifted] = {
+        "slug": drifted,
+        "saved": True,
+        "kind": "index",
+        "url": "https://cheatsheetseries.owasp.org/" + drifted + ".html",
+        "title": drifted,
+    }
+    meta_path.write_text(json.dumps(entries), encoding="utf-8", newline="")
+
+    completed = _run_optimized(tmp_root)
+    output = completed.stdout + completed.stderr
+
+    assert completed.returncode == 2, output
+    assert "index placement mismatch" in output, output
+    assert drifted in output, output
+    assert "TypeError" not in output, output
