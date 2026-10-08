@@ -47,7 +47,6 @@ class AuthContext:
     roles: Tuple[str, ...]
     tenant: str
     projects: Tuple[str, ...]
-    anonymous: bool = False
 
     @property
     def token_ref(self) -> str:
