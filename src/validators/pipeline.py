@@ -509,9 +509,20 @@ def run_pipeline(
                     )
                     for spec in runnable
                 }
-                for name, future in futures.items():
-                    outputs[name] = future.result()
-                    statuses[name] = outputs[name].status
+                for spec in runnable:
+                    future = futures[spec.id]
+                    try:
+                        outputs[spec.id] = future.result()
+                    except Exception as error:  # noqa: BLE001 - 线程里逃出来的异常也必须失败关闭
+                        # _execute 自己已经兜底了；这里再兜一层是因为"兜底之外"的异常
+                        # （目录准备、未来的新代码路径）会让整趟 run_pipeline 抛出去，
+                        # 其余 future 的异常在 shutdown 时被丢掉——报告直接消失（复核发现）。
+                        outputs[spec.id] = ValidatorOutput(
+                            status=ValidatorStatus.CRASHED,
+                            reason="验证器线程异常：" + type(error).__name__ + ": " + str(error),
+                            served=spec.checkers,
+                        )
+                    statuses[spec.id] = outputs[spec.id].status
     finally:
         if not keep_temp:
             shutil.rmtree(run_root, ignore_errors=True)
@@ -905,7 +916,16 @@ def _execute(
         )
 
     tmp_dir = run_root / spec.id
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        # 临时目录建不出来（只读根 / ENOSPC / 路径过长）是失败关闭点：旧实现在 try 之外建目录，
+        # 异常直接穿出 _execute（复核发现）。
+        return ValidatorOutput(
+            status=ValidatorStatus.CRASHED,
+            reason="无法创建验证器临时目录：" + type(error).__name__ + ": " + str(error),
+            served=spec.checkers,
+        )
     served_rules = [rule for rule in matched if rule.enforcement.checker in spec.checkers]
 
     try:
