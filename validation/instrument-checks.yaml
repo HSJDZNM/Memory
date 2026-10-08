@@ -215,6 +215,14 @@ checks:
     mutation_id: null
     gap_note: "存量检查，未做变异自证"
     severity: blocking
+  - check_id: "gate-step:Tech-detail notebooks execute"
+    owner: ci-line
+    command: ".venv/bin/python docs/project/architecture/tech-detail/build_notebooks.py"
+    covers: "技术讲解 notebook 的代码单元真的能跑（第二个消费者：上游改落盘布局/环境依赖时 --check 会绿而讲解已经跑不通）"
+    evidence_level: exit_code
+    mutation_id: null
+    gap_note: "2026-10-08 用 git archive HEAD 的副本做过一次显式变异（改错 02 章 cells.py 的一个断言）：本步骤的命令退出 1（代码单元执行: 12 个失败），而 --check 退出 0——这正是它补的缺口；变异未固化成常驻用例（每次 53 秒），如实登记为一次性证明"
+    severity: blocking
 
   - check_id: "gate-step:Text conventions (UTF-8 / LF / trailing whitespace)"
     owner: ci-line

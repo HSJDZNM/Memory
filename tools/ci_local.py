@@ -254,6 +254,11 @@ HANDBOOK_STEPS = (
     # 按阶段的学习手册（docs/project/learning/**）与其生成器已下线：学习材料不再进仓库，
     # "手册同步 / 手册结构"这两步随之删除。这里只剩按技术的讲解 notebook。
     "Tech-detail notebooks are in sync",
+    # 第二类检验：**真的把讲解的代码单元跑一遍**。--check 只比对产物与内容源，
+    # 上游改了落盘布局 / 环境依赖而讲解是第二个消费者时，它会绿着看讲解跑不通
+    # （2026-10-08 的 6917b81：02 章 8 个单元红、仓库测试全绿）。同组同前缀触发：
+    # src/ 一改就该问"讲解还跑得动吗"。本机实测全量 53 秒（单章 02 为 29.6 秒）。
+    "Tech-detail notebooks execute",
 )
 # 检索语料只在 docs/mirrors/ 下（knowledge/corpus.yaml 的每个 dataset 都指向镜像目录），
 # 所以这一组由 mirrors 与检索代码触发；本项目自产的 docs/project/** 改动与语料无关，
