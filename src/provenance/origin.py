@@ -37,7 +37,10 @@ __all__ = [
     "OriginError",
     "ORIGIN_OBJECT_KIND",
     "build_origin",
+    "config_path_in",
+    "family_of",
     "is_known_origin",
+    "payload_is_well_formed",
     "unknown_origin",
 ]
 
