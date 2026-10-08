@@ -458,3 +458,23 @@ def test_unavailable_cells_do_not_print_as_ok(tmp_root, capsys):
         "check_id_without_object",
     ):
         assert "[未评] " + key + ": unavailable" in out, out
+
+
+def test_a_malformed_workflow_shape_is_an_explicit_unavailable_not_a_traceback(tmp_root):
+    """workflow 形状漂移（jobs 是列表 / job 不是映射）要走"读不出来"这一档，不许抛 AttributeError。
+
+    `enumerate_objects` 只把 InstrumentChecksError 转成显式降级；形状漂移若以 AttributeError 逃出去，
+    整支仪器会以 traceback + 非 0 退出收场，破坏"退出码恒 0、读不出来是显式状态"的契约。
+    """
+
+    module = _load()
+    repo = tmp_root / "repo"
+    workflows = repo / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "bad.yml").write_text("jobs:\n  - not-a-mapping\n", encoding="utf-8")
+
+    with pytest.raises(module.InstrumentChecksError) as error:
+        module._gate_steps(repo)
+
+    assert "jobs 不是映射" in str(error.value)
+    assert "bad.yml" in str(error.value)

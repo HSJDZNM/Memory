@@ -464,9 +464,31 @@ def _gate_steps(repo: Path) -> tuple:
             document = yaml.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as error:
             raise InstrumentChecksError(str(path) + " 读不出来：" + str(error)) from error
+        # 形状守卫：`document` 是列表、`jobs` 是列表、job/step 不是映射，都会让下面这几行抛
+        # AttributeError——`enumerate_objects` 只把 InstrumentChecksError 转成"读不出来"这一档，
+        # 于是整支仪器以 traceback + 非 0 退出收场，破坏"退出码恒 0"的契约。
+        # 这里把形状漂移显式抬成 InstrumentChecksError（同一档降级，读数里说得清是哪份文件）。
+        if document is not None and not isinstance(document, dict):
+            raise InstrumentChecksError(
+                str(path) + " 的顶层不是映射（得到 " + type(document).__name__ + "）：读不出步骤清单"
+            )
         jobs = (document or {}).get("jobs") or {}
-        for job in jobs.values():
+        if not isinstance(jobs, dict):
+            raise InstrumentChecksError(
+                str(path) + " 的 jobs 不是映射（得到 " + type(jobs).__name__ + "）：读不出步骤清单"
+            )
+        for job_name, job in jobs.items():
+            if not isinstance(job, dict):
+                raise InstrumentChecksError(
+                    str(path) + " 的 job " + str(job_name) + " 不是映射（得到 "
+                    + type(job).__name__ + "）"
+                )
             for step in job.get("steps") or []:
+                if not isinstance(step, dict):
+                    raise InstrumentChecksError(
+                        str(path) + " 的 job " + str(job_name) + " 里有非映射的步骤（得到 "
+                        + type(step).__name__ + "）"
+                    )
                 run = step.get("run")
                 if isinstance(run, str) and run.strip():
                     name = str(step.get("name", "")) or "<未命名步骤>"
