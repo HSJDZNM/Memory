@@ -880,7 +880,9 @@ def _drop_reason(
     annotation = scope.annotation
     base_resolved = base.resolve()
     target = (base / annotation.file).resolve()
-    if not str(target).startswith(str(base_resolved)):
+    # 真包含判定（路径级，不是字符串前缀）：`<root>/<id>@<rev>-backup/x.py` 的字符串确实以
+    # 语料根的字符串开头，字符串前缀测试会把它当成语料内容——那份文件根本没被锁覆盖。
+    if target != base_resolved and base_resolved not in target.parents:
         return Skip(SKIP_TARGET_OUTSIDE_CORPUS, f"{annotation.code} {annotation.file}")
     if annotation.file not in line_cache:
         line_cache[annotation.file] = (
