@@ -301,13 +301,36 @@ def scenario_tool_facts_are_traceable() -> Scenario:
     report, _ = decide(workspace, "src/shop/style_offences.py")
     record = report.record("tool.ruff")
 
-    if record is None or record.tool is None:
+    from policy.evidence import ValidatorStatus
+
+
+    if record is None:
+        # 连记录都没有 = 这个验证器**根本没被选中/记录**：那不是"本机没装 Ruff"，
+        # 而是流水线没让它跑——旧实现把它与"没装"合并成同一个良性跳过，于是"Ruff 从没跑过"
+        # 也能整体 pass + 退出 0（条目 [65]）。
         return Scenario(
             "外部工具的版本与配置可追溯",
-            True,
-            "skipped: 本机没有可用的 Ruff（CI 会装一份再跑）",
-            {"tool.ruff": "unavailable"},
-            verified=False,
+            False,
+            "tool.ruff 没有任何证据记录：验证器没有跑（这不是「本机没装」）",
+            {"tool.ruff": "missing"},
+        )
+    if record.tool is None:
+        status = record.status.value
+        if status in (ValidatorStatus.UNAVAILABLE.value, ValidatorStatus.VERSION_MISMATCH.value):
+            # 只有"这台机器给不出 Ruff"才算良性跳过（CI 会装一份再跑）；
+            # crashed / config_error / timeout / output_invalid 等都不是"没装"，按失败处理。
+            return Scenario(
+                "外部工具的版本与配置可追溯",
+                True,
+                "skipped: 本机没有可用的 Ruff（CI 会装一份再跑）",
+                {"tool.ruff": status},
+                verified=False,
+            )
+        return Scenario(
+            "外部工具的版本与配置可追溯",
+            False,
+            "Ruff 没有给出工具事实（status=" + status + "）：这不是「本机没装」，按失败处理",
+            {"tool.ruff": status},
         )
     facts = {
         "version": record.tool.version,
