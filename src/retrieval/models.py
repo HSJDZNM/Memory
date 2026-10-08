@@ -821,7 +821,11 @@ class RetrievedChunk(StrictModel):
 
     @property
     def citation_source(self) -> str:
-        return f"{self.source_path}#{self.heading_anchor}" if self.heading_anchor else self.source_path
+        return (
+            f"{self.source_path}#{self.heading_anchor}"
+            if self.heading_anchor
+            else self.source_path
+        )
 
 
 class RetrievalResult(StrictModel):
