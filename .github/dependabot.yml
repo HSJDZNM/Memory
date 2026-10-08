@@ -23,5 +23,7 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: monthly
+      # 月度与文件头"漏洞披露后能不能快速升级"的说法不匹配：动作类更新按月检查，最坏要等约 30 天
+      # 才看到一次提案。改成每周（每次提案都会跑一遍完整门禁，代价由 workflow 的 concurrency 收敛）。
+      interval: weekly
     labels: ["dependencies", "ci"]
