@@ -212,6 +212,33 @@ def test_unknown_validator_filter_is_rejected() -> None:
     assert "tool.absent" in completed.stderr
 
 
+def test_git_paths_are_converted_to_the_workspace_coordinate_system(monkeypatch) -> None:
+    """git 的路径锚在仓库顶层，必须换算成 workspace 坐标系（复核发现）。"""
+
+    from validators import cli as cli_module
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(
+            cli_module, "_git_prefix", lambda anchor: "tests/fixtures/validators/project/"
+        )
+        converted = cli_module._workspace_relative(
+            (
+                "tests/fixtures/validators/project/src/shop/a.py",
+                "tests/fixtures/validators/project/tests/test_a.py",
+                "src/policy/models.py",  # 工作区之外：丢掉
+                "tests/fixtures/validators/project/",  # 目录项：换算后为空，丢掉
+            ),
+            Path("tests/fixtures/validators/project"),
+        )
+
+    assert converted == ("src/shop/a.py", "tests/test_a.py")
+
+    # 顶层工作区（前缀为空）原样返回。
+    with monkeypatch.context() as patcher:
+        patcher.setattr(cli_module, "_git_prefix", lambda anchor: "")
+        assert cli_module._workspace_relative(("src/a.py",), Path(".")) == ("src/a.py",)
+
+
 def test_changed_from_git_rejects_option_like_refs(tmp_root: Path) -> None:
     """--changed-from-git 的 ref 不能以 '-' 开头：git 会把它当选项（复核发现：选项注入）。"""
 
