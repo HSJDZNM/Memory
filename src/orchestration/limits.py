@@ -76,12 +76,12 @@ def charge(state: GraphState, kind: LimitKind, amount: int = 1) -> GraphState:
     updated = current + amount
     if updated > limit:
         # 失败码决定终态（needs_human）；这里不做任何"截断后继续"。
-        error = LimitExceeded(
+        # 码在构造期给：六种 limit_* 各自对应不同的终态与理由，靠"事后改属性"迟早漏一处。
+        raise LimitExceeded(
             f"{rule.description}超过上限：{updated} > {limit}",
+            code=rule.code,
             node=state.stage,
         )
-        error.code = rule.code
-        raise error
     counters = state.counters.model_copy(update={rule.counter: updated})
     return state.replace(counters=counters)
 

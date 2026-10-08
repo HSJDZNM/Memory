@@ -70,6 +70,12 @@ from orchestration.models import (
     empty_state,
 )
 from orchestration.client import _is_relative
+from orchestration.errors import (
+    ApprovalError,
+    CheckpointError,
+    LimitExceeded,
+    TraceError,
+)
 from orchestration.nodes import Change, _changed_paths
 
 from orchestration_support import (
@@ -732,6 +738,27 @@ def test_client_accepts_plain_relative_paths(value: str) -> None:
     """反向不变量：普通相对路径照旧收（带一个百分号编码的空格不该被误伤）。"""
 
     assert _is_relative(value) is True
+
+
+def test_failure_codes_can_be_given_at_construction() -> None:
+    """失败码在**构造期**给，默认值仍是各子类自己的码。
+
+    终态是按码推导的（errors.STATUS_BY_CODE），而调用方此前只能"先构造、再改属性"
+    （`error.code = code`）——任何忘记改属性的抛出点都会静默记成默认码，
+    于是"审批过期"会被记成"没有审批"、终态也跟着走偏。
+    """
+
+    assert ApprovalError("没有审批").code is FailureCode.APPROVAL_MISSING
+    expired = ApprovalError("已过期", code=FailureCode.APPROVAL_EXPIRED)
+    assert expired.code is FailureCode.APPROVAL_EXPIRED
+    assert expired.failure_payload()["code"] == "approval_expired"
+
+    assert LimitExceeded("超了", code=FailureCode.LIMIT_TOKENS).code is FailureCode.LIMIT_TOKENS
+    assert TraceError("断了", code=FailureCode.TRACE_FORGED).code is FailureCode.TRACE_FORGED
+    assert (
+        CheckpointError("坏了", code=FailureCode.CHECKPOINT_CORRUPT).code
+        is FailureCode.CHECKPOINT_CORRUPT
+    )
 
 
 def test_state_models_are_frozen_in_practice() -> None:

@@ -192,12 +192,13 @@ class ApprovalGate:
             uses_left=uses_left,
         )
         if code is not None:
-            error = ApprovalError(
+            # 码在**构造期**给（不再"先构造再改属性"）：忘改属性的抛出点会静默记成默认码，
+            # 而终态是按码推导的。
+            raise ApprovalError(
                 _message_for(code, node=node, action_hash=action_hash, action_id=action_id),
+                code=code,
                 node=node,
             )
-            error.code = code
-            raise error
         assert record is not None  # _classify 已经排除了 None
         try:
             # 判定权仍然在 Phase 4：角色、签发时间与单次使用都由它复核。
