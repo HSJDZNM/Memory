@@ -54,3 +54,51 @@ def test_manifest_fetched_at_comes_from_the_build_state() -> None:
     assert isinstance(fetched, ast.Name) and fetched.id == "TODAY", (
         "fetched_at 必须是 build_state 的抓取日期（TODAY），实际是 " + ast.dump(fetched)
     )
+
+def _extract_function(name: str):
+    """把 04_index.py 里的某个函数单独 exec 出来（脚本在 import 时就跑整条流水线，不能 import）。"""
+
+    for node in _tree().body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            module = ast.Module(body=[node], type_ignores=[])
+            namespace: dict = {}
+            exec(compile(module, str(SOURCE), "exec"), namespace)  # noqa: S102 - 只跑这一个纯函数
+            return namespace[name]
+    raise AssertionError("找不到函数 " + name)
+
+
+def test_saved_counter_counts_cheat_sheets_only() -> None:
+    """站点索引页不算进 pages_saved（否则 candidate / saved / excluded 三个数对不上）。"""
+
+    saved_cheat_sheets = _extract_function("saved_cheat_sheets")
+    pages = [
+        {"role": "cheat-sheet"},
+        {"role": "cheat-sheet"},
+        {"role": "site-index"},
+        {"role": "site-index"},
+        {"role": "cheat-sheet"},
+    ]
+
+    assert saved_cheat_sheets(pages) == 3
+    assert saved_cheat_sheets([]) == 0
+
+
+def test_manifest_uses_the_split_counter() -> None:
+    """manifest 里的 pages_saved 必须走这个口径，不许退回 len(pages)。"""
+
+    manifest = None
+    for node in _tree().body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "manifest" for target in node.targets
+        ):
+            manifest = node.value
+    assert isinstance(manifest, ast.Dict)
+
+    values = {
+        key.value: value
+        for key, value in zip(manifest.keys, manifest.values)
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+    saved = values.get("pages_saved")
+    assert isinstance(saved, ast.Call), "pages_saved 必须是计算出来的，不是字面量"
+    assert isinstance(saved.func, ast.Name) and saved.func.id == "saved_cheat_sheets", ast.dump(saved)
