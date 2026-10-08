@@ -777,7 +777,10 @@ print("终态:", report.status.value, "| 报告里的引擎名:", report.engine,
 print("工具端口真的被调用了几次:", len(repair_runner.calls),
       "| 每次的工具:", [call.tool_id for call in repair_runner.calls])
 assert report.status is RunStatus.COMPLETED
-assert report.engine in ("reference", "langgraph")
+# §6 的说法是"报告里的引擎名**如实**：装配时声明 `engine="auto"`，报告就写它实际用的那个"，
+# 而原来这条 `in ("reference", "langgraph")` **两个都接受**：报告写死 reference、实际跑的是
+# langgraph 也照样绿（"如实"从未被验证）。判据要与 §2 选出来的那个名字对齐（`auto_name`）。
+assert report.engine == auto_name, (report.engine, auto_name)
 assert [step.node for step in report.steps] == [
     "requirement_analysis", "policy_retrieval", "architecture_planning", "implementation",
     "validation", "repair", "validation", "testing", "review",
