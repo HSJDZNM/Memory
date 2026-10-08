@@ -227,7 +227,11 @@ def manifests(url, spec):
             "model": p["model"],
             "model_name": MODEL_NAME.get(p["model"], ""),
             "model_href": p["model_href"],
-            "catalog_order": p["order"],
+            # catalog_order 只对"能力目录里的能力"有意义：kind=capability 用目录页栅格里的序号
+            # （跨全部模型 1..N 唯一）。能力目录页自己与 /guides/ 的两篇指南**不在**这张目录里，
+            # 各写各的稿序会把两个序列混进同一个名字（旧实现里 guides 的 1、2 与能力 1、2 撞号，
+            # 按它排序 / 去重的消费方会把指南插进能力中间）。非 capability 一律 null。
+            "catalog_order": p["order"] if p["kind"] == "capability" else None,
             "summary": p["summary"],
             "parent": "index.md" if p["kind"] != "catalog" else "",
         },
@@ -391,7 +395,10 @@ def readme_saved():
             C(p["path"]) for p in pages() if p["kind"] == "guide") + "，",
         "  被能力正文按实施指导的方式引用；",
         "- " + C("manifest.json") + "：逐页记录来源 URL、本地路径、角色与收录理由（role / why）、",
-        "  模型层级（model / model_name / model_href / catalog_order）、摘要、字节数与 sha256，便于校验。",
+        "  模型层级（model / model_name / model_href）、摘要、字节数与 sha256，便于校验；",
+        "  " + C("catalog_order") + " 只出现在 " + C("kind=capability") + " 的条目上"
+        + "（能力目录页栅格里的序号 1..N，跨全部模型唯一），",
+        "  目录页自己与两篇指南记为 " + C("null") + "。",
     ]
 
 

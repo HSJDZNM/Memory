@@ -526,7 +526,7 @@
       "model": "guide",
       "model_name": "",
       "model_href": "",
-      "catalog_order": 1,
+      "catalog_order": null,
       "summary": ""
     },
     {
@@ -547,7 +547,7 @@
       "model": "guide",
       "model_name": "",
       "model_href": "",
-      "catalog_order": 2,
+      "catalog_order": null,
       "summary": ""
     },
     {
@@ -568,7 +568,7 @@
       "model": "",
       "model_name": "站点未标注模型",
       "model_href": "",
-      "catalog_order": 0,
+      "catalog_order": null,
       "summary": "Explore the practices and capabilities that foster a learning environment, efficient processes, and rapid feedback, all of which accelerate software delivery and enhance overall organizational performance. Each of these articles presentes specific practices, providing implementation guidance and strategies to overcome common challenges. You can also learn how to deploy a program to implement these capabilities in our guide “How to Transform.” Explore the practices and capabilities that foster a learning environment, efficient processes, and rapid feedback, all of which accelerate software delivery and enhance overall organizational performance. Each of these articles presentes specific practices, providing implementation guidance and strategies to overcome common challenges. You can also learn how to deploy a program to implement these capabilities in our guide “How to Transform.”"
     },
     {
