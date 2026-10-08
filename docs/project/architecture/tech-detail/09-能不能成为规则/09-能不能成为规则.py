@@ -502,8 +502,14 @@ assert atomic_files == sorted([good.name, bad.name]), atomic_files
 try:
     load_rules(atomic_dir, repo_root=REPO_ROOT)
     raise AssertionError("目录里有一条坏规则，整批加载本该失败")
-except RuleFileError as error:
-    blamed = str(error.repo_path).rsplit("/", 1)[-1]
+# 捕获**基类** `LoaderError`（`RuleFileError` 是它的子类）：这一格要证明的是"整批不加载"这条
+# 契约，而加载器在更早的步骤上也会抛基类——文件读不出来（`_read_mapping`）、目录读不出来
+# （`collect_rule_files`）、路径逃出仓库根（`_relative_to_root`）同样是"整批不成"。只接子类会让
+# 那些情形穿出去变成一段 traceback，读者还以为"演示写错了"。
+except LoaderError as error:
+    # 基类不一定带 `repo_path`（那三个来源就没有）：取不到就留空串，让下面的断言把
+    # "抱怨的不是那条坏文件"这件事说清楚。
+    blamed = str(getattr(error, "repo_path", "")).rsplit("/", 1)[-1]
     print("原子加载：" + str(len(atomic_files)) + " 个规则文件（1 好 + 1 坏）→ 整批不加载（"
           + type(error).__name__ + "）")
     print("  它抱怨的是 " + blamed + " —— 一条坏，整批不成。")
