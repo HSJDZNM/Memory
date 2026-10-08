@@ -27,10 +27,12 @@ def main():
         todo = STAGES
     else:
         todo = [s for s in STAGES if s.startswith(args[0])]
-    if not todo:
-        print("未知阶段: " + args[0])
-        print("可用: all, " + ", ".join(s[:2] for s in STAGES))
-        return 2
+        # **唯一匹配**才算指定了一个阶段：`0`（或空串）会一次匹配全部五个，
+        # 手滑成 `0` 就静默跑完整条流水线；将来多一个同前缀阶段也会被悄悄带上。
+        if len(todo) != 1:
+            print("未知或有歧义的阶段: " + repr(args[0]) + "（匹配到 " + str(len(todo)) + " 个阶段）")
+            print("可用: all, " + ", ".join(s[:2] for s in STAGES))
+            return 2
     for s in todo:
         print("")
         print("=" * 64)

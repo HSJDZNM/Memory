@@ -48,3 +48,29 @@ def test_no_argument_still_runs_all_stages(monkeypatch) -> None:
 
     assert module.main() == 0
     assert len(calls) == len(module.STAGES)
+
+def test_only_a_single_stage_selector_is_accepted(monkeypatch) -> None:
+    """`0` / 空串这类前缀一次匹配多个阶段：拒绝，不许静默跑整条流水线。"""
+
+    module = _load()
+    calls: list = []
+    monkeypatch.setattr(module.subprocess, "call", lambda *a, **k: calls.append(a) or 0)
+
+    for selector in ("0", "", "zz"):
+        monkeypatch.setattr(sys, "argv", ["pipeline.py", selector])
+        assert module.main() == 2, repr(selector)
+
+    assert calls == []
+
+
+def test_exact_stage_selector_runs_only_that_stage(monkeypatch) -> None:
+    """阳性对照：`03` 只跑 03_build.py。"""
+
+    module = _load()
+    calls: list = []
+    monkeypatch.setattr(module.subprocess, "call", lambda *a, **k: calls.append(a) or 0)
+    monkeypatch.setattr(sys, "argv", ["pipeline.py", "03"])
+
+    assert module.main() == 0
+    assert len(calls) == 1
+    assert calls[0][0][-1].endswith("03_build.py")
