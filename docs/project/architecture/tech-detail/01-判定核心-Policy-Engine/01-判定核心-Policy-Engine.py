@@ -373,7 +373,12 @@ for name in sorted(checkers.SUPPORTED_CHECKERS):
     kind = "上下文类" if name in checkers.CONTEXT_CHECKERS else "证据类"
     print(pad(name, 24) + pad(kind, 12) + checkers.checker_handler(name).__name__)
 
-assert set(checkers.CONTEXT_CHECKERS) | set(checkers.EVIDENCE_CHECKERS) == set(checkers.SUPPORTED_CHECKERS)
+# 原来这里有一条 `SUPPORTED_CHECKERS == CONTEXT_CHECKERS | EVIDENCE_CHECKERS`：而源码里
+# `SUPPORTED_CHECKERS` **就是**那两个集合的并集，这条断言永远为真——它不是检查，只是把定义
+# 抄了一遍（旁边那条"互不重叠"才是有内容的）。要钉住的是这两个族**各自非空**：哪一族被清空，
+# "证据类 checker 缺证据就必须阻断"这条纪律就会静默失效（没有成员再需要它）。
+assert checkers.CONTEXT_CHECKERS, "上下文类 checker 一族不能为空"
+assert checkers.EVIDENCE_CHECKERS, "证据类 checker 一族不能为空"
 assert not (set(checkers.CONTEXT_CHECKERS) & set(checkers.EVIDENCE_CHECKERS))
 used_checkers = {rule.enforcement.checker for rule in RULES.rules}
 assert used_checkers <= set(checkers.SUPPORTED_CHECKERS)
