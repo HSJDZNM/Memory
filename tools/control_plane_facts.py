@@ -88,8 +88,16 @@ FACTS_TABLE_SCHEMA_VERSION = "1"
 
 DEFAULT_FACTS = REPO / "validation" / "control-plane-facts.yaml"
 DEFAULT_CHECKS = isp.DEFAULT_CHECKS
-EXAMPLE_CONFIG = REPO / "examples" / "dsh" / "dsh-adapter.yaml"
-EXAMPLE_HOOKS = REPO / "examples" / "dsh" / "hooks.json"
+def _example_paths(root: Path) -> tuple[Path, Path]:
+    """`examples/dsh` 的两个文件**相对被检根**取（旧写法把 REPO 的绝对路径写死成模块常量）。
+
+    混用两个基准会让 `evaluate(repo=…)` 的读数变成**从两棵树缝出来的**：枚举 `root/tests`，
+    却读 REPO 的 adapter 配置与示例预算；而 `_display(EXAMPLE_HOOKS, root=root)` 在 `root != REPO`
+    时把示例路径折成"工作区之外"的占位符，本地通道的 `matched` 永远对不上。
+    """
+
+    base = root / "examples" / "dsh"
+    return base / "dsh-adapter.yaml", base / "hooks.json"
 
 STATUS_AVAILABLE = reading.STATUS_AVAILABLE
 STATUS_UNAVAILABLE = reading.STATUS_UNAVAILABLE
@@ -399,7 +407,7 @@ def cross_source_test_paths(root: Path) -> dict:
             path.relative_to(root).as_posix() for path in (root / "tests").rglob("*.py")
         )
         layout = load_test_layout(root=root)
-        config = load_config(EXAMPLE_CONFIG)
+        config = load_config(_example_paths(root)[0])
     except (RegistryError, DshEventError, OSError) as error:
         return {
             "status": STATUS_UNAVAILABLE,
@@ -825,12 +833,12 @@ def budget_inventory(root: Path, hooks_rel: str) -> dict:
 def cross_source_budget(root: Path, *, extra_instances: Sequence[tuple]) -> dict:
     """C3：预算不等式两套结论（仓库内 examples/dsh 恒读 + 显式给的实例）。"""
 
-    pairs = [(EXAMPLE_CONFIG, EXAMPLE_HOOKS), *extra_instances]
+    pairs = [_example_paths(root), *extra_instances]
     rendered = [
         budget_instance(config_path, hooks_path, root=root)
         for config_path, hooks_path in pairs
     ]
-    inventory = budget_inventory(root, _display(EXAMPLE_HOOKS, root=root))
+    inventory = budget_inventory(root, _display(_example_paths(root)[1], root=root))
     violated = [
         {
             "instance": item["instance"],
