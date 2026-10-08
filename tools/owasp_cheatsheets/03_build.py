@@ -130,6 +130,18 @@ INDEX_FILES = {
     "Glossary": ("00_索引与标准", "05_索引-字母顺序总索引.md"),
 }
 
+# 索引页同样要**双向**核对（上面那条只核了 sheet）。理由更硬：`dest_of()` 对未知 slug 返回 `None`，
+# 调用点的 `if d:` 会把 `None` **静默丢掉**，直到 `os.makedirs(os.path.dirname(dst))` 才以
+# `TypeError: expected str, bytes or os.PathLike object, not NoneType` 炸出来；反方向
+# （`INDEX_FILES` 声明了这一页、但这一页没抓到/没落盘）则会让发布出去的镜像少一份索引，而**没有任何人报错**。
+# 与上面那条一样写成显式报错 + 退出码 2：`-O` 不会把它删掉。
+missing_indexes = sorted(set(indexes_saved) - set(INDEX_FILES))
+extra_indexes = sorted(set(INDEX_FILES) - set(indexes_saved))
+if missing_indexes or extra_indexes:
+    print("ERROR: index placement mismatch：MISSING（保存了但 INDEX_FILES 里没有）=" + repr(missing_indexes)
+          + " EXTRA（INDEX_FILES 里有但没保存）=" + repr(extra_indexes))
+    raise SystemExit(2)
+
 def dest_of(slug):
     if slug in P:
         f, sub = P[slug]
