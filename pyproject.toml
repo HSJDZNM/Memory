@@ -27,6 +27,11 @@ dependencies = [
 dev = [
   "pytest>=8.3,<10",
   "pytest-xdist>=3.6,<4",
+  # [tool.coverage.run] 就在本文件里：没有这两条，那份配置在干净环境里读不到任何数据
+  # （`pytest --cov` 直接报 unknown option）。pytest-cov 提供 --cov，coverage 是它的后端，
+  # 也是 `python -m coverage report` 的入口——两个都显式声明，别让"能不能跑"取决于传递依赖。
+  "coverage>=7,<8",
+  "pytest-cov>=6,<8",
 ]
 
 [project.scripts]

@@ -12,3 +12,7 @@ langgraph>=1.2,<2
 pytest>=8.3,<10
 # 门禁的 pytest 步骤按文件并行（-n auto --dist loadfile）；只影响调度，不影响用例集合与断言。
 pytest-xdist>=3.6,<4
+# pyproject.toml 的 [tool.coverage.run] 要能真的跑起来：pytest-cov 提供 --cov，
+# coverage 是它的后端与 python -m coverage report 的入口。
+coverage>=7,<8
+pytest-cov>=6,<8
