@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -75,3 +77,33 @@ def test_install_writes_a_hook_that_resolves_the_tree_at_runtime(tmp_root, monke
     assert '"$ROOT/.venv/Scripts/python.exe"' in text
     assert "CI_LOCAL_PYTHON" in text
     assert (repo / "tools" / "ci_local.py").as_posix() not in text, "不许再写死安装时的路径"
+
+
+def test_fallback_python_is_escaped_before_it_lands_in_the_hook(tmp_root, monkeypatch):
+    """兜底解释器路径里的 $、反引号与 " 必须原样进钩子。
+
+    钩子里那一行是双引号字符串：$ 与反引号照样会被展开、" 会提前闭合。实测（Git for
+    Windows 的 bash）：含 $ 的路径被静默换成另一个解释器（PY=/opt/we/python3），
+    含 " 或反引号的路径直接变成语法错误（bash -n 退出码 2，unexpected EOF）——
+    也就是说钩子装得上、却每次 push 都失败。
+    """
+
+    module = _load()
+    weird = '/opt/we"ird/$HOME/py`whoami`'
+    monkeypatch.setattr(module, "_venv_python", lambda: weird)
+    hook = _install(module, monkeypatch, _fake_repo(tmp_root))
+    text = hook.read_text(encoding="utf-8")
+
+    assert weird not in text, "路径原样拼进了双引号：$ 与反引号会被 sh 展开"
+    # 兜底那一条是模板里最后一条 PY=：前两条回退用的是运行时解析的 $ROOT，不带注入面。
+    line = [row for row in text.splitlines() if row.startswith('[ -x "$PY" ] || PY=')][-1]
+    assert '\\$HOME' in line and "\\`whoami\\`" in line and '\\"ird' in line
+    if os.name == "nt" or shutil.which("sh") is None:
+        # Windows 的 system32\bash.exe 是 WSL，不能当成 POSIX sh 用：转义形态已断言，
+        # 真实展开行为交给 POSIX（CI）上的后半段守着。
+        pytest.skip("本机没有可信的 POSIX sh：只验证了转义形态")
+    result = subprocess.run(
+        [shutil.which("sh"), "-c", line + '; printf %s "$PY"'],
+        capture_output=True, text=True, check=True,
+    )
+    assert result.stdout == weird, "展开后不再是同一个路径"

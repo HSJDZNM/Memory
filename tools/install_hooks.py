@@ -41,6 +41,21 @@ exec "$PY" "$ROOT/tools/ci_local.py" --hook
 """
 
 
+def _sh_double_quoted(value: str) -> str:
+    """把要放进 sh 双引号里的字面量转义（路径可能含 $、反引号、" 与反斜杠）。
+
+    双引号里 `$` 与反引号照样会被展开、`"` 会提前闭合、反斜杠要成对写：把路径原样拼进
+    `PY="{fallback_python}"` 的话，含 `$` 的路径会**静默换成另一个解释器**，含 `"` /
+    反引号的路径会让整份钩子变成语法错误（每次 push 都失败）。这两类路径在真实文件系统里
+    都合法（Windows 上 `$` 与反引号合法，POSIX 上三者都合法）。
+    """
+
+    escaped = value.replace("\\", "\\\\")
+    for character in ('"', "$", "`"):
+        escaped = escaped.replace(character, "\\" + character)
+    return escaped
+
+
 def _venv_python() -> str:
     """装钩子时的解释器：只在"当前树没有 .venv"时兜底（见 SCRIPT 里的三段回退）。"""
 
@@ -80,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         print("已备份原来的 pre-push -> " + BACKUP.name)
     HOOK.parent.mkdir(parents=True, exist_ok=True)
     HOOK.write_text(
-        SCRIPT.format(fallback_python=_venv_python()),
+        SCRIPT.format(fallback_python=_sh_double_quoted(_venv_python())),
         encoding="utf-8", newline="\n",
     )
     # git 只执行带可执行位的钩子（find_hook 会做 access(X_OK)）：write_text 默认 0644，
