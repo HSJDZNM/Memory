@@ -8,6 +8,17 @@ from pydantic import ValidationError
 from retrieval.models import CorpusManifest, CorpusQuarantine
 
 
+def test_public_models_are_exported() -> None:
+    """被别的模块直接 import 的公开模型必须在 __all__ 里（复核发现：L4 models.py:41）。"""
+
+    import retrieval.models as models
+
+    assert "CorpusManifest" in models.__all__
+    assert "DocumentRecord" in models.__all__
+    # __all__ 是有序清单：两个名字都按字母序落位。
+    assert models.__all__ == sorted(models.__all__)
+
+
 def test_restricted_datasets_must_agree_with_visibility() -> None:
     """restricted_datasets 必须与 visibility 逐项一致（复核发现：security / fail-open）。
 
