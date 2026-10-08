@@ -243,15 +243,16 @@ def pre_markdown(res, spec, ctx, to_markdown):
 
 
 def _absolutize(art, page_url):
-    # 引擎传入的 URL 是归一化后的目录式写法（带尾斜杠），直接用来 urljoin 会把同级链接
-    # 解析成子目录（naming-guidelines/capitalization-conventions），故先还原 canonical 形式
-    page_url = (page_url or BASE).rstrip("/")
     """把正文中的相对链接补全为绝对 URL。
 
     该站正文里的链接有两种相对形式：根相对（/en-us/...，指向 API 参考等）与同级相对
     （capitalization-conventions、./，指向本章其它页面）。引擎的链接改写只认绝对地址，
     相对地址既无法改写成本地路径，离线后也不可点，故统一按当前页 URL 解析。
     """
+
+    # 引擎传入的 URL 是归一化后的目录式写法（带尾斜杠），直接用来 urljoin 会把同级链接
+    # 解析成子目录（naming-guidelines/capitalization-conventions），故先还原 canonical 形式
+    page_url = (page_url or BASE).rstrip("/")
     for a in art.find_all("a", href=True):
         href = a["href"].strip()
         if not href or href.startswith(("#", "mailto:", "javascript:")):
