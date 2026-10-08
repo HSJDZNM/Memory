@@ -22,7 +22,7 @@ import datetime as clock
 import json
 import sys
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional, Sequence, Tuple
+from typing import Any, Callable, Optional, Sequence, Tuple
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -40,9 +40,8 @@ from retrieval.models import (  # noqa: E402
     AccessScope,
     PolicyFact,
     RetrievalQuery,
-    RetrievalStatus,
 )
-from retrieval.retriever import FtsRetriever, ResultCache, hits_to_chunks  # noqa: E402
+from retrieval.retriever import FtsRetriever, ResultCache  # noqa: E402
 from retrieval.store import ChunkStore  # noqa: E402
 from retrieval.vector import VectorRetriever  # noqa: E402
 
