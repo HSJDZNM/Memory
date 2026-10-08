@@ -125,8 +125,12 @@ def main(argv: list[str]) -> int:
     # 两个 git 清单都必须成功：失败时不能退化成「没有文件可查」，也不能把被跟踪的文件当成
     # 未跟踪（见 _git_listed 的说明）。
     known = committed_paths()
-    if known is None:
-        print("git ls-files --cached 执行失败：无法区分仓库内容与临时文件，按失败关闭处理")
+    if known is None or not known:
+        # **空清单同样要失败关闭**：`GIT_INDEX_FILE` 指向不存在的索引时，`git ls-files --cached`
+        # 会空手而归**且退出 0**（`_git_listed` 只按退出码返回 None，看不出这一种）。
+        # 放它过去的话，被跟踪文件会被当成未跟踪：读不到就记一次跳过、门禁放行——
+        # 而"没东西可查"从来不等于"查过了"。
+        print("git ls-files --cached 清单为空或执行失败：没东西可查不等于查过了，按失败关闭处理")
         return 1
     # 仓库根是这一轮所有路径的基准：清单是仓库相对的（`--full-name`），读取也要按同一个根解析——
     # 否则从子目录调用时读的是"子目录下的同名路径"，或者干脆读不到。

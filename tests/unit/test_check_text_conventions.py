@@ -213,3 +213,18 @@ def test_running_from_a_subdirectory_checks_the_same_set(monkeypatch, capsys):
 
     assert summaries["root"] == summaries["docs"], summaries
     assert "mirrors" not in summaries["docs"], summaries["docs"]
+
+
+def test_empty_committed_list_does_not_disable_fail_closed(monkeypatch, capsys):
+    """`--cached` 清单为空（索引读不到）时，被跟踪文件不许被当成未跟踪。
+
+    这是「清单为空」的**局部**形态：`tracked_files()` 仍然有内容（`--others` 照常列出未跟踪
+    文件），所以只靠"文件清单为空"那道门拦不住——必须在 `committed_paths()` 这一层就失败关闭。
+    """
+
+    module = _load()
+    monkeypatch.setattr(module, "committed_paths", lambda: set())
+    monkeypatch.setattr(module, "tracked_files", lambda: {"README.md"})
+
+    assert module.main(["check_text_conventions.py"]) == 1
+    assert "按失败关闭处理" in capsys.readouterr().out
