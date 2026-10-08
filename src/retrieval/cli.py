@@ -555,7 +555,10 @@ def _dispatch(
         print(f"config error: {error}", file=sys.stderr)
         return EXIT_ERROR
     except json.JSONDecodeError as error:
-        print(f"config error: 决策载荷不是合法 JSON ({error})", file=sys.stderr)
+        # 决策载荷自己的解析失败在 _decision_facts 里已经转成 CorpusError（上一分支接住它），
+        # 所以能走到这里的是**别处**的 JSON 解析（例如库里 heading_path 列被改坏）。
+        # 理由必须如实：把"某处 JSON 坏了"一律说成"决策载荷不是合法 JSON"会把人带偏。
+        print(f"config error: 读取过程中出现非法 JSON（不一定是决策载荷）: {error}", file=sys.stderr)
         return EXIT_ERROR
 
     if as_json:
