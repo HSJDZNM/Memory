@@ -673,12 +673,17 @@ def test_the_recorded_change_follows_the_executed_workspace_and_normalized_path(
     assert refs[0].bytes == len((workspace / "src" / "target.py").read_bytes())
     assert refs[0].path == "src/target.py", "路径取规范化后的仓库相对形式"
 
-    # 超长路径：artifact_id 的上限是 128，超出就用摘要收口——不许在副作用之后抛 ValidationError
-    deep = workspace / ("d" * 40) / ("e" * 40)
+    # 超长路径：artifact_id 的上限是 128，超出就用摘要收口——不许在副作用之后抛 ValidationError。
+    # 阈值实测：相对路径 110 字符时 id 长 121（仍合法）、118 字符时旧实现直接
+    # "ValidationError: String should have at most 128 characters"。这里取 140 字符留足余量。
+    segments = ["d" * 30, "e" * 30, "f" * 30, "g" * 30]
+    long_relative = "/".join(segments + ["long_target.py"])
+    assert len(long_relative) >= 118, "要真的越过 128 的 id 上限，否则这条断言证明不了什么"
+    deep = workspace.joinpath(*segments)
     deep.mkdir(parents=True, exist_ok=True)
     (deep / "long_target.py").write_text("z = 3\n", encoding="utf-8")
     long_request = tool_request(
-        params={"file_path": f"{'d' * 40}/{'e' * 40}/long_target.py", "content": "w = 4\n"},
+        params={"file_path": long_relative, "content": "w = 4\n"},
         workspace=str(workspace),
     )
     long_action = runner._action(long_request, spec)
