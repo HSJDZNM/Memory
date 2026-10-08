@@ -10,7 +10,9 @@
 3. 事后验证失败会回滚（声明了 file_snapshot 的工具），并给出 repair_required；
 4. 一条 trace 从 pre-check 到终态可被重放出来。
 
-所有产物都写在 .tmp/phase-4-demo/ 下，不触碰仓库真实文件。
+受控工作区、审计与台账在 `.tmp/phase-4-demo/`（`workspace/` + `audit.jsonl` + `ledger.jsonl`）下，
+**结论 JSON 不在这里**——它写到 `.tmp/artifacts/phase-4-enforcement-result.json`（见 RESULT，与上面用法说明一致）。
+这些路径都在 `.tmp/` 内，不触碰仓库真实文件。
 """
 
 from __future__ import annotations
