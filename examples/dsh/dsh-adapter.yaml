@@ -89,7 +89,11 @@ enforcement_ledger: ../../.tmp/artifacts/dsh-enforcement-ledger.jsonl
 # （evidence_unavailable，退出码 2），绝不回落到"没证据就当跳过"。
 #
 # 预算不等式（check_wiring 会查）：pre_evidence.timeout_ms + timeout_ms < hooks.json 的 timeout。
-# 上面的 hooks.json 写的是 30s，所以这里先只写形状、不启用；要启用就把 timeout 一起调大。
+# 上面的 hooks.json 写的是 30s、本文件的 timeout_ms 是 5000，因此取证预算最多 24999ms；
+# 下面给 20000（和 = 25000 < 30000，直接取消注释就能启用）。
+# **不要**把它调成 60000：65000 > 30000 会让接线自检报不等式不满足，而 dsh 侧 30s 就把 Hook 杀掉——
+# 被杀等于放行，正是这条不等式要防的路径。要更长的取证预算，必须同一次改动里把 hooks.json 的
+# timeout 一起调大。
 #
 # pre_evidence:
 #   enabled: true
@@ -98,4 +102,4 @@ enforcement_ledger: ../../.tmp/artifacts/dsh-enforcement-ledger.jsonl
 #   shadow_root: .policy/pre-evidence   # 影子副本落点（用完必删；与被治理项目重叠会被拒绝）
 #   exclude: [".git/**", ".policy/**", ".tmp/**", "**/__pycache__/**"]
 #   validators: []                  # 省略 = 按规则选择；写死可省时间（例如 [py.source, tool.ruff]）
-#   timeout_ms: 60000
+#   timeout_ms: 20000
