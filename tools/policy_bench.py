@@ -105,8 +105,14 @@ def generate_rules(count: int, *, seed: int = DEFAULT_SEED) -> RuleSet:
     return RuleSet(rules=tuple(rules))
 
 
-def generate_contexts(count: int, *, seed: int = DEFAULT_SEED) -> tuple[PolicyContext, ...]:
-    """生成固定的一组上下文；依赖编号与规则编号对齐，保证有真实命中。"""
+def generate_contexts(count: int) -> tuple[PolicyContext, ...]:
+    """生成固定的一组上下文；依赖编号与规则编号对齐，保证有真实命中。
+
+    **没有 seed 参数**：这组上下文是按编号构造的（index → 层 / 模块 / 依赖），本身就是确定的，
+    留一个从不被使用的 `seed=` 只会让调用方以为"换个种子就换一组上下文"（旧实现就是这样：
+    参数收下、函数体里一次都没用到）。规则那边不同——`generate_rules` 真的用 `random.Random(seed)`
+    掷层号，所以它的 seed 是有意义的。
+    """
 
     contexts: list[PolicyContext] = []
     for index in range(count):
@@ -137,7 +143,7 @@ def measure(
     """测量 count 条规则对固定上下文的匹配耗时与内存峰值。"""
 
     rules = generate_rules(count, seed=seed)
-    contexts = generate_contexts(context_count, seed=seed)
+    contexts = generate_contexts(context_count)
 
     tracemalloc.start()
     started = time.perf_counter()
