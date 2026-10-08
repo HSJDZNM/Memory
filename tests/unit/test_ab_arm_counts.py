@@ -48,3 +48,22 @@ def test_off_arm_is_zero_by_construction() -> None:
         arm=ab_arm.ARM_OFF, decision=ab_arm.DECISION_NOT_GOVERNED, action=ab_arm.ACTION_APPLIED
     )
     assert counts == {"write_actions": 1, "governed_write_actions": 0, "bypass_actions": 0}
+
+
+def test_sanitize_tree_does_not_report_children_of_removed_dirs_as_failures(tmp_root: Path) -> None:
+    """`dir/**` 连目录本身一起命中：目录被 rmtree 后，子项不该记成"删除失败"。
+
+    旧写法在 candidates 的**删除前快照**上逐个 unlink：父目录先被整棵删掉，子项随后必然
+    FileNotFoundError，被 except OSError 收成 removed:false + error —— sanitization 与
+    "删除 N 项"因此混进一堆假的失败读数。
+    """
+
+    (tmp_root / "policies" / "coding").mkdir(parents=True)
+    (tmp_root / "policies" / "coding" / "STYLE-001.yaml").write_text("id: STYLE-001\n", encoding="utf-8")
+    (tmp_root / "policies" / "README.md").write_text("# policies\n", encoding="utf-8")
+
+    records = ab_arm.sanitize_tree(tmp_root)
+
+    assert [item for item in records if item["removed"] is False] == []
+    assert not (tmp_root / "policies").exists()
+    assert any(item["path"] == "policies" and item["removed"] is True for item in records)

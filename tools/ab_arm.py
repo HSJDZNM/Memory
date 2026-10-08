@@ -1062,6 +1062,14 @@ def sanitize_tree(tree: Path) -> list[Mapping[str, Any]]:
         ]
         for relative in sorted(candidates):
             target = tree / relative
+            if not target.exists():
+                # `dir/**` 会**连目录本身一起命中**（matches_pattern 让 "policies" == 前缀），
+                # 而 candidates 是删除**前**的快照：目录先被 rmtree 掉之后，同一批里的子项
+                # 在这里必然已经不存在。旧写法照样 unlink() → FileNotFoundError → 记成
+                # removed:false + error，于是 sanitization 与"删除 N 项"里混进一堆"删除失败"
+                # （其实是被上级目录带走的），仪器读数因此虚高。
+                handled.add(relative)
+                continue
             try:
                 if target.is_dir():
                     shutil.rmtree(target)
