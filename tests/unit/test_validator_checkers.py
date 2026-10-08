@@ -170,6 +170,38 @@ def test_package_derivation_handles_glob_roots_and_root_level_files() -> None:
     )
 
 
+def test_truncation_keeps_the_most_relevant_candidates(tmp_root: Path) -> None:
+    """截断必须按层级（related -> package -> suite），不是字母序（复核发现）。"""
+
+    workspace = tmp_root / "workspace"
+    (workspace / "src" / "shop").mkdir(parents=True)
+    for name in ("order_service", "zzz_widget"):
+        (workspace / "src" / "shop" / (name + ".py")).write_text(
+            "x = 1" + chr(10), encoding="utf-8", newline=""
+        )
+    tests_dir = workspace / "tests"
+    tests_dir.mkdir(parents=True)
+    for name in ("aaa_one", "aaa_two", "aaa_three", "order_service"):
+        (tests_dir / ("test_" + name + ".py")).write_text(
+            "def test_x():" + chr(10) + "    assert True" + chr(10),
+            encoding="utf-8",
+            newline="",
+        )
+
+    selection = select_tests(
+        target_path="src/shop/order_service.py",
+        changed_files=("src/shop/order_service.py", "src/shop/zzz_widget.py"),
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=2,
+    )
+
+    # test_order_service.py 是 related 级（字母序排在 aaa_* 之后），必须先被选中；
+    # zzz_widget 没有相关/同包测试 -> 升级到 suite，aaa_* 是 suite 级候选。
+    assert selection.nodeids == ("tests/test_order_service.py", "tests/test_aaa_one.py")
+    assert selection.truncated is True
+
+
 def test_selection_prefers_the_related_test_file() -> None:
     selection = select_tests(
         target_path="src/shop/order_service.py",

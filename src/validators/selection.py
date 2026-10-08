@@ -167,7 +167,9 @@ def select_tests(
             reason="工作区里没有任何匹配测试模式的文件",
         )
 
-    selected: list[str] = []
+    # 每个候选记下**它是在哪一级被选中的**：截断必须保相关性高的（复核发现：旧实现按字母序
+    # 截断，套件升级一旦把候选顶过上限，tests/aaa/... 会把真正相关的测试挤出名单）。
+    ranked: dict[str, int] = {}
     missing: list[str] = []
     highest = "related"
     for path in production:
@@ -178,7 +180,8 @@ def select_tests(
         )
         if level is not None:
             highest = _wider(highest, level)
-            selected.extend(files)
+            for item in files:
+                ranked.setdefault(item, _ORDER[level])
             continue
 
         # 相关与同包都没有 → 这条生产变更缺少对应测试
@@ -189,10 +192,11 @@ def select_tests(
         )
         if suite_level is not None:
             highest = _wider(highest, suite_level)
-            selected.extend(suite_files)
+            for item in suite_files:
+                ranked.setdefault(item, _ORDER[suite_level])
 
-    unique = sorted(set(selected))
-    nodeids = tuple(unique[:max_nodeids])
+    unique = tuple(sorted(ranked, key=lambda item: (ranked[item], item)))
+    nodeids = unique[:max_nodeids]
     truncated = len(unique) > len(nodeids)
     escalated = highest == "suite" and bool(nodeids)
     if nodeids:
