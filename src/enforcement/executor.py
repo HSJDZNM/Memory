@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Callable, Mapping, Optional
 
 from policy.models import Decision
 
@@ -144,31 +144,31 @@ class ControlledExecutor:
 
         refusal = self._refusal_reason(request, spec, pre, moment=moment)
         if refusal is not None:
-            record = self._record(
+            return self._refuse(
                 request,
                 spec,
-                status=ExecutionStatus.REFUSED,
-                reason_code=refusal,
+                pre,
+                reason=refusal,
                 detail=f"拒绝执行：{refusal.value}",
-                started=moment,
-                finished=moment,
-            )
-            note(
-                self._audit(
-                    AuditStage.EXECUTION,
-                    request,
-                    {
-                        "status": record.status.value,
-                        "reason_code": record.reason_code.value,
-                        "action_hash": request.action_hash,
-                    },
-                )
-            )
-            return ExecutionOutcome(
-                final=self._final(request, spec, pre, record, None),
-                record=record,
-                pre=pre,
+                moment=moment,
                 notes=notes,
+                note=note,
+            )
+
+        # 驱动存在性检查必须在**消费授权之前**：DRIVER_UNAVAILABLE 是"平台跑不了"，
+        # 没有任何副作用发生；先消费会把一张仍然有效的单次授权烧掉，修好驱动之后
+        # 同一个动作再也执行不了（凭据已作废，用户必须重新走一遍审批）。
+        driver = self.drivers.get(spec.id) or self.drivers.get(spec.driver.value)
+        if driver is None:
+            return self._refuse(
+                request,
+                spec,
+                pre,
+                reason=ReasonCode.DRIVER_UNAVAILABLE,
+                detail=f"没有为 {spec.driver.value} 注册执行驱动：平台不假装执行过",
+                moment=moment,
+                notes=notes,
+                note=note,
             )
 
         grant = pre.grant
@@ -176,60 +176,15 @@ class ControlledExecutor:
         try:
             self.ledger.consume_grant(grant, now=moment)
         except GrantError as error:
-            record = self._record(
+            return self._refuse(
                 request,
                 spec,
-                status=ExecutionStatus.REFUSED,
-                reason_code=ReasonCode.GRANT_REUSED,
+                pre,
+                reason=self._grant_reason(error),
                 detail=str(error),
-                started=moment,
-                finished=moment,
-            )
-            note(
-                self._audit(
-                    AuditStage.EXECUTION,
-                    request,
-                    {
-                        "status": record.status.value,
-                        "reason_code": record.reason_code.value,
-                        "action_hash": request.action_hash,
-                    },
-                )
-            )
-            return ExecutionOutcome(
-                final=self._final(request, spec, pre, record, None),
-                record=record,
-                pre=pre,
+                moment=moment,
                 notes=notes,
-            )
-
-        driver = self.drivers.get(spec.id) or self.drivers.get(spec.driver.value)
-        if driver is None:
-            record = self._record(
-                request,
-                spec,
-                status=ExecutionStatus.REFUSED,
-                reason_code=ReasonCode.DRIVER_UNAVAILABLE,
-                detail=f"没有为 {spec.driver.value} 注册执行驱动：平台不假装执行过",
-                started=moment,
-                finished=moment,
-            )
-            note(
-                self._audit(
-                    AuditStage.EXECUTION,
-                    request,
-                    {
-                        "status": record.status.value,
-                        "reason_code": record.reason_code.value,
-                        "action_hash": request.action_hash,
-                    },
-                )
-            )
-            return ExecutionOutcome(
-                final=self._final(request, spec, pre, record, None),
-                record=record,
-                pre=pre,
-                notes=notes,
+                note=note,
             )
 
         started = moment
@@ -384,23 +339,7 @@ class ControlledExecutor:
             # 等于窗口内失败数少算；与 _audit 同口径，把失败如实记进 notes。
             note(f"台账写入失败（execution）：{error}")
 
-        note(
-            self._audit(
-                AuditStage.FINAL_DECISION,
-                request,
-                {
-                    "outcome": final.outcome.value,
-                    "reason_code": final.reason_code.value,
-                    "action_hash": request.action_hash,
-                    "pre_decision": final.pre_decision.value,
-                    "execution_status": None
-                    if final.execution_status is None
-                    else final.execution_status.value,
-                    "post_status": None if final.post_status is None else final.post_status.value,
-                    "detail": final.detail,
-                },
-            )
-        )
+        note(self._audit(AuditStage.FINAL_DECISION, request, self._final_payload(request, final)))
 
         return ExecutionOutcome(
             final=final,
@@ -414,6 +353,64 @@ class ControlledExecutor:
         )
 
     # ------------------------------------------------------------------ 内部
+    @staticmethod
+    def _final_payload(request: ActionRequest, final: FinalDecision) -> dict[str, object]:
+        return {
+            "outcome": final.outcome.value,
+            "reason_code": final.reason_code.value,
+            "action_hash": request.action_hash,
+            "pre_decision": final.pre_decision.value,
+            "execution_status": (
+                None if final.execution_status is None else final.execution_status.value
+            ),
+            "post_status": None if final.post_status is None else final.post_status.value,
+            "detail": final.detail,
+        }
+
+    def _refuse(
+        self,
+        request: ActionRequest,
+        spec: ToolSpec,
+        pre: PreDecision,
+        *,
+        reason: ReasonCode,
+        detail: str,
+        moment: datetime,
+        notes: list[str],
+        note: Callable[[Optional[str]], None],
+    ) -> ExecutionOutcome:
+        """拒绝路径的统一出口：EXECUTION 与 FINAL_DECISION **两段**都要进审计链。
+
+        三条早退路径（策略拒绝 / 驱动不可用 / 授权已用或不可用）过去只写 EXECUTION。
+        trace 校验把"没有终态 FINAL_DECISION"读成链不完整（enforcement.trace.load_trace
+        的 require_final），于是每次被拒绝的动作都留下一条不可重放的 trace，
+        与模块文档"pre → 执行 → post 三段都写进审计链"矛盾。
+        """
+
+        record = self._record(
+            request,
+            spec,
+            status=ExecutionStatus.REFUSED,
+            reason_code=reason,
+            detail=detail,
+            started=moment,
+            finished=moment,
+        )
+        note(
+            self._audit(
+                AuditStage.EXECUTION,
+                request,
+                {
+                    "status": record.status.value,
+                    "reason_code": record.reason_code.value,
+                    "action_hash": request.action_hash,
+                },
+            )
+        )
+        final = self._final(request, spec, pre, record, None)
+        note(self._audit(AuditStage.FINAL_DECISION, request, self._final_payload(request, final)))
+        return ExecutionOutcome(final=final, record=record, pre=pre, notes=notes)
+
     def _refusal_reason(
         self,
         request: ActionRequest,
@@ -445,13 +442,25 @@ class ControlledExecutor:
                 max_ttl_seconds=self.max_grant_ttl_seconds,
             )
         except GrantError as error:
-            text = str(error)
-            if "过期" in text:
-                return ReasonCode.GRANT_EXPIRED
-            if "已被使用" in text:
-                return ReasonCode.GRANT_REUSED
-            return ReasonCode.GRANT_INVALID
+            return self._grant_reason(error)
         return None
+
+    @staticmethod
+    def _grant_reason(error: GrantError) -> ReasonCode:
+        """从**结构化字段**取原因码，不解析消息文本。
+
+        旧实现按消息里的中文子串（"过期" / "已被使用"）分流：措辞、标点或本地化一改，
+        审计里就会静默降级成笼统的 GRANT_INVALID——而"被拒绝的原因"正是这条链路要保证
+        的审计信号。读不出结构化原因时按最保守的 GRANT_INVALID 处理（仍然是拒绝）。
+        """
+
+        value = getattr(error, "reason_code", None)
+        if not value:
+            return ReasonCode.GRANT_INVALID
+        try:
+            return ReasonCode(str(value))
+        except ValueError:
+            return ReasonCode.GRANT_INVALID
 
     def _maybe_rollback(
         self,
@@ -534,7 +543,9 @@ class ControlledExecutor:
         record: ExecutionRecord,
         post: Optional[PostDecision],
     ) -> FinalDecision:
-        if pre.decision.value == "block":
+        # 用枚举成员比较，不比较序列化后的字面量：字面量取决于枚举的拼写，
+        # 而 _refusal_reason 那边用的是 `pre.decision is Decision.BLOCK`——两处必须同一口径。
+        if pre.decision is Decision.BLOCK:
             outcome = FinalOutcome.BLOCKED
             reason = pre.reason_code
             detail = "pre-check 阻断：动作没有执行"

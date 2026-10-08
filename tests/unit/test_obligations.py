@@ -398,3 +398,21 @@ def test_book_pending_findings_expands_every_missing_target(tmp_root: Path) -> N
     assert missing == ["shop.order_service:cancel_order", "shop.order_service:refund"]
     # 快照是完整的（两条都带两个目标），不是只留第一条。
     assert all(len(item.missing_targets) == 2 for item in load(ledger).open)
+
+
+def test_a_malformed_record_message_names_the_ledger_file(tmp_root: Path) -> None:
+    """坏记录的报错必须带上**哪一份账本**：多份账本并存时，只说"第 N 行"定位不到文件。
+
+    _parse_record 一直收着 path 却不用它；这条用例把"path 必须体现在消息里"钉住。
+    """
+
+    import policy.obligations as obligations_module
+
+    ledger = tmp_root / "broken.jsonl"
+    ledger.write_text("{ not json }\n", encoding="utf-8")
+
+    with pytest.raises(ObligationsError) as error:
+        obligations_module.load(ledger)
+    message = str(error.value)
+    assert str(ledger) in message, message
+    assert "第 1 行" in message

@@ -179,6 +179,22 @@ def test_file_effect_rejects_self_contradicting_evidence():
             path="a.py", existed_before=True, exists_after=True,
             sha256_before="sha256:a", sha256_after="sha256:a", changed=True,
         )
+    # 空证据：说"变了"，可两侧都没有哈希、文件也从未存在过。
+    # 旧实现把这条判据写成 "哈希相同 **且** existed_before"，于是它从缝里溜了过去。
+    with pytest.raises(ValidationError):
+        FileEffect(
+            path="a.py", existed_before=False, exists_after=False,
+            sha256_before=None, sha256_after=None, changed=True,
+        )
+    # 反真空：合法的"新建"与"修改"照常接受（两侧哈希本来就不相等，用不着放宽判据）。
+    assert FileEffect(
+        path="a.py", existed_before=False, exists_after=True,
+        sha256_before=None, sha256_after="sha256:b", changed=True,
+    ).changed is True
+    assert FileEffect(
+        path="a.py", existed_before=True, exists_after=True,
+        sha256_before="sha256:a", sha256_after="sha256:b", changed=True,
+    ).changed is True
 
 
 def test_final_decision_refuses_impossible_transitions(enforcement_paths):

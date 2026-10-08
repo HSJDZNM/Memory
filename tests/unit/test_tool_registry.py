@@ -24,6 +24,7 @@ from enforcement.registry import (
     APPROVED_SCHEMA_VERSION,
     approve_registry,
     load_registry,
+    load_registry_document,
     registry_document_from_mapping,
     write_approved,
 )
@@ -75,6 +76,16 @@ def test_registry_identity_is_order_independent():
 
 
 # --------------------------------------------------------------------------- 结构校验
+
+
+def test_every_exported_name_exists():
+    """__all__ 里的名字必须真的存在：导出清单是契约，不是愿望清单。"""
+
+    import enforcement.registry as registry_module
+
+    missing = [name for name in registry_module.__all__ if not hasattr(registry_module, name)]
+
+    assert missing == [], missing
 
 
 def test_registry_rejects_duplicate_yaml_keys(tmp_root):
@@ -140,6 +151,80 @@ def test_registry_rejects_duplicate_tool_ids_and_names(tmp_root):
 
 
 @pytest.mark.parametrize(
+    ("document", "needle"),
+    [
+        # 不可哈希的键：PyYAML 自己的 construct_mapping 会拦，这里也必须拦
+        ("? [a, b]\n: x\n", "不可哈希"),
+        # 未知字段的键混了数字与字符串：sorted() 会抛 TypeError
+        ("1: x\nzzz: y\n", "未知字段"),
+        (
+            'registry_schema_version: "1.0"\nversion: 1\ndefaults:\n  1: 5\n  zzz: 1\n',
+            "defaults 出现未知字段",
+        ),
+        (
+            'registry_schema_version: "1.0"\nversion: 1\napprovals:\n  1: x\n  zzz: y\n',
+            "approvals 出现未知字段",
+        ),
+    ],
+)
+def test_structural_registry_errors_are_registry_errors(tmp_root, document, needle):
+    """YAML 结构错误与混合类型键都必须报 RegistryError，不能抛裸 TypeError。
+
+    文档承诺"语法、重复键、类型错误一律抛 RegistryError"，而 load_registry_document 只兜
+    yaml.YAMLError：不可哈希的键让成员测试抛 TypeError，未知字段里的数字键与字符串键
+    混在一起让 sorted() 抛 TypeError——两种都从契约外面漏出去。
+    """
+
+    path = tmp_root / "bad.yaml"
+    path.write_text(document, encoding="utf-8", newline="")
+
+    with pytest.raises(RegistryError) as error:
+        registry_document_from_mapping(load_registry_document(path))
+
+    assert needle in str(error.value), error.value
+
+
+@pytest.mark.parametrize(
+    ("document", "needle"),
+    [
+        (
+            'registry_schema_version: "1.0"\nversion: 1\n'
+            "permissions:\n  repo.approve: A\n  Repo.Approve: B\n",
+            "permissions",
+        ),
+        (
+            'registry_schema_version: "1.0"\nversion: 1\n'
+            "roles:\n  Reviewer: [repo.read]\n  reviewer: [repo.write]\n",
+            "roles",
+        ),
+    ],
+)
+def test_keys_that_canonicalize_to_the_same_token_are_refused(tmp_root, document, needle):
+    """两个原始键规范化后是同一个 token：那就是"同一个键声明了两次"，后一条会静默覆盖前一条。"""
+
+    path = tmp_root / "duplicate.yaml"
+    path.write_text(document, encoding="utf-8", newline="")
+
+    with pytest.raises(RegistryError) as error:
+        registry_document_from_mapping(load_registry_document(path))
+
+    assert "重复键" in str(error.value) and needle in str(error.value), error.value
+
+
+def _retype_command_param(tool: dict, type_name: str) -> None:
+    """把 exec.shell 的 command 参数换成别的类型。
+
+    文本约束（max_chars）只适用于 string 参数：不一起去掉的话，加载期会先命中
+    "integer 参数上挂着文本约束"这条更早的判据，测不到 command_param 的类型判据。
+    """
+
+    for item in tool["parameters"]:
+        if item["name"] == "command":
+            item["type"] = type_name
+            item.pop("max_chars", None)
+
+
+@pytest.mark.parametrize(
     ("index", "mutation", "needle"),
     [
         (3, lambda tool: tool.pop("approval"), "必须 approval=required"),
@@ -167,6 +252,11 @@ def test_registry_rejects_duplicate_tool_ids_and_names(tmp_root):
         (4, lambda tool: tool.pop("allowed_commands"), "allowed_commands"),
         (4, lambda tool: tool.pop("shell"), "shell 前缀"),
         (4, lambda tool: tool.pop("command_param"), "command_param"),
+        (
+            4,
+            lambda tool: _retype_command_param(tool, "integer"),
+            "必须是 string 参数",
+        ),
         (
             4,
             lambda tool: tool.update({"allowed_commands": ["("]}),

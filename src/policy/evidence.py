@@ -477,7 +477,13 @@ class EvidenceBundle(StrictModel):
         return tuple(sorted({fact.name for fact in self.dependencies}))
 
     def normalize(self) -> "EvidenceBundle":
-        """稳定化：证据、依赖、记录、阻断点全部按确定顺序排列并去重。"""
+        """稳定化：依赖 / 证据 / 待实现清单按各自 sort_key 稳定排序**并去重**；
+        validator 记录只按 validator 名、blocker 只按 (validator, reason) 稳定排序，
+        **不去重**——同键并列时保持输入顺序（两条同 validator 不同 stage/status 的记录会都留下）。
+
+        后两类的这条边界是已知的：要用它们做"谁先谁后"的判定，先去重 / 换更细的键，
+        别把这里的顺序当成与输入无关的结论。
+        """
 
         return self.model_copy(
             update={

@@ -21,9 +21,9 @@ import re
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from hashlib import sha256
-from typing import Any, Mapping, Optional, Tuple, Union
+from typing import Annotated, Any, Mapping, Optional, Tuple, Union
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AfterValidator, Field, field_validator, model_validator
 
 from policy.models import (
     Decision,
@@ -97,6 +97,24 @@ __all__ = [
 ENFORCEMENT_SCHEMA_VERSION = "1.0"
 SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS = frozenset({ENFORCEMENT_SCHEMA_VERSION})
 
+
+def _check_protocol_version(value: str) -> str:
+    """第 3 条"协议带版本"：看不懂的版本一律拒收，不做兼容猜测。"""
+
+    if value not in SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS:
+        raise ValueError(
+            f"未知受控执行协议版本 {value!r}；只接受 "
+            f"{sorted(SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS)}，拒绝消费"
+        )
+    return value
+
+
+#: **每一个**信封模型共用的版本字段类型。旧实现只在校验 ActionRequest 与 PreDecision：
+#: 嵌套在里面的凭据（AuthorizationGrant）可以带任意 schema_version 被消费
+#: （grant.verify 不看版本），执行 / 证据 / 终态 / 审计记录同样照单全收——外部或持久化
+#: 载荷于是能从"协议带版本"这条不变式下面溜过去。类型只有一份，就不会再漏。
+EnforcementVersion = Annotated[str, AfterValidator(_check_protocol_version)]
+
 REGISTRY_SCHEMA_VERSION = "1.0"
 SUPPORTED_REGISTRY_SCHEMA_VERSIONS = frozenset({REGISTRY_SCHEMA_VERSION})
 
@@ -167,7 +185,16 @@ class GrantError(EnforcementError):
     """授权不可用：哈希不符、过期、已被使用、主体不符或缺少绑定信息。
 
     一律按失败关闭处理：不执行、不降级、不"再问一次模型"。
+
+    `reason_code` 是**结构化**的拒绝原因（ReasonCode 的值）：执行器据此写审计的
+    reason_code，不去解析消息文本——措辞、标点或本地化一改，读文本分流就会把
+    "过期 / 已被使用"悄悄降级成笼统的 GRANT_INVALID，而审计信号正是这条链路要保证的东西。
+    读不出来时调用方按最保守的 GRANT_INVALID 处理（仍然是拒绝，不会放行）。
     """
+
+    def __init__(self, message: str, *, reason_code: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 class LedgerError(EnforcementError):
@@ -619,6 +646,17 @@ class ParamSpec(StrictModel):
             )
         if self.blocked_prefixes and self.type is not ParamType.PATH:
             raise ValueError(f"{self.name}: blocked_prefixes 只适用于 path 参数")
+        if self.type not in (ParamType.STRING, ParamType.PATH) and (
+            self.pattern is not None or self.max_chars is not None or self.enum
+        ):
+            # action._check_constraints 只对字符串取值生效：声明在 integer / boolean /
+            # string_list 上的 pattern / max_chars / enum 会被**静默跳过**。
+            # 与上面几条同一口径：会被忽略的声明直接拒绝，而不是"接受了但不执行"。
+            # （string_list 的长度约束走 max_items / max_item_chars，它们有自己的校验。）
+            raise ValueError(
+                f"{self.name}: pattern / max_chars / enum 只适用于 string 与 path 参数，"
+                f"当前类型是 {self.type.value}；在它上面声明这些约束会被静默跳过"
+            )
         if self.escalating_values and not self.requires_permission:
             raise ValueError(
                 f"{self.name}: 声明了 escalating_values 就必须声明 requires_permission，"
@@ -742,9 +780,19 @@ class ToolSpec(StrictModel):
         if self.command_param is not None:
             if self.driver is not DriverKind.SHELL_COMMAND:
                 raise ValueError(f"{self.id}: command_param 只适用于 shell_command 驱动")
-            if self.parameter(self.command_param) is None:
+            carrier = self.parameter(self.command_param)
+            if carrier is None:
                 raise ValueError(
                     f"{self.id}: command_param={self.command_param!r} 不是已声明的参数"
+                )
+            if carrier.type is not ParamType.STRING:
+                # 与 code_check.param 同一口径：命令文本是字符串。指向 string_list / integer
+                # 时，pre-check 拿到的不是 str，于是把它当成空串，组合与被禁片段检查直接报
+                # PASSED——注册表里打错一个字，结构性阻断整条失效（失败打开）。
+                raise ValueError(
+                    f"{self.id}: command_param={carrier.name!r} 必须是 string 参数，"
+                    f"得到 {carrier.type.value}：命令文本是字符串，"
+                    "指向别的类型会让组合/被禁片段检查读到非字符串并被静默当成空串"
                 )
         unknown_checks = [item for item in self.post_checks if item not in SUPPORTED_POST_CHECKS]
         if unknown_checks:
@@ -887,7 +935,7 @@ class ActionRequest(StrictModel):
     action_hash 覆盖上述全部内容；任何一处变化都会让旧授权失效。
     """
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     action_id: str = Field(min_length=1, description="幂等键：同一 action 重试必须复用")
     request_id: str = Field(min_length=1)
     trace_id: Optional[str] = None
@@ -911,16 +959,6 @@ class ActionRequest(StrictModel):
     expires_at: Optional[datetime] = None
     action_hash: str = ""
 
-    @field_validator("schema_version")
-    @classmethod
-    def _check_schema_version(cls, value: str) -> str:
-        if value not in SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS:
-            raise ValueError(
-                f"未知受控执行协议版本 {value!r}；只接受 "
-                f"{sorted(SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS)}，拒绝消费"
-            )
-        return value
-
     @field_validator("params")
     @classmethod
     def _check_param_order(cls, value: Tuple[ParamValue, ...]) -> Tuple[ParamValue, ...]:
@@ -937,6 +975,18 @@ class ActionRequest(StrictModel):
 
     @model_validator(mode="after")
     def _check_hash(self) -> "ActionRequest":
+        # param_digest 不在 action_hash 的 material 里（并进去会让在途授权与已存哈希全部
+        # 失效，是协议级变更），但它必须**与规范化参数一致**：它是审计里"这次到底传了什么"
+        # 的摘要，失配说明这份载荷被改过或字段是编的——构造期就拒绝，不让它作为"没人核的
+        # 装饰"被记进审计。同一个请求文档因此不可能带着一个描述别的参数的摘要通过校验。
+        expected_param_digest = digest_of(
+            {item.name: item.canonical() for item in self.params}
+        )
+        if self.param_digest != expected_param_digest:
+            raise ValueError(
+                "param_digest 与规范化参数不一致：摘要必须能由 params 复算出来"
+                f"（期望 {expected_param_digest}，得到 {self.param_digest!r}）"
+            )
         expected = self.compute_action_hash()
         if not self.action_hash:
             object.__setattr__(self, "action_hash", expected)
@@ -1013,7 +1063,7 @@ class AuthorizationGrant(StrictModel):
     执行器只认这一张凭据：它不解析自然语言批准，也不接受"模型说可以"。
     """
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     grant_id: str = Field(min_length=1)
     action_id: str = Field(min_length=1)
     action_hash: str = Field(min_length=1)
@@ -1046,34 +1096,56 @@ class AuthorizationGrant(StrictModel):
         if self.action_hash != request.action_hash:
             raise GrantError(
                 "授权绑定的 action_hash 与当前动作不一致："
-                "参数、主体、schema 或上下文已经变化，旧决定不得复用"
+                "参数、主体、schema 或上下文已经变化，旧决定不得复用",
+                reason_code=ReasonCode.GRANT_INVALID.value,
             )
         if self.action_id != request.action_id:
-            raise GrantError("授权绑定的 action_id 与当前动作不一致")
+            raise GrantError(
+                "授权绑定的 action_id 与当前动作不一致",
+                reason_code=ReasonCode.GRANT_INVALID.value,
+            )
         if self.tool_id != request.tool_id:
-            raise GrantError("授权绑定的工具与当前动作不一致")
+            raise GrantError(
+                "授权绑定的工具与当前动作不一致", reason_code=ReasonCode.GRANT_INVALID.value
+            )
         if self.tool_schema_hash != request.tool_schema_hash:
-            raise GrantError("工具 schema 已变化（可能升级过 Agent），授权立即失效")
+            raise GrantError(
+                "工具 schema 已变化（可能升级过 Agent），授权立即失效",
+                reason_code=ReasonCode.GRANT_INVALID.value,
+            )
         if request.subject is None or self.subject != request.subject:
-            raise GrantError("授权主体与当前请求主体不一致：授权不可跨主体复用")
+            raise GrantError(
+                "授权主体与当前请求主体不一致：授权不可跨主体复用",
+                reason_code=ReasonCode.GRANT_INVALID.value,
+            )
         if now >= self.expires_at:
-            raise GrantError(f"授权已过期（{to_timestamp(self.expires_at)}）：必须重新走 pre-check")
+            raise GrantError(
+                f"授权已过期（{to_timestamp(self.expires_at)}）：必须重新走 pre-check",
+                reason_code=ReasonCode.GRANT_EXPIRED.value,
+            )
         if now < self.issued_at - timedelta(seconds=5):
-            raise GrantError("授权签发时间在未来：时钟或凭据不可信，拒绝执行")
+            raise GrantError(
+                "授权签发时间在未来：时钟或凭据不可信，拒绝执行",
+                reason_code=ReasonCode.GRANT_INVALID.value,
+            )
         if max_ttl_seconds is not None:
             ttl = (self.expires_at - self.issued_at).total_seconds()
             if ttl > max_ttl_seconds:
                 raise GrantError(
-                    f"授权有效期 {ttl:g}s 超过上限 {max_ttl_seconds}s：允许结果必须是短时效的"
+                    f"授权有效期 {ttl:g}s 超过上限 {max_ttl_seconds}s：允许结果必须是短时效的",
+                    reason_code=ReasonCode.GRANT_INVALID.value,
                 )
         if used and self.single_use:
-            raise GrantError("授权已被使用：单次授权不得重复消费")
+            raise GrantError(
+                "授权已被使用：单次授权不得重复消费",
+                reason_code=ReasonCode.GRANT_REUSED.value,
+            )
 
 
 class PreDecision(StrictModel):
     """执行前决策：决定 + 全部检查项 + （允许时的）授权凭据。"""
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     decision: Decision
     reason_code: ReasonCode
     action_id: str
@@ -1093,13 +1165,6 @@ class PreDecision(StrictModel):
         default=False,
         description="只做决策、不占用 action_id 也不签发可用授权（CLI precheck 的语义）",
     )
-
-    @field_validator("schema_version")
-    @classmethod
-    def _check_schema_version(cls, value: str) -> str:
-        if value not in SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS:
-            raise ValueError(f"未知受控执行协议版本 {value!r}，拒绝消费")
-        return value
 
     @model_validator(mode="after")
     def _grant_matches_decision(self) -> "PreDecision":
@@ -1142,7 +1207,7 @@ class PreDecision(StrictModel):
 class ExecutionRecord(StrictModel):
     """一次执行的完整记录：执行器驱动、退出码、超时、输出摘要。"""
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     action_id: str
     request_id: str
     trace_id: Optional[str] = None
@@ -1211,8 +1276,14 @@ class FileEffect(StrictModel):
             raise ValueError(
                 f"{self.path}: changed=False 但前后哈希不同——证据自相矛盾，拒绝记录"
             )
-        if self.changed and self.sha256_before == self.sha256_after and self.existed_before:
-            raise ValueError(f"{self.path}: changed=True 但哈希未变——证据自相矛盾")
+        if self.changed and self.sha256_before == self.sha256_after:
+            # 不附加 existed_before 条件：existed_before=False + 两侧都没有哈希 + changed=True
+            # 是"声称变了、却没有任何变化可证明"的空证据（baseline_recorded=True 还声称有基线）。
+            # 合法的"新建"是 before=None / after=<hash>，两侧本来就不相等，用不着放宽。
+            raise ValueError(
+                f"{self.path}: changed=True 但前后哈希相同（含两侧都没有哈希）——"
+                "证据自相矛盾：声称发生了变化却没有变化可证明"
+            )
         return self
 
 
@@ -1249,7 +1320,7 @@ class ValidatorOutcome(StrictModel):
 class PostEvidence(StrictModel):
     """执行后收集到的全部证据。工具返回值里的文本只作为不可信数据保存。"""
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     action_id: str
     request_id: str
     trace_id: Optional[str] = None
@@ -1281,7 +1352,7 @@ class RollbackOutcome(StrictModel):
 class PostDecision(StrictModel):
     """事后验证决策：validated / repair_required / inconsistent / not_required。"""
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     status: PostStatus
     reason_code: ReasonCode
     action_id: str
@@ -1298,7 +1369,7 @@ class PostDecision(StrictModel):
 class FinalDecision(StrictModel):
     """链路终态：把 pre、执行与 post 三段合成一个可重放的结论。"""
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     outcome: FinalOutcome
     reason_code: ReasonCode
     action_id: str
@@ -1336,7 +1407,7 @@ class FinalDecision(StrictModel):
 class AuditRecord(StrictModel):
     """审计链上的一条记录。payload 已经过脱敏与体积限制，且只作为不可信数据保存。"""
 
-    schema_version: str = ENFORCEMENT_SCHEMA_VERSION
+    schema_version: EnforcementVersion = ENFORCEMENT_SCHEMA_VERSION
     sequence: int = Field(ge=1)
     stage: AuditStage
     trace_id: Optional[str] = None

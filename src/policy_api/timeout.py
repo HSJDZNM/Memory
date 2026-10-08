@@ -4,9 +4,12 @@ Phase 2 的 Hook 用的是"内部预算小于 Agent 侧超时"，这里把它搬
 
 - 预算到点后要么拿到结论，要么拿到 `*_timeout`（HTTP 504 / 503），**没有第三种结果**。
   没有"降级成 allow"的分支——失败关闭在服务端和在 Hook 里是同一条纪律；
-- 线程仍会把工作跑完（Python 没有可移植的线程取消），因此"超时"语义是
-  **调用方不再等待** + 结果被丢弃 + 观测里记 `outcome=timeout`。这一点写在这里，
-  是因为把"超时"说成"已经停止工作"是不诚实的；
+- 工作线程是 **daemon**：`join` 到点就返回，但线程**既不保证跑完、也不保证被等**——
+  Python 没有可移植的线程取消，而解释器退出（收到信号、被 kill、正常收尾）时 daemon 线程
+  会被直接终止。所以"超时"的准确含义是 **调用方不再等待** + 结果被丢弃 + 观测里记
+  `outcome=timeout`，不是"工作已经停止"，也不是"它一定会跑完"。两种说法都不诚实，
+  这里只留事实；
+- 超时路径同样先看工作线程有没有**已经**留下异常：崩溃就是崩溃，不洗成超时（见 `run_with_budget`）。
 - 计时用 `time.monotonic`（受时钟回拨影响的是 datetime，不是 monotonic）。
 """
 
@@ -83,6 +86,12 @@ def run_with_budget(
     worker.join(budget_ms / 1000.0)
     elapsed = Elapsed(milliseconds=(clock() - started) * 1000.0, timed_out=worker.is_alive())
     if elapsed.timed_out:
+        # 竞态窗口：`join` 超时与这次检查之间，工作可能刚好结束——而且可能是**抛错结束**。
+        # 整个 box 丢掉会把"崩溃"报成"超时"（理由错了：调用方会去重试一个已经失败的操作），
+        # 所以先看异常：留下来了就抛出去（异常才是真正的原因）。
+        # 值不在此列：超时路径的**结果**一律丢弃，预算语义不变。
+        if "error" in box:
+            raise box["error"]  # type: ignore[misc]
         return None, elapsed
     if "error" in box:
         raise box["error"]  # type: ignore[misc]

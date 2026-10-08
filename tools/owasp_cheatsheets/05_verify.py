@@ -42,7 +42,14 @@ for root, dirs, files in os.walk(OUT):
             if t.startswith(("http", "#", "mailto:")):
                 continue
             rel_total += 1
-            tgt = os.path.normpath(os.path.join(root, t.split("#")[0]))
+            target = t.split("#")[0]
+            if target.startswith("/"):
+                # 根相对链接指的是**镜像根**，不是文件系统根：os.path.join(root, "/x") 会
+                # 直接丢掉 root，于是它被拿去和文件系统根拼，永远判成断链（或更糟：命中了
+                # 宿主机上恰好存在的同名路径）。
+                tgt = os.path.normpath(os.path.join(OUT, target.lstrip("/")))
+            else:
+                tgt = os.path.normpath(os.path.join(root, target))
             if not os.path.exists(tgt):
                 broken.append((os.path.relpath(p, OUT), t))
 if broken:
@@ -80,17 +87,33 @@ if bad_tail:
     problems.append("结尾换行异常 " + str(len(bad_tail)) + " 个: " + ", ".join(bad_tail[:10]))
 
 # ---- 3. manifest 校验和 ----
-man = json.load(open(os.path.join(OUT, "manifest.json"), encoding="utf-8"))
+# 读不出来 / 形状不对都进问题清单：直接 man["pages"] 取值会让畸形 manifest 变成一段栈回溯，
+# 而这个脚本的全部价值就是把"哪里不对"逐条说出来。
+man = None
+manifest_path = os.path.join(OUT, "manifest.json")
+try:
+    with open(manifest_path, encoding="utf-8") as handle:
+        man = json.load(handle)
+except (OSError, ValueError) as error:
+    problems.append("manifest.json 读不出来（" + type(error).__name__ + ": " + str(error) + "）")
+if man is not None and (not isinstance(man, dict) or not isinstance(man.get("pages"), list)):
+    problems.append("manifest.json 形状不对：顶层必须是对象且 pages 是数组（得到 "
+                    + type(man).__name__ + "）")
+    man = None
 mismatch = []
-for pg in man["pages"]:
-    p = os.path.join(OUT, pg["local_path"])
-    if not os.path.exists(p):
-        mismatch.append((pg["local_path"], "文件缺失"))
-        continue
-    if os.path.getsize(p) != pg["bytes"]:
-        mismatch.append((pg["local_path"], "字节数不符"))
-    elif hashlib.sha256(open(p, "rb").read()).hexdigest() != pg["sha256"]:
-        mismatch.append((pg["local_path"], "sha256 不符"))
+if man is not None:
+    for index, pg in enumerate(man["pages"]):
+        if not isinstance(pg, dict) or not isinstance(pg.get("local_path"), str):
+            mismatch.append(("pages[" + str(index) + "]", "条目形状不对（缺 local_path）"))
+            continue
+        p = os.path.join(OUT, pg["local_path"])
+        if not os.path.exists(p):
+            mismatch.append((pg["local_path"], "文件缺失"))
+            continue
+        if os.path.getsize(p) != pg.get("bytes"):
+            mismatch.append((pg["local_path"], "字节数不符"))
+        elif hashlib.sha256(open(p, "rb").read()).hexdigest() != pg.get("sha256"):
+            mismatch.append((pg["local_path"], "sha256 不符"))
 if mismatch:
     problems.append("manifest 校验失败 " + str(len(mismatch)) + " 项")
     for a, b in mismatch[:10]:
@@ -104,8 +127,12 @@ for fn in ["README.md", "STRUCTURE.md", "manifest.json", "LICENSE.txt"]:
 print("")
 print("Markdown 文件: " + str(md_count) + "  |  相对链接: " + str(rel_total)
       + "  |  文本文件: " + str(text_files))
-print("manifest 页面: " + str(len(man["pages"])) + "  |  排除: " + str(man["pages_excluded"])
-      + "  |  候选: " + str(man["pages_candidate"]))
+if man is None:
+    print("manifest 页面: 读不出来（见上面的问题清单）")
+else:
+    print("manifest 页面: " + str(len(man["pages"]))
+          + "  |  排除: " + str(man.get("pages_excluded", "未声明"))
+          + "  |  候选: " + str(man.get("pages_candidate", "未声明")))
 if problems:
     print("")
     print("FAIL:")

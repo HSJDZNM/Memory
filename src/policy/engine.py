@@ -20,7 +20,7 @@ Phase 5 相对 Phase 1–4 的变化：
 
 from __future__ import annotations
 
-from typing import Iterator, Optional, Sequence
+from typing import Optional
 
 from .checkers import (
     CONTEXT_CHECKERS,

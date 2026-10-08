@@ -7,7 +7,10 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -106,6 +109,138 @@ def reason_of(outcome) -> ReasonCode:
 
 
 # --------------------------------------------------------------------------- 注册表与参数
+
+
+class AppendOnlySink:
+    """只实现 append 的审计端口（没有 chain_records）。
+
+    按旧声明接口写出来的端口就是这样：判定能继续，但它拿不出链记录——
+    "台账 + 审计链两处都要看"的判据于是只剩一处，这件事必须写成显式状态。
+    """
+
+    def __init__(self) -> None:
+        self.appended = 0
+
+    def append(self, stage, *, payload, **kwargs):  # type: ignore[no-untyped-def]
+        self.appended += 1
+        return SimpleNamespace(sequence=self.appended)
+
+
+def test_a_sink_without_chain_records_makes_the_replay_degradation_visible(tmp_root):
+    """只实现 append 的端口拿不出链记录：重放判据的退化必须看得见。
+
+    旧实现用 hasattr 试探，试探不到就什么都不写：判定悄悄退化成只看台账这一份证据，
+    而注释里恰恰写着"只看台账不能信"。现在它是一条 SKIPPED 检查项 + 一条警告。
+    """
+
+    from enforcement_support import EnforcementPaths
+
+    paths = EnforcementPaths(tmp_root)
+    registry = paths.registry_object()
+    request = make_action(
+        registry, paths, "fs.read", {"file_path": "src/shop/order_controller.py"}
+    )
+    sink = AppendOnlySink()
+
+    outcome = pre_execute(
+        request,
+        registry=registry,
+        ledger=EnforcementLedger(paths.ledger),
+        sink=sink,
+    )
+
+    assert sink.appended == 1, "前置条件：这次判定确实用到了这个端口"
+    assert outcome.decision.decision is Decision.ALLOW_WITH_WARNINGS
+    assert outcome.decision.reason_code is ReasonCode.ALLOW_WITH_WARNINGS
+    degraded = outcome.decision.check("audit_replay")
+    assert degraded is not None, "重放判据退化必须留下一条显式检查项"
+    assert degraded.status is CheckStatus.SKIPPED
+    assert "证据缺失" in degraded.detail
+
+
+def test_rate_limit_holds_under_concurrent_requests(enforcement_paths, monkeypatch):
+    """并发请求不能一起看到 calls < max_calls：读计数与写计数必须原子。
+
+    测试注册表里 fs.edit 是 max_calls=3 / 60s。旧实现把计数放在第 7 项检查里读、把 +1
+    的那条 pre_decision 留到 pre_execute 末尾才写，中间夹着认领、审批占用与审计写入，
+    4 个并发请求会全部读到 0 并全部放行。这里把"读 → 写"之间的窗口拉大（读完之后
+    sleep 0.2s），让竞态确定复现：修复后恰好 3 个放行、第 4 个按 RATE_LIMITED 拒绝。
+    """
+
+    paths = enforcement_paths
+    registry = paths.registry_object()
+    paths.file("src/shop/order_controller.py", "from service import OrderService\n")
+
+    original = EnforcementLedger.count_since
+
+    def slow_count(self, **kwargs):  # type: ignore[no-untyped-def]
+        value = original(self, **kwargs)
+        time.sleep(0.2)
+        return value
+
+    monkeypatch.setattr(EnforcementLedger, "count_since", slow_count)
+
+    results: list[Decision] = []
+    guard = threading.Lock()
+
+    def worker(index: int) -> None:
+        request = make_action(
+            registry, paths, "fs.edit", edit_params(), action_id=f"act-{index}"
+        )
+        outcome = pre_execute(
+            request,
+            registry=registry,
+            ledger=EnforcementLedger(paths.ledger),
+            sink=FileAuditSink(paths.audit, workspace=paths.workspace),
+        )
+        with guard:
+            results.append(outcome.decision.decision)
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+
+    assert len(results) == 4, results
+    allowed = [item for item in results if item is not Decision.BLOCK]
+    assert len(allowed) == 3, f"并发下放行了 {len(allowed)} 次，超过窗口上限 3：{results}"
+
+
+def test_a_contended_limit_lock_refuses_instead_of_reading_a_stale_count(
+    enforcement_paths, monkeypatch
+):
+    """抢不到限流锁 → 按失败关闭拒绝（LEDGER_UNAVAILABLE），绝不"读旧计数照样判"。"""
+
+    from enforcement import ledger as ledger_module
+
+    paths = enforcement_paths
+    registry = paths.registry_object()
+    monkeypatch.setattr(ledger_module, "DEFAULT_LOCK_TIMEOUT_SECONDS", 0.2)
+
+    holder = EnforcementLedger(paths.ledger)
+    with holder.limit_lock("local-user|fs.edit"):  # 另一个进程（这里是另一个句柄）持锁
+        outcome = pre_execute(
+            make_action(registry, paths, "fs.edit", edit_params(), action_id="act-locked"),
+            registry=registry,
+            ledger=EnforcementLedger(paths.ledger),
+            sink=FileAuditSink(paths.audit, workspace=paths.workspace),
+        )
+
+    assert outcome.decision.decision is Decision.BLOCK
+    assert outcome.decision.reason_code is ReasonCode.LEDGER_UNAVAILABLE
+    lock_check = outcome.decision.check("rate_limit_lock")
+    assert lock_check is not None and lock_check.status is CheckStatus.FAILED
+    assert "拿不到锁就不判定" in lock_check.detail
+
+    # 反真空：锁释放之后同一个请求照常判定（失败关闭没有把工具永久锁死）。
+    released = pre_execute(
+        make_action(registry, paths, "fs.edit", edit_params(), action_id="act-locked"),
+        registry=registry,
+        ledger=EnforcementLedger(paths.ledger),
+        sink=FileAuditSink(paths.audit, workspace=paths.workspace),
+    )
+    assert released.decision.decision is not Decision.BLOCK
 
 
 def test_unregistered_tool_is_blocked(enforcement_paths):
@@ -695,6 +830,46 @@ def test_verify_approval_directly_covers_the_edge_cases(enforcement_paths):
         verify_approval(approval, **{**arguments, "action_id": "other"})
 
 
+def test_pattern_approval_without_a_use_count_is_refused(enforcement_paths):
+    """uses 缺省不再等于 0：拿不到台账里的已用次数就证明不了额度没用完。
+
+    旧签名 uses: int = 0：调用方忘了传次数时，一张有上限的模式条子会静默退化成
+    "到期前无限次"——而同一个下午刚为 params=None 写过"证明不了即失败关闭"。
+    """
+
+    registry = enforcement_paths.registry_object()
+    request = make_action(
+        registry, enforcement_paths, "exec.process", process_params(), roles=("owner",)
+    )
+    now = utc_now()
+    record = ApprovalRecord(
+        approval_id="approval-uses-none",
+        binding="pattern",
+        tool_id=request.tool_id,
+        subject=request.subject or "local-user",
+        granted_by="alice",
+        granted_by_roles=("reviewer",),
+        granted_at=now - timedelta(seconds=1),
+        expires_at=now + timedelta(seconds=300),
+        max_uses=5,
+        param_patterns={"description": ".*"},
+    )
+
+    with pytest.raises(ApprovalError) as error:
+        verify_approval(  # 故意不传 uses
+            record,
+            action_hash=request.action_hash,
+            action_id=request.action_id,
+            tool_id=request.tool_id,
+            subject=request.subject,
+            approval_roles=("reviewer",),
+            used=False,
+            params={item.name: item.value for item in request.params},
+        )
+
+    assert "已用次数" in str(error.value)
+
+
 def test_naive_approval_timestamps_are_rejected_as_the_documented_error(tmp_root):
     """无时区的审批时间必须在加载期报 ApprovalError，不能等到校验路径抛 TypeError。
 
@@ -1097,6 +1272,40 @@ def test_check_list_is_complete_for_governed_actions(enforcement_paths):
     ]
     assert "approval" in names and "policy" in names and "ledger" in names
     assert spec is not None and warnings == ()
+
+
+def test_a_string_sources_field_is_a_usage_error(enforcement_paths):
+    """请求文档的 sources 写成字符串必须报错：它唯一没做类型检查的列表字段。
+
+    旧口径直接 [str(item) for item in document.get("sources", [])]：一个字符串会被
+    **逐字符**展开成 ["d","o","c","s","/","a",".","m","d"]，上下文摘要于是算在一个
+    根本不存在的来源集合上（roles/params 都查了类型，只有它漏了）。
+    """
+
+    from enforcement.cli import CliError, build_request_document
+
+    registry = enforcement_paths.registry_object()
+    document = {
+        "action_id": "sources-1",
+        "request_id": "sources-1",
+        "agent": "dsh",
+        "tool_id": "fs.edit",
+        "subject": "local-user",
+        "roles": ["developer"],
+        "sources": "docs/a.md",
+        "params": {
+            "file_path": "src/a.py",
+            "old_string": "x",
+            "new_string": "y",
+            "replace_all": False,
+        },
+    }
+
+    with pytest.raises(CliError) as error:
+        build_request_document(
+            document, registry=registry, workspace=enforcement_paths.workspace
+        )
+    assert "sources" in str(error.value)
 
 
 def test_authorization_grant_requires_a_ttl_within_the_cap(enforcement_paths):

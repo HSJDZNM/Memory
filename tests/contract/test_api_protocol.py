@@ -67,6 +67,63 @@ def runtime() -> ApiRuntime:
     return ApiRuntime(config, root=REPO_ROOT)
 
 
+def test_openapi_publishes_the_runtime_numeric_and_length_constraints(runtime: ApiRuntime) -> None:
+    """文档里的数值 / 长度约束必须与运行时 DTO 一致。
+
+    历史缺陷（medium 台账 M1，api/openapi.json:265）：握手模型只取注解、丢掉 Field 约束，
+    于是 `budget_ms`（1..600000）与 `limit`（1..50）在契约里是无界整数——文档比实现**宽**，
+    照文档写的客户端会在服务端撞上 400 而查不到边界。约束只是文档：请求体是
+    `openapi_extra` 里的 $ref，不参与框架校验。
+    """
+
+    schemas = openapi_document(runtime)["components"]["schemas"]
+
+    def optional_branch(schema):
+        """可选字段在 JSON Schema 里是 `anyOf: [<真实类型>, null]`：取第一个分支。"""
+
+        branches = schema.get("anyOf")
+        assert branches, "字段不是 anyOf 形态（契约形状变了）：" + str(schema)
+        return branches[0]
+
+    budget = optional_branch(schemas["EvaluateRequest"]["properties"]["budget_ms"])
+    assert (budget["minimum"], budget["maximum"]) == (1, 600_000)
+
+    limit = optional_branch(schemas["RetrieveRequest"]["properties"]["limit"])
+    assert (limit["minimum"], limit["maximum"]) == (1, 50)
+
+    # 长度约束同样要出现：query ≤2000、tenant ≤64、subject 1..200
+    assert optional_branch(schemas["RetrieveRequest"]["properties"]["query"])["maxLength"] == 2000
+    assert optional_branch(schemas["EvaluateRequest"]["properties"]["tenant"])["maxLength"] == 64
+    subject = optional_branch(schemas["PrincipalDTO"]["properties"]["subject"])
+    assert (subject["minLength"], subject["maxLength"]) == (1, 200)
+
+
+def test_openapi_declares_how_callers_authenticate(runtime: ApiRuntime) -> None:
+    """受治理路由的凭据形态必须写进契约。
+
+    历史缺陷（medium 台账 M1，api/openapi.json:145）：四条路由一直在返回 401/403，契约里
+    却既没有 `securitySchemes`、也没有任何 `security` 要求——调用方只能靠猜。补的是**描述**，
+    不是协议形状：载荷一个字节没变，API_SCHEMA_VERSION 因此不动。
+    """
+
+    document = openapi_document(runtime)
+    scheme = document["components"]["securitySchemes"]["BearerAuth"]
+    assert (scheme["type"], scheme["scheme"]) == ("http", "bearer")
+
+    for path, method in (
+        ("/v1/policy/evaluate", "post"),
+        ("/v1/knowledge/retrieve", "post"),
+        ("/v1/validation/evaluate", "post"),
+        ("/v1/ops/metrics", "get"),
+    ):
+        assert document["paths"][path][method]["security"] == [{"BearerAuth": []}], path
+
+    # 探针按设计不要求认证：不给它们挂 requirement，也不设顶层 security
+    assert "security" not in document
+    for path in ("/v1/health/live", "/v1/health/ready"):
+        assert "security" not in document["paths"][path]["get"]
+
+
 def test_openapi_snapshot_matches_the_application(runtime: ApiRuntime) -> None:
     """OpenAPI 快照与当前应用**零差异**：这是 CI 门禁，不是提示。
 

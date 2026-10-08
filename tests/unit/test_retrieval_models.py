@@ -5,7 +5,54 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from retrieval.models import CorpusQuarantine
+from retrieval.models import CorpusManifest, CorpusQuarantine
+
+
+def test_restricted_datasets_must_agree_with_visibility() -> None:
+    """restricted_datasets 必须与 visibility 逐项一致（复核发现：security / fail-open）。
+
+    这份名单在生产代码里没有第二个消费者：检索期真正生效的是 documents.visibility 与
+    AccessScope.allow_restricted。登记成受限而 visibility 仍是 public，等于"按清单作者
+    的意思该受限、实际任何人都能检索"。
+    """
+
+    dataset = {
+        "name": "guides",
+        "title": "Guides",
+        "mirror": "mirror/guides",
+        "license": "CC0-1.0",
+        "tier": "guidance",
+        "visibility": "public",
+        "entries": ["index.md"],
+    }
+    public = {"version": 1, "datasets": [dataset], "restricted_datasets": []}
+    assert CorpusManifest.model_validate(public).restricted_datasets == ()
+
+    # fail-open 方向：登记为受限，但 visibility 允许所有人检索。
+    with pytest.raises(ValidationError):
+        CorpusManifest.model_validate({**public, "restricted_datasets": ["guides"]})
+
+    restricted = {
+        **public,
+        "datasets": [{**dataset, "visibility": "restricted"}],
+        "restricted_datasets": ["guides"],
+    }
+    assert CorpusManifest.model_validate(restricted).restricted_datasets == ("guides",)
+
+    # 反向：visibility=restricted 却漏登记，这份名单就在骗读者。
+    with pytest.raises(ValidationError):
+        CorpusManifest.model_validate({**restricted, "restricted_datasets": []})
+
+    # 真实语料与夹具都满足这条不变式（全 public + 空名单 / restricted + 登记）。
+    from pathlib import Path
+
+    import yaml
+
+    from conftest import REPO_ROOT
+
+    document = yaml.safe_load((REPO_ROOT / "knowledge" / "corpus.yaml").read_text(encoding="utf-8"))
+    manifest = CorpusManifest.model_validate(document)
+    assert manifest.restricted_datasets == ()
 
 
 def test_quarantine_text_hash_must_be_hex_and_is_lowercased() -> None:

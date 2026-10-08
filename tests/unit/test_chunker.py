@@ -385,6 +385,19 @@ def test_blocks_helper_reports_lossless_coverage() -> None:
         assert compact_text(section.body) == compact_text("".join(texts))
 
 
+def test_chunk_document_does_not_advertise_a_version_parameter() -> None:
+    """分块结果上不带版本：chunk_document 不再收一个从不读的 chunker_version（复核发现）。"""
+
+    with pytest.raises(TypeError):
+        chunk_document(  # type: ignore[call-arg]
+            "# T" + chr(10) + chr(10) + "body" + chr(10),
+            document_id="doc",
+            max_chars=200,
+            hard_max_chars=400,
+            chunker_version="whatever",
+        )
+
+
 def test_preamble_heading_does_not_collide_with_preamble_anchor() -> None:
     """前言与标题 "Preamble" 不能抢同一个锚点（复核发现的静默丢正文缺陷）。"""
 

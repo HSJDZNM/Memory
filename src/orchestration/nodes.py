@@ -21,6 +21,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Protocol, Tuple, runtime_checkable
 
+from policy.models import PolicyContextError, normalize_repo_path
+
 from .approvals import ApprovalGate
 from .client import (
     REASON_APPROVAL_REQUIRED,
@@ -72,6 +74,17 @@ PROTECTED_EDIT_TOOL = "orc.policy.edit"
 PROTECTED_WRITE_TOOL = "orc.policy.write"
 
 
+def _is_policy_path(path: str) -> bool:
+    """规则目录**之内**：按路径段判，不用裸前缀。
+
+    裸 `startswith("policies/")` 会被遍历段绕过（`policies/../src/other.py` 以 policies/ 开头），
+    于是"这一改动要不要走受治理的规则工具"由**一个别的文件**的名字决定。Canonical 之后
+    （Change 在构造期就用平台自己的规范化器归一）这个判据才是它字面上的意思。
+    """
+
+    return path == "policies" or path.startswith("policies/")
+
+
 @dataclass(frozen=True)
 class Change:
     """一次候选改动。`content` 与 `replacement` 二选一（写整文件 / 替换片段）。"""
@@ -96,6 +109,19 @@ class Change:
 
         if not self.path:
             raise NodeContractError("候选改动缺少目标路径")
+        # 路径判据（tool_id、是否在任务范围内）必须先有**规范形态**：平台自己的规范化器
+        # （policy.models.normalize_repo_path，与 Hook、Phase 4 同一个口径）拿不到形态就拒绝。
+        # 词法判断会被 `policies/../src/other.py` 绕过：它以 policies/ 开头，于是被判成受治理的
+        # 规则改动、走的却是写别的文件的那条路。`./x`、`x/` 这类等价写法顺带归一，
+        # 让 digest 与 params 都对着同一个路径算（平台执行时也会归一）。
+        try:
+            canonical = normalize_repo_path(self.path)
+        except PolicyContextError as error:
+            raise NodeContractError(
+                f"候选改动的目标 {self.path!r} 不是受控范围内的仓库相对路径：{error}"
+            ) from error
+        if canonical != self.path:
+            object.__setattr__(self, "path", canonical)
         editing = self.old is not None
         writing = self.content is not None
         if editing == writing:
@@ -122,8 +148,8 @@ class Change:
     @property
     def tool_id(self) -> str:
         if self.old is not None:
-            return PROTECTED_EDIT_TOOL if self.path.startswith("policies/") else EDIT_TOOL
-        return PROTECTED_WRITE_TOOL if self.path.startswith("policies/") else WRITE_TOOL
+            return PROTECTED_EDIT_TOOL if _is_policy_path(self.path) else EDIT_TOOL
+        return PROTECTED_WRITE_TOOL if _is_policy_path(self.path) else WRITE_TOOL
 
     def params(self) -> dict[str, Any]:
         # __post_init__ 已经保证"二选一"，这里不再用 `or ""` 把 None 抹成空串——
@@ -365,6 +391,36 @@ def _stop_unrepairable(
     return NodeOutcome(state=stopped, label="blocked", detail=detail)
 
 
+def _stop_approval_gate(
+    state: GraphState, node: NodeId, reason: str, summary: ValidationSummary
+) -> NodeOutcome:
+    """审批门禁不是「发现」：**带不带 violation 都**不产生任何 Change，交给人（AGENTS 第 38 条）。
+
+    「图到达了审批节点」永远不等于「用户批准」，所以即便这次 block 同时带着规则报的 violation，
+    也不该由修复节点去规划一次**正需要人来批准**的写入。
+    """
+
+    detail = (
+        f"本次 block 是审批门禁（required_action=approval，violations={len(summary.violations)}）："
+        "审批不是可以「修」掉的东西——需要人来批准"
+    )
+    stopped = state.replace(
+        **_failure_updates(FailureCode.APPROVAL_MISSING, node, detail),
+        notes=state.notes + (f"{node.value} 停在审批门禁：交给人",),
+    )
+    stopped = _record_run(
+        stopped,
+        node,
+        label="needs_human",
+        status=StageStatus.NEEDS_HUMAN,
+        key=f"{state.task_id}:{node.value}:{reason}",
+        outcome={"reason_code": reason, "violations": len(summary.violations)},
+        detail=detail,
+        failure=FailureCode.APPROVAL_MISSING,
+    )
+    return NodeOutcome(state=stopped, label="needs_human", detail=detail)
+
+
 def _trace(
     state: GraphState, node: NodeId, outcome: DecisionOutcome, *, status: StageStatus
 ) -> GraphState:
@@ -542,30 +598,25 @@ def repair(state: GraphState, context: NodeContext) -> NodeOutcome:
             node=NodeId.REPAIR,
         )
     reason = summary.reason
-    # 「平台没能查」类与审批门禁都要在**空 violations 之前**判掉：前者可能带着 violation
-    # 进场（uncovered_checker / blocker 在判定侧就长这样），拿它去规划改动等于用"改代码"
-    # 回应"平台没查"——R3 要的正是"不产生任何 Change"。
+    # **白名单先判**：只有 policy_violation 这一条路允许「改文件」。
+    # 顺序也有讲究——「平台没能查」与审批门禁都必须在**空 violations 之前**判掉：
+    #   前者可能带着 violation 进场（uncovered_checker / blocker 在判定侧就长这样），
+    #   拿它去规划改动等于用「改代码」回应「平台没查」；
+    #   后者带 violation 时同样不许动手——`decision_reason` 的第 1 条优先于 violations，
+    #   所以「block + 审批 + 有 violation」是一个**能构造出来**的形态。
+    # 早先的写法把审批门禁只放在「空 violations」分支里，于是那种形态会滑到下面，
+    # 去规划一次正需要人来批准的写入（AGENTS 第 38 条）。
     if reason in _UNREPAIRABLE_REASONS:
         return _stop_unrepairable(state, NodeId.REPAIR, reason, summary)
+    if reason == REASON_APPROVAL_REQUIRED:
+        return _stop_approval_gate(state, NodeId.REPAIR, reason, summary)
+    if reason not in _REPAIRABLE_REASONS:
+        raise NodeContractError(
+            f"修复节点只认 {sorted(_REPAIRABLE_REASONS)} 这一类理由（本次是 {reason!r}）："
+            "说不出理由的 block 不许拿来做改动依据",
+            node=NodeId.REPAIR,
+        )
     if not summary.violations:
-        if reason == REASON_APPROVAL_REQUIRED:
-            # 审批不是"发现"：没有可修的对象，也不许放行（AGENTS 第 38 条）。
-            detail = "本次 block 是审批门禁（required_action=approval）：没有可修的 violation，需要人来批准"
-            stopped = state.replace(
-                **_failure_updates(FailureCode.APPROVAL_MISSING, NodeId.REPAIR, detail),
-                notes=state.notes + (f"{NodeId.REPAIR.value} 停在审批门禁：交给人",),
-            )
-            stopped = _record_run(
-                stopped,
-                NodeId.REPAIR,
-                label="needs_human",
-                status=StageStatus.NEEDS_HUMAN,
-                key=f"{state.task_id}:{NodeId.REPAIR.value}:approval_required",
-                outcome={"reason_code": reason},
-                detail=detail,
-                failure=FailureCode.APPROVAL_MISSING,
-            )
-            return NodeOutcome(state=stopped, label="needs_human", detail=detail)
         raise NodeContractError(
             "修复节点没有结构化 violation 可用：拒绝在没有依据的情况下修改文件",
             node=NodeId.REPAIR,
@@ -590,7 +641,7 @@ def _apply_change(
 ) -> NodeOutcome:
     """受治理的写入：先问平台（evaluate），再交给受控执行链。"""
 
-    if change.path != context.task.target and not change.path.startswith("policies/"):
+    if change.path != context.task.target and not _is_policy_path(change.path):
         raise NodeContractError(
             f"改动目标 {change.path!r} 超出任务声明的工作目标：拒绝越界修改", node=node
         )
@@ -761,6 +812,23 @@ def _apply_change(
     return NodeOutcome(state=updated, label="ok", detail=f"写入 {change.path}")
 
 
+def _changed_paths(state: GraphState, target: str) -> Tuple[str, ...]:
+    """这次要验证的**改动集**：取自落账的 CHANGE artifact，取不到才退回任务目标。
+
+    为什么不能写死任务目标：`_apply_change` 允许改 `policies/…`（规则文件也是这次任务改的东西），
+    而平台把这个集合喂给**验证器选择**与 pytest 的 `changed_only`——写死会出现"验证的是一棵
+    没被改的树、真正改过的文件却没声明"（本仓库对"证据属于哪棵树"有明确纪律）。
+    多轮修复会累积多个 artifact：按发生顺序去重，同一文件只声明一次。
+    """
+
+    executed = tuple(
+        item.path for item in state.artifacts if item.kind is ArtifactKind.CHANGE and item.path
+    )
+    if executed:
+        return tuple(dict.fromkeys(executed))
+    return (target,)
+
+
 def validation(state: GraphState, context: NodeContext) -> NodeOutcome:
     """**只**提交证据：证据由服务端验证器流水线产出，客户端不能自带。"""
 
@@ -770,7 +838,7 @@ def validation(state: GraphState, context: NodeContext) -> NodeOutcome:
         principal=dict(context.task.principal),
         trace_id=state.trace_id,
         target=context.task.target,
-        changed=(context.task.target,),
+        changed=_changed_paths(state, context.task.target),
     )
     outcome = context.client.validate(call)
     state = _trace(state, NodeId.VALIDATION, _as_decision(outcome), status=StageStatus.OK)
@@ -808,7 +876,7 @@ def testing(state: GraphState, context: NodeContext) -> NodeOutcome:
         principal=dict(context.task.principal),
         trace_id=state.trace_id,
         target=context.task.target,
-        changed=(context.task.target,),
+        changed=_changed_paths(state, context.task.target),
         only=("failing_tests",),
     )
     outcome = context.client.validate(call)

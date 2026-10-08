@@ -509,9 +509,20 @@ def run_pipeline(
                     )
                     for spec in runnable
                 }
-                for name, future in futures.items():
-                    outputs[name] = future.result()
-                    statuses[name] = outputs[name].status
+                for spec in runnable:
+                    future = futures[spec.id]
+                    try:
+                        outputs[spec.id] = future.result()
+                    except Exception as error:  # noqa: BLE001 - 线程里逃出来的异常也必须失败关闭
+                        # _execute 自己已经兜底了；这里再兜一层是因为"兜底之外"的异常
+                        # （目录准备、未来的新代码路径）会让整趟 run_pipeline 抛出去，
+                        # 其余 future 的异常在 shutdown 时被丢掉——报告直接消失（复核发现）。
+                        outputs[spec.id] = ValidatorOutput(
+                            status=ValidatorStatus.CRASHED,
+                            reason="验证器线程异常：" + type(error).__name__ + ": " + str(error),
+                            served=spec.checkers,
+                        )
+                    statuses[spec.id] = outputs[spec.id].status
     finally:
         if not keep_temp:
             shutil.rmtree(run_root, ignore_errors=True)
@@ -663,7 +674,23 @@ def run_pipeline(
             )
         )
         served.add("forbidden_dependency")
-        blocked = [item for item in blocked if "forbidden_dependency" not in item.checkers]
+        # 只把 forbidden_dependency 从每条 blocker 的 checker 集合里摘掉，**不整条丢弃**：
+        # 同一个 blocker 里可能还列着别的 checker（语言缺失的 CONFIG_ERROR 用的就是
+        # checkers=tuple(sorted(needed))，某验证器服务多个 checker 时 _blocked_checkers 同理），
+        # 而上面的 difference_update 已经把这些 checker 从 served 里删掉了——整条丢掉会让它们
+        # 既不服务也不阻断，正是"没查和查了没问题看起来一样"的那类歧义（复核发现）。
+        # 摘空了的 blocker 才丢弃（Blocker.checkers 有 min_length=1，空集合不可表示）。
+        trimmed = [
+            item.model_copy(
+                update={
+                    "checkers": tuple(
+                        checker for checker in item.checkers if checker != "forbidden_dependency"
+                    )
+                }
+            )
+            for item in blocked
+        ]
+        blocked = [item for item in trimmed if item.checkers]
 
     return PipelineReport(
         language_coverage=coverage,
@@ -889,7 +916,16 @@ def _execute(
         )
 
     tmp_dir = run_root / spec.id
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        # 临时目录建不出来（只读根 / ENOSPC / 路径过长）是失败关闭点：旧实现在 try 之外建目录，
+        # 异常直接穿出 _execute（复核发现）。
+        return ValidatorOutput(
+            status=ValidatorStatus.CRASHED,
+            reason="无法创建验证器临时目录：" + type(error).__name__ + ": " + str(error),
+            served=spec.checkers,
+        )
     served_rules = [rule for rule in matched if rule.enforcement.checker in spec.checkers]
 
     try:

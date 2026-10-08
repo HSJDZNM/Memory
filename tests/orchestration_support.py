@@ -344,7 +344,8 @@ def write_change(
         path=path,
         summary=summary,
         content=content
-        or '''"""接口层：Controller 只依赖 Service。"""
+        if content is not None
+        else '''"""接口层：Controller 只依赖 Service。"""
 
 from shop.order_service import OrderService
 
@@ -513,7 +514,7 @@ def run_graph(
     author: Any,
     runner: Any,
     task: Optional[TaskSpec] = None,
-    engine: str = "reference",
+    engine: Optional[str] = None,
     limits: Optional[RunLimits] = None,
     name: str = "run",
     config: Optional[OrchestrationConfig] = None,
@@ -525,13 +526,37 @@ def run_graph(
     传入 `config=`（上一次运行返回的那份）就是**恢复**：checkpoint 目录不变，
     于是 `StepExecutor.prepare` 会走 `plan_resume`，
     报告里的 `resume_mode` 说明这次走的是 fresh / resume / revalidate / reapprove。
+
+    恢复路径上 `config` 是**唯一**权威，因此这里把两件"静默失效"挡在门外：
+
+    - 再传 `engine` / `limits` / `**overrides` 会被直接拒绝——旧写法把它们算出来又丢掉，
+      调用方以为换了引擎或上限，实际跑的还是 config 里那一份；
+    - `task=` 必须显式给。旧写法默认去查 `phase8-task` 或 `name` 的 checkpoint，
+      第一次运行若用了别的 task id，这里查不到就静默规划成一次**全新运行**
+      （`resume_mode: fresh`），调用方却以为恢复成功了。
     """
 
-    config = (
-        config
-        if config is not None
-        else graph_config(root, name=name, engine=engine, limits=limits, **overrides)
-    )
+    if config is not None:
+        if engine is not None or limits is not None or overrides:
+            raise ValueError(
+                "config= 已经带着 engine/limits：恢复路径上再传 engine/limits/**overrides "
+                "会被静默忽略，请只保留 config="
+            )
+        if task is None:
+            raise ValueError(
+                "config= 是恢复路径，必须显式给 task=：默认 task id 会去查另一个 checkpoint，"
+                "查不到就静默变成一次全新运行（resume_mode: fresh）"
+            )
+        resolved = config
+    else:
+        resolved = graph_config(
+            root,
+            name=name,
+            engine="reference" if engine is None else engine,
+            limits=limits,
+            **overrides,
+        )
+    config = resolved
     task = task or task_spec(name if name != "run" else "phase8-task")
     assembly = build_assembly(config, task=task, author=author, client=client, tool_runner=runner)
     fresh = (
@@ -645,7 +670,9 @@ def tool_request(
         tool_id=tool_id,
         action_id=action_id,
         request_id=request_id,
-        params=dict(params or {"file_path": TARGET_PATH, "content": "# 写入\n"}),
+        params=dict(
+            {"file_path": TARGET_PATH, "content": "# 写入\n"} if params is None else params
+        ),
         subject=subject,
         roles=roles,
         trace_id=trace_id,

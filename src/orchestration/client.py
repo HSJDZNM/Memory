@@ -58,6 +58,7 @@ from .models import (
     ValidationSummary,
     ViolationRef,
     decision_reason,
+    is_relative_state_path,
 )
 
 __all__ = [
@@ -387,6 +388,42 @@ def _violations_from(payload: Mapping[str, Any]) -> Tuple[ViolationRef, ...]:
     return tuple(items)
 
 
+def _decoded_object(raw: bytes) -> Mapping[str, Any]:
+    """把响应体解成对象；解不出来就是**空对象**（不是异常，也不是半份数据）。
+
+    用在这里的是"版本凭据"的读取路径：调用方按"拿不到 = 变了"处理，所以正确的结果是
+    "不知道"，而不是把解码异常抛到熔断计数之外。
+    """
+
+    if not raw:
+        return {}
+    try:
+        decoded = json.loads(raw.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        return {}
+    return decoded if isinstance(decoded, Mapping) else {}
+
+
+def _mapping_items(
+    value: Any, *, where: str, code: FailureCode
+) -> Tuple[Mapping[str, Any], ...]:
+    """载荷里的"对象列表"：给了就必须是序列，形状不对是**契约违规**。
+
+    为什么不像文件里别处那样"不是 Mapping 就跳过"：这里跳过等于把"平台回了一份读不懂的报告"
+    读成"这次没有验证器/没有阻断点"——契约违规被降级成了正常结论。旧实现更糟：
+    `for item in report.get("validators", []) or []` 遇到标量直接抛 TypeError，
+    绕过 ResilientPolicyClient 的失败计数（熔断与降级因此瞎掉）。
+    """
+
+    if value is None:
+        return ()
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise PlatformUnavailableError(
+            f"{where} 必须是对象列表，得到 {type(value).__name__}", code=code
+        )
+    return tuple(item for item in value if isinstance(item, Mapping))
+
+
 def _parse_validation(payload: Mapping[str, Any]) -> ValidationResult:
     try:
         return parse_decision(payload)
@@ -398,9 +435,19 @@ def _parse_validation(payload: Mapping[str, Any]) -> ValidationResult:
 
 
 def _is_relative(value: str) -> bool:
-    """状态里只允许仓库相对路径：绝对路径、`~` 与 `..` 一律不进状态。"""
+    """状态里只允许仓库相对路径——按**状态模型自己的口径**判，不另写一套。
 
-    return bool(value) and not value.startswith(("/", "~")) and ".." not in value.split("/")
+    旧实现只看前导 `/`、`~` 与按 `/` 切的 `..`：Windows 形态（反斜杠分隔的 `..`、盘符 `C:`、UNC）
+    与百分号编码的 `%2e%2e` 都能进状态，而同一个值一旦交给状态模型就会被拒——两套口径必然漂移。
+    现在直接问 is_relative_state_path（与 ContextRef.source_path 的校验逐条同源）；
+    百分号编码另外再判一次**解码后**的形态：下游消费方会不会解码不由我们决定，
+    两种形态都合法才收。
+    """
+
+    if not value or not is_relative_state_path(value):
+        return False
+    decoded = urllib.parse.unquote(value)
+    return decoded == value or is_relative_state_path(decoded)
 
 
 def _check_trace(expected: Optional[str], received: Optional[str]) -> Optional[str]:
@@ -463,18 +510,29 @@ class ApiPolicyClient:
         token: str,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         opener: Optional[Callable[..., Any]] = None,
+        tenant: Optional[str] = None,
     ) -> None:
+        """`tenant` 是**请求体里的提示**（租户只来自令牌，服务端按令牌的客户端声明核对）：
+
+        装配层知道 CLI 的 `--tenant`，而调用点是各节点自己构造的信封——统一在这里补上，
+        免得"收下了 --tenant 却什么都没发生"。调用方自己填了 tenant 时以调用方为准。
+        """
+
         if not base_url or not token:
             raise NodeContractError("ApiPolicyClient 需要 base_url 与 token")
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
+        self.tenant = tenant
         self._opener = opener or _default_transport_opener(self.base_url)
         self.paths: list[str] = []
 
     # -- 传输 ---------------------------------------------------------------
     def _post(self, path: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
-        body = json.dumps(dict(payload), ensure_ascii=False).encode("utf-8")
+        envelope = dict(payload)
+        if self.tenant is not None and "tenant" not in envelope:
+            envelope["tenant"] = self.tenant
+        body = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             self.base_url + path,
             data=body,
@@ -533,16 +591,17 @@ class ApiPolicyClient:
         self.paths.append(path)
         try:
             with self._opener(request, timeout=self.timeout) as response:
-                raw = response.read().decode("utf-8")
-                return int(response.status), json.loads(raw) if raw else {}
+                return int(response.status), _decoded_object(response.read())
         except urllib.error.HTTPError as error:
-            raw = error.read().decode("utf-8", errors="replace")
-            try:
-                return int(error.code), json.loads(raw) if raw else {}
-            except json.JSONDecodeError:
-                return int(error.code), {}
-        except (urllib.error.URLError, TimeoutError, OSError):
+            return int(error.code), _decoded_object(error.read())
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
             # 版本凭据拿不到：如实说"不知道"，由调用方按"变了"处理。
+            #
+            # 为什么要接 ValueError：_decoded_object 已经不抛 JSONDecodeError 了，但**读取本身**
+            # 还可能失败（例如正文不是 UTF-8 时某些 opener 在 read() 期间抛 UnicodeDecodeError，
+            # 它是 ValueError 的子类）。旧实现只接 HTTPError / URLError / TimeoutError / OSError，
+            # 于是非 UTF-8 正文与 2xx 的非 JSON 正文会逃出 ResilientPolicyClient 的失败计数——
+            # 熔断与降级因此瞎掉，而契约说的是"拿不到就是拿不到"（state="unknown" / ready=False）。
             return 0, {}
 
     def readiness(self) -> PlatformReadiness:
@@ -625,7 +684,8 @@ class ApiPolicyClient:
         contexts: list[ContextRef] = []
         for item in snippets:
             source = str(item.get("source_path", ""))
-            if not source or source.startswith(("/", "~")) or ".." in source.split("/"):
+            # 与 _violations_from 同一判据（同一条"什么能进状态"的规则，不各写一份）。
+            if not _is_relative(source):
                 continue
             contexts.append(
                 ContextRef(
@@ -663,8 +723,11 @@ class ApiPolicyClient:
             )
         validators = tuple(
             str(item.get("validator", ""))
-            for item in report.get("validators", []) or []
-            if isinstance(item, Mapping)
+            for item in _mapping_items(
+                report.get("validators"),
+                where="validate 响应的 report.validators",
+                code=FailureCode.VALIDATOR_UNAVAILABLE,
+            )
         )
         blockers = tuple(
             ":".join(
@@ -674,8 +737,11 @@ class ApiPolicyClient:
                     str(item.get("reason", "")),
                 ]
             )
-            for item in body.get("blockers", []) or []
-            if isinstance(item, Mapping)
+            for item in _mapping_items(
+                body.get("blockers"),
+                where="validate 响应的 blockers",
+                code=FailureCode.VALIDATOR_UNAVAILABLE,
+            )
         )
         decision_block = body.get("decision")
         evidence = report.get("evidence")

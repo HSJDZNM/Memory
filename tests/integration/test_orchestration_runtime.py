@@ -15,10 +15,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
+from datetime import datetime, timezone
+from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Any, Tuple
+from typing import Any, Optional, Tuple
 
 import pytest
 
@@ -27,6 +30,7 @@ from orchestration.client import (
     ApiPolicyClient,
     EvaluateCall,
     ResilientPolicyClient,
+    ValidateCall,
 )
 from orchestration.errors import CircuitOpenError, PlatformUnavailableError
 from orchestration.models import (
@@ -39,11 +43,13 @@ from orchestration.models import (
     StageStatus,
 )
 from orchestration.nodes import ScriptedAuthor
+from orchestration.runtime import build_assembly
 
 from orchestration_support import (
     CHANGED_RULE_SET_HASH,
     ExecutingToolRunner,
     FakeOpener,
+    FakeResponse,
     ROUTE_PATHS,
     RULE_SET_HASH,
     TARGET_PATH,
@@ -55,6 +61,8 @@ from orchestration_support import (
     graph_config,
     platform_runner,
     readiness,
+    scripted_client,
+    tool_request,
     readiness_response,
     retrieval_ok,
     retrieval_unavailable,
@@ -482,6 +490,32 @@ def test_platform_failures_stop_the_run(
     assert len(runner.calls) == expected_tool_calls
 
 
+def test_the_two_clocks_keep_their_own_contracts(tmp_root) -> None:
+    """预算用单调秒、审批与授权用**墙上时间**：一个参数混两种口径，走到授权检查那一刻才炸。
+
+    旧实现把同一个 clock 同时喂给 StepExecutor（要单调秒）与 ApprovalGate / PlatformToolRunner
+    （要 datetime）：注入单调秒时 _now() 返回 123.0，而审批记录的 expires_at 是 datetime——
+    比较那一刻抛 `TypeError: '<=' not supported between 'datetime.datetime' and 'float'`，
+    而那时流程已经走了一半。
+    """
+
+    pinned = datetime(2026, 10, 8, 7, 0, tzinfo=timezone.utc)
+    config = graph_config(tmp_root, name="clocks")
+
+    assembly = build_assembly(
+        config,
+        task=task_spec("clocks-task"),
+        author=ScriptedAuthor([write_change()]),
+        client=scripted_client(),
+        tool_runner=ExecutingToolRunner(),
+        clock=lambda: 123.0,
+        wall_clock=lambda: pinned,
+    )
+
+    assert assembly.node_context.clock() == 123.0
+    assert assembly.node_context.approvals._now() == pinned
+
+
 def test_validate_without_a_decision_blocks_the_run_over_the_real_client(tmp_root) -> None:
     """HTTP 形状的"没有决策"：传输层成功、协议层缺决策，必须 blocked 而不是 PASS。"""
 
@@ -513,6 +547,178 @@ def test_validate_without_a_decision_blocks_the_run_over_the_real_client(tmp_roo
         ROUTE_PATHS["evaluate"],
         ROUTE_PATHS["validate"],
     )
+
+
+def test_validate_with_a_scalar_validators_field_is_a_contract_violation(tmp_root) -> None:
+    """200 响应里 validators 是标量：契约违规 → 显式不可用。
+
+    旧实现直接 `for item in report.get("validators", []) or []`：标量抛 TypeError，
+    绕过 ResilientPolicyClient 的失败计数（熔断与降级因此瞎掉），而不是按"拿不到就是拿不到"处理。
+    """
+
+    echo = echo_validate_response()
+
+    def malformed(request: Any) -> Tuple[int, Mapping[str, Any]]:
+        status, body = echo(request)
+        body["report"]["validators"] = 1  # 标量：既不是列表也不是 None
+        return status, body
+
+    opener = FakeOpener(
+        {
+            ROUTE_PATHS["readiness"]: readiness_response(),
+            ROUTE_PATHS["evaluate"]: echo_decision_response(),
+            ROUTE_PATHS["retrieve"]: echo_retrieval_response(),
+            ROUTE_PATHS["validate"]: malformed,
+        }
+    )
+    client = ApiPolicyClient(
+        "http://127.0.0.1:9", token="test-token", opener=opener, timeout=2.0
+    )
+
+    with pytest.raises(PlatformUnavailableError) as error:
+        client.validate(
+            ValidateCall(request_id="req-1", context={"file": TARGET_PATH}, principal={})
+        )
+
+    assert error.value.code is FailureCode.VALIDATOR_UNAVAILABLE
+    assert "对象列表" in str(error.value)
+
+
+class _RawResponse:
+    """给定**原始字节**的响应替身：用来喂非 UTF-8 / 非 JSON 的正文（FakeOpener 只收可 JSON 化的对象）。"""
+
+    def __init__(self, status: int, body: bytes) -> None:
+        self.status = status
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> "_RawResponse":
+        return self
+
+    def __exit__(self, *args: Any) -> bool:
+        return False
+
+
+def _raw_opener(status: int, body: bytes):
+    def opener(request: Any, timeout: Optional[float] = None) -> _RawResponse:
+        return _RawResponse(status, body)
+
+    return opener
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"\xff\xfe\x00\x01binary",  # 不是 UTF-8
+        b"<html>502 Bad Gateway</html>",  # 2xx 但不是 JSON（代理塞回来的页面）
+        b'["not", "an", "object"]',  # JSON 但不是对象
+        b"null",
+    ],
+    ids=["non-utf8", "html", "json-list", "json-null"],
+)
+def test_readiness_calls_unreadable_bodies_unknown(body: bytes) -> None:
+    """版本凭据读不出来 = **不知道**（unknown / not ready），既不是异常也不是"没变"。
+
+    旧实现只接 HTTPError / URLError / TimeoutError / OSError：非 UTF-8 正文抛 UnicodeDecodeError、
+    2xx 的非 JSON 正文抛 JSONDecodeError、JSON 但不是对象时把 list 当 Mapping 返回
+    （readiness 里 body.get(...) 直接 AttributeError）——三者都逃出熔断计数，
+    而契约说的是"拿不到就是拿不到"。
+    """
+
+    client = ApiPolicyClient(
+        "http://127.0.0.1:9", token="test-token", opener=_raw_opener(200, body), timeout=2.0
+    )
+
+    value = client.readiness()
+
+    assert value.state == "unknown"
+    assert value.ready is False
+
+
+def test_the_recorded_change_follows_the_executed_workspace_and_normalized_path(tmp_root) -> None:
+    """执行后记录的证据必须与**真正写下去的那份**同一口径（根目录 + 规范化路径）。
+
+    旧实现永远用 `self.workspace`，并且直接用调用方原样给的参数：
+      - 带 per-request workspace 时（`_action` / `pre_execute` / `execute` 都按它解析），
+        同一个相对路径在另一个根下是**另一个文件**——记下来的摘要与大小与平台实际写的无关；
+      - 绝对路径（工作区内、会被规范化成相对形式）与超长路径会让 `ArtifactRef` 校验失败，
+        而这一步发生在**副作用与审计都已经落盘之后**：一次成功的受治理写入变成崩溃。
+    """
+
+    root = Path(tmp_root)
+    workspace = root / "ws"
+    (workspace / "src").mkdir(parents=True, exist_ok=True)
+    (workspace / "src" / "target.py").write_text("x = 1\n", encoding="utf-8")
+    # 同相对路径、不同内容：这正是 runner 自己的 workspace（旧实现会读它）
+    other = root / "other"
+    (other / "src").mkdir(parents=True, exist_ok=True)
+    (other / "src" / "target.py").write_text("DIFFERENT CONTENT\n", encoding="utf-8")
+
+    runner = platform_runner(root, workspace=other, name="changed")
+    spec = runner.spec_for("orc.fs.write")
+
+    request = tool_request(
+        params={"file_path": str(workspace / "src" / "target.py"), "content": "y = 2\n"},
+        workspace=str(workspace),
+    )
+    action = runner._action(request, spec)
+
+    refs = runner._changed(spec, action, request)
+
+    assert len(refs) == 1
+    digest = hashlib.sha256((workspace / "src" / "target.py").read_bytes()).hexdigest()
+    assert refs[0].digest == "sha256:" + digest
+    assert refs[0].bytes == len((workspace / "src" / "target.py").read_bytes())
+    assert refs[0].path == "src/target.py", "路径取规范化后的仓库相对形式"
+
+    # 超长路径：artifact_id 的上限是 128，超出就用摘要收口——不许在副作用之后抛 ValidationError。
+    # 阈值实测：相对路径 110 字符时 id 长 121（仍合法）、118 字符时旧实现直接
+    # "ValidationError: String should have at most 128 characters"。这里取 140 字符留足余量。
+    segments = ["d" * 30, "e" * 30, "f" * 30, "g" * 30]
+    long_relative = "/".join(segments + ["long_target.py"])
+    assert len(long_relative) >= 118, "要真的越过 128 的 id 上限，否则这条断言证明不了什么"
+    deep = workspace.joinpath(*segments)
+    deep.mkdir(parents=True, exist_ok=True)
+    (deep / "long_target.py").write_text("z = 3\n", encoding="utf-8")
+    long_request = tool_request(
+        params={"file_path": long_relative, "content": "w = 4\n"},
+        workspace=str(workspace),
+    )
+    long_action = runner._action(long_request, spec)
+
+    long_refs = runner._changed(spec, long_action, long_request)
+
+    assert len(long_refs) == 1
+    assert len(long_refs[0].artifact_id) <= 128
+
+
+def test_the_tenant_hint_reaches_the_platform() -> None:
+    """`--tenant` 必须真的到得了平台：它是**提示**（租户只来自令牌），但收下却不用就是撒谎。
+
+    旧实现把 tenant 存进 OrchestrationConfig 之后没有任何消费方——每个判定请求的信封里
+    这个键始终是 None，而操作者以为 `--tenant` 已经生效。
+    """
+
+    seen: list[Any] = []
+    echo = echo_decision_response()
+
+    def record(request: Any, timeout: Optional[float] = None) -> FakeResponse:
+        seen.append(json.loads((request.data or b"{}").decode("utf-8")))
+        status, payload = echo(request)
+        return FakeResponse(status, payload)
+
+    client = ApiPolicyClient(
+        "http://127.0.0.1:9", token="test-token", tenant="alpha", opener=record, timeout=2.0
+    )
+    client.evaluate(EvaluateCall(request_id="req-1", context={"file": TARGET_PATH}, principal={}))
+    assert seen[-1]["tenant"] == "alpha"
+
+    # 不配就是不配：信封里连这个键都没有（而不是空串或 null）
+    plain = ApiPolicyClient("http://127.0.0.1:9", token="test-token", opener=record, timeout=2.0)
+    plain.evaluate(EvaluateCall(request_id="req-2", context={"file": TARGET_PATH}, principal={}))
+    assert "tenant" not in seen[-1]
 
 
 def test_api_client_against_an_unused_port_fails_closed() -> None:

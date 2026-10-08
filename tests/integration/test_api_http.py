@@ -695,6 +695,42 @@ def test_retrieve_reports_real_corpus_hash_drift(tmp_root: Path) -> None:
     assert response.json()["index"]["hash_drift"] == ["guides:index.md"]
 
 
+def test_decision_ref_is_scoped_to_the_client_that_computed_it(tmp_root: Path) -> None:
+    """同一个租户里的**另一个客户端**不能引用别人算过的决策。
+
+    历史缺陷（medium 台账 M1，runtime.py:721，security）：`decision_ref` 只按
+    `(tenant, request_id)` 解析，而 `request_id` 由调用方提供——同租户的另一个客户端只要
+    复用/猜中这个 id，就能引用别人的决策：`_policy_facts` 会把别人的违规与规则集事实
+    组装进检索结果（同租户内的越权读取）。
+
+    本用例的通道没有配索引：决策引用**先**被判（授权先于可用性），因此 403 与 503 正好
+    区分"引用被拒"与"引用通过、只是检索不可用"。
+    """
+
+    runtime, client, _ = build_api(tmp_root)
+    owner = client.post(
+        "/v1/policy/evaluate", headers=auth(), json=envelope("it-ref-owner", context=BAD_CONTEXT)
+    )
+    assert owner.status_code == 200
+
+    stolen = client.post(
+        "/v1/knowledge/retrieve",
+        headers={"Authorization": f"Bearer {TOKEN2}"},  # 同租户的另一个客户端
+        json={
+            "api_version": "1.0",
+            "request_id": "it-ref-thief",
+            "tenant": "alpha",
+            "principal": {"subject": "bob", "roles": ["developer"]},
+            "context": dict(GOOD_CONTEXT),
+            "query": "代码评审",
+            "decision_ref": "it-ref-owner",
+        },
+    )
+
+    assert stolen.status_code == 403, stolen.json()
+    assert error_code(stolen) == "forbidden"
+
+
 def test_retrieve_rejects_a_decision_ref_the_service_never_computed(tmp_root: Path) -> None:
     """`decision_ref` 只能指向**本服务算过的** request_id：客户端不能自带决策给自己扩权。"""
 
@@ -749,6 +785,56 @@ def test_retrieve_fails_closed_when_the_index_file_disappears(tmp_root: Path) ->
 
 
 # --------------------------------------------------------------------------- 验证器
+
+
+def test_validate_bounds_the_follow_up_decision_with_the_remaining_budget(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`include_decision=true` 时，合并证据后的判定也要在预算内。
+
+    历史缺陷（medium 台账 M1，runtime.py:792）：后续 `evaluate` 跑在 `run_with_budget` **之外**
+    ——流水线有 504 兜着，这一步没有；一个慢引擎可以让 validate 路由的总耗时无上限，
+    而响应里的 elapsed 也只报了流水线那一段。
+    """
+
+    import time as clock_module
+
+    from validators import pipeline as pipeline_module
+
+    from policy_api import runtime as runtime_module
+
+    runtime, client, _ = build_api(tmp_root)
+
+    class InstantReport:
+        """让流水线瞬间返回：被测的是**后续判定**那一段的预算。"""
+
+        bundle = ()
+        blockers = ()
+
+        def to_payload(self) -> Mapping[str, Any]:
+            return {"evidence": [], "served_checkers": []}
+
+    monkeypatch.setattr(
+        pipeline_module, "run_pipeline", lambda request, config: InstantReport()
+    )
+
+    def slow_evaluate(*args: Any, **kwargs: Any) -> Any:
+        clock_module.sleep(2)  # 远超下面给的预算
+        return None
+
+    monkeypatch.setattr(runtime_module, "evaluate", slow_evaluate)
+    response = client.post(
+        "/v1/validation/evaluate",
+        headers=auth(),
+        json={
+            **envelope("it-validate-budget", context=GOOD_CONTEXT),
+            "target": "src/shop/order_service.py",
+            "budget_ms": 300,
+        },
+    )
+
+    assert response.status_code == 504, response.json()
+    assert error_code(response) == "validate_timeout"
 
 
 def test_validate_runs_the_real_pipeline_and_returns_a_decision(tmp_root: Path) -> None:

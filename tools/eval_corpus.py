@@ -103,6 +103,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import io
 import json
 import re
@@ -196,6 +197,9 @@ class Skip:
 SKIP_TARGET_MISSING = "target_missing"
 SKIP_TARGET_LINE_OUT_OF_RANGE = "target_line_out_of_range"
 SKIP_TARGET_OUTSIDE_CORPUS = "target_outside_corpus"
+#: 文件在那儿但读不出来（权限 / 变成了目录 / 读到一半消失）：**不是**"上游漂移"（TARGET_MISSING），
+#: 也不是崩溃——如实记一条带异常类型的 skip，由读数的人决定要不要管。
+SKIP_TARGET_UNREADABLE = "target_unreadable"
 SKIP_NO_LOCATION = "expectation_without_location"
 SKIP_NO_CODE = "expectation_without_code"
 SKIP_UNDECLARED_CODE = "code_not_declared_in_file"
@@ -658,7 +662,9 @@ def _download(spec: SourceSpec) -> bytes:
             payload = response.read()
     except urllib.error.HTTPError as error:
         raise CorpusError(f"{spec.id}: 下载失败 HTTP {error.code}：{spec.url}") from error
-    except (urllib.error.URLError, OSError) as error:
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
+        # IncompleteRead 是 http.client.HTTPException：既不是 URLError 也不是 OSError，
+        # 传输被截断时会从这里逃出去（模块契约是"要么给结论，要么给 CorpusError"）。
         raise CorpusError(f"{spec.id}: 下载失败：{spec.url}：{error}") from error
     if not payload:
         raise CorpusError(f"{spec.id}: 下载到 0 字节：{spec.url}")
@@ -669,33 +675,43 @@ def _archive_members(spec: SourceSpec, payload: bytes) -> dict[str, bytes]:
     """把归档读成 {相对 archive_root 的 POSIX 路径: 内容}，并对形状做显式校验。"""
 
     members: dict[str, bytes] = {}
+    # 解析失败必须翻成 CorpusError：BadZipFile / tarfile 的错误都是普通 Exception 子类，
+    # 逃出去就是 --fetch 上的一段栈回溯（200 响应但内容是畸形/截断/恰好以 PK 开头的非 zip 体都会走到这里）。
     if payload[:2] == b"PK":
-        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-            names = archive.namelist()
-            tops = {name.split("/", 1)[0] for name in names if "/" in name}
-            _require_single_root(spec, tops)
-            for info in archive.infolist():
-                if info.is_dir():
-                    continue
-                relative = _strip_archive_root(spec, info.filename)
-                if relative is None:
-                    continue
-                members[relative] = archive.read(info)
+        try:
+            with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+                names = archive.namelist()
+                tops = {name.split("/", 1)[0] for name in names if "/" in name}
+                _require_single_root(spec, tops)
+                for info in archive.infolist():
+                    if info.is_dir():
+                        continue
+                    relative = _strip_archive_root(spec, info.filename)
+                    if relative is None:
+                        continue
+                    members[relative] = archive.read(info)
+        except zipfile.BadZipFile as error:
+            raise CorpusError(f"{spec.id}: 归档不是合法 zip（{error}）：{spec.url}") from error
     else:
-        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
-            entries = archive.getmembers()
-            tops = {entry.name.split("/", 1)[0] for entry in entries if "/" in entry.name}
-            _require_single_root(spec, tops)
-            for entry in entries:
-                if not entry.isfile():
-                    continue
-                relative = _strip_archive_root(spec, entry.name)
-                if relative is None:
-                    continue
-                handle = archive.extractfile(entry)
-                if handle is None:
-                    raise CorpusError(f"{spec.id}: 归档成员读不出来：{entry.name}")
-                members[relative] = handle.read()
+        try:
+            with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
+                entries = archive.getmembers()
+                tops = {entry.name.split("/", 1)[0] for entry in entries if "/" in entry.name}
+                _require_single_root(spec, tops)
+                for entry in entries:
+                    if not entry.isfile():
+                        continue
+                    relative = _strip_archive_root(spec, entry.name)
+                    if relative is None:
+                        continue
+                    handle = archive.extractfile(entry)
+                    if handle is None:
+                        raise CorpusError(f"{spec.id}: 归档成员读不出来：{entry.name}")
+                    members[relative] = handle.read()
+        except tarfile.TarError as error:
+            raise CorpusError(
+                f"{spec.id}: 归档不是合法 tar（{type(error).__name__}: {error}）：{spec.url}"
+            ) from error
     return members
 
 
@@ -880,12 +896,26 @@ def _drop_reason(
     annotation = scope.annotation
     base_resolved = base.resolve()
     target = (base / annotation.file).resolve()
-    if not str(target).startswith(str(base_resolved)):
+    # 真包含判定（路径级，不是字符串前缀）：`<root>/<id>@<rev>-backup/x.py` 的字符串确实以
+    # 语料根的字符串开头，字符串前缀测试会把它当成语料内容——那份文件根本没被锁覆盖。
+    if target != base_resolved and base_resolved not in target.parents:
         return Skip(SKIP_TARGET_OUTSIDE_CORPUS, f"{annotation.code} {annotation.file}")
     if annotation.file not in line_cache:
-        line_cache[annotation.file] = (
-            len(_decode(target.read_bytes()).splitlines()) if target.is_file() else None
-        )
+        # 一次读到底（旧实现是 `is_file()` 再 `read_bytes()`：中间那一小段是 TOCTOU 窗口，
+        # 而且 `read_bytes()` 本身没守护——权限错误/目标变成目录都会裸抛 OSError，
+        # 逃出 annotation_report()/load_annotations()，与模块契约不符）。
+        try:
+            data = target.read_bytes()
+        except (FileNotFoundError, NotADirectoryError):
+            line_cache[annotation.file] = None
+        except OSError as error:
+            return Skip(
+                SKIP_TARGET_UNREADABLE,
+                f"{annotation.code} {annotation.file}:{annotation.line}"
+                f"（读不出来：{type(error).__name__}: {error}；声明于 {annotation.source}）",
+            )
+        else:
+            line_cache[annotation.file] = len(_decode(data).splitlines())
     total = line_cache[annotation.file]
     if total is None:
         return Skip(
@@ -1100,6 +1130,31 @@ def write_lock(dataset_id: str, *, root: Path, lock_dir: Path) -> Path:
     return destination
 
 
+def _locked_files(dataset_id: str, payload: dict, problems: list[str]) -> dict[str, str]:
+    """lock 的 files 段 → {相对路径: sha256}；形状不对**逐条记问题**，不抛 KeyError/TypeError。
+
+    lock 是提交进仓库、可能被人手工改过的数据文件：entries 缺 path/sha256、files 不是数组、
+    甚至 json.loads 回来根本不是 dict，都必须走 (False, problems) 这条路，而不是让 verify
+    以一段 traceback 收场（main 只把 CorpusError 翻成退出码）。
+    """
+
+    files = payload.get("files")
+    if not isinstance(files, list):
+        problems.append(f"{dataset_id}: lock 的 files 必须是数组（得到 {type(files).__name__}）")
+        return {}
+    locked: dict[str, str] = {}
+    for index, item in enumerate(files):
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            problems.append(f"{dataset_id}: lock 的 files[{index}] 缺 path（形状不对）")
+            continue
+        digest = item.get("sha256")
+        if not isinstance(digest, str) or not digest:
+            problems.append(f"{dataset_id}: lock 的 files[{index}]（{item['path']}）缺 sha256")
+            continue
+        locked[item["path"]] = digest
+    return locked
+
+
 def verify(dataset_id: str, *, root: Path, lock_dir: Path) -> tuple[bool, list[str]]:
     """比对 lock 与本地语料，并跑结构自检。返回 (是否通过, 问题清单)。"""
 
@@ -1112,6 +1167,11 @@ def verify(dataset_id: str, *, root: Path, lock_dir: Path) -> tuple[bool, list[s
         payload = json.loads(locked_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return False, [f"{dataset_id}: lock 读不出来：{locked_path}：{error}"]
+    # 形状先校验：手工改过 / 截断的 lock 不能变成 traceback——契约是 (False, problems)。
+    if not isinstance(payload, dict):
+        return False, [
+            f"{dataset_id}: lock 顶层必须是 JSON 对象（得到 {type(payload).__name__}）：{locked_path}"
+        ]
     if payload.get("schema_version") != LOCK_SCHEMA_VERSION:
         problems.append(
             f"{dataset_id}: lock 的 schema_version={payload.get('schema_version')!r}，"
@@ -1132,7 +1192,7 @@ def verify(dataset_id: str, *, root: Path, lock_dir: Path) -> tuple[bool, list[s
         problems.append(f"{dataset_id}: 本地语料不存在：{base}（先跑 --fetch）")
         return False, problems
 
-    locked = {item["path"]: item for item in payload.get("files", [])}
+    locked = _locked_files(dataset_id, payload, problems)
     present = _list_files(base)
     for relative in sorted(set(locked) - set(present)):
         problems.append(f"{dataset_id}: lock 里列了但本地没有：{relative}")
@@ -1140,10 +1200,9 @@ def verify(dataset_id: str, *, root: Path, lock_dir: Path) -> tuple[bool, list[s
         problems.append(f"{dataset_id}: 本地有但 lock 没覆盖：{relative}（lock 不完整）")
     for relative in sorted(set(locked) & set(present)):
         actual = _file_digest(base / relative)
-        if actual != locked[relative]["sha256"]:
+        if actual != locked[relative]:
             problems.append(
-                f"{dataset_id}: sha256 漂移：{relative}：lock={locked[relative]['sha256']}，"
-                f"实际={actual}"
+                f"{dataset_id}: sha256 漂移：{relative}：lock={locked[relative]}，实际={actual}"
             )
 
     report = annotation_report(dataset_id, root=root)

@@ -31,8 +31,9 @@ from policy import models as policy_models
 from orchestration import models as orchestration_models
 from orchestration.checkpoint import CHECKPOINT_SCHEMA_VERSION, JsonCheckpointStore
 from orchestration.client import API_SCHEMA_VERSION, EvaluateCall, RetrieveCall, ValidateCall
-from orchestration.engines import ReferenceEngine
-from orchestration.errors import CheckpointError, NodeContractError
+from orchestration.engines import ReferenceEngine, StepExecutor
+from orchestration.errors import CheckpointError, EngineUnavailableError, NodeContractError
+from orchestration.langgraph_engine import LangGraphEngine, _load
 from orchestration.graph import (
     DEFAULT_SPEC,
     END,
@@ -202,6 +203,43 @@ def test_auto_engine_reports_the_engine_it_actually_used(tmp_root) -> None:
     assert report.engine == name
 
 
+def test_limit_reached_is_derived_from_the_terminal_failure_code(tmp_root) -> None:
+    """"因为撞上限而停下"是一类要能读出来的事实（这个字段此前永远是 False）。
+
+    它只按终止失败码推导：节点与引擎都不必各自记得去置它，读报告的人也不必反推
+    "needs_human 到底是预算不够还是审批缺失"。
+    """
+
+    limited = next(item for item in SCENARIOS if item.name == "repair-limit-reached")
+    run = run_graph(
+        tmp_root,
+        name="limit-flag",
+        task=task_spec("limit-flag-task"),
+        client=limited.client(),
+        author=limited.author(),
+        runner=limited.runner(),
+        limits=limited.limits,
+    )
+    assert run.report.failure is not None
+    assert run.report.failure.code is FailureCode.LIMIT_REPAIR_ROUNDS
+    assert run.report.limit_reached is True
+    assert run.report.to_payload()["limit_reached"] is True
+
+    # 反向：正常跑完的一轮不该被标成"撞了上限"
+    happy = SCENARIOS[0]
+    done = run_graph(
+        tmp_root,
+        name="limit-flag-ok",
+        task=task_spec("limit-flag-ok-task"),
+        client=happy.client(),
+        author=happy.author(),
+        runner=happy.runner(),
+        limits=happy.limits,
+    )
+    assert done.report.status is RunStatus.COMPLETED
+    assert done.report.limit_reached is False
+
+
 def test_repair_limit_is_reported_with_its_failure_code(tmp_root) -> None:
     """上限击穿不是"静默停下"：报告里必须带失败码，状态是 needs_human。"""
 
@@ -275,6 +313,159 @@ def test_graph_problems_reject_contradictory_routers() -> None:
 
     # 正例一条都不误报：默认图定义没有任何矛盾
     assert DEFAULT_SPEC.problems() == ()
+
+
+def test_graph_problems_reject_a_graph_that_cannot_finish() -> None:
+    """自检要回答"这张图能不能跑完"：没有出口的环与孤立节点都必须报出来。
+
+    只查"每个节点有没有出边"是不够的：`validation ⇄ repair` 满足它却永远不会结束
+    （实测旧版本对这个环报出 6 条，全是别的节点没有出边，**没有一条**说它到不了终点），
+    而这条自检在引擎构造期是契约错误（`BaseEngine.__init__`）——漏掉它等于让跑不完的图通过。
+    """
+
+    loop = GraphSpec(
+        entry=NodeId.VALIDATION.value,
+        edges=(
+            Edge(source=NodeId.VALIDATION.value, target=NodeId.REPAIR.value),
+            Edge(source=NodeId.REPAIR.value, target=NodeId.VALIDATION.value),
+        ),
+    )
+    issues = loop.problems()
+    assert any("到不了终点 end" in issue for issue in issues)
+    assert any("从入口不可达" in issue and "requirement_analysis" in issue for issue in issues)
+
+    # 反向不变量：真实的图定义一条都不误报（自检不能靠"多报"显得有用）
+    assert DEFAULT_SPEC.problems() == ()
+
+
+def test_an_incomplete_langgraph_is_unavailable_not_an_attribute_error(monkeypatch) -> None:
+    """装了一半的 langgraph（StateGraph / GraphRecursionError 缺失）必须判"不可用"。
+
+    旧实现把 `getattr` 放在守卫**外面**：AttributeError 会直接抛出去，而 select_engine("auto")
+    只接 EngineUnavailableError——"自动回落到参考引擎"于是变成一句空话。
+    GraphRecursionError 更关键：它以前缺省回落到 RuntimeError，于是图运行期间的**任何**
+    RuntimeError 都会被 `except lg.GraphRecursionError` 翻译成 LIMIT_NODE_RUNS / NEEDS_HUMAN。
+    """
+
+    import sys
+    import types
+
+    graph_module = types.ModuleType("langgraph.graph")  # 没有 StateGraph
+    errors_module = types.ModuleType("langgraph.errors")
+    monkeypatch.setitem(sys.modules, "langgraph.graph", graph_module)
+    monkeypatch.setitem(sys.modules, "langgraph.errors", errors_module)
+
+    with pytest.raises(EngineUnavailableError):
+        _load()
+
+    # 补上 graph 侧的 API，但 errors 侧仍然没有 GraphRecursionError：同样判不可用
+    graph_module.StateGraph = object
+    graph_module.START = "__start__"
+    graph_module.END = "__end__"
+
+    with pytest.raises(EngineUnavailableError):
+        _load()
+
+
+def test_the_recursion_limit_never_fires_before_the_budget(tmp_root) -> None:
+    """递归上限必须**大于**配置的节点预算：它不是预算，是后备。
+
+    旧实现写死 `min(max_node_runs + slack, 200)`：RunLimits.max_node_runs 允许到 500，
+    预算是 500 时 LangGraph 会在 ~200 步就抛 GraphRecursionError，被报成 LIMIT_NODE_RUNS /
+    NEEDS_HUMAN——参考引擎在同样输入下会继续跑，两个引擎的 RunReport 因此分叉。
+    """
+
+    executor = step_executor(tmp_root, name="recursion-limit")
+    engine = LangGraphEngine(executor=executor)
+
+    big = empty_state("limit-task", limits=RunLimits(max_node_runs=500))
+    assert engine._recursion_limit(big) > 500, "上限不能小于预算"
+
+    # 余量为负 = 把预算悄悄缩小：构造期就拒绝
+    with pytest.raises(NodeContractError):
+        LangGraphEngine(executor=executor, recursion_slack=-1)
+
+
+def test_a_spec_with_two_static_edges_leaving_one_node_is_rejected() -> None:
+    """同源两条静态边必须被自检拒绝：两个引擎对它的行为不同（实测）。
+
+    参考引擎按 spec 顺序取第一条（另一条静默丢掉，图变成一条走不通的路），
+    LangGraph 因为两条边共用同一个分支名直接编译失败
+    （ValueError: Branch with name _static_choice already exists for node 'policy_retrieval'）。
+    让两个引擎各自决定就等于"同一份 spec 两种语义"。
+    """
+
+    ambiguous = DEFAULT_SPEC.model_copy(
+        update={
+            "edges": DEFAULT_SPEC.edges
+            + (Edge(source=NodeId.POLICY_RETRIEVAL.value, target=NodeId.IMPLEMENTATION.value),)
+        }
+    )
+
+    issues = ambiguous.problems()
+
+    assert any("2 条静态边" in issue for issue in issues)
+    # 反向不变量：真实图定义仍然一条都不误报
+    assert DEFAULT_SPEC.problems() == ()
+
+
+def test_a_checkpointer_is_rejected_with_a_reason(tmp_root) -> None:
+    """checkpointer 参数被**显式拒绝**，而不是"收下却跑不起来"。
+
+    旧实现把它原样交给 compile，而 invoke 从不带 configurable.thread_id——第一次驱动就抛
+    ValueError: Checkpointer requires ... thread_id…；就算补上 thread_id，它也会按自己的线程状态
+    恢复，与本包"跨进程恢复只认自己的 checkpoint 存储"的策略分叉（两套状态源）。
+    """
+
+    executor = step_executor(tmp_root, name="checkpointer")
+
+    with pytest.raises(NodeContractError) as error:
+        LangGraphEngine(executor=executor, checkpointer=object())
+
+    assert "checkpoint 存储" in str(error.value)
+    assert "thread" in str(error.value)
+
+
+def test_the_recursion_error_type_is_the_frameworks_own() -> None:
+    """捕获的"递归上限"必须是框架自己的那个类，不能回落到 RuntimeError。
+
+    回落成 RuntimeError 会让 _drive 里的 except 把图运行期间的**任何** RuntimeError
+    （checkpoint 存储 I/O、langgraph 内部错误）都翻译成 LIMIT_NODE_RUNS / NEEDS_HUMAN——
+    真失败被伪装成"预算不够"。
+    """
+
+    loaded = _load()
+
+    assert loaded.GraphRecursionError is not RuntimeError
+    assert issubclass(loaded.GraphRecursionError, Exception)
+
+
+def test_a_node_runtime_error_is_an_invalid_state_not_a_budget_stop(tmp_root) -> None:
+    """节点里冒出的 RuntimeError 由**执行器**翻译成 STATE_INVALID 的失败步。
+
+    这条同时钉住两个边界：(1) 未分类异常不会逃出编排层（失败关闭，且状态里留下 type 与脱敏文本）；
+    (2) 它不会被误报成 LIMIT_NODE_RUNS——后者只有"真的撞了节点上限"才配。
+    """
+
+    def exploding(state, context):  # noqa: ANN001, ANN202 - 只求抛出去
+        raise RuntimeError("节点内部炸了（不是递归上限）")
+
+    nodes = dict(NODES)
+    nodes[NodeId.REQUIREMENT_ANALYSIS] = exploding
+    executor = StepExecutor(
+        node_context=step_executor(tmp_root, name="runtime-error").context,
+        store=None,
+        spec=DEFAULT_SPEC,
+        nodes=nodes,
+    )
+    engine = LangGraphEngine(executor=executor)
+
+    report = engine.run(task_id="runtime-error", state=empty_state("runtime-error"))
+
+    assert report.failure is not None
+    assert report.failure.code is FailureCode.STATE_INVALID
+    assert report.status is RunStatus.FAILED
+    assert "不是递归上限" in report.failure.detail
 
 
 def test_engine_level_failure_keeps_progress_and_persists_it(tmp_root) -> None:
@@ -393,6 +584,32 @@ def test_validation_router_without_a_decision_is_a_contract_error(tmp_root) -> N
         executor.route(state, "pass")
     with pytest.raises(NodeContractError):
         executor.route(state, "fail")
+
+
+def test_resume_path_refuses_the_arguments_it_used_to_ignore(tmp_root) -> None:
+    """`config=` 是恢复路径：被静默丢掉的参数与默认 task id 都必须当场报错。
+
+    为什么必须这样：旧实现把 `config` 之外的 `engine` / `limits` / `**overrides` 算出来后
+    丢掉，调用方以为换了引擎或上限；更隐蔽的是 `task` 缺省——第一次运行用的是非默认 task id 时，
+    这里会去查另一个 checkpoint，查不到就**静默**规划一次全新运行，调用方以为恢复成功。
+    这一组用例只钉"拒绝"，不重复跑引擎：三种组合都在装配之前就失败。
+    """
+
+    config = graph_config(tmp_root, name="resume")
+
+    with pytest.raises(ValueError, match="config="):
+        run_graph(tmp_root, config=config, engine="langgraph", client=None, author=None, runner=None)
+    with pytest.raises(ValueError, match="config="):
+        run_graph(
+            tmp_root,
+            config=config,
+            limits=RunLimits(max_repair_rounds=0),
+            client=None,
+            author=None,
+            runner=None,
+        )
+    with pytest.raises(ValueError, match="task="):
+        run_graph(tmp_root, config=config, client=None, author=None, runner=None)
 
 
 # --------------------------------------------------------------------------- 依赖方向

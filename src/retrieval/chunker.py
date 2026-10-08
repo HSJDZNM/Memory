@@ -477,9 +477,14 @@ def chunk_document(
     document_id: str,
     max_chars: int,
     hard_max_chars: int,
-    chunker_version: str = CHUNKER_VERSION,
 ) -> Tuple[FrontMatter, Tuple[ChunkDraft, ...]]:
-    """把一份文档切成 chunk：先分章节，再按预算打包，最后给每个 chunk 一个稳定 ID。"""
+    """把一份文档切成 chunk：先分章节，再按预算打包，最后给每个 chunk 一个稳定 ID。
+
+    这里**不接版本参数**：分块结果上不带版本（ChunkDraft 没有这个字段），"这份文档是用哪套
+    分块参数切的"由 indexer 写进 DocumentRecord.chunker_version（有效版本 = CHUNKER_VERSION +
+    预算参数，见 effective_chunker_version）。旧签名收下一个 chunker_version 却从不读它，
+    等于向调用方承诺了一个它没有的控制。
+    """
 
     if max_chars <= 0 or hard_max_chars <= 0:
         raise ChunkerError("max_chars 与 hard_max_chars 必须是正数")

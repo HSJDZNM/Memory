@@ -53,4 +53,4 @@ message: 不要关闭模板自动转义、不要用 mark_safe 放行未转义 HT
 source:
   kind: standard
   path: docs/mirrors/owasp-cheatsheets/12_编程语言与框架专项/Python/Django_Security_Cheat_Sheet.md
-  note: '小节 "## Cross Site Scripting (XSS)"；裸 SQL 的原文在 Django REST Framework Cheat Sheet "### API8:2019 Injection -> #### SQLi"。'
+  note: '主来源：Django Security Cheat Sheet "## Cross Site Scripting (XSS)"（source.path 指向它）。头部还引了两处，都在镜像内（2026-10-08 逐字复核）：(1) 裸 SQL 那句在 Django REST Framework Cheat Sheet "### API8:2019 Injection -> #### SQLi"——docs/mirrors/owasp-cheatsheets/12_编程语言与框架专项/Python/Django_REST_Framework_Cheat_Sheet.md:59；(2) 框架默认转义那两句在 Cross Site Scripting Prevention Cheat Sheet "## XSS Defense Philosophy" / "## Framework Security"——docs/mirrors/owasp-cheatsheets/02_输入验证、注入与文件处理/Cross_Site_Scripting_Prevention_Cheat_Sheet.md:17,30。三处都是 standard 且都有镜像；只记第一处会让溯源漏掉一半引用。'

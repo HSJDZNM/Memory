@@ -23,7 +23,13 @@ from typing import Any, Callable, Mapping, Optional
 
 from adapters.base import Adapter, AdapterConfig, RegistryError
 from adapters.models import AgentEvent, AdapterManifest
-from policy.models import SCHEMA_VERSION, Decision, PolicyContext
+from policy.models import (
+    SCHEMA_VERSION,
+    Decision,
+    PolicyContext,
+    ProtocolError,
+    parse_decision,
+)
 
 __all__ = ["HttpApiAdapter", "HttpApiClient"]
 
@@ -185,11 +191,18 @@ class HttpApiAdapter(Adapter):
                 "project": context.project,
             },
         }
+        request_id = str(event.request_id or "")
+        trace_id = event.trace_id
         try:
             status, body = self.client.post("/v1/policy/evaluate", payload)
         except RegistryError as error:
             # 网络层失败不是"没有结论"，而是"策略服务不可用"：必须失败关闭。
-            return self._unavailable(0, {"error": {"code": "policy_unavailable", "detail": str(error)}})
+            return self._unavailable(
+                0,
+                {"error": {"code": "policy_unavailable", "detail": str(error)}},
+                request_id=request_id,
+                trace_id=trace_id,
+            )
         except Exception as error:  # noqa: BLE001 - 适配器只有"阻断"一种安全失败形态
             # 这条兜底让 docstring 的承诺（"任何异常都转成携带 policy_unavailable 的阻断响应"）
             # 成为事实：这里**没有**放行路径，未预期异常也只会变成阻断（带异常类型），
@@ -202,15 +215,49 @@ class HttpApiAdapter(Adapter):
                         "detail": f"未预期异常 {type(error).__name__}",
                     }
                 },
+                request_id=request_id,
+                trace_id=trace_id,
             )
         if status != 200:
-            return self._unavailable(status, body)
+            return self._unavailable(
+                status, body, request_id=request_id, trace_id=trace_id
+            )
         decision = body.get("decision")
         if not isinstance(decision, Mapping) or "decision" not in decision:
-            return self._unavailable(status, {"error": {"code": "invalid_response"}})
+            return self._unavailable(
+                status,
+                {"error": {"code": "invalid_response"}},
+                request_id=request_id,
+                trace_id=trace_id,
+            )
+        try:
+            # **按核心协议解析一遍**，不是只看有没有 `decision` 键：未知决策值（"deny" /
+            # "Allow"）、未知协议版本、字段形状不对，都必须在这里失败关闭——否则它们会被原样
+            # 交给调用方，而调用方按枚举读，等于让一个"看不懂的结论"当成结论过去
+            # （AGENTS 第 3/7 条：未知枚举与未知协议版本一律拒绝）。
+            parse_decision(decision)
+        except ProtocolError as error:
+            return self._unavailable(
+                status,
+                {
+                    "error": {
+                        "code": "invalid_response",
+                        "detail": type(error).__name__,
+                    }
+                },
+                request_id=request_id,
+                trace_id=trace_id,
+            )
         return decision
 
-    def _unavailable(self, status: int, body: Any) -> Mapping[str, Any]:
+    def _unavailable(
+        self,
+        status: int,
+        body: Any,
+        *,
+        request_id: str = "",
+        trace_id: Optional[str] = None,
+    ) -> Mapping[str, Any]:
         """阻断载荷：错误码取服务端给的，取不到就是 policy_unavailable。
 
         `body` 可能是**任何东西**（代理的 HTML、非对象 JSON、读失败时的空映射），
@@ -228,8 +275,10 @@ class HttpApiAdapter(Adapter):
             # 而它本来是"服务不可达 → 阻断"这条链路上唯一的证据。
             "schema_version": SCHEMA_VERSION,
             "decision": Decision.BLOCK.value,
-            "request_id": "",
-            "trace_id": None,
+            # 阻断载荷同样要带关联标识：否则一次 policy_unavailable 无法回指到具体事件
+            # （调用方的日志里有 request_id，而这个 block 却说"不知道是谁"）。
+            "request_id": request_id,
+            "trace_id": trace_id,
             "matched_rules": [],
             "violations": [
                 {

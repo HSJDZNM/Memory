@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 from policy.evidence import (
     DependencyFact,
@@ -62,7 +62,6 @@ CONFORMANCE_SCHEMA_VERSION = "1.0"
 PROBE_CONTROLLER = "src/shop/order_controller.py"
 PROBE_SERVICE = "src/shop/order_service.py"
 PROBE_NEW_FILE = "src/shop/order_cache.py"
-WORKSPACE_FIXTURE = "tests/fixtures/agent_events/workspace"
 
 
 def conformance_evidence(_event: AgentEvent, context: Any) -> EvidenceBundle:
@@ -363,7 +362,11 @@ def render_event(
     call = scenario.call + (f"-{index}" if scenario.call_suffix else "")
     # {outside} 的唯一含义是"受控工作区的同级路径"：把"越界"定义成
     # "相对工作区往外一层"，它才与工作区放在哪里无关。
-    outside_path = str(Path(workspace).resolve().parent / "outside-workspace.py")
+    # 调用方显式给了 `outside` 就用它（此前这个形参被整个忽略：调用方以为自己在指定
+    # "越界目标"，渲染出来的却是另一个路径——"这个场景测的是哪个越界目标"就不可读了）。
+    outside_path = outside or str(
+        Path(workspace).resolve().parent / "outside-workspace.py"
+    )
     path = (
         None
         if scenario.path is None

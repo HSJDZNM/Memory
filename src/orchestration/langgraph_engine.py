@@ -9,7 +9,9 @@
   节点函数回调 `StepExecutor`，所以两个引擎的语义只有一份实现；
 - **跨进程恢复用的是本包的 checkpoint 存储**，不是 LangGraph 的 checkpointer：
   阶段计划要求 checkpoint 里带"规则集 / 索引 / 工具 schema 的兼容性"，那是领域信息，
-  通用 checkpointer 不提供。若部署方另外装配了 checkpointer，可以通过参数传入。
+  通用 checkpointer 不提供；而它一旦开始工作，还会按自己的 thread 状态恢复，
+  与"规则集变了就退回检索节点重评"这条策略分叉。因此 `checkpointer` 参数被**显式拒绝**
+  （见构造函数）：不做"收下但跑不起来"的选项，也不做两套状态源。
 
 删掉这个文件（以及整个 `orchestration` 包）不影响 Policy Platform 独立运行：
 核心层从不导入本包（`tests/contract/test_orchestration_engine.py` 会检查）。
@@ -23,7 +25,7 @@ from importlib import import_module, metadata
 from typing import Any, Callable, Mapping, Optional, TypedDict
 
 from .engines import BaseEngine, StepExecutor
-from .errors import EngineUnavailableError
+from .errors import EngineUnavailableError, NodeContractError
 from .models import FailureCode, FailureRef, GraphState, NodeId, RunStatus
 
 __all__ = ["MIN_LANGGRAPH_VERSION", "LangGraphEngine", "langgraph_version"]
@@ -86,15 +88,26 @@ def _load() -> _LangGraph:
     try:
         graph_module = import_module("langgraph.graph")
         errors_module = import_module("langgraph.errors")
-    except Exception as error:  # noqa: BLE001 - 导入失败即不可用
+        # **属性访问也在守卫内**：装了一半的 langgraph（StateGraph / START / END 缺失或改名）
+        # 以前会把 AttributeError 抛到外面，而 select_engine("auto") 只接
+        # EngineUnavailableError——"自动回落到参考引擎"于是变成一句空话（失败关闭失效）。
+        state_graph = graph_module.StateGraph
+        start = graph_module.START
+        end = graph_module.END
+        # GraphRecursionError 必须**真的有**：以前缺省回落到 RuntimeError，于是 _drive 里
+        # `except lg.GraphRecursionError` 会把图运行期间**任何** RuntimeError（checkpoint 存储 I/O、
+        # langgraph 内部错误、节点里冒出的 RuntimeError）都翻译成 LIMIT_NODE_RUNS / NEEDS_HUMAN，
+        # 把真失败伪装成"撞了节点上限"。宁可判定这个 langgraph 不可用。
+        recursion_error = errors_module.GraphRecursionError
+    except Exception as error:  # noqa: BLE001 - 导入或 API 缺失即不可用
         raise EngineUnavailableError(
-            f"langgraph 可导入但 API 不完整（{type(error).__name__}）"
+            f"langgraph 可导入但 API 不完整（{type(error).__name__}: {error}）"
         ) from error
     return _LangGraph(
-        StateGraph=getattr(graph_module, "StateGraph"),
-        START=getattr(graph_module, "START"),
-        END=getattr(graph_module, "END"),
-        GraphRecursionError=getattr(errors_module, "GraphRecursionError", RuntimeError),
+        StateGraph=state_graph,
+        START=start,
+        END=end,
+        GraphRecursionError=recursion_error,
         version=version,
     )
 
@@ -113,6 +126,24 @@ class LangGraphEngine(BaseEngine):
         recursion_slack: int = 8,
     ) -> None:
         super().__init__(executor=executor, clock=clock)
+        if recursion_slack < 0:
+            # 负数会把配置好的节点预算**悄悄缩小**：预算是"允许跑多少步"，余量只能是余量。
+            raise NodeContractError(
+                f"recursion_slack 不能为负（得到 {recursion_slack}）："
+                "它会缩小配置的节点预算，而不是留出余量"
+            )
+        if checkpointer is not None:
+            # 显式拒绝，而不是"收下却跑不起来"：这个参数以前被原样交给 compile，而 invoke 从不带
+            # configurable.thread_id——第一次驱动就会抛
+            # ValueError: Checkpointer requires one or more of the following 'configurable' keys: thread_id…
+            # 就算补上 thread_id，它也会按自己的线程状态恢复，与本包"跨进程恢复只认自己的
+            # checkpoint 存储（带兼容性凭据 + 规则集变化要重评）"的策略分叉。
+            raise NodeContractError(
+                "不接受 checkpointer：本包的跨进程恢复只认自己的 checkpoint 存储"
+                "（它带规则集 / 索引 / 工具 schema 的兼容性，且规则集变了要退回检索节点重评）；"
+                "LangGraph 的 checkpointer 会按自己的 thread 状态恢复，与这条策略分叉。"
+                "要额外耐久请在部署层做，不要在编排层塞第二套状态源"
+            )
         self.checkpointer = checkpointer
         self.recursion_slack = recursion_slack
         # **构造即校验**：不这样做，`engine="auto"` 在框架缺席时会照样选中本引擎，
@@ -201,10 +232,23 @@ class LangGraphEngine(BaseEngine):
         return choose
 
     # ------------------------------------------------------------------ 驱动
+    def _recursion_limit(self, state: GraphState) -> int:
+        """LangGraph 的递归上限从**配置的节点预算**推导（不再是写死的 200）。
+
+        为什么不能写死：RunLimits.max_node_runs 允许到 500，上限写成 200 会让"预算还没用完"的长任务
+        提前撞 GraphRecursionError，然后被报成 LIMIT_NODE_RUNS / NEEDS_HUMAN——而参考引擎在同样的
+        输入下会继续跑，两个引擎因此分叉（RunReport 应当是同一份）。
+        系数 2 是**实测余量**：一次节点执行在 LangGraph 里最多耗两个 superstep（节点本身 + 它的条件边），
+        实测 2 个节点需要 limit=3（比值 1.5），取 2 留余量。真正的预算仍由 charge_node_run 守——
+        这里是**后备**，只保证它不会比预算先响。
+        """
+
+        return max(1, 2 * (state.limits.max_node_runs + self.recursion_slack))
+
     def _drive(self, state: GraphState) -> GraphState:
         lg = _load()
         graph = self.build()
-        limit = min(state.limits.max_node_runs + self.recursion_slack, 200)
+        limit = self._recursion_limit(state)
         try:
             channels = graph.invoke(
                 {"state": state.payload(), "label": ""},

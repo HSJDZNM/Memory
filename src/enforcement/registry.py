@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Hashable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -38,7 +39,6 @@ __all__ = [
     "APPROVED_SCHEMA_VERSION",
     "DEFAULT_APPROVED_PATH",
     "DEFAULT_REGISTRY_PATH",
-    "ApprovedTool",
     "LoadedRegistry",
     "ToolRegistry",
     "approve_registry",
@@ -75,6 +75,17 @@ def _construct_mapping(loader: yaml.SafeLoader, node: yaml.MappingNode, deep: bo
     mapping: dict[Any, Any] = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=deep)
+        if not isinstance(key, Hashable):
+            # 与 PyYAML 自己的 construct_mapping 同口径：不可哈希的键（`? [a, b]`、
+            # 用映射当键）是 YAML **结构**错误，必须报成 ConstructorError（进而被
+            # load_registry_document 翻成 RegistryError），而不是让 `key in mapping`
+            # 抛一个裸 TypeError 穿透文档承诺的错误契约。
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"键不可哈希（{type(key).__name__}）：工具注册表不得有歧义",
+                key_node.start_mark,
+            )
         if key in mapping:
             raise yaml.constructor.ConstructorError(
                 "while constructing a mapping",
@@ -120,6 +131,13 @@ def _as_token_mapping(value: Any, *, where: str) -> dict[str, tuple[str, ...]]:
             if canonical in items:
                 raise RegistryError(f"{where}.{key} 出现重复值 {item!r}")
             items.append(canonical)
+        if key in parsed:
+            # 两个不同的原始键规范化后是同一个 token（Reviewer / reviewer）：
+            # 直接覆盖等于"同一个键声明了两次，后一条说了算"，而注册表恰恰不许有这种歧义。
+            raise RegistryError(
+                f"{where} 出现重复键 {raw_key!r}：规范化后与已有的 {key!r} 相同，"
+                "同一项不得声明两次"
+            )
         parsed[key] = tuple(items)
     return parsed
 
@@ -304,7 +322,9 @@ def registry_document_from_mapping(document: Mapping[str, Any]) -> ToolRegistry:
     if not isinstance(document, Mapping):
         raise RegistryError(f"工具注册表必须是映射，得到 {type(document).__name__}")
 
-    unknown = sorted(set(document) - set(_REGISTRY_FIELDS))
+    # key=str：未知字段的键可能是混合类型（YAML 里数字键与字符串键可以同时出现），
+    # 直接 sorted 会抛 TypeError("<" not supported) 穿透 RegistryError 契约。
+    unknown = sorted(set(document) - set(_REGISTRY_FIELDS), key=str)
     if unknown:
         raise RegistryError(
             f"工具注册表出现未知字段 {unknown}；允许的字段为 {sorted(_REGISTRY_FIELDS)}"
@@ -324,7 +344,7 @@ def registry_document_from_mapping(document: Mapping[str, Any]) -> ToolRegistry:
         raise RegistryError(f"version 必须是正整数，得到 {version!r}")
 
     defaults = _as_mapping(document.get("defaults", {}), where="defaults")
-    unknown_defaults = sorted(set(defaults) - set(_DEFAULT_FIELDS))
+    unknown_defaults = sorted(set(defaults) - set(_DEFAULT_FIELDS), key=str)
     if unknown_defaults:
         raise RegistryError(f"defaults 出现未知字段 {unknown_defaults}")
     default_timeout = defaults.get("timeout_ms", 5000)
@@ -355,6 +375,12 @@ def registry_document_from_mapping(document: Mapping[str, Any]) -> ToolRegistry:
         key = canonical_identifier(str(raw_key))
         if not key or "." not in key:
             raise RegistryError(f"权限名必须是 <域>.<动作> 形式，得到 {raw_key!r}")
+        if key in permissions:
+            # Repo.Approve / repo.approve 规范化后是同一个权限：后一条会静默盖掉前一条，
+            # 而被盖掉的那条可能挂着完全不同的说明（这是加载器声称要拒绝的歧义）。
+            raise RegistryError(
+                f"permissions 出现重复键 {raw_key!r}：规范化后与已有的 {key!r} 相同"
+            )
         permissions[key] = "" if raw_note is None else str(raw_note)
 
     roles = _as_token_mapping(document.get("roles", {}), where="roles")
@@ -367,7 +393,7 @@ def registry_document_from_mapping(document: Mapping[str, Any]) -> ToolRegistry:
             )
 
     raw_approvals = _as_mapping(document.get("approvals", {}), where="approvals")
-    unknown_approvals = sorted(set(raw_approvals) - {"require_role"})
+    unknown_approvals = sorted(set(raw_approvals) - {"require_role"}, key=str)
     if unknown_approvals:
         raise RegistryError(f"approvals 出现未知字段 {unknown_approvals}")
     approval_role = canonical_identifier(str(raw_approvals.get("require_role", "reviewer")))

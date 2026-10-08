@@ -12,7 +12,13 @@ from conftest import REPO_ROOT, VALIDATION_DIR, fake_tool_spec, write_validation
 from policy.evidence import ValidatorKind
 from policy.models import RuleValidationError
 from validators.models import Registry, ToolSpec, ValidatorSpec
-from validators.registry import RegistryError, config_digest, load_config, load_registry
+from validators.registry import (
+    RegistryError,
+    config_digest,
+    load_config,
+    load_project,
+    load_registry,
+)
 
 
 def registry_document() -> dict:
@@ -263,11 +269,66 @@ def test_builtin_validator_must_not_declare_a_tool() -> None:
     assert "不能声明 tool" in str(error.value)
 
 
+def test_tool_command_rejects_empty_elements_in_any_position() -> None:
+    """空（或全空白）元素在任何位置都要拒（复核发现：any() 只要有一个非空就放行）。"""
+
+    for values in (("ruff", ""), ("", "ruff"), ("ruff", "   "), ("",)):
+        with pytest.raises(Exception) as error:
+            ToolSpec(command=values)
+        assert "不能有空元素" in str(error.value), values
+
+    assert ToolSpec(command=("ruff", "--fix")).command == ("ruff", "--fix")
+
+
+def test_tool_config_rejects_windows_absolute_and_drive_relative_paths() -> None:
+    """tool.config 的路径校验必须与消费方同口径（复核发现：盘符/UNC 漏过）。"""
+
+    for bad in (
+        "C:/tools/ruff.toml",
+        "C:../outside/ruff.toml",
+        "C:\\tools\\ruff.toml",
+        "//server/share/ruff.toml",
+        "\\\\server\\share\\ruff.toml",
+        "../outside/ruff.toml",
+        "/etc/ruff.toml",
+    ):
+        with pytest.raises(Exception) as error:
+            ToolSpec(command=("ruff",), config=bad)
+        assert "tool.config" in str(error.value), bad
+
+    # 合法的仓库相对路径照常，并归一掉 "./" 与反斜杠。
+    assert ToolSpec(command=("ruff",), config="validation/ruff.toml").config == (
+        "validation/ruff.toml"
+    )
+    assert ToolSpec(command=("ruff",), config=".\\validation\\ruff.toml").config == (
+        "validation/ruff.toml"
+    )
+
+
 def test_version_pattern_must_capture_a_version() -> None:
     with pytest.raises(Exception) as error:
         ToolSpec(command=("ruff",), version_pattern=r"ruff [0-9.]+")
 
     assert "捕获组" in str(error.value)
+
+
+def test_project_profile_rejects_windows_style_escaping_python_roots(tmp_root: Path) -> None:
+    """python_roots 的逃逸守卫必须覆盖反斜杠 / 盘符 / UNC（复核发现：只做了 POSIX 那一半）。"""
+
+    for bad in ("..\\..\\outside", "C:\\outside", "C:/outside", "\\\\server\\share", "../outside"):
+        document = yaml.safe_load((VALIDATION_DIR / "project.yaml").read_text(encoding="utf-8"))
+        document["python_roots"] = [bad]
+        write_validation_config(tmp_root, project=document)
+        with pytest.raises(RegistryError) as error:
+            load_config(root=tmp_root, registry=VALIDATION_DIR / "validators.yaml")
+        assert "python_roots" in str(error.value), bad
+
+    # 合法的解析根照常，反斜杠写法被归一成消费方看到的形态。
+    document = yaml.safe_load((VALIDATION_DIR / "project.yaml").read_text(encoding="utf-8"))
+    document["python_roots"] = [".", "src", ".\\src"]
+    write_validation_config(tmp_root, project=document)
+    profile = load_project(root=tmp_root)
+    assert profile.python_roots == (".", "src", "src")
 
 
 def test_project_profile_rejects_escaping_python_roots(tmp_root: Path) -> None:

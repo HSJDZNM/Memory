@@ -103,6 +103,71 @@ def test_declared_surfaces_actually_block_the_repository_declaration():
     assert "已知不可覆盖的形态" in clean.detail
 
 
+def test_dotted_forbidden_call_entries_actually_match():
+    """声明的点分调用名必须真的能命中。
+
+    _check_entries 允许 forbidden_calls 写 "subprocess.run" 这类点分条目，而旧实现只在
+    被调用者是裸 ast.Name 时才比对——点分条目加载期通过、运行时永远不命中：
+    一条"声明了却不起作用"的禁止面（失败打开）。
+    """
+
+    from enforcement.models import CodeCheckSpec
+
+    declaration = CodeCheckSpec(
+        kind="python_forbidden_surface",
+        param="code",
+        forbidden_calls=["subprocess.run"],
+        forbidden_imports=[],
+        forbidden_attributes=[],
+        known_gaps=["测试用最小声明"],
+    )
+
+    hit = check_code("import subprocess\nsubprocess.run(['ls'])\n", declaration)
+
+    assert not hit.passed, "点分条目没有命中"
+    assert hit.reason_code is ReasonCode.CODE_BLOCKED
+    assert any("subprocess.run" in item for item in hit.hits), hit.hits
+    assert any("调用" in item for item in hit.hits), hit.hits
+
+    # 反真空：声明别的点分名时不能连坐（前缀匹配只从头比）。
+    clean = check_code("import subprocess\nsubprocess.Popen(['ls'])\n", declaration)
+    assert clean.passed, clean.detail
+
+
+def _attribute_declaration():
+    from enforcement.models import CodeCheckSpec
+
+    return CodeCheckSpec(
+        kind="python_forbidden_surface",
+        param="code",
+        forbidden_imports=[],
+        forbidden_calls=[],
+        forbidden_attributes=["os"],
+        known_gaps=["测试用最小声明"],
+    )
+
+
+def test_nested_attribute_hits_are_collapsed():
+    """一条属性链只算一处命中：os.path.join(...) 不该同时报 os.path.join 与内层 os.path。"""
+
+    nested = check_code(
+        "import os" + chr(10) + "os.path.join('a', 'b')" + chr(10), _attribute_declaration()
+    )
+    attributes = [item for item in nested.hits if "属性" in item]
+
+    assert len(attributes) == 1, nested.hits
+    assert "1 处" in nested.detail, nested.detail
+
+
+def test_reported_hits_are_capped_like_the_detail():
+    """hits 与 detail 受同一个上限：否则它正是"单条审计记录有体积上限"这条理由的漏口。"""
+
+    many = check_code(chr(10).join(f"os.m{index}" for index in range(20)), _attribute_declaration())
+
+    assert len(many.hits) <= 8, many.hits
+    assert "另有 12 处" in many.detail, many.detail
+
+
 def test_parse_failure_is_a_refusal_not_a_skip():
     declaration = executed_code_spec(repository_registry()).code_check
     for source in ("def (:\n", "", "   "):
@@ -239,6 +304,11 @@ def test_code_check_param_must_be_a_declared_string_param(tmp_root):
     for item in wrong_type["parameters"]:
         if item["name"] == "description":
             item["type"] = "integer"
+            # 文本约束只适用于 string 参数（models.ParamSpec 的加载期判据）。
+            # 夹具要验证的是「code_check.param 必须指向 string 参数」，所以必须先把
+            # 那条更早的判据满足掉：一个挂着 max_chars 的 integer 参数本身就是坏注册表，
+            # 报错停在文本约束上是对的——不能为了走到下一条判据而放宽任何一条检查。
+            item.pop("max_chars", None)
     with pytest.raises(Exception) as error:
         load_registry_with(tmp_root, wrong_type, name="wrong-type")
     assert "必须是 string 参数" in str(error.value)

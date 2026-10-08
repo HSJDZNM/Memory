@@ -400,6 +400,63 @@ def test_load_api_config_requires_an_explicit_root(tmp_root: Path) -> None:
     assert config.service_root == str(REPO_ROOT)
 
 
+def test_decision_store_is_bounded_and_expires(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_decisions` 必须同时有 TTL 与容量上限：request_id 由调用方提供，不能任它增长。
+
+    历史缺陷（medium 台账 M1，runtime.py:550）：每次 evaluate 都以 `(tenant, request_id)`
+    为键把整份 `ValidationResult` 留在进程内存，全仓没有任何删除 / TTL / 容量上限——长跑服务
+    里"每次换一个 request_id"就能把内存撑满。
+    """
+
+    config_path, anchor = isolated_api(tmp_root)
+    config = load_api_config(config_path, root=anchor)
+    clock = {"now": 1000.0}
+    runtime = ApiRuntime(config, root=anchor, clock=lambda: clock["now"])
+    monkeypatch.setattr(ApiRuntime, "_MAX_REMEMBERED_DECISIONS", 2)
+
+    runtime._remember_decision("a", object())  # type: ignore[arg-type]
+    runtime._remember_decision("b", object())  # type: ignore[arg-type]
+    runtime._remember_decision("c", object())  # type: ignore[arg-type]
+    assert set(runtime._decisions) == {"b", "c"}, "容量上限没生效（最旧的应当先走）"
+
+    # TTL 到了：下一次写入顺带清掉过期项（默认 ttl = 900s）
+    clock["now"] += config.idempotency_ttl_seconds + 1
+    runtime._remember_decision("d", object())  # type: ignore[arg-type]
+    assert set(runtime._decisions) == {"d"}
+
+
+def test_a_timeout_is_counted_once(tmp_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """超时只许计一次：raise 点与错误码出口各计一次 = 真实值的两倍。
+
+    历史缺陷（medium 台账 M1，runtime.py:390）：三条路由预算耗尽时都先
+    `self.metrics.count_timeout()` 再抛 `*_TIMEOUT`，而 `handle` 的 `except ApiError`
+    又按错误码计一次——`metrics.timeouts` 因此是真实值的两倍。
+    """
+
+    from policy_api.errors import ApiError, ErrorCode
+
+    config_path, anchor = isolated_api(tmp_root)
+    runtime = ApiRuntime(load_api_config(config_path, root=anchor), root=anchor)
+
+    def timing_out(*args: object, **kwargs: object) -> object:
+        raise ApiError(ErrorCode.EVALUATE_TIMEOUT, "预算耗尽（用例构造）", retryable=True)
+
+    monkeypatch.setattr(runtime, "_dispatch", timing_out)
+    payload = {
+        "api_version": "1.0",
+        "request_id": "it-timeout-1",
+        "tenant": "alpha",
+        "principal": {"subject": "alice", "roles": ["developer"]},
+        "context": {"file": "src/shop/order_service.py", "layer": "service", "language": "python"},
+    }
+    response = runtime.handle("evaluate", payload, authorization=f"Bearer {TOKEN}")
+
+    assert response.status == 504
+    assert runtime.metrics.to_payload()["timeouts"] == 1
+
+
 def test_duplicate_client_id_is_rejected(tmp_root: Path) -> None:
     """两个客户端共用一个 `client_id` 必须在加载期拒绝。
 
@@ -486,6 +543,35 @@ def test_run_with_budget_returns_value_and_reports_timeout() -> None:
     assert value is None
     assert elapsed.timed_out is True
     assert elapsed.milliseconds >= 20.0
+
+
+def test_run_with_budget_reports_a_crash_that_lands_after_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """超时路径不许把"刚好崩溃"洗成"超时"：异常才是真正的原因（AGENTS 第 52 条）。
+
+    历史缺陷（medium 台账 M1，timeout.py:85）：`join` 超时后整份 `box` 被丢掉——里面可能
+    已经有工作线程写下的 `error`（它恰好在截止时刻前后结束），调用方于是拿到 504 超时，
+    而不是"这个操作崩了"。
+    """
+
+    import threading
+
+    real_is_alive = threading.Thread.is_alive
+    calls = {"n": 0}
+
+    def flaky_is_alive(self: threading.Thread) -> bool:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return True  # 模拟"join 超时的那一刻看起来还在跑"
+        return real_is_alive(self)
+
+    def boom() -> None:
+        raise ValueError("崩溃在超时窗口内落地")
+
+    monkeypatch.setattr(threading.Thread, "is_alive", flaky_is_alive)
+    with pytest.raises(ValueError):
+        run_with_budget(boom, budget_ms=1000)
 
 
 def test_run_with_budget_propagates_operation_errors() -> None:
@@ -1145,6 +1231,27 @@ def test_endpoint_parses_the_documented_forms() -> None:
     assert endpoint(SimpleNamespace(base_url="http://[::1]")) == ("::1", 8088)
 
 
+def test_serve_prints_assembly_failures(tmp_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """装配失败的租户也要被打印出来：只报"未通过"而不给原因是查不下去的。
+
+    历史缺陷（medium 台账 M1，serve.py:56）：打印循环只遍历 `tenants`，而那份列表只含
+    **装配成功**的租户——装配失败的租户只进了 `assembly_errors`，运维看到 detail 里的租户名
+    却在下面找不到任何一行原因。
+    """
+
+    import shutil
+
+    config_path, anchor = isolated_api(tmp_root)
+    shutil.rmtree(tmp_root / "project")  # 让两个租户都在装配期失败（project_root 不存在）
+
+    assert serve(config_path, root=anchor) == 3
+
+    printed = capsys.readouterr().out
+    assert "readiness 未通过" in printed
+    assert "/ assembly:" in printed, "装配失败的原因没有被打印：" + printed
+    assert "project_root" in printed
+
+
 def test_serve_binds_the_address_of_the_runtime_it_was_given(
     tmp_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1185,6 +1292,90 @@ def test_serve_refuses_to_start_with_an_unparsable_base_url(tmp_root: Path) -> N
     config_path.write_text(text, encoding="utf-8", newline="\n")
 
     assert serve(config_path, root=anchor) == 2
+
+
+def test_probe_rejects_a_decision_it_cannot_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    """只有 `decision` 键不算决策：未知决策值 / 未知协议版本必须失败关闭。
+
+    历史缺陷（medium 台账 M1，probe.py:156）：`decide` 只检查 `"decision" in decision`，
+    一个 `"deny"` / `"Allow"` 或未来协议版本的载荷会被原样交给调用方——而调用方按枚举读，
+    等于把"看不懂的结论"当成结论用（AGENTS 第 3/7 条）。
+    """
+
+    from policy_api.probe import HttpApiAdapter
+
+    def fake_post(path: str, payload: object) -> tuple[int, dict]:
+        return 200, {
+            "decision": {
+                "schema_version": "1.1",
+                "request_id": "it-probe-unknown",
+                "decision": "deny",  # 不在核心枚举里
+            }
+        }
+
+    adapter = object.__new__(HttpApiAdapter)
+    adapter.client = SimpleNamespace(post=fake_post)  # type: ignore[assignment]
+    monkeypatch.setattr(
+        HttpApiAdapter,
+        "to_policy_context",
+        lambda self, event, workspace=None: SimpleNamespace(
+            principal=None,
+            file="src/a.py",
+            layer="service",
+            language="python",
+            module=None,
+            operation=None,
+            dependencies=(),
+            agent=None,
+            project=None,
+        ),
+    )
+
+    result = adapter.decide(SimpleNamespace(request_id="it-probe-unknown", trace_id=None))
+
+    assert result["decision"] == "block", "看不懂的决策被原样交给了调用方"
+    assert result["violations"][0]["evidence"]["value"] == "invalid_response"
+
+
+def test_probe_block_payload_carries_the_event_correlation_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """阻断载荷必须带 request_id / trace_id：否则这次 policy_unavailable 回指不到事件。
+
+    历史缺陷（medium 台账 M1，probe.py:160）：`_unavailable` 把 request_id 写死 `""`、
+    trace_id 写死 None——调用方的日志里有 request_id，而这个 block 说"不知道是谁"，
+    一次失败的服务调用因此无法与具体事件对齐。
+    """
+
+    from policy_api.probe import HttpApiAdapter
+
+    def failing_post(path: str, payload: object) -> tuple[int, dict]:
+        return 503, {"error": {"code": "knowledge_unavailable", "detail": "服务忙"}}
+
+    adapter = object.__new__(HttpApiAdapter)
+    adapter.client = SimpleNamespace(post=failing_post)  # type: ignore[assignment]
+    monkeypatch.setattr(
+        HttpApiAdapter,
+        "to_policy_context",
+        lambda self, event, workspace=None: SimpleNamespace(
+            principal=None,
+            file="src/a.py",
+            layer="service",
+            language="python",
+            module=None,
+            operation=None,
+            dependencies=(),
+            agent=None,
+            project=None,
+        ),
+    )
+    event = SimpleNamespace(request_id="it-probe-block", trace_id="trace-42")
+
+    result = adapter.decide(event)
+
+    assert result["decision"] == "block"
+    assert result["request_id"] == "it-probe-block"
+    assert result["trace_id"] == "trace-42"
 
 
 def test_probe_forwards_base_dir_to_the_inner_json_adapter(
@@ -1245,6 +1436,32 @@ def test_probe_unavailable_payload_is_a_consumable_decision_payload() -> None:
 
 
 # --------------------------------------------------------------------------- 冒烟
+
+
+def test_rule_files_collects_both_suffixes_and_only_files(tmp_root: Path) -> None:
+    """`_rule_files` 的语义：两种后缀都算、嵌套目录也走、**目录不算文件**。
+
+    历史缺陷（medium 台账 M1，services.py:76）：每个请求两次 rglob 各走一遍整棵规则树（热路径、
+    且都在租户锁里）；同一次修里也把"名为 x.yaml 的目录被当成规则文件"收掉——那种目录会在
+    加载期炸成一句"规则文件不存在"（真因是它不是文件）。
+    """
+
+    from policy_api.services import TenantStore
+
+    config_path, anchor = isolated_api(tmp_root)
+    store = TenantStore(load_api_config(config_path, root=anchor), root=anchor).load()
+    tenant = store.get("alpha")
+
+    rules_dir = tmp_root / "project" / "rules"
+    (rules_dir / "EXTRA.yml").write_text("id: EXTRA-001" + chr(10), encoding="utf-8", newline="")
+    nested = rules_dir / "nested"
+    nested.mkdir()
+    (nested / "NESTED.yaml").write_text("id: NESTED-001" + chr(10), encoding="utf-8", newline="")
+    (rules_dir / "not-a-rule.txt").write_text("x" + chr(10), encoding="utf-8", newline="")
+    (rules_dir / "trap.yaml").mkdir()  # 名字像规则文件的目录
+
+    names = sorted(item.name for item in tenant._rule_files())
+    assert names == ["ARCH-001.yaml", "EXTRA.yml", "NESTED.yaml"]
 
 
 def test_tenant_store_load_resets_previous_state(tmp_root: Path) -> None:
@@ -1814,3 +2031,60 @@ def test_verify_seal_refuses_unknown_anchor_protocol_version(tmp_root: Path) -> 
     log.append(make_entry(request_id="req-2"))
     after = verify_seal(log, unknown)
     assert after[0].startswith("锚的协议版本未知"), after
+
+
+def test_write_api_config_resolves_a_relative_project_for_extra_rules(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """project 给相对路径时，额外规则目录仍必须写成绝对路径。
+
+    为什么必须这样：`_copy_extra_rules` 返回的目录会原样写进租户的 `rules` 列表，而
+    `TenantSpec.rules` 的每一项相对**租户项目根**解析（不是仓库根）。project 没被解析时，
+    相对目录会拼成 `<project>/out/project/rules-extra/...`——租户装配直接失败，报错指向的
+    却是"找不到规则目录"，不是"project 参数是相对的"。
+    """
+
+    import yaml
+
+    from api_support import write_api_config
+
+    source = tmp_root / "extra-source"
+    source.mkdir(parents=True, exist_ok=True)
+    (source / "ARCH-001.yaml").write_text(
+        (REPO_ROOT / "policies" / "architecture" / "ARCH-001.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+        newline="\n",
+    )
+    monkeypatch.chdir(tmp_root)  # 相对 project 相对 cwd 解析：把基准固定住，用例不依赖调用方 cwd
+
+    config = write_api_config(tmp_root, project=Path("relative-project"), extra_rules=(source,))
+
+    document = yaml.safe_load(config.read_text(encoding="utf-8"))
+    rules = document["tenants"][0]["rules"]
+    assert rules[0] == "rules", rules
+    extras = rules[1:]
+    assert extras, "额外规则包没被写进配置：这条用例就什么都没证明"
+    for item in extras:
+        path = Path(item)
+        assert path.is_absolute(), f"额外规则目录必须绝对（TenantSpec 相对项目根解析）：{rules}"
+        assert path.is_relative_to(tmp_root.resolve()), path
+
+
+def test_placeholder_guard_sees_digit_bearing_placeholders() -> None:
+    """模板占位符守卫必须覆盖带数字的名字：`{token_sha2}` 是模板里真实存在的一条。
+
+    为什么必须这样：这条守卫是"漏替换"的唯一拦路者。字符类写成 `[a-z_]+` 时，
+    `{token_sha2}` 这类名字**永远不会被检出**，于是 `str.replace` 少一条的后果不是当场失败，
+    而是配置里留下一个字面量令牌摘要——失败点被推迟到认证 / 租户装配阶段，
+    那里报出来的症状（401、找不到规则目录）指向的都不是真正的原因。
+    """
+
+    from api_support import _PLACEHOLDER_RE
+
+    found = _PLACEHOLDER_RE.findall("{token_sha2} {tenant_audit_beta} {project} {rules_extra}")
+    assert found == [
+        "{token_sha2}",
+        "{tenant_audit_beta}",
+        "{project}",
+        "{rules_extra}",
+    ], found

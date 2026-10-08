@@ -91,6 +91,25 @@ def test_read_source_rejects_paths_outside_the_workspace(tmp_root: Path) -> None
         assert "工作区" in str(error.value) or "逃出" in str(error.value)
 
 
+def test_resolve_runtime_error_is_a_source_error(tmp_root: Path, monkeypatch) -> None:
+    """resolve() 也会抛 RuntimeError（符号链接成环）：必须落 SourceError（复核发现）。"""
+
+    target = tmp_root / "loop.py"
+    target.write_text("x = 1" + chr(10), encoding="utf-8")
+    real = Path.resolve
+
+    def looping(self, *args, **kwargs):
+        if self.name == "loop.py":
+            raise RuntimeError("Symlink loop from 'loop.py'")
+        return real(self, *args, **kwargs)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(Path, "resolve", looping)
+        with pytest.raises(SourceError) as error:
+            resolve_target("loop.py", workspace=tmp_root)
+    assert "无法解析" in str(error.value)
+
+
 def test_resolve_target_rejects_control_characters(tmp_root: Path) -> None:
     workspace = tmp_root / "workspace"
     workspace.mkdir()

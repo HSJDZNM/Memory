@@ -145,6 +145,13 @@ class ApprovalRecord(StrictModel):
                 re.compile(pattern)
             except re.error as error:
                 raise ApprovalError(f"审批模式 {name!r} 的正则不合法: {error}") from error
+            if name in normalized:
+                # 两个原始键 strip 之后是同一个参数名（"cmd" 与 " cmd "）：后一条会静默
+                # 盖掉前一条，而"互相矛盾 / 重复的声明在加载期拒绝"正是本模块的口径。
+                raise ApprovalError(
+                    f"审批模式出现重复参数名 {raw_name!r}：strip 之后与已有的 {name!r} 相同，"
+                    "同一参数不得声明两次"
+                )
             normalized[name] = pattern
         return normalized
 
@@ -238,7 +245,7 @@ def verify_approval(
     used: bool,
     now: Optional[datetime] = None,
     params: Optional[Mapping[str, Any]] = None,
-    uses: int = 0,
+    uses: Optional[int] = None,
 ) -> None:
     """校验审批与当前动作一致；任何不符都抛 ApprovalError。
 
@@ -279,6 +286,12 @@ def verify_approval(
         return
 
     # binding=pattern
+    if uses is None:
+        # uses 是"台账里已经消费了几次"：缺省 0 会让"忘了传"静默等价于"一次都没用过"，
+        # 一张有次数上限的模式条子于是退化成到期前的无限次通行证。拿不到次数就拒绝。
+        raise ApprovalError(
+            "模式化审批必须给出台账里的已用次数（uses）：拿不到就证明不了额度没用完"
+        )
     if uses >= record.max_uses:
         raise ApprovalError(
             f"审批的次数上限已用尽（已用 {uses}/{record.max_uses} 次）：必须重新签发"

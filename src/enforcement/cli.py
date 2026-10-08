@@ -181,6 +181,12 @@ def build_request_document(
         raise CliError("roles 必须是字符串列表")
     permissions = registry.permissions_for([str(role) for role in roles])
 
+    # sources 与 roles 同一口径：字符串会被逐字符展开成 ['a','b','c']，那不是"一个来源"。
+    # 它是唯一此前没做类型检查的列表字段，静默展开会把上下文摘要算在一个不存在的来源集合上。
+    sources = document.get("sources", [])
+    if isinstance(sources, str) or not isinstance(sources, (list, tuple)):
+        raise CliError("sources 必须是字符串列表")
+
     return action_module.build_action_request(
         spec,
         params,
@@ -193,7 +199,7 @@ def build_request_document(
         roles=[str(role) for role in roles],
         permissions=permissions,
         context=context,
-        sources=[str(item) for item in document.get("sources", [])],
+        sources=[str(item) for item in sources],
         workspace=workspace,
         ttl_seconds=registry.grant_ttl_seconds,
         now=now or utc_now(),
@@ -723,7 +729,6 @@ def _verify(args: argparse.Namespace, repo: Path) -> int:
     payload: dict[str, Any] = {
         "audit": str(args.audit),
         **described,
-        "ok": not issues,
     }
     if getattr(args, "verify_registry", False):
         loaded = load_registry(args.registry, approved_path=args.approved)
@@ -735,6 +740,9 @@ def _verify(args: argparse.Namespace, repo: Path) -> int:
         payload["unapproved_tools"] = unapproved
         if unapproved:
             issues.append(f"未审核的工具：{unapproved}")
+    # ok 必须在**所有** issue 都产生之后才推导：--check-registry 的"未审核工具"也是 issue，
+    # 先算 ok 会让 --json 在门禁红着的时候报 "ok": true（同一份载荷自相矛盾）。
+    payload["ok"] = not issues
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
@@ -758,7 +766,14 @@ def _verdict(args: argparse.Namespace, _repo: Path) -> int:
     path = Path(args.audit)
     if not path.is_file():
         raise CliError(f"审计文件不存在：{args.audit}")
-    records, bad = load_audit(path)
+    try:
+        records, bad, lines = load_audit(path)
+    except (OSError, UnicodeDecodeError) as error:
+        # 「读不出来」不等于「没有记录」：吞掉异常退化成 unproven 正是这条判据要防的错误，
+        # 所以这里显式失败，而不是把 traceback 抛给用户。
+        raise CliError(
+            f"审计文件读不出来（{type(error).__name__}）：先修产物，再下结论"
+        ) from error
     if bad:
         shown = ", ".join(str(item) for item in bad[:5])
         raise CliError(
@@ -769,6 +784,9 @@ def _verdict(args: argparse.Namespace, _repo: Path) -> int:
         action_id=args.action_id,
         tool=args.tool,
         artifact_changed=bool(args.artifact_changed),
+        # 结论里的"依据在第几行"必须是**产物里的行号**（中间的空行/坏行会拉开差距），
+        # 第三方才能照它回到原始产物上重算。
+        line_numbers=lines,
     )
     payload = verdict.to_dict()
     payload["audit_records"] = len(records)

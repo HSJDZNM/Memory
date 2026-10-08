@@ -10,6 +10,7 @@ Phase 3 的立场：**先有可解释的 FTS5 基线，再有向量**。这里�
 
 from __future__ import annotations
 
+import array
 import datetime as clock
 import math
 import re
@@ -38,7 +39,12 @@ _WORD_RE = re.compile(r"[0-9A-Za-z_\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040
 
 
 class EmbeddingPort(Protocol):
-    """Embedding 端口：任何实现都必须给出稳定的向量维度与可复现的向量。"""
+    """Embedding 端口：任何实现都必须给出稳定的向量维度与可复现的向量。
+
+    **归一化不是必须的**：评分侧（_cosine）自己算真余弦，未归一化的实现不会被模长放大
+    分数、也不会悄悄越过后面的 vector_min_similarity；返回全零向量的实现按相似度 0 计
+    （不会得到 NaN）。内置 HashingEmbedding 本来就是 L2 归一化的，因此结果一字不变。
+    """
 
     name: str
     dim: int
@@ -86,9 +92,25 @@ class HashingEmbedding:
 
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
+    """真正的余弦相似度：点积 / 两个模长之积（任一模长为 0 时按 0 计）。
+
+    端口契约不要求实现返回 L2 归一化的向量，所以归一必须在这里做：点积会在未归一的向量上
+    被模长放大——一个正交但"很长"的候选能靠模长越过 vector_min_similarity，分数区间与排序
+    也随之失去意义（复核发现：函数名叫 cosine，算的却是点积）。
+    """
+
     if len(left) != len(right):
         raise ValueError("向量维度不一致")
-    return sum(a * b for a, b in zip(left, right))
+    dot = 0.0
+    left_norm = 0.0
+    right_norm = 0.0
+    for a, b in zip(left, right):
+        dot += a * b
+        left_norm += a * a
+        right_norm += b * b
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    return dot / math.sqrt(left_norm * right_norm)
 
 
 class VectorRetriever:
@@ -122,10 +144,11 @@ class VectorRetriever:
         scope = AccessScope(subject="indexer", datasets=frozenset(datasets), allow_restricted=True)
         # 只有"维度与当前 embedding 一致"的行才算已存在：同模型名下的旧维度行
         # （换过 dim 的自定义实现）必须重算，否则它们永远不会被修好。
+        # 只需要 (id, dim)：整表解码向量在这条路径上是纯浪费（O(corpus) 次解码只为拿 id）。
         existing = {
             chunk_id
-            for chunk_id, vector in self.store.embeddings(model=self.model_name)
-            if len(vector) == self.embedder.dim
+            for chunk_id, dim in self.store.embedding_index(model=self.model_name)
+            if dim == self.embedder.dim
         }
         pending = [hit for hit in self.store.candidates(scope=scope) if hit.chunk_id not in existing]
         if not pending:
@@ -139,8 +162,6 @@ class VectorRetriever:
                 raise QueryError(
                     f"embedding 维度与声明不一致：{len(vector)} != {self.embedder.dim}"
                 )
-            import array
-
             payload = array.array("f", vector)
             self.store.store_embedding(
                 chunk_id=hit.chunk_id,
@@ -196,8 +217,9 @@ class VectorRetriever:
                     update={"request_id": query.request_id, "trace_id": query.trace_id}
                 )
 
-        stored = dict(self.store.embeddings(model=self.model_name))
-        if not stored:
+        # "有没有这个模型的向量"用 id 清单判（不解码整表）；真正要用的向量在候选集确定后
+        # 再按 id 取（见下）——与整表读取逐值一致，只是不再读与本次权限/过滤无关的行。
+        if not self.store.embedding_index(model=self.model_name):
             return RetrievalResult(
                 status=RetrievalStatus.UNAVAILABLE,
                 query=plan.text,
@@ -229,6 +251,11 @@ class VectorRetriever:
                 request_id=query.request_id,
                 trace_id=query.trace_id,
             )
+
+        # 只取候选集的向量：整表解码会把与本次权限 / 过滤无关的向量也读出来。
+        stored = self.store.embeddings_for(
+            [hit.chunk_id for hit in candidates], model=self.model_name
+        )
 
         query_vector = self.embedder.embed((" ".join(plan.terms),))[0]
         if len(query_vector) != self.embedder.dim:

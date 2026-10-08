@@ -13,7 +13,12 @@ from typing import Literal, Mapping, Optional, Tuple
 from pydantic import Field, field_validator, model_validator
 
 from policy.evidence import ValidatorKind
-from policy.models import StrictModel, canonical_identifier
+from policy.models import (
+    PolicyContextError,
+    StrictModel,
+    canonical_identifier,
+    normalize_repo_path,
+)
 
 __all__ = [
     "KNOWN_FACTS",
@@ -93,7 +98,9 @@ class ToolSpec(StrictModel):
     @field_validator("command")
     @classmethod
     def _check_command(cls, values: Tuple[str, ...]) -> Tuple[str, ...]:
-        if not any(values):
+        # all 而不是 any：any 只要有一个非空就放行，于是 ("ruff", "") 这种带空元素的 argv
+        # 能过检查——而错误信息说的正是"不能有空元素"（复核发现）。空白串同样算空。
+        if not all(item.strip() for item in values):
             raise ValueError("tool.command 不能有空元素")
         _check_placeholders(values, field="tool.command", allow=("{python}",))
         return values
@@ -138,10 +145,15 @@ class ToolSpec(StrictModel):
     def _check_config(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
-        normalized = value.strip().replace("\\", "/")
-        if not normalized or normalized.startswith("/") or ".." in normalized.split("/"):
-            raise ValueError(f"tool.config 必须是仓库内的相对路径，得到 {value!r}")
-        return normalized
+        # 与消费方同一条口径（policy.models.normalize_repo_path）：反斜杠 / 盘符 / UNC /
+        # ".." / 路径元字符都在这里被拒，返回的也是归一化之后的形态——校验看到的路径必须与
+        # 后面交给外部工具的那一个逐字节相同。旧实现只查前导 "/" 与精确的 ".." 段：
+        # C:/tools/ruff.toml 与 C:../x.toml（"C:.." 不是一个 ".." 段）都被当成仓库相对路径，
+        # 随后作为**工具配置**交给外部工具，等于让仓库外的文件当受控配置。
+        try:
+            return normalize_repo_path(value)
+        except PolicyContextError as error:
+            raise ValueError(f"tool.config 必须是仓库内的相对路径：{error}") from error
 
 
 class ValidatorSpec(StrictModel):
@@ -374,6 +386,26 @@ class ProjectProfile(StrictModel):
     python_roots: Tuple[str, ...] = (".",)
     unmatched: Literal["top_level_package"] = "top_level_package"
     components: Tuple[ComponentSpec, ...] = ()
+
+    @field_validator("python_roots")
+    @classmethod
+    def _check_python_roots(cls, values: Tuple[str, ...]) -> Tuple[str, ...]:
+        """模块解析根必须是**项目内**的相对目录（"." = 项目根本身）。
+
+        与消费方同一条口径（policy.models.normalize_repo_path，allow_root=True）：反斜杠、
+        盘符、UNC、".." 与路径元字符都在加载期被拒，而且**存下来的值是归一化之后的形态**
+        ——pipeline 随后做 request.workspace / root，校验与使用必须看到同一个字符串
+        （复核发现：旧守卫只在加载器里查前导 "/" 与按 "/" 切的 ".."，于是
+        ..\\..\\outside 与 C:\\outside 都能过）。
+        """
+
+        normalized: list[str] = []
+        for item in values:
+            try:
+                normalized.append(normalize_repo_path(str(item), allow_root=True))
+            except PolicyContextError as error:
+                raise ValueError(f"python_roots 必须是项目内的相对目录：{error}") from error
+        return tuple(normalized)
 
     def language_for(self, path: str) -> Optional[str]:
         from .globs import glob_match

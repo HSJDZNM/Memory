@@ -6,7 +6,7 @@
 第二个协议消费者都属于这一类，因此公共部分写在这里，各 Agent 只提供数据：
 
 - 事件名与载荷字段名 → manifest 的 `hooks`（`HookNames`）；
-- 事件名 → 规范事件类型 → 子类的 `AGENT_WIRE`；
+- 事件名 → 规范事件类型：`hooks` 声明优先，子类的 `AGENT_WIRE` 只兜规范默认名；
 - 工具名 → 受控操作与路径字段 → manifest 的 `tools`（`AgentTool`，含 Agent 侧别名）。
 
 这一层**不做任何判定**：它只回答"这条原始事件对应哪个规范事件、涉及哪个工具、
@@ -89,9 +89,10 @@ def hook_command_result(
 class EventAdapter(Adapter):
     """钩子线协议 Adapter 的公共实现。
 
-    `AGENT_WIRE` 把 Agent 侧的事件名映射到规范事件类型。它是类属性而不是配置项，
-    因为"这个 Agent 的事件名是什么意思"是**协议知识**，
-    必须和这份协议一起被审核（manifest 里的 `hooks` 只描述字段名）。
+    `AGENT_WIRE` 给出**规范默认名**（PreToolUse / PostToolUse）到规范事件类型的映射。
+    Agent 侧的真实事件名由 manifest 的 `hooks.pre_execute` / `hooks.post_execute` 声明——
+    它和 `session_field` / `tool_field` 一样是已审核的声明数据（`conformance.render_event`
+    也按它生成事件）：声明改名时以声明为准，`AGENT_WIRE` 只兜住没改名的默认形态。
     """
 
     AGENT_WIRE: Mapping[str, EventType] = {
@@ -113,9 +114,20 @@ class EventAdapter(Adapter):
         event_name = _require_text(
             raw_event.get("hook_event_name"), where="hook_event_name"
         )
-        event_type = self.AGENT_WIRE.get(event_name)
+        # 事件名以 **manifest 的 `hooks`** 为准（那是声明 + 已审核的数据），`AGENT_WIRE` 只兜
+        # 规范里那两个默认名字：此前只看类属性，于是任何声明了非默认事件名的 manifest 都是
+        # 「声明了却接不上」——它发的每一个事件都被判成未支持，而 conformance 的渲染器又正好
+        # 按 manifest 生成事件名（AGENT_WIRE[hooks.pre_execute]），两边口径并不一致。
+        # 顺序：先放类属性里的规范默认名，再让 manifest 声明的名字**覆盖**它们——
+        # 声明是已审核的数据，代码只是兜底。两边都写同一个名字时结论一致（默认值就是它们）。
+        wire: dict[str, EventType] = {
+            **self.AGENT_WIRE,
+            hooks.pre_execute: EventType.TOOL_PRE_EXECUTE,
+            hooks.post_execute: EventType.TOOL_POST_EXECUTE,
+        }
+        event_type = wire.get(event_name)
         if event_type is None:
-            known = sorted(self.AGENT_WIRE)
+            known = sorted(wire)
             raise AdapterEventError(
                 f"未支持的 hook 事件 {event_name!r}：{self.agent_id} 只治理 {known}，"
                 "未识别事件不得静默放行"

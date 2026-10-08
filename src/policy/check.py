@@ -31,14 +31,18 @@ result / exit_code。
 **这一份不带 run**（2026-09-30 裁定①）：run 里是"本次运行"的标识，加上它 --json 就不再是输入的
 纯函数——而 CLI 包装层被要求"相同输入得到逐字节相同的输出"（AGENTS 第 19 条的同一条纪律），
 且当时没有任何消费方读它。所以这里显式 include_run=False：**同一份输入的两次 --json 逐字节相同**，
-由 tests/integration/test_cli.py 的 test_json_output_is_reproducible 钉住；文本输出本来就没有
+由 tests/integration/test_cli.py 的 test_json_output_is_reproducible 钉住——注意那条用例是带
+`--request-id req-fixed` 跑的，而**不给** --request-id 时 request_id 由 cli-<uuid4> 现生成
+（check.py 的 run()），它属于"输入"的一部分：默认路径的两次运行本来就不该逐字节相同，
+别把这条承诺读成"任何情况下都可复现"。文本输出本来就没有
 这两个字段。其余读数（端到端结果、只报告两处）保留 run。证据载荷**不能**带它——
 那两份要求"相同输入得到逐字节相同的证据"（21 号 §2.7）。
 
 **包装层也有自己的协议版本**（2026-09-30 裁定）：output_schema_version 只描述**外层包装**的形状，
 与决策协议（policy.models.SCHEMA_VERSION）各自演进、谁也不跟随谁。1.0 是**追认**的
 ——它指"台阶 3c 之前的形状"（那时 check_volume 里还没有 obligations_open / obligations_note
-两个键，见台阶 3c 记录 §2.5）；当前形状记为 1.1。给包装加键 / 改语义都要按 AGENTS 第 55 条
+两个键，见台阶 3c 记录 §2.5）；当前形状记为 1.2（与下面的 OUTPUT_SCHEMA_VERSION 同值——
+这一句曾经停在 1.1，而常量已经走到 1.2）。给包装加键 / 改语义都要按 AGENTS 第 55 条
 递增这个版本，因为消费方（脚本、门禁、手册）按它读键集合。
 
 两个**只增不改**的读数（07 号报告 P4 / P5）：
@@ -531,6 +535,41 @@ def _dimension_sort_key(name: str) -> tuple[int, str]:
     return (len(KNOWN_SCOPE_DIMENSIONS), name)
 
 
+_OBLIGATIONS_OPEN_KEY = "obligations_open"
+_OBLIGATIONS_NOTE_KEY = "note"
+
+
+def _obligations_volume(obligations: Mapping[str, Any]) -> tuple[int, str]:
+    """校验义务账摘要的两个必需键，形状不对就报错，绝不按缺键推断。
+
+    为什么必须在这里校验：build_check_volume 是 __all__ 导出项，调用方可以传任意映射；
+    而 run() 里这次调用**不在**把配置错误映射成退出码 2 的 try/except 内——KeyError /
+    ValueError 一旦逃出去，进程以退出码 1 结束，而 1 是「发现违规」的码：门禁会把一次
+    内部错误读成一次违规。两个键的含义见 obligations.summarize()。
+    """
+
+    missing = [
+        key
+        for key in (_OBLIGATIONS_OPEN_KEY, _OBLIGATIONS_NOTE_KEY)
+        if key not in obligations
+    ]
+    if missing:
+        raise ObligationsError(
+            "义务账摘要缺少必需键：" + ", ".join(missing) + "；缺键不能读成 0 条未结义务"
+        )
+    open_count = obligations[_OBLIGATIONS_OPEN_KEY]
+    if isinstance(open_count, bool) or not isinstance(open_count, int) or open_count < 0:
+        raise ObligationsError(
+            "义务账摘要的 " + _OBLIGATIONS_OPEN_KEY + " 必须是非负整数，得到 " + repr(open_count)
+        )
+    note = obligations[_OBLIGATIONS_NOTE_KEY]
+    if not isinstance(note, str):
+        raise ObligationsError(
+            "义务账摘要的 " + _OBLIGATIONS_NOTE_KEY + " 必须是字符串，得到 " + repr(note)
+        )
+    return open_count, note
+
+
 def build_check_volume(
     rules: RuleSet,
     context: PolicyContext,
@@ -621,9 +660,9 @@ def build_check_volume(
         "note": CHECK_VOLUME_NOTE,
     }
     if obligations is not None:
-        open_count = int(obligations["obligations_open"])
+        open_count, note = _obligations_volume(obligations)
         volume["obligations_open"] = open_count
-        volume["obligations_note"] = str(obligations["note"])
+        volume["obligations_note"] = note
         volume["complete"] = volume["complete"] and open_count == 0
     return volume
 
@@ -1089,13 +1128,19 @@ def run(argv: Sequence[str] | None = None, *, root: Path | None = None) -> int:
         except ObligationsError as error:
             print(f"config error: 义务账本不可用：{error}", file=sys.stderr)
             return EXIT_ERROR
-    volume = (
-        None
-        if result is None
-        else build_check_volume(
-            rules, context, result, evidence=evidence, obligations=obligations
+    # 同一条错误映射：义务账摘要不合法属于**配置错误**（退出码 2），绝不能以未捕获异常的
+    # 形式变成退出码 1——那是「发现违规」的码，门禁会把它读成一次违规。
+    try:
+        volume = (
+            None
+            if result is None
+            else build_check_volume(
+                rules, context, result, evidence=evidence, obligations=obligations
+            )
         )
-    )
+    except ObligationsError as error:
+        print(f"config error: 义务账摘要不可用：{error}", file=sys.stderr)
+        return EXIT_ERROR
 
     if args.json:
         rendered = render_json(

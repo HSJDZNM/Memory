@@ -214,15 +214,43 @@ def diff_baseline(recorded: dict[str, Any], current: dict[str, Any]) -> list[str
     return differences
 
 
+class EvalConfigError(RuntimeError):
+    """评测集或基线读不出来 / 不合法：**配置错误**（退出码 2）。
+
+    它不是"门槛未满足"（退出码 1）：CI 必须能分开"评测没通过"与"这次根本没配好"。
+    """
+
+
+def load_baseline(path: Path) -> dict:
+    """读记录在案的基线：读不出来 / 不是 JSON 对象 / methods 不是列表 ⇒ EvalConfigError。"""
+
+    try:
+        recorded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise EvalConfigError(
+            "基线读不出来 %s：%s: %s" % (path, type(error).__name__, error)
+        ) from error
+    if not isinstance(recorded, dict):
+        raise EvalConfigError("基线不是 JSON 对象：%s（%s）" % (path, type(recorded).__name__))
+    if not isinstance(recorded.get("methods"), list):
+        raise EvalConfigError("基线的 methods 不是列表：%s" % path)
+    return recorded
+
+
 def load_eval_set(path: Path | str = EVAL_PATH) -> EvalSet:
     target = Path(path)
     if not target.is_absolute():
         target = REPO_ROOT / target
-    document = yaml.safe_load(target.read_text(encoding="utf-8"))
+    try:
+        document = yaml.safe_load(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise EvalConfigError(
+            "评测集读不出来 %s：%s: %s" % (target, type(error).__name__, error)
+        ) from error
     try:
         return EvalSet.model_validate(document)
     except ValidationError as error:
-        raise SystemExit(f"评测集校验失败 {target}: {error}") from error
+        raise EvalConfigError(f"评测集校验失败 {target}: {error}") from error
 
 
 def document_key(result: Any) -> str:
@@ -406,10 +434,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
 
     now = clock.datetime.now(clock.timezone.utc)
+    # 评测集先读：它是**配置**，读不出来要在建索引（几十秒）之前就按用法错误收场。
+    try:
+        eval_set = load_eval_set()
+    except EvalConfigError as error:
+        parser.error(str(error))
     db_path = REPO_ROOT / args.db
     store, loaded, lexicon, ingest_report = build_store(db_path=db_path, rebuild=args.rebuild)
     scope = AccessScope(subject="eval-harness", datasets=frozenset(loaded.manifest.dataset_names))
-    eval_set = load_eval_set()
 
     def fts_retrieve(request: RetrievalQuery) -> Any:
         retriever = FtsRetriever(store, policy=loaded.policy, lexicon=lexicon, cache=ResultCache())
@@ -495,8 +527,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         }
         print("已记录基线:", recorded_path.relative_to(REPO_ROOT).as_posix())
     elif baseline_path.is_file():
-        recorded = json.loads(baseline_path.read_text(encoding="utf-8"))
-        drift = diff_baseline(recorded, record)
+        try:
+            recorded = load_baseline(baseline_path)
+            drift = diff_baseline(recorded, record)
+        except EvalConfigError as error:
+            parser.error(str(error))
+        except (KeyError, TypeError, AttributeError) as error:
+            parser.error(
+                "基线结构不可比较 %s：%s: %s" % (baseline_path, type(error).__name__, error)
+            )
         payload["baseline"] = {
             "path": args.baseline,
             "action": "compared",

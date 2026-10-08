@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -223,6 +224,11 @@ def check_list(
     checks.append(
         _check("registry", CheckStatus.PASSED, ReasonCode.ALLOW, f"{spec.id} 已注册且已审核")
     )
+
+    # 本函数只读台账：一次快照供下面所有检查共用。旧实现每问一个问题就重读并重解析
+    # 整份台账（追加写、只会变长的文件），单次 pre-check 要读七八遍；
+    # 权威的一致性点在 pre_execute 的 claim（那里追加后必须重新读）。
+    ledger_records = ledger.records()
 
     # 2) 动作自身的时效：过期请求不得执行。
     if request.expires_at is not None and moment >= request.expires_at:
@@ -446,13 +452,17 @@ def check_list(
                 tool_id=request.tool_id,
                 subject=request.subject,
                 approval_roles=registry.approval_role_members(),
-                used=False if approval is None else ledger.approval_used(approval.approval_id),
+                used=False
+                if approval is None
+                else ledger.approval_used(approval.approval_id, records=ledger_records),
                 params=(
                     None
                     if approval is None
                     else {item.name: item.value for item in request.params}
                 ),
-                uses=0 if approval is None else ledger.approval_use_count(approval.approval_id),
+                uses=0
+                if approval is None
+                else ledger.approval_use_count(approval.approval_id, records=ledger_records),
                 now=moment,
             )
         except ApprovalError as error:
@@ -477,7 +487,7 @@ def check_list(
             if approval.binding is ApprovalBinding.PATTERN:
                 detail += (
                     f" max_uses={approval.max_uses}"
-                    f" used={ledger.approval_use_count(approval.approval_id)}"
+                    f" used={ledger.approval_use_count(approval.approval_id, records=ledger_records)}"
                     f" patterns={sorted(approval.param_patterns)}"
                 )
             checks.append(_check("approval", CheckStatus.PASSED, ReasonCode.ALLOW, detail))
@@ -525,6 +535,7 @@ def check_list(
             key_value=limit_key,
             window_seconds=spec.rate_limit.window_seconds,
             now=moment,
+            records=ledger_records,
         )
         if calls >= spec.rate_limit.max_calls:
             checks.append(
@@ -551,6 +562,7 @@ def check_list(
                 key_value=limit_key,
                 window_seconds=spec.rate_limit.breaker_seconds or spec.rate_limit.window_seconds,
                 now=moment,
+                records=ledger_records,
             )
             if failures >= spec.rate_limit.max_failures:
                 checks.append(
@@ -584,46 +596,38 @@ def check_list(
     # 8) 重放 / 复用：台账 + 审计链两处都要看。
     #    只看台账的话，删掉台账文件就能让同一个 action 再执行一次；审计链是追加写的独立证据，
     #    因此两份记录里任何一份说"这个 action 已经发生过"，都必须阻断。
-    claims = list(ledger.active_claims(action_id=request.action_id, tool_id=request.tool_id))
-    prior_hashes: list[object] = [item.get("action_hash") for item in claims]
-    if sink is not None and hasattr(sink, "chain_records"):
-        occupants: list[object] = []
-        executed: set[object] = set()
-        corrected: set[object] = set()
-        for item in sink.chain_records():  # type: ignore[attr-defined]
-            if item.get("action_id") != request.action_id:
-                continue
-            if item.get("stage") not in ("pre_decision", "final_decision", "execution"):
-                continue
-            payload = item.get("payload") or {}
-            if not isinstance(payload, Mapping):
-                continue
-            # 只有"真的允许过 / 真的跑过"才占用 action_id：被阻断的尝试没有产生副作用，
-            # 修好参数或补齐审批之后必须能重试，否则失败关闭会变成无法恢复的死锁。
-            blocked = (
-                payload.get("decision") == "block"
-                or payload.get("outcome") == "blocked"
-                or payload.get("status") == "refused"
-            )
-            if blocked or payload.get("dry_run"):
-                # dry-run 的 allow 不是授权，也不占用 action_id：它不能挡住真正的执行。
-                # 唯一的例外是"纠正记录"：它明确撤回**同一次尝试**的 allow（台账登记失败时
-                # 决策从 allow 翻成 block），否则修好台账之后那个 action_id 会被自己挡住。
-                if blocked and _is_corrected_pre_decision(payload):
-                    corrected.add(
-                        payload.get("action_hash") or f"<unknown:{item.get('digest')}>"
-                    )
-                continue
-            # 记录里没有 action_hash 时不能拿"当前请求的哈希"顶替：那会把
-            # "这个 action_id 发生过"误判成"就是这次这个动作"。
-            marker = payload.get("action_hash") or f"<unknown:{item.get('digest')}>"
-            occupants.append(marker)
-            if item.get("stage") in ("execution", "final_decision"):
-                executed.add(marker)
-        # 纠正只对"没有执行痕迹"的尝试生效：一旦有执行 / 终态记录，那条 allow 永远占用。
-        prior_hashes.extend(
-            marker for marker in occupants if marker not in corrected or marker in executed
+    claims = list(
+        ledger.active_claims(
+            action_id=request.action_id, tool_id=request.tool_id, records=ledger_records
         )
+    )
+    prior_hashes: list[object] = [item.get("action_hash") for item in claims]
+    chain_error = ""
+    if sink is None:
+        chain_error = "没有配置审计端口"
+    else:
+        try:
+            chain = list(sink.chain_records())
+        except AuditError as error:
+            chain_error = str(error)
+        except AttributeError as error:
+            # 端口没有实现声明里的 chain_records（第三方端口 / 旧实现）：同样按证据缺失处理。
+            chain_error = f"审计端口没有实现 chain_records（{error}）"
+        else:
+            _collect_chain_occupants(
+                chain, request=request, prior_hashes=prior_hashes
+            )
+    if chain_error:
+        checks.append(
+            _check(
+                "audit_replay",
+                CheckStatus.SKIPPED,
+                ReasonCode.ALLOW,
+                f"审计链记录不可读（{chain_error}）：重放判据退化为**只看台账**这一份证据——"
+                "这是证据缺失，不是'没有重放'，本条结论只能按单一来源解读",
+            )
+        )
+        warnings.append("replay_evidence_degraded")
     prior = [item for item in prior_hashes if item is not None]
     if prior:
         same = any(item == request.action_hash for item in prior)
@@ -662,6 +666,138 @@ def _is_corrected_pre_decision(payload: Mapping[str, Any]) -> bool:
         for item in checks
     )
 
+def _limit_key_of(
+    spec: Optional[ToolSpec], request: ActionRequest, *, dry_run: bool
+) -> Optional[str]:
+    """本次判定要不要按限流键串行化；不需要就返回 None（不取锁）。
+
+    计数在第 7 项检查里读，而 +1 的那条 pre_decision 直到 pre_execute 末尾才落盘，中间还
+    夹着认领、审批占用、授权签发与审计写入：N 个并发请求会同时看到 calls < max_calls，
+    然后**全部**放行——注册表里配置的窗口上限形同虚设（熔断计数同源，同样失效）。
+
+    台账自己的原子性原语是"先追加再复核"，但它只覆盖单条记录；这里是"读一个数 + 写一条
+    记录"两步，所以用同一个限流键上的跨进程互斥把两步圈在一起。粒度按 (subject|tool)：
+    不同键不互相阻塞。不需要限流的工具与 dry-run（不写计数行）都不取锁。
+    """
+
+    if spec is None or spec.rate_limit is None or request.subject is None or dry_run:
+        return None
+    return f"{request.subject}|{request.tool_id}"
+
+
+def _unavailable_outcome(
+    request: ActionRequest,
+    *,
+    spec: Optional[ToolSpec],
+    error: str,
+    moment: datetime,
+    sink: Optional[AuditSink],
+) -> PrecheckOutcome:
+    """限流临界区不可用：按失败关闭拒绝，并写清理由。
+
+    **不退化成"读旧计数照样判"**：读不到一致的窗口计数，就证明不了这次调用在预算之内。
+    """
+
+    checks = [
+        _check(
+            "rate_limit_lock",
+            CheckStatus.FAILED,
+            ReasonCode.LEDGER_UNAVAILABLE,
+            f"限流临界区不可用：{error}；"
+            "证明不了本次调用在窗口预算内，按失败关闭拒绝（不是放行）",
+        )
+    ]
+    try:
+        if sink is not None:
+            sink.append(
+                AuditStage.PRE_DECISION,
+                payload={
+                    "decision": Decision.BLOCK.value,
+                    "reason_code": ReasonCode.LEDGER_UNAVAILABLE.value,
+                    "action_hash": request.action_hash,
+                    "risk": request.risk.value,
+                    "subject": request.subject,
+                    "checks": [item.model_dump(mode="json") for item in checks],
+                    "dry_run": False,
+                },
+                trace_id=request.trace_id,
+                action_id=request.action_id,
+                request_id=request.request_id,
+                tool_id=request.tool_id,
+                now=moment,
+            )
+    except AuditError:
+        # 审计写不进去不改变结论：这是一次拒绝，不是放行。
+        pass
+    return PrecheckOutcome(
+        decision=PreDecision(
+            decision=Decision.BLOCK,
+            reason_code=ReasonCode.LEDGER_UNAVAILABLE,
+            action_id=request.action_id,
+            request_id=request.request_id,
+            trace_id=request.trace_id,
+            action_hash=request.action_hash,
+            tool_id=request.tool_id,
+            tool_name=request.tool_name,
+            risk=request.risk,
+            checks=tuple(checks),
+            grant=None,
+            evaluated_at=moment,
+        ),
+        checks=list(checks),
+        spec=spec,
+        claim_id=None,
+    )
+
+
+def _collect_chain_occupants(
+    chain: Sequence[Mapping[str, Any]],
+    *,
+    request: ActionRequest,
+    prior_hashes: list[object],
+) -> None:
+    """把审计链里"真的允许过 / 真的跑过"的记录并进重放判据的占用集。
+
+    只有产生过副作用的记录才占用 action_id：被阻断的尝试没有副作用，修好参数或补齐审批
+    之后必须能重试，否则失败关闭会变成无法恢复的死锁。唯一的例外是"纠正记录"：它明确撤回
+    **同一次尝试**的 allow（台账登记失败时决策从 allow 翻成 block）。
+    """
+
+    occupants: list[object] = []
+    executed: set[object] = set()
+    corrected: set[object] = set()
+    for item in chain:
+        if item.get("action_id") != request.action_id:
+            continue
+        if item.get("stage") not in ("pre_decision", "final_decision", "execution"):
+            continue
+        payload = item.get("payload") or {}
+        if not isinstance(payload, Mapping):
+            continue
+        blocked = (
+            payload.get("decision") == "block"
+            or payload.get("outcome") == "blocked"
+            or payload.get("status") == "refused"
+        )
+        if blocked or payload.get("dry_run"):
+            # dry-run 的 allow 不是授权，也不占用 action_id：它不能挡住真正的执行。
+            if blocked and _is_corrected_pre_decision(payload):
+                corrected.add(
+                    payload.get("action_hash") or f"<unknown:{item.get('digest')}>"
+                )
+            continue
+        # 记录里没有 action_hash 时不能拿"当前请求的哈希"顶替：那会把
+        # "这个 action_id 发生过"误判成"就是这次这个动作"。
+        marker = payload.get("action_hash") or f"<unknown:{item.get('digest')}>"
+        occupants.append(marker)
+        if item.get("stage") in ("execution", "final_decision"):
+            executed.add(marker)
+    # 纠正只对"没有执行痕迹"的尝试生效：一旦有执行 / 终态记录，那条 allow 永远占用。
+    prior_hashes.extend(
+        marker for marker in occupants if marker not in corrected or marker in executed
+    )
+
+
 def pre_execute(
     request: ActionRequest,
     *,
@@ -684,6 +820,54 @@ def pre_execute(
     不写限流台账，审计记录上标注 dry_run。CLI 的 precheck 子命令用的就是这个语义——
     否则"先 precheck 再 execute"会因为 action_id 被占用而变成重放。
     """
+
+    spec = registry.tool(request.tool_id)
+    moment = now or utc_now()
+    limit_key = _limit_key_of(spec, request, dry_run=dry_run)
+    # **锁序固定为 rate-lock → audit-lock**（判定里唯一另一把锁是审计追加用的；
+    # 台账文件本身不加锁）。任何新增取锁点都必须沿用这条顺序，反向顺序就是死锁配方。
+    with ExitStack() as stack:
+        if limit_key is not None:
+            try:
+                stack.enter_context(ledger.limit_lock(limit_key))
+            except LedgerError as error:
+                return _unavailable_outcome(
+                    request, spec=spec, error=str(error), moment=moment, sink=sink
+                )
+        return _pre_execute_locked(
+            request,
+            registry=registry,
+            ledger=ledger,
+            sink=sink,
+            approval=approval,
+            policy_decision=policy_decision,
+            policy_error=policy_error,
+            policy_detail=policy_detail,
+            policy_skipped_reason=policy_skipped_reason,
+            now=moment,
+            workspace=workspace,
+            grant_ttl_seconds=grant_ttl_seconds,
+            dry_run=dry_run,
+        )
+
+
+def _pre_execute_locked(
+    request: ActionRequest,
+    *,
+    registry: ToolRegistry,
+    ledger: EnforcementLedger,
+    sink: Optional[AuditSink] = None,
+    approval: Optional[ApprovalRecord] = None,
+    policy_decision: Optional[ValidationResult] = None,
+    policy_error: Optional[ReasonCode] = None,
+    policy_detail: str = "",
+    policy_skipped_reason: str = "",
+    now: Optional[datetime] = None,
+    workspace: Optional[Path | str] = None,
+    grant_ttl_seconds: Optional[int] = None,
+    dry_run: bool = False,
+) -> PrecheckOutcome:
+    """执行前决策的实现：调用方 pre_execute 已按限流键把这一段串行化。"""
 
     moment = now or utc_now()
     checks, spec, warnings = check_list(

@@ -260,8 +260,6 @@ SITES = {
 
         ],
 
-        "outbound_why": "判定理由：上述分区为 Python 官方文档与社区站点，不属本次镜像范围；它们在正文中保留为绝对链接，可在线跳转。",
-
         "structure_findings": [
             "**清单来源：根文档正文的超链接，逐一评估后确定。** 先抓取 PEP 8 与 PEP 257 全文，",
             "解析出正文中的全部超链接（PEP 8 得 11 条，PEP 257 得 6 条），逐一实际抓取并阅读，",
@@ -322,7 +320,10 @@ SITES = {
             "- 代码块内的 " + C("# 注释") + " 若按通用转换会变成 Markdown 标题，故站点模块先把 " + C("<pre>") + " 抽成",
             "  纯文本再还原为围栏代码块；",
             "- PEP 257 的主页正文极短（约 10 KB），其主要内容是规范条款本身，需配合 PEP 256 / 258 阅读。",
-        ],        "outbound_why": "判定理由：上述分区为 Python 官方文档与社区站点，不属 PEP 文档树；它们在正文中保留为绝对链接，可在线跳转。",
+        ],
+        # 这一条曾经在 readme_facts 之前还写过一次（同名字面量重复，Python 只保留最后一个）——
+        # 前一份是死代码，读到它的人会以为镜像范围是"本站分区"，而实际生效的是下面这句。
+        "outbound_why": "判定理由：上述分区为 Python 官方文档与社区站点，不属 PEP 文档树；它们在正文中保留为绝对链接，可在线跳转。",
     },
     "dotnet-design-guidelines": {
         "desc": ".NET Framework Design Guidelines（框架设计指南）",
@@ -478,6 +479,11 @@ def norm(url, spec):
         return None
     if path.rstrip("/") in [s.rstrip("/") for s in spec.get("skip_paths", [])]:
         return None
+    # `<dir>/index.html` 与 `<dir>/` 是同一页（服务器用 index.html 承接目录请求）。
+    # 不归一的话两者各自成为 URL 键，却都落到 `<dir>/index.md`：后写的覆盖先写的、manifest 里
+    # 出现两条同 local_path 的 saved 条目、README 的"已按尾斜杠形式归一"当场变成假话。
+    if path.endswith("/index.html"):
+        path = path[: -len("index.html")]
     # 只给无扩展名的目录式路径补尾斜杠，.html 等文件路径必须原样保留
     if not path.endswith("/") and "." not in path.rsplit("/", 1)[-1]:
         path += "/"
@@ -526,8 +532,24 @@ def clean_markdown(md, spec):
     return md.strip() + "\n", upstream
 
 
+def unfenced_lines(body):
+    """只产出**围栏之外**的正文行。
+
+    围栏里的 URL 是代码样例，不是链接：改写它会让镜像里的代码与原文不一致，收进互引/外链台账
+    则是把代码当成了引用关系。headings_outline 与 verify_mirror 本来就跳过围栏，这里对齐口径。
+    """
+
+    inside = False
+    for line in body.split(chr(10)):
+        if line.lstrip().startswith(FENCE):
+            inside = not inside
+            continue
+        if not inside:
+            yield line
+
+
 def rewrite_links(md, cur_url, urlmap, out):
-    """镜像范围内的链接 -> 相对本地路径；范围外链接原样保留。"""
+    """镜像范围内的链接 -> 相对本地路径；范围外链接原样保留。**围栏里的代码一个字都不动。**"""
     if not urlmap:
         return md
     cur_rel = urlmap[cur_url]
@@ -545,7 +567,15 @@ def rewrite_links(md, cur_url, urlmap, out):
         rel = os.path.relpath(out / tgt_rel, cur_dir).replace(os.sep, "/")
         return rel + (("#" + frag) if frag else "")
 
-    return pattern.sub(repl, md)
+    lines, inside = [], False
+    for line in md.split(chr(10)):
+        if line.lstrip().startswith(FENCE):
+            inside = not inside
+            lines.append(line)
+            continue
+        lines.append(line if inside else pattern.sub(repl, line))
+    return chr(10).join(lines)
+
 
 def strip_front(text):
     if text.startswith("---"):
@@ -563,12 +593,13 @@ def compute_edges(out):
     for p in files:
         body = strip_front(p.read_text(encoding="utf-8"))
         seen = []
-        for t in LINK_RE.findall(body):
-            if t.startswith(("http", "#")):
-                continue
-            r = (p.parent / t.split("#", 1)[0]).resolve()
-            if r in rel and rel[r] not in seen:
-                seen.append(rel[r])
+        for line in unfenced_lines(body):
+            for t in LINK_RE.findall(line):
+                if t.startswith(("http", "#")):
+                    continue
+                r = (p.parent / t.split("#", 1)[0]).resolve()
+                if r in rel and rel[r] not in seen:
+                    seen.append(rel[r])
         edges[rel[p.resolve()]] = seen
     return edges
 
@@ -581,7 +612,10 @@ def collect_outbound(out, spec):
         if p.name in ("README.md", "STRUCTURE.md"):
             continue
         body = strip_front(p.read_text(encoding="utf-8"))
-        for target in set(pattern.findall(body)):
+        targets: set = set()
+        for line in unfenced_lines(body):
+            targets.update(pattern.findall(line))
+        for target in targets:
             path = urlparse(urldefrag(target)[0]).path
             if in_scope_path(path, spec):
                 continue
@@ -709,18 +743,29 @@ async def discover(crawler, spec):
         frontier = sorted(set(nxt))
     return pages
 async def fetch_plain_file(url):
-    """取非 HTML 的单文件（如 LICENSE）。
+    """取非 HTML 的单文件（如 LICENSE）。返回**读数**：{"url", "status", "text", "reason"}。
 
     不使用 crawl4ai：其 AsyncHTTPCrawlerStrategy 在 Windows 上处理非 HTML 响应时
     会走到 os.O_NOFOLLOW（该常量 Windows 上不存在）而崩溃，故改用其自身依赖的 aiohttp。
+
+    两个纪律：请求必须有超时（同 sitemap 的 180s——旧实现没有，一次挂起就拖死整轮镜像）；
+    失败不许退化成空串——调用方曾经 `if extra.get(dest)` 直接跳过，而 README/STRUCTURE 照旧
+    宣称这份文件已保存，镜像少了一页却没有任何人看得见。
     """
     import aiohttp
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status != 200:
-                return ""
-            return (await resp.text()).strip()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=180)) as resp:
+                if resp.status != 200:
+                    return {"url": url, "status": resp.status, "text": "",
+                            "reason": "HTTP " + str(resp.status)}
+                return {"url": url, "status": resp.status, "text": (await resp.text()).strip(),
+                        "reason": ""}
+    except Exception as error:  # noqa: BLE001 - aiohttp 是可选依赖，异常类型在导入期拿不到；
+        # 但"读不到"必须变成读数而不是空串，所以这里显式收口并带上类型名。
+        return {"url": url, "status": None, "text": "",
+                "reason": type(error).__name__ + ": " + str(error)}
 
 
 # --------------------------------------------------------------------------
@@ -939,10 +984,15 @@ def write_structure(out, spec, manifest, edges):
                     emit(child, prefix + ("    " if last else "│   "), full)
 
         emit(build(sorted(ok)), "", "")
-        width = max(len(r[0]) for r in rows) + 2
         L += ["## 2. 层级结构", "", FENCE]
-        for text, note in rows:
-            L.append(text if not note else text.ljust(width) + "# " + note)
+        if rows:
+            width = max(len(r[0]) for r in rows) + 2
+            for text, note in rows:
+                L.append(text if not note else text.ljust(width) + "# " + note)
+        else:
+            # 一页都没保存（发现为空 / 全部抓取失败）：这是**读数**，不是崩点。
+            # 旧实现在这里 max() 空序列 → ValueError，STRUCTURE.md 根本没写出来。
+            L.append("（本次没有任何页面被保存：发现为空或全部抓取失败——没有层级可列）")
         L += [FENCE, ""] + spec.get("structure_tree_note", [
                 "本地路径完整保留站点 URL 层级（未剥离前缀），因此各专题根互不覆盖，",
                 "且任意文件都能反查回其线上地址。",
@@ -1001,13 +1051,27 @@ def role_of(relpath, spec, guide):
     return "chapter"
 
 
-def parent_of(relpath, spec, guide):
+def parent_of(relpath, known):
+    """一页在镜像层级里的父节点：**同一镜像里最近的祖先索引页**；没有就是 ""。
+
+    旧实现按站点把"共享层"的父路径写死成 "review/index.md"——那是 google-eng-practices 的
+    结构。对多根镜像（gitlab-code-review 20 篇、python-pep-code-style 11 篇）它指向一个
+    **镜像里根本不存在的文件**：沿 parent 走面包屑 / 导航树的消费方拿到的是悬空引用，
+    而这条引用既不报错、也没有任何读数为证（见各镜像自己的 STRUCTURE.md：专题根互不覆盖）。
+
+    父节点因此只能从**这次真的收了哪些页**（`known` = 本次清单的 local_path 集合）推出：
+    从当前文件所在目录逐级向上，取第一个存在的 index.md，跳过自身。找不到就是 ""——
+    多根镜像的每一根都是没有父页的入口，与站点根 index.md 记 "" 是同一条语义。
+    返回值因此**必然**落在清单内或为空串，不会指到不存在的文件。
+    """
     if relpath == "index.md":
         return ""
-    if guide == "shared":
-        return "review/index.md"
-    groot = [g[3] for g in spec["groups"] if g[0] == guide][0]
-    return "review/index.md" if relpath == groot else groot
+    parts = relpath.split("/")[:-1]
+    for depth in range(len(parts), 0, -1):
+        candidate = "/".join(parts[:depth]) + "/index.md"
+        if candidate != relpath and candidate in known:
+            return candidate
+    return "index.md" if "index.md" in known else ""
 
 
 # --------------------------------------------------------------------------
@@ -1030,7 +1094,7 @@ async def run(site_key):
     site_paths = mod.pathmap() if (mod is not None and hasattr(mod, "pathmap")) else {}
     urlmap = {u: site_paths.get(u) or url_to_relpath(u, spec) for u in pages}
     for path, dest in spec.get("extra_plain", []):
-        if extra.get(dest):
+        if (extra.get(dest) or {}).get("text"):
             urlmap[urljoin(spec["base"], path)] = dest
     if mod is not None and hasattr(mod, "urlmap_extra"):
         urlmap.update(mod.urlmap_extra(spec))
@@ -1089,7 +1153,9 @@ async def run(site_key):
             "guide": gid,
             "guide_name": GUIDE_ID[spec["out"]].get(gid, ("",))[1] if gid != "shared" else "",
             "role": data.get("role") or role_of(posix_rel, spec, gid),
-            "parent": parent_of(posix_rel, spec, gid),
+            # parent 只能在清单确定之后算（见 parent_of）：先落 None，站点模块自己声明过
+            # parent 的（learn_site / dora_site）保持原样，不在这里覆盖。
+            "parent": None,
             "source_url": url,
             "title": title,
             "source_repo_path": upstream,
@@ -1105,10 +1171,23 @@ async def run(site_key):
         manifest.append(entry)
         print("  [OK] " + posix_rel.ljust(52) + str(len(content.encode("utf-8"))).rjust(7) + " B  " + title)
 
-    for dest, text in extra.items():
+    # 第二遍：清单到这里才确定，父节点现在可以算了（见 parent_of）。站点模块自己给了
+    # parent 的条目不覆盖——那是该站自己的层级声明，函数只负责"没有声明时不许悬空"。
+    saved_paths = {item["local_path"] for item in manifest if item.get("saved")}
+    for item in manifest:
+        if item.get("saved") and item.get("parent") is None:
+            item["parent"] = parent_of(item["local_path"], saved_paths)
+
+    for dest, reading in extra.items():
+        text = reading.get("text") or ""
         if text:
             (out / dest).write_text(text + chr(10), encoding="utf-8", newline=chr(10))
             print("  [OK] " + dest + " (" + str(len(text)) + " chars)")
+        else:
+            # README/STRUCTURE 里写着这份文件已保存——抓不到就必须有人看得见，
+            # 而不是让 `if text:` 悄悄跳过这一页。
+            print("  [FAIL] " + dest + " <- " + reading.get("url", "")
+                  + "（" + (reading.get("reason") or "内容为空") + "）")
 
     out.mkdir(parents=True, exist_ok=True)
     (out / "manifest.json").write_text(json.dumps({

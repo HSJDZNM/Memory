@@ -30,8 +30,8 @@ from validators.adapters.base import (
     tool_environment,
 )
 from validators.adapters.mypy import run_mypy
-from validators.adapters.pytest_runner import run_pytest
-from validators.adapters.ruff import run_ruff
+from validators.adapters.pytest_runner import _module_binds_name, run_pytest
+from validators.adapters.ruff import map_diagnostics, run_ruff
 
 CONFIG = validators_config()
 TARGET = "src/shop/style_offences.py"
@@ -275,6 +275,29 @@ def test_run_tool_truncates_oversized_output(tmp_root: Path) -> None:
     assert len(result.stdout) <= 1024
 
 
+def test_truncation_does_not_split_a_multibyte_character(tmp_root: Path) -> None:
+    """按字节截断不许切开多字节字符：合法输出不能被我们自己切成 OUTPUT_INVALID（复核发现）。"""
+
+    spec = fake_tool_spec("ruff", "ok")
+    probed = probe(spec, tmp_root, timeout_ms=TIMEOUT_MS)
+    argv = (sys.executable, "-c", "print('检' * 1000)")  # 3001 字节，截到 1024 会落在字符中间
+    run = run_tool(
+        spec.tool,
+        probed,
+        argv,
+        workspace=VALIDATOR_PROJECT,
+        tmp_dir=tmp_root,
+        timeout_ms=TIMEOUT_MS,
+        max_output_bytes=1024,
+        findings_exit_codes=(1,),
+    )
+
+    assert run.status is not ValidatorStatus.OUTPUT_INVALID, run.reason
+    assert run.truncated is True
+    assert run.stdout
+    assert run.stdout.encode("utf-8")  # 前缀本身是合法 UTF-8（截断点在字符边界上）
+
+
 def test_timeout_kills_the_whole_process_tree(tmp_root: Path) -> None:
     spec = fake_tool_spec("ruff", "slow", timeout_ms=2000)
     started = time.monotonic()
@@ -442,6 +465,89 @@ def test_ruff_treats_a_missing_tool_as_unavailable(tmp_root: Path) -> None:
             config=None,
             paths=(TARGET,),
         )
+
+
+def test_ruff_tolerates_a_malformed_location_from_the_tool(tmp_root: Path) -> None:
+    """工具输出不可信：location 不是映射时不许崩——证据照出、坐标留空（复核发现）。"""
+
+    rule = make_checker_rule(
+        "STYLE-001",
+        checker="style_lint",
+        body={"style_lint": {"tool": "ruff", "codes": ["F401"]}},
+    )
+    baseline = run_adapter("ruff", "ok", tmp_root, rules=(rule,))  # 只为拿一份合法的 tool 载荷
+    document = (
+        {"code": "F401", "message": "unused import", "filename": TARGET, "location": [1, 2]},
+        {"code": "F401", "message": "unused import", "filename": TARGET, "location": "12:5"},
+        {"code": "F401", "message": "unused import", "filename": TARGET, "location": {"row": "x"}},
+        {"code": "F401", "message": "unused import", "filename": TARGET},
+    )
+
+    evidence, unmapped = map_diagnostics(
+        document,
+        rules=(rule,),
+        workspace=VALIDATOR_PROJECT,
+        target_path=TARGET,
+        tool=baseline.tool,
+        max_message_chars=200,
+    )
+
+    assert unmapped == 0
+    assert len(evidence) == 4
+    assert [item.location.line for item in evidence] == [None, None, None, None]
+    assert all(item.location.file == TARGET for item in evidence)
+
+
+def test_absence_of_a_name_cannot_be_proven_from_the_ast_alone(tmp_path: Path) -> None:
+    """星号导入 / __all__ / 模块级 __getattr__ / 动态绑定都让"这个名字不存在"证明不了（复核发现）。
+
+    证明不了就必须返回 True（=当它存在）：否则一次真实的收集失败会被降级成
+    pending_implementation（warning），而那正是本模块禁止的方向。
+    """
+
+    cases = {
+        "star.py": "from helpers import *" + chr(10),
+        "all.py": "__all__ = [\"thing\"]" + chr(10),
+        "annotated_all.py": "__all__: list = [\"thing\"]" + chr(10),
+        "getattr_module.py": "def __getattr__(name):" + chr(10) + "    return name" + chr(10),
+        "dynamic.py": "globals()[\"thing\"] = 1" + chr(10),
+        "setattr_module.py": (
+            "import sys" + chr(10) + "setattr(sys.modules[__name__], \"thing\", 1)" + chr(10)
+        ),
+    }
+    for filename, source in cases.items():
+        path = tmp_path / filename
+        path.write_text(source, encoding="utf-8", newline="")
+        assert _module_binds_name(path, "thing") is True, filename
+
+    # 普通模块里确实没有这个名字：这一种是真的能证明，返回 False。
+    plain = tmp_path / "plain.py"
+    plain.write_text("VALUE = 1" + chr(10), encoding="utf-8", newline="")
+    assert _module_binds_name(plain, "thing") is False
+
+    # 读不到 / 解析不了同样返回 True（原有口径不变）。
+    assert _module_binds_name(tmp_path / "no_such.py", "thing") is True
+    broken = tmp_path / "broken.py"
+    broken.write_text("def (" + chr(10), encoding="utf-8", newline="")
+    assert _module_binds_name(broken, "thing") is True
+
+
+def test_mypy_with_only_unowned_diagnostics_does_not_claim_there_were_none(tmp_root: Path) -> None:
+    """有诊断、只是没有一条归属到规则时，理由不能说"没有类型诊断"（复核发现）。"""
+
+    rule = make_checker_rule(
+        "TYPES-002",
+        checker="type_check",
+        body={"type_check": {"tool": "mypy", "codes": ["assignment"]}},
+    )
+
+    result = run_adapter("mypy", "findings", tmp_root, rules=(rule,))
+
+    assert result.status is ValidatorStatus.OK  # 没有归属的诊断按设计不参与判定
+    assert result.evidence == ()
+    assert result.unmapped >= 1
+    assert result.findings >= 1
+    assert result.reason is None, result.reason
 
 
 def test_mypy_maps_error_lines_and_counts_unowned_ones(tmp_root: Path) -> None:

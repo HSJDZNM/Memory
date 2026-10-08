@@ -12,11 +12,14 @@ jobs:
   phase-8:
     name: Phase 8 tests (python 3.13)
     runs-on: ubuntu-latest
+    # 全套门禁（xdist 四套件 + 真端口 API 闭环 + 沙箱/编排闭环）跑在一个 job 里：
+    # 不给上限就继承 360 分钟默认值，卡死要 6 小时才失败。本机同批门禁是 20 分钟量级，60 分钟留 3 倍余量。
+    timeout-minutes: 60
     env:
       # 本项目不把 src/ 装进 site-packages：CI 与本地都用同一条路径找到包。
       PYTHONPATH: src
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Install uv
         # 第三方 action 锁到完整 commit SHA：可变 tag 可以被重新指向，
@@ -28,7 +31,8 @@ jobs:
       # 依赖锁定以 requirements.lock 为准：仓库没有 uv.lock，uv sync 会重新解析，不是锁定安装。
       - name: Install pinned dependencies
         run: |
-          uv venv
+          # job 名写着 python 3.13：解释器必须真的按 3.13 解析（uv 取不到就红，不退到默认版本）。
+          uv venv --python 3.13
           uv pip install -r requirements.lock
 
       # Phase 5 的外部 Linter 是本项目的"外部工具"而不是 Python 依赖：
@@ -81,6 +85,8 @@ jobs:
 
       - name: Scope skip reason is reported
         run: |
+          # bash -e 不带 pipefail：管道状态取 tee 的 0，policy.check 的退出码会被吞掉。
+          set -o pipefail
           .venv/bin/python -m policy.check examples/good_controller.py --layer service \
             --dependencies repository | tee /tmp/skip.txt
           grep -q "layer service != controller" /tmp/skip.txt

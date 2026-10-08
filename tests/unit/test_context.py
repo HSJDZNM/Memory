@@ -73,6 +73,38 @@ def test_absolute_paths_outside_the_repository_are_rejected(raw: str) -> None:
     assert "拒绝处理" in str(error.value) or "repo_root" in str(error.value)
 
 
+def test_a_path_that_cannot_be_resolved_is_rejected_not_crashed(monkeypatch) -> None:
+    """解析不了的绝对路径也是"拒绝"，而不是把宿主环境的 OSError 抛出去。
+
+    实测（阶段门禁，Windows）：UNC 路径 \\server\share\file.py 会触发网络查找，
+    负载高时抛 OSError [WinError 64] 指定的网络名不再可用——那条 OSError 此前原样抛给调用方，
+    于是"绝对路径一律拒绝"这条判据**时灵时不灵**（同一个用例单独跑绿、整批并行跑红）。
+    """
+
+    from pathlib import Path
+
+    from policy import context as context_module
+
+    original = Path.resolve
+
+    def exploding_resolve(self, strict: bool = False):  # noqa: ANN001, ANN202 - 只对那条路径抛
+        # 只让 UNC 那条路径失败：repo_root 的 resolve() 必须照常工作（否则测的就不是这条分支了）
+        if "server" in str(self):
+            raise OSError(64, "指定的网络名不再可用")
+        return original(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", exploding_resolve)
+
+    with pytest.raises(PolicyContextError) as error:
+        context_module.repo_relative_path(
+            chr(92) + chr(92) + "server" + chr(92) + "share" + chr(92) + "file.py",
+            repo_root=REPO_ROOT,
+        )
+
+    assert "拒绝处理" in str(error.value)
+    assert "OSError" in str(error.value), "理由是宿主错误要说得出类型，否则读的人只能猜"
+
+
 def test_absolute_path_inside_repository_becomes_relative() -> None:
     absolute = str(REPO_ROOT / "examples" / "good_controller.py")
 
@@ -474,3 +506,18 @@ def test_case_differing_absolute_path_stays_in_scope_on_windows() -> None:
     outside = str(REPO_ROOT).upper() + chr(92) + "src" + chr(92) + "order" + chr(92) + "controller.py"
 
     assert repo_relative_path(outside, repo_root=REPO_ROOT) == "src/order/controller.py"
+
+
+def test_absolute_path_helper_covers_unc_and_backslash_forms() -> None:
+    """`_is_absolute_path` 直接调用时也要认出 UNC 与反斜杠开头——那条分支不是死代码。
+
+    repo_relative_path 会先把 "\" 换成 "/"，所以经它进来的 UNC 走的是 "/" 那条分支；
+    但 helper 自己的 docstring 声称跨平台判据，直接调用（或将来新增的调用点）必须仍然成立。
+    """
+
+    from policy.context import _is_absolute_path
+
+    assert _is_absolute_path("/etc/passwd") is True
+    assert _is_absolute_path("\\\\server\\share\\file.txt") is True
+    assert _is_absolute_path("C:/Windows/system32") is True
+    assert _is_absolute_path("relative/path.py") is False

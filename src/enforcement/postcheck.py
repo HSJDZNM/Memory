@@ -186,9 +186,18 @@ def collect_evidence(
             if snapshot is not None and snapshot.path == relative and snapshot.existed:
                 # 平台自己执行时，变更前文本来自执行器保存的快照（永远不会是编造的）。
                 before_text = snapshot.content.decode("utf-8", "replace")
-            files.append(
-                _file_effect(relative, baseline, workspace=workspace, before_text=before_text)
-            )
+            try:
+                effect = _file_effect(
+                    relative, baseline, workspace=workspace, before_text=before_text
+                )
+            except ValueError:
+                # 目标逃出工作区：取证**拒绝**去 stat 工作区外的路径（_file_effect 的判据），
+                # 但异常不能抛穿事后链路——本函数的契约是"只记录、不判断"，抛出去会让
+                # 已经执行过的动作连 PostDecision 与审计记录都不剩。这里记成"没有收集到
+                # 文件证据"，由 validate 判成需要修复（确定性失败），失败关闭且结构化。
+                pass
+            else:
+                files.append(effect)
 
     process = None
     if spec.effect.value == "process" or record.exit_code is not None or record.timed_out:
@@ -213,14 +222,6 @@ def collect_evidence(
         untrusted_result_digest=None if untrusted_result is None else digest_of(untrusted_result),
         collected_at=now or utc_now(),
     )
-
-
-def _change_expectation(spec: ToolSpec, request: ActionRequest) -> bool:
-    """这次动作是否**应当**改变目标文件。"""
-
-    if spec.effect.value != "file_write":
-        return False
-    return True
 
 
 def validate(
@@ -263,6 +264,37 @@ def validate(
             evaluated_at=moment,
         ), evidence)
 
+    if record.status is ExecutionStatus.FAILED:
+        # 执行失败 / 超时是**确定性**结论：与工具有没有声明 post_checks 无关。
+        # 旧实现把这条判据排在 "没有声明 post_checks → not_required" 之后，于是在没有
+        # 验证器的工具上，一次超时（或非零退出）被事后记录写成"无需验证 / allow"。
+        failure = (
+            ReasonCode.EXECUTION_TIMEOUT if record.timed_out else ReasonCode.EXECUTION_FAILED
+        )
+        return _with_validators(PostDecision(
+            status=PostStatus.REPAIR_REQUIRED,
+            reason_code=failure,
+            action_id=request.action_id,
+            request_id=request.request_id,
+            trace_id=request.trace_id,
+            action_hash=request.action_hash,
+            tool_id=request.tool_id,
+            checks=(
+                CheckResult(
+                    check="post",
+                    status=CheckStatus.FAILED,
+                    reason_code=failure,
+                    detail=(
+                        "执行超时被终止：不需要验证器也能判定需要修复"
+                        if record.timed_out
+                        else "执行失败：不需要验证器也能判定需要修复"
+                    ),
+                ),
+            ),
+            detail=record.detail or "执行没有成功",
+            evaluated_at=moment,
+        ), evidence)
+
     if not spec.post_checks:
         return _with_validators(PostDecision(
             status=PostStatus.NOT_REQUIRED,
@@ -294,12 +326,7 @@ def validate(
     failed = [item for item in checks if item.status is CheckStatus.FAILED]
     evidence = evidence.model_copy(update={"validators": tuple(outcomes)})
 
-    if record.status is ExecutionStatus.FAILED:
-        reason = (
-            ReasonCode.EXECUTION_TIMEOUT if record.timed_out else ReasonCode.EXECUTION_FAILED
-        )
-        status = PostStatus.REPAIR_REQUIRED
-    elif not failed:
+    if not failed:
         reason = ReasonCode.ALLOW
         status = PostStatus.VALIDATED
     elif any(
@@ -308,8 +335,10 @@ def validate(
         # 确定性验证没过 → 需要修复（比"证据不一致"更可操作）
         reason = ReasonCode.POST_CHECK_FAILED
         status = PostStatus.REPAIR_REQUIRED
-    elif any(item.check in ("file_changed", "content_matches") for item in failed):
-        # 只有"目标里看不到请求声明的结果"这一类失败时，才是证据自相矛盾
+    elif any(item.reason_code is ReasonCode.POST_EVIDENCE_INCONSISTENT for item in failed):
+        # 只有验证器**自己**判定"工具声称成功、目标却不是那个结果"时才是证据自相矛盾。
+        # 旧实现按检查项名字分流，于是"没有收集到文件证据 / 缺少执行前基线"这些**证据不足**
+        # 的失败也被写成"工具声称成功但目标根本没变"——那是另一种结论（需要修复）。
         reason = ReasonCode.POST_EVIDENCE_INCONSISTENT
         status = PostStatus.INCONSISTENT
     else:
@@ -355,27 +384,42 @@ def _run_post_check(
         target = file_target(request)
         effect = evidence.file(target) if target else None
         if effect is None:
-            return _outcome(name, False, "没有收集到文件证据：目标路径缺失或工作区未声明")
+            return _outcome(
+                name,
+                False,
+                "没有收集到文件证据：目标路径缺失 / 工作区未声明 / 目标逃出工作区被拒绝取证",
+            )
         if not effect.baseline_recorded:
             # 没有执行前基线时的"变了"是猜测，不是证据：宁可判需要修复。
             return _outcome(name, False, "缺少执行前基线：无法证明这次动作产生了什么效果")
-        if record.status is ExecutionStatus.DELEGATED and evidence.files and effect.changed:
-            return _outcome(name, True, f"{effect.path} 哈希已变化")
         if effect.changed:
             return _outcome(name, True, f"{effect.path} 哈希已变化")
         return _outcome(
             name,
             False,
             f"{effect.path} 在执行前后没有任何变化：工具声称成功但目标未改变",
+            reason=ReasonCode.POST_EVIDENCE_INCONSISTENT,
         )
 
     if name == "content_matches":
         target = file_target(request)
         if target is None or workspace is None:
-            return _outcome(name, True, "非文件动作，跳过内容一致性检查")
+            return _skipped(name, "非文件动作，跳过内容一致性检查")
         effect = evidence.file(target)
-        if effect is None or not effect.exists_after:
-            return _outcome(name, False, f"{target} 在执行后不存在：动作没有产生它声称的结果")
+        if effect is None:
+            # 没有证据 ≠ 证据自相矛盾：这里根本不知道目标变成了什么。
+            return _outcome(
+                name,
+                False,
+                "没有收集到文件证据：目标路径缺失 / 工作区未声明 / 目标逃出工作区被拒绝取证",
+            )
+        if not effect.exists_after:
+            return _outcome(
+                name,
+                False,
+                f"{target} 在执行后不存在：动作没有产生它声称的结果",
+                reason=ReasonCode.POST_EVIDENCE_INCONSISTENT,
+            )
         content = (Path(workspace) / target).read_text(encoding="utf-8", errors="replace")
         expected = request.value_of("content")
         if isinstance(expected, str):
@@ -385,22 +429,40 @@ def _run_post_check(
                 name,
                 False,
                 f"{target} 的内容与请求声明的 content 不一致（工具声称成功，目标却不是那个结果）",
+                reason=ReasonCode.POST_EVIDENCE_INCONSISTENT,
             )
         new = request.value_of("new_string")
         old = request.value_of("old_string")
         if isinstance(new, str) and new and new not in content:
-            return _outcome(name, False, f"{target} 里没有出现请求声明的 new_string")
+            return _outcome(
+                name,
+                False,
+                f"{target} 里没有出现请求声明的 new_string",
+                reason=ReasonCode.POST_EVIDENCE_INCONSISTENT,
+            )
         if isinstance(old, str) and isinstance(new, str) and old != new and not effect.changed:
-            return _outcome(name, False, f"{target} 没有变化，替换结果无迹可循")
+            if not effect.baseline_recorded:
+                # changed=False 在这里来自"没有基线"，不是"真的没变"：证据不足。
+                return _outcome(
+                    name,
+                    False,
+                    f"{target} 缺少执行前基线：无法证明替换真的发生过（证据不足，不是自相矛盾）",
+                )
+            return _outcome(
+                name,
+                False,
+                f"{target} 没有变化，替换结果无迹可循",
+                reason=ReasonCode.POST_EVIDENCE_INCONSISTENT,
+            )
         return _outcome(name, True, f"{target} 与请求声明的变更一致")
 
     if name == "file_syntax":
         target = file_target(request)
         effect = evidence.file(target) if target else None
         if effect is None or not effect.exists_after:
-            return _outcome(name, True, "目标不存在，跳过语法检查")
+            return _skipped(name, "目标不存在，跳过语法检查")
         if workspace is None or target is None or not target.endswith(".py"):
-            return _outcome(name, True, "非 Python 目标，Phase 4 不做语法检查")
+            return _skipped(name, "非 Python 目标，Phase 4 不做语法检查")
         content = (Path(workspace) / target).read_text(encoding="utf-8", errors="replace")
         try:
             ast.parse(content)
@@ -411,8 +473,10 @@ def _run_post_check(
     if name == "diff_recorded":
         target = file_target(request)
         effect = evidence.file(target) if target else None
-        if effect is None or not effect.changed:
-            return _outcome(name, True, "没有变化，无需 diff")
+        if effect is None:
+            return _skipped(name, "没有收集到文件证据：无从记录 diff")
+        if not effect.changed:
+            return _skipped(name, "没有变化，无需 diff")
         if not effect.diff_digest:
             return _outcome(name, False, "目标发生变化但没有记录 diff 摘要")
         return _outcome(name, True, f"diff_digest={effect.diff_digest}")
@@ -441,8 +505,42 @@ def _run_post_check(
     return _outcome(name, False, f"未知验证器 {name!r}：注册表加载阶段本应拦下它")
 
 
-def _outcome(name: str, passed: bool, detail: str) -> tuple[ValidatorOutcome, CheckResult]:
-    reason = ReasonCode.ALLOW if passed else ReasonCode.POST_CHECK_FAILED
+def _skipped(name: str, detail: str) -> tuple[ValidatorOutcome, CheckResult]:
+    """不适用 / 无从查起的检查项记成 **SKIPPED**，而不是"passed"。
+
+    与 precheck 同一口径（package 里其余地方的非适用检查都写 SKIPPED）：
+    "什么都没查"与"查过且通过"必须在 PostEvidence.validators 与审计里分得开——
+    否则事后读证据的人会把一条没跑过的检查读成"验证过了"。
+    """
+
+    return (
+        ValidatorOutcome(
+            validator=name,
+            status=CheckStatus.SKIPPED,
+            detail=detail,
+            evidence_digest=digest_of({"validator": name, "detail": detail}),
+        ),
+        CheckResult(
+            check=name,
+            status=CheckStatus.SKIPPED,
+            reason_code=ReasonCode.ALLOW,
+            detail=detail,
+        ),
+    )
+
+
+def _outcome(
+    name: str, passed: bool, detail: str, *, reason: Optional[ReasonCode] = None
+) -> tuple[ValidatorOutcome, CheckResult]:
+    """一条验证器结论。
+
+    失败时默认 POST_CHECK_FAILED（"需要修复"），只有验证器**自己**判定"工具声称成功、
+    目标却不是那个结果"时才显式传 POST_EVIDENCE_INCONSISTENT —— 判定侧因此能按原因码
+    区分"证据不足"与"证据自相矛盾"，而不是按检查项名字猜。
+    """
+
+    if reason is None:
+        reason = ReasonCode.ALLOW if passed else ReasonCode.POST_CHECK_FAILED
     status = CheckStatus.PASSED if passed else CheckStatus.FAILED
     return (
         ValidatorOutcome(

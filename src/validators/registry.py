@@ -235,11 +235,8 @@ def load_project(
     _assert_unique(
         [item.language for item in profile.languages], path=target, label="languages"
     )
-    for root_name in profile.python_roots:
-        if root_name.startswith("/") or ".." in root_name.split("/"):
-            raise RegistryError(
-                f"{target}: python_roots 必须是项目内的相对目录，得到 {root_name!r}"
-            )
+    # python_roots 的合法性由模型校验（ProjectProfile._check_python_roots，与消费方同口径）：
+    # 这里不再重复一遍较弱的检查——两处口径只会漂移。
     return profile
 
 

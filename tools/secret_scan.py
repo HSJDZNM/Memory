@@ -48,6 +48,15 @@ SELF = "tools/secret_scan.py"
 
 ALLOW_MARKER = "secret-scan: allow"
 
+
+class ScanEnvironmentError(RuntimeError):
+    """扫描环境错误：有文件读不出来 ⇒ 这次门禁证明不了任何事（退出码 2）。
+
+    不能当作"干净"：`git ls-files` 保证路径存在，所以 OSError 通常意味着扫描器真的没能检查它，
+    而 UnicodeDecodeError 意味着一个后缀不在 BINARY_SUFFIXES 里的非 UTF-8 / 二进制文件从未被扫过。
+    两种情况都可能把凭据放行出发布门禁。
+    """
+
 # 扫描专用补充：形态确定、误报率低。
 EXTRA_PATTERNS = (
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),          # AWS access key id
@@ -81,11 +90,20 @@ def tracked_files(*, include_mirrors: bool) -> list[str]:
 
 
 def scan(path: str, patterns: tuple[re.Pattern[str], ...]) -> list[str]:
+    """扫一个文件。
+
+    读不出来就抛 ScanEnvironmentError（不当作干净）：静默 return [] 会让一个从未被检查过的
+    文件以"没有发现疑似凭据"收场，而那正是发布门禁最不能接受的一种通过。
+    """
+
     target = ROOT / path
     try:
         text = target.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
+    except (OSError, UnicodeDecodeError) as error:
+        raise ScanEnvironmentError(
+            "%s 读不出来（%s: %s）：它没有被检查过，不能当作干净"
+            % (path, type(error).__name__, error)
+        ) from error
     findings: list[str] = []
     for number, line in enumerate(text.splitlines(), start=1):
         if ALLOW_MARKER in line:
@@ -111,12 +129,31 @@ def main(argv: list[str]) -> int:
 
     patterns = secret_patterns()
     findings: list[str] = []
-    files = tracked_files(include_mirrors=include_mirrors)
+    unreadable: list[str] = []
+    try:
+        files = tracked_files(include_mirrors=include_mirrors)
+    except (OSError, subprocess.SubprocessError, ImportError) as error:
+        # git 缺失 / 不在仓库里 / enforcement.audit 导不进来：都是**环境错误**（退出码 2）。
+        # 让解释器用退出码 1 收场就与"发现凭据"同码，CI 分不清两者。
+        print("secret scan: 扫描环境不可用（%s: %s）" % (type(error).__name__, error), file=sys.stderr)
+        return 2
     for name in files:
-        findings.extend(scan(name, patterns))
+        try:
+            findings.extend(scan(name, patterns))
+        except ScanEnvironmentError as error:
+            unreadable.append(str(error))
 
     print("secret scan: 已扫描 %d 个文件（镜像 %s）"
           % (len(files), "包含" if include_mirrors else "跳过"))
+    if unreadable:
+        for item in unreadable:
+            print("  ! " + item, file=sys.stderr)
+        print(
+            "有 %d 个文件读不出来：这次扫描不完整，按环境错误退出（2）——"
+            "它们没有被检查过，不等于干净" % len(unreadable),
+            file=sys.stderr,
+        )
+        return 2
     if not findings:
         print("没有发现疑似凭据")
         return 0

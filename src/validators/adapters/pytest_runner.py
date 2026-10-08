@@ -521,7 +521,32 @@ def _module_binds_name(path: Path, name: str) -> bool:
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
         return True
+    # 这几种写法都能在运行期提供源码里看不见的名字：`from x import *`、为再导出声明的
+    # `__all__`、PEP 562 的模块级 `__getattr__`、以及 globals()/setattr 动态绑定。
+    # 扫描证明不了"这个名字不存在"，而"证明不了"必须落回"当它存在"——否则一次真实的
+    # 收集失败会被降级成 pending_implementation（warning），正是本模块禁止的方向（复核发现）。
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and any(
+            alias.name == "*" for alias in node.names
+        ):
+            return True
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets
+        ):
+            return True
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == "__all__":
+                return True
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "__getattr__":
+            return True
+
     for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in ("globals", "setattr", "exec") or (
+                isinstance(node.func, ast.Attribute) and node.func.attr in ("update", "setdefault")
+            ):
+                # globals()['x'] = ... / globals().update(...) / setattr(sys.modules[...], ...)
+                return True
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             if node.name == name:
                 return True

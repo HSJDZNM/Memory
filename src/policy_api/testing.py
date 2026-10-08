@@ -44,7 +44,14 @@ def call(
     *,
     token: Optional[str] = None,
 ) -> RuntimeResponse:
-    """进程内调用一次；凭据既可以放信封里，也可以由调用方显式传入。"""
+    """进程内调用一次；凭据既可以放信封里，也可以由调用方显式传入。
+
+    **优先顺序是明确的（不是"静默"）：`payload["credentials"]["token"]` 先于 `token` 参数**，
+    因为 `ApiRuntime._authenticate` 先看信封、再看 `Authorization` 头。这条只用于**进程内**
+    路径——HTTP 路径的凭据来自请求头，请求体里的 `credentials` 是给进程内调用准备的第二形态
+    （同样是显式声明的令牌）。它与"服务身份不替用户扩权"不冲突：那条约束管的是**越权**
+    （跨租户、跨项目、替调用方选一个边界），而这里两个来源都是调用方自己给的凭据。
+    """
 
     body: dict[str, Any] = dict(payload)
     authorization = None

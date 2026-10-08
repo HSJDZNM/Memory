@@ -379,6 +379,14 @@ def test_contradictory_or_unknown_approval_fields_are_refused(tmp_root):
         ApprovalRecord(**common, binding="wildcard", action_hash="h", action_id="i")
     with pytest.raises(ApprovalError):
         ApprovalRecord(**common, binding="pattern", param_patterns={"command": "("})
+    # 两个只在首尾空白上不同的参数名 strip 之后是同一个：不许静默 last-wins，
+    # 否则一条更严格的模式会被悄悄丢掉。
+    with pytest.raises(ApprovalError):
+        ApprovalRecord(
+            **common,
+            binding="pattern",
+            param_patterns={"command": COMMAND_PATTERN, " command ": ".*"},
+        )
 
     # 未知字段：审批 JSON 里多写一个字段就必须被拒绝（不是静默忽略）
     document = {

@@ -200,9 +200,9 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         "report_schema_version": EXEMPTION_REPORT_SCHEMA_VERSION,
         "mode": "report-only",
         "note": "只报告：不改任何退出码、不影响任何判定；到期前 " + str(args.lead_days) + " 天提醒，过期标红",
-        # 台阶 4：旁注（哪棵树 / 哪个宿主 / 读的是哪两处声明）。它**只进 --json**：
-        # 默认输出那条 HITS: 机器行是跨文件契约，一个字符都不改。
-        "reading_context": build_reading_context(scope=Path(args.scope)),
+        # 台阶 4：旁注（哪棵树 / 哪个宿主 / 读的是哪两处声明）在 --json 分支里**懒构建**：
+        # 默认输出那条 HITS: 机器行是跨文件契约，一个字符都不改，也不该为它算一遍树摘要
+        # （workspace_tree_digest 走整棵树 + 每文件 sha256，外加一个 git 子进程）。
         "today": today.isoformat(),
         "lead_days": args.lead_days,
         "entries": entries,
@@ -217,6 +217,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         },
     }
     if args.json:
+        payload["reading_context"] = build_reading_context(scope=Path(args.scope))
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
 

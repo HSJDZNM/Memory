@@ -10,23 +10,40 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
 authors = [{ name = "Memory repository maintainers" }]
+# **核心层只需要这两个**：policy / retrieval / validators / enforcement / adapters / provenance
+# 从不导入 Web 框架与工作流框架。把 HTTP 栈与编排框架放进 dependencies，等于让每一次
+# `pip install` 都为"平台可以独立运行"这件事付反方向的代价（核心的供应链面被无谓放大，
+# 而"删掉 policy_api / orchestration 包平台照常跑"在安装边界上并不成立）。
 dependencies = [
   "pydantic>=2.9,<3",
   "PyYAML>=6.0,<7",
-  # Phase 7 的传输层依赖：核心（policy / retrieval / validators / enforcement /
-  # adapters）刻意不依赖它们，只有 policy_api 的 HTTP 应用需要。
-  "fastapi>=0.110,<1",
-  "uvicorn>=0.27,<1",
-  # Phase 8 的编排依赖：与 Phase 7 同一条纪律——只有 src/orchestration 需要它，
-  # 而且只有 langgraph_engine.py 导入它（延迟导入 + 版本校验，不可用即失败关闭）。
-  # 核心层从不导入本框架：删掉 orchestration 包，平台照样独立运行。
-  "langgraph>=1.2,<2",
 ]
 
 [project.optional-dependencies]
+# Phase 7 传输层：只有 src/policy_api 的 HTTP 应用需要。
+api = [
+  "fastapi>=0.110,<1",
+  "uvicorn>=0.27,<1",
+]
+# Phase 8 编排层：只有 src/orchestration 需要，且只有 langgraph_engine.py 导入它
+# （延迟导入 + 版本校验，不可用即失败关闭）。核心层从不导入本框架。
+orchestration = [
+  "langgraph>=1.2,<2",
+]
 dev = [
+  # 自引用把上面两组一起装上：**开发环境跑的是完整平台**（四个测试套件都要 API 与编排），
+  # 部署方却可以只装核心（`pip install .`）或按需加 `[api]` / `[orchestration]`。
+  "engineering-policy-platform[api,orchestration]",
   "pytest>=8.3,<10",
   "pytest-xdist>=3.6,<4",
+  # [tool.coverage.run] 就在本文件里：没有这两条，那份配置在干净环境里读不到任何数据
+  # （`pytest --cov` 直接报 unknown option）。pytest-cov 提供 --cov，coverage 是它的后端，
+  # 也是 `python -m coverage report` 的入口——两个都显式声明，别让"能不能跑"取决于传递依赖。
+  "coverage>=7,<8",
+  "pytest-cov>=6,<8",
+  # API 测试走 policy_api.testing.make_client → fastapi.testclient.TestClient，
+  # 而 starlette 的 TestClient 依赖 httpx（fastapi 本体不装它）：不声明，干净环境跑不了这三个套件。
+  "httpx>=0.27,<1",
 ]
 
 [project.scripts]
@@ -38,16 +55,29 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.pytest.ini_options]
-minversion = "8.0"
-testpaths = ["tests"]
-addopts = "-ra --strict-markers --strict-config"
-markers = [
-  "contract: 核心协议契约测试",
-  "integration: 真实 CLI 与文件系统边界的集成测试",
-  "security: 对抗测试（注入、越权、缓存失效、失败关闭）",
-]
+[tool.setuptools.package-data]
+# 非 Python 的运行时资产不会自动进 wheel / sdist：
+# - policy-hook.plugin.mjs 是 dsh 的进程内转发插件（adapters.wiring 的接线清单与
+#   examples/dsh/profile-patch.yml 都指向它）：缺了它，装出来的平台上策略桥起不来；
+# - 两个 README.md 被同目录模块的 docstring 直接引用（"见同目录 README.md"），
+#   装出去以后这些指路必须仍然成立。
+"adapters.dsh" = ["*.mjs", "*.md"]
+"orchestration" = ["*.md"]
 
 [tool.coverage.run]
 branch = true
-source = ["src/policy", "src/retrieval"]
+# 度量范围 = 发行版真的装出去的全部包（src/ 下的 8 个），不是"核心两层"：
+# 只量 policy + retrieval 会让 adapters / enforcement / orchestration / policy_api /
+# provenance / validators 的回归在覆盖率读数里**根本不存在**（不是 0%，是不出现）。
+source = [
+  "src/adapters",
+  "src/enforcement",
+  "src/orchestration",
+  "src/policy",
+  "src/policy_api",
+  "src/provenance",
+  "src/retrieval",
+  "src/validators",
+]
+# 刻意不设 fail_under：覆盖率门槛是**门禁决策**（谁跑、跑哪些套件、达不到时拦不拦），
+# 现在没有任何步骤跑 --cov，先写一个数字只会制造一条没人验证的门槛。

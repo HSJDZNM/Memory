@@ -24,7 +24,7 @@ from policy.models import (
 )
 
 from conftest import rule_document
-from policy.models import RULE_BODY_CLASSES
+from policy.models import RULE_BODY_CLASSES, StyleLintSpec, TypeCheckSpec
 
 # 规则体 union 的成员类名：错误位置里不带它们，测试与加载器的报错口径一致。
 UNION_MEMBER_NAMES = {cls.__name__ for cls in RULE_BODY_CLASSES}
@@ -374,3 +374,47 @@ def test_rule_set_identity_ignores_loading_order() -> None:
     assert forward.identity == backward.identity
     assert forward.ids == ("ARCH-001@1", "ARCH-002@2")
     assert backward.ids == ("ARCH-002@2", "ARCH-001@1")
+
+
+def test_declared_codes_report_the_owning_field_name() -> None:
+    """type_check.codes 的错误必须报 type_check：同一个校验器不许给出两套字段名。"""
+
+    with pytest.raises(ValidationError) as style_error:
+        StyleLintSpec.model_validate({"tool": "ruff", "codes": ["S105", " "]})
+    assert "style_lint.codes" in str(style_error.value)
+
+    with pytest.raises(ValidationError) as type_error:
+        TypeCheckSpec.model_validate({"tool": "mypy", "codes": ["assignment", ""]})
+    assert "type_check.codes" in str(type_error.value)
+    assert "style_lint.codes" not in str(type_error.value)
+
+
+@pytest.mark.parametrize("spec", [StyleLintSpec, TypeCheckSpec])
+def test_declared_codes_reject_malformed_containers(spec) -> None:
+    """非容器输入必须是校验错误：不是裸 TypeError，也不能把映射当成键序列静默收下。"""
+
+    with pytest.raises(ValidationError):
+        spec.model_validate({"tool": "ruff", "codes": 123})
+    with pytest.raises(ValidationError):
+        spec.model_validate({"tool": "ruff", "codes": {"S105": True}})
+
+
+def test_declared_codes_are_uppercased_deduped_and_sorted() -> None:
+    """规范化口径不变：大写、去重、升序（与 ruff.toml 的码表逐字可比）。"""
+
+    spec = StyleLintSpec.model_validate({"tool": "ruff", "codes": ["s105", "S105", " F401 "]})
+
+    assert spec.codes == ("F401", "S105")
+    assert TypeCheckSpec.model_validate({"tool": "mypy"}).codes == ()
+
+
+def test_union_member_names_are_derived_from_the_rule_body_tuple() -> None:
+    """错误位置过滤用的类名集合必须与 RULE_BODY_CLASSES 同源，不许再抄一份。
+
+    抄一份的代价是静默的：往 RULE_BODY_CLASSES 里加一个规则体而忘了改这份字面量集合，
+    新规则体的校验报错就会带上内部类名（RuleValidationError 本意就是去掉它）。
+    """
+
+    from policy import models
+
+    assert models._UNION_MEMBER_NAMES == {cls.__name__ for cls in models.RULE_BODY_CLASSES}

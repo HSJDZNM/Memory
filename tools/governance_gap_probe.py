@@ -9,7 +9,8 @@
     python -c "..."                     （G06 的 Phase 6 路径：装配 generic-json Adapter，
                                          规范事件 → to_policy_context → evaluate）
     python -c "from adapters.dsh.adapter import glob_match, TOOL_TABLE"   （静态事实）
-    src/adapters/dsh/policy-hook.plugin.mjs                                （插件源码静态事实）
+    src/adapters/dsh/policy-hook.plugin.mjs                                （注册了哪些钩子：静态事实）
+    node <假 ctx 探针> + 真插件                                            （退出码映射：行为读数）
     审计 JSONL / 台账 JSONL 的实际内容
 
 每项缺口同时声明"修前应当看到什么"（before）与"修后应当看到什么"（after），
@@ -756,6 +757,102 @@ if (out.post_registered) {
 }
 console.log(JSON.stringify(out));
 '''
+
+
+#: 退出码映射的**行为**探针：喂的是插件的返回值形状，断言的是它给出的决策。
+#: 为什么不是读源码 + 正则：G12 原来匹配 `exitCode !== 0` 这一种写法，适配层把映射改成显式形状
+#: 判断（`=== 0` / 非数字 / `=== 2` / 其余）之后，行为更强了而正则再也匹配不到——仪器追的是写法，
+#: 不是行为（AGENTS 第 45 条：仪器要能失败，也要测得准）。
+PLUGIN_EXIT_PROBE = r'''
+/**
+ * 真 node 驱动真插件的退出码映射：0 -> next()（放行）；其余形状 -> deny。
+ * argv: <plugin.mjs> <mode>；mode 见 PLUGIN_EXIT_MODES。
+ */
+import { pathToFileURL } from 'node:url';
+
+const { apply } = await import(pathToFileURL(process.argv[2]).href);
+const mode = process.argv[3];
+const shapes = {
+  zero: { exitCode: 0, stderr: { text: '' } },
+  two: { exitCode: 2, stderr: { text: 'blocked by policy' } },
+  seven: { exitCode: 7, stderr: { text: 'hook crashed' } },
+  string_code: { exitCode: '7', stderr: { text: '' } },
+  no_code: { stderr: { text: '' } },
+};
+
+const handlers = {};
+const ctx = {
+  on(name, registered) { (handlers[name] = handlers[name] || []).push(registered); },
+  shell: {
+    resolve(request) { return request; },
+    async run() { return shapes[mode]; },
+  },
+};
+
+apply(ctx, { command: 'python -m adapters.dsh.hooks', timeoutMs: 30000, projectDir: process.cwd() });
+
+const pre = (handlers['tools/pre-execute'] || [])[0];
+const exec = {
+  name: 'pwsh',
+  callId: 'probe-call-1',
+  arguments: {},
+  signal: undefined,
+  agent: { session: { header: { id: 'probe-session', cwd: process.cwd() } } },
+};
+// pre 钩子的签名是 (exec, next)：放行 = 调 next()，拒绝 = 返回自己的判定对象。
+const outcome = typeof pre === 'function'
+  ? await pre(exec, async () => ({ kind: 'enter' }))
+  : null;
+process.stdout.write(JSON.stringify({ outcome, pre_registered: typeof pre === 'function' }));
+'''
+
+#: 五种返回值形状：一种必须放行，其余四种必须被拒绝。
+PLUGIN_EXIT_MODES: tuple[str, ...] = ("zero", "two", "seven", "string_code", "no_code")
+
+
+def plugin_exit_cases(node: str, plugin: Path, workdir: Path, *, cwd: Path) -> dict[str, Any]:
+    """真 node 驱动**给定插件**，返回五种返回值形状下的决策（行为读数）。
+
+    plugin 参数是为了让变异证明能喂一棵临时副本：把"其余退出码 -> deny"改成放行之后，
+    同一份读数必须变红。
+    """
+
+    harness = Path(workdir) / "plugin-exit-probe.mjs"
+    harness.parent.mkdir(parents=True, exist_ok=True)
+    harness.write_text(PLUGIN_EXIT_PROBE, encoding="utf-8", newline="\n")
+    env = dict(os.environ)
+    env["NODE_NO_WARNINGS"] = "1"
+    cases: dict[str, Any] = {}
+    for mode in PLUGIN_EXIT_MODES:
+        done = subprocess.run(
+            [node, str(harness), str(plugin), mode],
+            cwd=str(cwd), capture_output=True, text=True, encoding="utf-8",
+            errors="replace", check=False, env=env, timeout=DEFAULT_TIMEOUT,
+        )
+        payload: Any = {}
+        try:
+            payload = json.loads(done.stdout)
+        except ValueError:
+            payload = {}
+        outcome = payload.get("outcome") if isinstance(payload, Mapping) else None
+        cases[mode] = {
+            "node_exit": done.returncode,
+            "kind": outcome.get("kind") if isinstance(outcome, Mapping) else None,
+            "reason": outcome.get("reason") if isinstance(outcome, Mapping) else None,
+            "stderr_tail": (done.stderr or "")[-200:],
+        }
+    return cases
+
+
+def exit_map_verdict(cases: Mapping[str, Any]) -> bool:
+    """行为判据：exit 0 必须放行（next() -> kind=enter），其余四种形状必须 kind=deny。"""
+
+    if (cases.get("zero") or {}).get("kind") != "enter":
+        return False
+    return all(
+        (cases.get(mode) or {}).get("kind") == "deny"
+        for mode in ("two", "seven", "string_code", "no_code")
+    )
 
 
 def _node_path() -> Optional[str]:
@@ -2111,12 +2208,33 @@ def check_g12(env: Env) -> Check:
                "selfcheck_broken_hooks_blocks": True, "missing_config_blocks": True,
                "library_strict_refuses_unverified_wiring": True},
     )
-    source = _plugin_source(env.root)
-    denies_unknown = bool(
-        re.search(r"exitCode\s*!==\s*0", source) or re.search(r"exit\s*!==\s*0", source)
-    ) and "deny" in source
-    check.facts["plugin_denies_unknown_exit"] = denies_unknown
-    check.evidence.append(f"插件源码把「非 0 非 2」映射成 deny：{denies_unknown}")
+    # 行为判据：真 node 驱动真插件，喂真实返回值形状（不再读源码 + 正则——那条正则匹配的是
+    # `exitCode !== 0` 这一种写法，适配层改成显式形状判断后行为更强而它再也匹配不到）。
+    node = _node_path()
+    check.facts["plugin_exit_probe_node_available"] = node is not None
+    if node is None:
+        check.facts["plugin_denies_unknown_exit"] = False
+        check.facts["plugin_exit_probe_unavailable"] = (
+            "本机没有 node：退出码映射无法执行——这条行为判据**不成立**（读源码 + 正则的替身已被",
+            "证明会追错写法，不能用它顶替）"
+        )
+        check.evidence.append("插件退出码映射没有验证：本机没有 node（不是通过）")
+    else:
+        cases = plugin_exit_cases(
+            node,
+            env.root / "src" / "adapters" / "dsh" / "policy-hook.plugin.mjs",
+            env.work,
+            cwd=env.project,
+        )
+        check.facts["plugin_exit_probe"] = json.dumps(cases, ensure_ascii=False, sort_keys=True)
+        check.facts["plugin_denies_unknown_exit"] = exit_map_verdict(cases)
+        check.evidence.append(
+            "真 node 驱动真插件（返回值形状 -> 决策）："
+            + "；".join(
+                "%s -> %s" % (mode, (cases.get(mode) or {}).get("kind"))
+                for mode in PLUGIN_EXIT_MODES
+            )
+        )
 
     absent = env.py(["-m", "adapters.dsh.hooks", "--config", ".policy/dsh-adapter.yaml",
                      "--self-check"], cwd=env.project)

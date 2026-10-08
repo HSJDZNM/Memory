@@ -24,10 +24,15 @@ $RECYCLE.BIN/
 .classpath
 .settings/
 
-# ---- 密钥与本地配置（优先级最高，务必不要提交）----
+# ---- 密钥与本地配置（务必不要提交）----
+# 生效靠**位置**，不靠这句话：gitignore 是最后匹配者胜，本节之后的任何 ! 规则都会
+# 覆盖这里的忽略。新增忽略写在本节之前、需要放行的写在这里。
 .env
 .env.*
+# 放行的是**模板**：.env.example 与带环境名的变体（.env.production.example 等）要能被
+# 提交、也要在 git status 里看得见——只否定一个精确名字时，新写的变体会静默消失。
 !.env.example
+!.env.*.example
 *.pem
 *.key
 *.p12
@@ -105,8 +110,20 @@ htmlcov/
 .tmp/
 
 # ---- 数据与产物（按需放开）----
+# WAL / rollback journal 模式下的 SQLite 会生成与主库同名的兄弟文件：只忽略主库时
+# 它们能被提交，而里面有还没 checkpoint 的表内容。逐个后缀写出来，不用 *.db-* 这类通配：
+# 那会把 foo.db-backup 这种真正想留下的文件也一起吞掉。
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
 *.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 *.db
+*.db-wal
+*.db-shm
+*.db-journal
 data/
 artifacts/

@@ -68,6 +68,11 @@ const ctx = {
       if (behaviour.throwError) {
         throw new Error(behaviour.throwError);
       }
+      if ('returnValue' in behaviour) {
+        // 形状漂移：result 整个缺失、退出码改名、stderr 变成裸字符串——都必须由插件
+        // 明确拒绝，而不是让翻译步骤自己抛出去。
+        return behaviour.returnValue;
+      }
       return { exitCode: behaviour.exitCode, stderr: { text: behaviour.stderr } };
     },
   },
@@ -121,6 +126,13 @@ observations.pre_unknown_exit = await drivePre();
 behaviour = { throwError: 'spawn EPERM' };
 observations.pre_spawn_failure = await drivePre();
 
+// 形状漂移的两条：结果整个缺失；结果在、但 stderr 是裸字符串（退出码 2 的阻断理由）
+behaviour = { returnValue: undefined };
+observations.pre_result_missing = await drivePre();
+
+behaviour = { returnValue: { exitCode: 2, stderr: 'blocked by ARCH-001' } };
+observations.pre_result_string_stderr = await drivePre();
+
 behaviour = { exitCode: 0, stderr: '' };
 observations.post_allow = await drivePost({
   content: [
@@ -130,6 +142,9 @@ observations.post_allow = await drivePost({
   ],
 });
 observations.post_allow_string = await drivePost('plain text result');
+// 形状漂移：结果是个对象但没有 content——旧写法（blocksToText(裸对象)）会把它变成空串，
+// 事后核对因此分不出「工具什么都没输出」与「形状我们不认识」。
+observations.post_object_without_content = await drivePost({ isError: false, note: 'shape drift' });
 observations.post_truncated = await drivePost({
   content: [{ type: 'text', text: 'x'.repeat(9000) }],
 });
@@ -1403,6 +1418,10 @@ observations.wire_allow_post = await mountForWorkdir(
   existingWorkdir,
 ).drivePost({ content: [{ type: 'text', text: 'ok' }] });
 
+// ⑧ 空串 projectDir 与「没写」同义：应当回落到会话 cwd 并照常 spawn（而不是把 "" 当成
+//    声明过的目录，落进 inspectWorkdir 的 unknown_origin 且 spawn 0 次）。
+observations.origin_blank_project_dir = await mountForWorkdir('', existingWorkdir).driveHook();
+
 process.stdout.write(JSON.stringify(observations));
 '''
 
@@ -1482,6 +1501,61 @@ def _assert_origin_shape(origin: dict) -> None:
     assert isinstance(origin["fix"], str) and origin["fix"].strip() != "", origin
     assert "联系管理员" not in origin["fix"]
     assert origin["causal_link"] in {"proven", "unproven"}
+
+
+def test_an_unrecognised_result_shape_is_forwarded_not_dropped(tmp_root) -> None:
+    """结果对象没有 content 时，工具输出必须**原样转发**，不能静默变成空串。
+
+    注释写着「拿不到 content 时退回结果本身，避免把结果形状变了静默变成空结果」，但
+    `blocksToText` 对裸对象返回空串，而「结果对象没有 content」正好是这种形状：post_checks
+    看到的是一份「什么都没输出」的答复，`exit_code_zero` 之类的核对因此建立在错误的前提上。
+    """
+
+    observed = run_harness(tmp_root)
+    payload = observed["post_object_without_content"]["payload"]
+
+    assert payload["hook_event_name"] == "PostToolUse"
+    assert "shape drift" in payload["tool_response"], payload["tool_response"]
+
+
+def test_a_malformed_hook_result_is_refused_not_thrown(tmp_root) -> None:
+    """shell 结果形状漂移时必须**由插件**明确拒绝，而不是让翻译步骤抛出去。
+
+    `ctx.shell.run` 是唯一被 try/catch 包住的调用，其后的一切（取退出码、取 stderr、判定行
+    解析）此前都裸露在外：`result` 缺失时 `result.exitCode` 抛 TypeError，逃出插件处理器后
+    由 dsh 的错误处理接管——「只有 exit 0 放行」这条契约就不再由本插件保证。另外
+    `result.stderr?.text` 遇到裸字符串 stderr 会静默变成 ''，把 Hook 写的阻断理由整条丢掉。
+    """
+
+    observed = run_harness(tmp_root)
+
+    # ① 结果整个缺失：拒绝，不是抛异常（探针能跑完本身就是这条的证据）
+    missing = observed["pre_result_missing"]["outcome"]
+    assert missing["kind"] == "deny", missing
+    assert "退出码" in missing["reason"], missing
+    assert observed["pre_result_missing"]["nextCalls"] == 0
+
+    # ② 退出码 2 + 裸字符串 stderr：阻断理由必须原样读出来（不被吞成空串）
+    string_stderr = observed["pre_result_string_stderr"]["outcome"]
+    assert string_stderr["kind"] == "deny", string_stderr
+    assert "blocked by ARCH-001" in string_stderr["reason"], string_stderr
+
+
+def test_a_blank_project_dir_behaves_like_an_undeclared_one(tmp_root) -> None:
+    """`projectDir: ""`（或非字符串）与「没写」同义：回落到会话 cwd，而不是声明了一个空目录。
+
+    头部文档写的是「不填则用会话工作目录」，而 `config.projectDir ?? cwd` 只兜 null/undefined：
+    空串会被当成「声明过了」——会话 cwd 永不被采纳、cwdSource 谎报成 config.projectDir、
+    `workdir: ""` 一路传给 spawn，最后连"这次在哪个目录启动"都归因不出来。
+    """
+
+    observed = run_origin_harness(tmp_root)
+    outcome = observed["origin_blank_project_dir"]
+
+    # 回落成功：真的 spawn 了一次、决策是放行，而且**没有**给它编一条归因
+    assert outcome["spawnAttempts"] == 1, outcome
+    assert outcome["outcome"]["allowed"] is True, outcome
+    assert set(outcome["outcome"]) == {"allowed", "reason"}, outcome
 
 
 def test_every_workdir_denial_carries_a_verified_origin_from_the_closed_set(tmp_root):
@@ -1865,3 +1939,42 @@ def test_the_js_builder_and_the_python_validator_agree_on_empty_and_null(tmp_roo
     assert observed["non_strings"]["object"]["source"] == "unknown"
     assert observed["invalid_everything"]["origin"] == "unknown_origin"
     assert observed["invalid_everything"]["causal_link"] == "unproven"
+
+
+# ------------------------------------------------------------------- 调用标识（配对键）
+
+
+def test_call_action_id_never_fabricates_a_partial_identifier() -> None:
+    """载荷缺字段时返回 None，不许拼「半个 id」。
+
+    docstring 承诺「载荷缺字段时返回 None：编出来的标识会让事后核对接错动作」。旧实现却把
+    缺了 tool_use_id 的载荷折叠成裸 session_id：同一会话里所有这样的调用共用同一个
+    action_id，pre / post 于是按错误的键配对——正是那句承诺要避免的事。裸 tool_use_id
+    则丢掉会话维度，跨会话撞键。
+    """
+
+    from adapters.dsh.hooks import call_action_id
+
+    assert call_action_id({"session_id": "s", "tool_use_id": "call-1"}) == "s:call-1"
+    assert call_action_id({"session_id": "s"}) is None
+    assert call_action_id({"tool_use_id": "call-1"}) is None
+    assert call_action_id({}) is None
+    assert call_action_id({"session_id": "   ", "tool_use_id": "call-1"}) is None
+    assert call_action_id("not-a-mapping") is None
+
+
+def test_a_payload_without_a_tool_use_id_leaves_the_audit_action_id_unset(
+    dsh_config_path, dsh_project
+) -> None:
+    """审计里读到的必须是「没有标识」，不是编出来的那一个。"""
+
+    audit = dsh_project.parent / "audit.jsonl"
+    document = payload("pre-tool-use-edit-block.json", dsh_project)
+    document.pop("tool_use_id")
+
+    outcome = run_hook(document, config_path=dsh_config_path, audit_path=audit)
+
+    assert outcome.exit_code == EXIT_BLOCK
+    record = load_jsonl(audit)[0]
+    assert record["reason_code"] == "context_error"
+    assert "action_id" not in record

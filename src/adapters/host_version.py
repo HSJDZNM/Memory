@@ -718,7 +718,9 @@ def probe_host_version(
             executable_name=name,
             detail=redact(f"输出里解析不出声明正则匹配的版本：{stdout or stderr or '（无输出）'}"),
         )
-    version = match.group(1).strip()
+    # 声明正则允许"恰好一个捕获组"，但那个组可以**不参与匹配**（可选组）：group(1) 这时是
+    # None，直接 .strip() 会抛 AttributeError，破坏"读不出来 = unavailable"的契约。
+    version = (match.group(1) or "").strip()
     if not version:
         return ProbeOutcome(
             ok=False,
@@ -904,11 +906,11 @@ def check_declared_versions(
     compared = tuple(
         item.agent_id for item in findings if item.status in compared_statuses
     )
-    covered = sum(
-        1
-        for item in findings
-        if item.status in (HostVersionStatus.MATCH, HostVersionStatus.DRIFT)
-    )
+    # RECORDING_STALE 也算「真的比对过」：活体探测成功、版本与声明一致，只是提交进仓库的
+    # 观测记录过期了——它确实参与了与宿主的比对。此前把它排除在 covered 之外，于是一次全是
+    # stale 的运行会同时打印「本次没有任何 Adapter 真正参与比对（covered 0/N）」与
+    # 「观测记录…参与了比对」两句互相打脸的话，覆盖数也低估了实际比过的条数。
+    covered = len(compared)
     if failures:
         result = "fail"
     elif unavailable:
@@ -1057,7 +1059,13 @@ def check_recorded_versions(
             findings.append(
                 HostVersionFinding(
                     status=HostVersionStatus.RECORDING_STALE,
-                    detail=(
+                    # 记录文档按不可信加载：它里面的 executable / args / version_pattern
+                    # 必须与活体探测那条路径同口径过 redact()，否则手改记录就能把绝对路径
+                    # 带回报告（本模块的口径是报告里不出现机器布局）。
+                    # 记录文档按不可信加载：它里面的 executable / args / version_pattern
+                    # 必须与活体探测那条路径同口径过 redact()，否则手改记录就能把绝对路径
+                    # 带回报告（本模块的口径是报告里不出现机器布局）。
+                    detail=redact(
                         "记录里的探测读法 "
                         + _describe_reading(entry.executable, entry.args, entry.version_pattern)
                         + " 与当前声明 "
@@ -1072,7 +1080,7 @@ def check_recorded_versions(
             findings.append(
                 HostVersionFinding(
                     status=HostVersionStatus.DRIFT,
-                    detail=(
+                    detail=redact(
                         f"声明 {manifest.agent_version} 不等于记录里的实测值 "
                         f"{entry.observed_version}（记录于 {entry.recorded_at}，探测 {probe_text}）"
                     ),

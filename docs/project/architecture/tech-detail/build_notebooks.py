@@ -106,10 +106,24 @@ def chapter_dirs() -> dict[str, Path]:
     看一章只要打开一个目录。目录名与产物名必须逐字相同（load_spec 会核）。
     """
 
-    found = {}
+    found: dict[str, Path] = {}
+    collisions: dict[str, list[str]] = {}
     for path in sorted(HERE.glob("[0-9][0-9]-*")):
-        if path.is_dir() and (path / CELLS_NAME).is_file():
-            found[path.name[:2]] = path
+        if not (path.is_dir() and (path / CELLS_NAME).is_file()):
+            continue
+        number = path.name[:2]
+        if number in found:
+            collisions.setdefault(number, [found[number].name]).append(path.name)
+            continue
+        found[number] = path
+    if collisions:
+        # 编号是这一章的**唯一键**（`--only 03`、产物名、清单都按它找）。两个目录共用一个编号时
+        # "字母序靠后的赢"是静默覆盖：被覆盖的那一章永远生成不出来，也永远进不了 `--check`
+        # ——它的产物与内容源可以随便漂移而没有任何读数会红。这是仓库结构错误，直接拒绝
+        # （与"没有找到仓库根"同一条出口：退出码 2）。
+        for number, names in sorted(collisions.items()):
+            print(f"章节目录编号重复：{number} → {', '.join(names)}", file=sys.stderr)
+        raise SystemExit(2)
     return found
 
 
@@ -154,7 +168,14 @@ def notebook_cells(spec) -> list[tuple[str, str]]:
     cells = list(spec.cells)
     if not any("pad(" in text for _, text in cells):
         return cells
-    first_code = next(index for index, (kind, _) in enumerate(cells) if kind == "code")
+    first_code = next(
+        (index for index, (kind, _) in enumerate(cells) if kind == "code"), None
+    )
+    if first_code is None:
+        # 没有代码单元（只有说明，且说明里恰好提到 `pad(`）：这里不注入表格工具。
+        # 生成器不该用一个未捕获的 StopIteration 抢在 guard_spec 前面把结论变成 traceback
+        # ——"没有任何代码单元"是一条**结构结论**，由守卫按它的口径报出来。
+        return cells
     kind, text = cells[first_code]
     cells[first_code] = (kind, text.rstrip() + TABLE_HELPER)
     return cells
@@ -261,6 +282,16 @@ def extract_script(spec, cells: Sequence[tuple[str, str]]) -> str:
         "",
         "内容改动请修改同目录的 cells.py 后重新生成，不要直接编辑本文件。",
         '"""',
+        "",
+        "# **`assert` 就是这些讲解的检查手段**：`-O` / `PYTHONOPTIMIZE` 会把它们**全部剥离**——",
+        "# 每张表照样打印、退出码照样 0，而结论一条都没校验：这正是这些脚本要防的假绿。",
+        "# 所以在开头就拒绝运行，而不是跑完看起来都对。",
+        "import sys as _sys",
+        "",
+        "if _sys.flags.optimize:",
+        "    raise SystemExit(",
+        '        "请勿用 -O / PYTHONOPTIMIZE 运行本讲解：assert 已被剥离，结论无法校验"',
+        "    )",
     ]
     for kind, text in cells:
         parts.append("")
@@ -286,6 +317,14 @@ def structural_problems(path: Path) -> list[str]:
 def run_cells(spec, workdir: Path, *, verbose: bool = True) -> list[str]:
     """在指定工作目录下按顺序执行全部代码单元；返回失败原因列表。"""
 
+    if sys.flags.optimize:
+        # 与产物开头那段同一个理由：assert 被剥离时，单元会"全部通过"而结论一条都没校验。
+        # 这里必须显式拒绝——生成/门禁路径上绝不允许出现这种假绿。
+        print(
+            "请勿用 -O / PYTHONOPTIMIZE 运行：assert 会被剥离，讲解单元会全部\"通过\"而结论无从校验",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     failures: list[str] = []
     namespace: dict = {"__name__": "__notebook__"}
     for directory in (SRC_DIR, TOOLS_DIR):
@@ -333,7 +372,38 @@ def git_untracked_snapshot() -> set[str]:
         errors="replace",
         check=False,
     )
+    if result.returncode != 0:
+        # **拿不到基线就不许报"干净"**：git 失败（tarball 检出里没有 .git、索引坏了、
+        # dubious ownership）时 stdout 是空的，`after - before` 于是恒为空——
+        # "单元动了仓库"这条守卫会永远绿。它是守卫，不是尽力而为的读数。
+        detail = (result.stderr or "").strip().splitlines()
+        print(
+            "git status 失败（退出码 " + str(result.returncode) + "）：工作区守卫拿不到基线，"
+            "拒绝按“没有改动”继续" + (f"：{detail[0][:200]}" if detail else ""),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     return {line for line in result.stdout.splitlines() if line.strip()}
+
+
+def unexpected_worktree_changes(
+    before: set[str], after: set[str], *, allowed: set[str]
+) -> set[str]:
+    """本次运行**不该**出现的改动：除 `allowed`（本次生成的两份产物）之外的任何新行。
+
+    为什么不能按后缀放行：`git status --porcelain` 里任何以 `.py` / `.ipynb` 结尾的行都会被
+    当成"本次生成的产物"，于是某个单元把仓库里任意 `.py` 改坏（` M src/policy/models.py`）、
+    新建 `?? src/evil.py`、删掉 ` D src/x.py` 都不会让生成失败——而这条守卫的注释说的是
+    "只允许本目录刚生成的两份产物"。精确比对路径才是那句话的字面意思。
+    """
+
+    unexpected: set[str] = set()
+    for line in after - before:
+        # porcelain v1 的形状：XY<空格>PATH（未跟踪是 `?? PATH`）。
+        path = line[3:].strip().strip('"')
+        if path not in allowed:
+            unexpected.add(line)
+    return unexpected
 
 
 def build_one(spec, *, check_only: bool, execute: bool) -> list[str]:
@@ -381,9 +451,14 @@ def build_one(spec, *, check_only: bool, execute: bool) -> list[str]:
         after = git_untracked_snapshot()
         # 新出现的未被忽略的文件只允许是本目录刚生成的两份产物（.ipynb / .py）；
         # 其余一律算"单元执行动了仓库"，必须报错而不是放过。
-        unexpected = {
-            line for line in after - before if not line.endswith((".ipynb", ".py"))
-        }
+        unexpected = unexpected_worktree_changes(
+            before,
+            after,
+            allowed={
+                notebook_path.relative_to(REPO_ROOT).as_posix(),
+                script_path.relative_to(REPO_ROOT).as_posix(),
+            },
+        )
         if unexpected:
             failures.append(
                 f"[{spec.stem}] 单元执行期间工作区出现了未被忽略的改动（只允许写 .tmp/ 与本次生成的产物）："

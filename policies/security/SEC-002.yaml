@@ -20,6 +20,14 @@
 #   "DO NOT load user-controlled pickle files, which includes the pandas method
 #    `pandas.read_pickle()`."
 #
+# 覆盖边界（实测 ruff 0.14.13，--isolated --select S301,S302 探针）：
+#   报：pickle.load/pickle.loads（含 import pickle as pk 与 from pickle import loads 两种别名写法）、
+#     marshal.load/marshal.loads、pandas.read_pickle，以及 Ruff 认定的"包装 pickle"的库
+#     （实测 dill.loads 与 jsonpickle.decode 会报）；
+#   不报：joblib.load、torch.load、yaml.unsafe_load / yaml.full_load（实测四个都不报）。
+#   S302 只覆盖 marshal；比 pickle 更直接的 unsafe_load 反而在覆盖之外——
+#   "没报"不等于"没有原生反序列化"。
+#
 # 严重级别：原文是 "DO NOT load user-controlled pickle files" 的祈使禁止，因此 error。
 id: SEC-002
 version: 1

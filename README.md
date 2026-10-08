@@ -40,6 +40,16 @@ uv pip install -r requirements.lock
 python -m pip install -r requirements.lock
 ```
 
+**安装边界与"核心可独立运行"是同一条口径**：`pyproject.toml` 的必装依赖只有 pydantic 与 PyYAML；
+HTTP 栈（fastapi / uvicorn）与编排框架（langgraph）分别在 `[api]` 与 `[orchestration]` 两个 extra 里
+（`[dev]` 通过自引用把两者一起装上，所以开发环境与下面这些命令不受影响）。只想要治理核心时：
+
+```powershell
+pip install .                 # 只有核心：policy / retrieval / validators / enforcement / adapters / provenance
+pip install ".[api]"          # 再加 Phase 7 的 HTTP 服务
+pip install ".[orchestration]" # 再加 Phase 8 的编排层（需要 langgraph）
+```
+
 > 本仓库**没有提交 `uv.lock`**：生成它需要在能探测解释器的环境里运行 `uv lock`（受控沙箱会拒绝）。
 > 因此在锁文件这件事上只有一份真相——`requirements.lock`；`uv sync` 在没有 `uv.lock` 时是重新解析，
 > 不是锁定安装，CI 里不使用它。`python tools/check_repo_consistency.py` 会守住这条一致性。
@@ -591,7 +601,7 @@ uv run python tools/cleanup.py             # 删除 .tmp/、__pycache__/、.pyte
 | 项 | 选择 | 说明 |
 | --- | --- | --- |
 | 语言 | Python ≥ 3.11（本机验证 3.13.11） | 文档选型 Phase 0–1 指定 |
-| 依赖 | pydantic 2、PyYAML 6；FastAPI + uvicorn（Phase 7 传输层）；langgraph 1.2（Phase 8 编排层） | 类型化规则与 YAML 解析；**核心层不依赖 Web 框架，也不依赖工作流框架**——只有 `src/policy_api/app.py` 需要前者，只有 `src/orchestration/langgraph_engine.py` 需要后者（构造引擎时延迟导入 + 版本校验，不可用即失败关闭） |
+| 依赖 | **必装**：pydantic 2、PyYAML 6；**extras**：`[api]` = FastAPI + uvicorn（Phase 7 传输层）、`[orchestration]` = langgraph 1.2（Phase 8 编排层） | 类型化规则与 YAML 解析；**核心层不依赖 Web 框架，也不依赖工作流框架**——只有 `src/policy_api/app.py` 需要前者，只有 `src/orchestration/langgraph_engine.py` 需要后者（构造引擎时延迟导入 + 版本校验，不可用即失败关闭）。这条纪律在**安装边界**上也成立：`pip install .` 不会把 HTTP 栈与 LangChain 依赖树拖进核心 |
 | 检索 | SQLite FTS5（标准库 sqlite3，无第三方依赖） | Phase 3 的可解释检索基线；向量检索是可替换端口，本阶段**未采纳**（评测见阶段记录） |
 | 受控执行 | 标准库 + pydantic（无第三方依赖） | Phase 4：Tool Registry 是数据（YAML），授权 / 幂等 / 审计链落在追加写 JSONL 上，执行驱动按注册表声明选择 |
 | 测试 | pytest 8+（本机验证 9.1.1） | 单元 + 契约 + 集成 + 对抗四层；API 用进程内 ASGI 客户端（httpx），不需要端口 |

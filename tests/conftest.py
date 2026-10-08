@@ -43,7 +43,14 @@ def _install_session_temp_root() -> bool:
     """
 
     fallen_back = os.path.realpath(tempfile.gettempdir()) == os.path.realpath(os.getcwd())
-    SESSION_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    try:
+        SESSION_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # 仓库内 .tmp/ 建不出来（只读检出、祖先路径不是目录）时**不能**让会话在这里死掉：
+        # 这段 bootstrap 在 conftest 导入期执行，异常冒泡等于"任何用例都还没收集就整体失败"，
+        # 而 tempfile 自己的解析（TMPDIR/TEMP/TMP 或平台默认）本来是可用的。
+        # 契约是"建得出才改环境变量"：没建出来就一个都不改，绝不把临时根指到不存在的目录。
+        return fallen_back
     # 三个变量都设：tempfile 依次看 TMPDIR / TEMP / TMP，少设一个就可能在别的平台上又回退。
     for name in ("TMPDIR", "TEMP", "TMP"):
         os.environ[name] = str(SESSION_TEMP_ROOT)

@@ -505,7 +505,8 @@ BAD_TIMEOUT = write_hooks(BAD_TIMEOUT_HOOKS, 3, "python -m adapters.dsh.hooks --
 NO_COMMAND = write_hooks(NO_COMMAND_HOOKS, 30, "python -c pass")
 
 wiring_cases = (
-    ("hooks.json 正常", GOOD, ""),
+    # 健康行的期望不是"某个子串"，而是"**没有问题**"（None 只是占位，下面走另一条分支）。
+    ("hooks.json 正常", GOOD, None),
     ("timeout 只有 3s", BAD_TIMEOUT, "不大于内部预算"),
     ("命令没指向本 Hook", NO_COMMAND, "没有指向 adapters.dsh.hooks"),
     ("hooks.json 不存在", TEMP / "nope.json", "不存在"),
@@ -515,7 +516,12 @@ print("-" * 108)
 for label, path, expected in wiring_cases:
     report = check_wiring(CONFIG, hooks_config_path=path)
     print(pad(label, 24) + (report[:76] if report else "通过（运行期接线正常）"))
-    assert expected in report, (label, report)
+    if expected is None:
+        # **健康行要断言"没有问题"**：原来这里写的是 `expected = ""` + `assert "" in report`，
+        # 而空串是任何字符串的子串——`check_wiring` 就算报出一堆问题，这一行也照样通过。
+        assert not report, (label, report)
+    else:
+        assert expected in report, (label, report)
 
 # 接线坏了连"本来会放行"的事件也要阻断：配置事故不得降级成放行。
 bad_wired = run_hook(
@@ -733,8 +739,6 @@ print()
 print("台账按 event_id 查到上一次判定:", previous is not None, "| 原因码:", None if previous is None else previous["reason_code"])
 post_lines = POST_AUDIT.read_text(encoding="utf-8").splitlines()
 assert previous is not None and previous["reason_code"] == "allow"
-assert sum(1 for line in post_lines if "call-post-valid" in line) >= 2
-assert sum(1 for line in post_lines if "call-post-repair" in line) >= 2
 # G2 的成对契约要按**语义**断言，不能数记录条数：同一次调用在审计里除了 Phase 2 的
 # PreToolUse / PostToolUse 两条，还会落 Phase 4 的 pre_state / post_evidence / final_decision 等阶段，
 # 会话起点另有一条 G11 的上下文留痕（reason_code=context_injection）。数条数会随不相干的

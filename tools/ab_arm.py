@@ -3,7 +3,7 @@
 # 用法::
 #
 #     python tools/ab_arm.py --list-sanitization            # 净化面（每条带理由）
-#     python tools/ab_arm.py --materialize --baseline . --out .tmp/ab-arms
+#     python tools/ab_arm.py --materialize --baseline-fixture shop --out .tmp/ab-arms
 #     python tools/ab_arm.py --assert-clean --run-dir .tmp/ab-arms/<run>
 #     python tools/ab_arm.py --self-proof                   # 变异自证：故意留规则 -> 断言必须红 -> 撤回 -> 绿
 #     python tools/ab_arm.py --run --task demo-1 --path src/shop/order_controller.py \
@@ -47,10 +47,21 @@
 #   所以 --assert-clean 同时要求：清单路径不存在、内容扫描零命中、rules_root 在臂树之外。
 #   清单与理由见 SANITIZATION；自证见 --self-proof（AGENTS 第 45 条：仪器必须证明自己会红）。
 #
+# 基线从哪来（`--baseline` 只收**外部任务树**）
+# ==========================================
+#
+#   --baseline-fixture shop   生成固定夹具项目（最小三层树 + 一个自带测试）；
+#   --baseline <dir>          任意外部 checkout（任务树）。
+#
+#   **平台仓库自己不是受支持的基线。** clean 判据问的是"这棵臂树里能不能读到平台自己的规则集
+#   与产物"，而平台仓库必然在自己的**追溯语料**里引用规则 ID（docs/project/rule-effects/**、
+#   docs/project/reviews/** 就是逐条点评规则的报告）。拿它当基线时 clean 段报红，说明的是
+#   **你在问一个不该问的问题**——不是扫描器误报，也不是净化清单漏了东西。平台自测请用
+#   --baseline-fixture；外部任务树的判定才是这套读数的适用范围。
+#
 # 不承诺什么
 # ==========
-#
-#   - 净化不覆盖 .git 历史：本工具复制时就**不带 .git**（复制忽略项里有它），
+##   - 净化不覆盖 .git 历史：本工具复制时就**不带 .git**（复制忽略项里有它），
 #     但基线树里若已有别的历史副本（例如打包好的 zip），它管不着；这一点写在 --list-sanitization 的 note 里；
 #   - 内容扫描只认"规则身份形态"的正则，认不出的复述（中文意译、改名后的 YAML）它抓不到——
 #     所以清单以**路径**为主、正则为辅，抓不到的部分如实写成缺口；
@@ -121,6 +132,49 @@ COPY_IGNORE = (
 )
 
 
+#: 「这棵树就是平台仓库自己」的特征**组合**：单看任何一条都会误伤（外部任务树也可能带 policies/），
+#: 三条同时成立才算——规则本体 + 核心判定引擎 + 本机门禁。
+PLATFORM_REPO_FEATURES: tuple[str, ...] = (
+    "policies/*/*.yaml（规则本体）",
+    "src/policy/engine.py（核心判定引擎）",
+    "tools/ci_local.py（本机门禁）",
+)
+
+
+def platform_repo_features(tree: Path) -> list[str]:
+    """基线树命中了哪几条「平台仓库自己」的特征。"""
+
+    hits: list[str] = []
+    if any((tree / "policies").glob("*/*.yaml")):
+        hits.append(PLATFORM_REPO_FEATURES[0])
+    if (tree / "src" / "policy" / "engine.py").is_file():
+        hits.append(PLATFORM_REPO_FEATURES[1])
+    if (tree / "tools" / "ci_local.py").is_file():
+        hits.append(PLATFORM_REPO_FEATURES[2])
+    return hits
+
+
+def assert_supported_baseline(baseline: Path) -> None:
+    """`--baseline` 只收**外部任务树**；平台仓库自己按用法错误拒绝（退出码 2）。
+
+    clean 判据问的是「这棵臂树里能不能读到平台自己的规则集与产物」。平台仓库必然在自己的
+    追溯语料里引用规则 ID（docs/project/rule-effects/**、docs/project/reviews/**），此时 clean
+    段报红是**在问一个不该问的问题**——所以不受支持的输入要在这里失败关闭，而不是产出一份
+    让人误以为是缺陷的读数。判据是**特征组合**（三条同时成立），不是单一路径：外部任务树
+    带一份 policies/ 是正常的。
+    """
+
+    hits = platform_repo_features(baseline)
+    if len(hits) == len(PLATFORM_REPO_FEATURES):
+        raise UsageError(
+            "基线树看起来就是平台仓库自己（命中：" + "；".join(hits) + "）。"
+            "`--baseline` 的输入是**外部任务树**：clean 判据问的是「这棵臂树里能不能读到平台自己的"
+            "规则集与产物」，而平台仓库必然在追溯语料里引用规则 ID（docs/project/rule-effects/**、"
+            "docs/project/reviews/**），此时报红是在问一个不该问的问题，不是缺陷。"
+            "平台自测请用 --baseline-fixture shop。"
+        )
+
+
 class UsageError(Exception):
     """用法 / 配置错误：退出码 2。"""
 
@@ -171,16 +225,60 @@ SANITIZATION: tuple[SanitizedPath, ...] = (
     SanitizedPath(".policy/**", "钩子配置 / 审计 / 台账（存在就删；臂运行时自己生成自己的）"),
 )
 
-# 内容扫描：规则身份的形态。
-# 局限写在这里：它只认"大写字母组-三位数字"这类身份串与几个明显的键名，
+# 内容扫描：规则身份。
+# 局限写在这里：它只认**本平台自己的规则 ID**与几个明显的键名，
 # **认不出**中文意译、改名后的 YAML、或把规则编码进别的东西里——所以清单以路径为主。
-LEAK_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r"\b[A-Z][A-Z0-9]{1,9}-\d{1,4}\b", "规则身份形态（例如 ARCH-001 / STYLE-018）"),
+RULE_ID_SHAPE_PATTERN: tuple[str, str] = (
+    r"\b[A-Z][A-Z0-9]{1,9}-\d{1,4}\b",
+    "规则身份形态（兜底：policies/ 读不到时才用；UTF-8 / SHA-256 / AB-5 这类标准写法也会命中）",
+)
+
+#: 判定协议 / 审计记录里的键名：改名后的 YAML 认不出，但这几个键名一出现就是协议形态的泄露。
+PROTOCOL_KEY_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\brule_id\b", "判定协议里的 rule_id 键名"),
     (r"\bmatched_rules\b", "判定协议里的 matched_rules 键名"),
     (r"\bskipped_rules\b", "判定协议里的 skipped_rules 键名"),
     (r"\bviolations_by_severity\b", "审计记录里的按级别分布键名"),
 )
+
+#: 扫描器**自己的源文件**：它必然包含模式串、载荷键名与自证植入的规则 ID。
+#: 把这几样当成"泄露"，会让一棵真正干净的臂树永远报 dirty（实测：只放这一个文件的树上命中 15 行）。
+SELF_SOURCE = "tools/ab_arm.py"
+
+
+def rule_identities(root: Path | None = None) -> tuple[str, ...]:
+    """本平台自己的规则 ID：policies/<domain>/<ID>.yaml 的文件名主干。
+
+    这是"规则身份"的**权威集合**——比"大写字母组-数字"的形态串精确得多：
+    UTF-8 / SHA-256 / ISO-8601 / R16-4 这些标准写法与章节号都不在其中。
+    读不到（没有 policies/ 目录）就返回空元组，由调用方回退到形态串并**在读数里说明**。
+    """
+
+    base = (root or REPO_ROOT) / "policies"
+    if not base.is_dir():
+        return ()
+    identities: list[str] = []
+    for path in sorted(base.glob("*/*.yaml")):
+        value = path.stem.strip()
+        if value and value not in identities:
+            identities.append(value)
+    return tuple(identities)
+
+
+def leak_patterns(root: Path | None = None) -> tuple[tuple[str, str], ...]:
+    """本次真正使用的扫描模式：规则 ID（优先取权威集合） + 协议键名。"""
+
+    identities = rule_identities(root)
+    if identities:
+        head = (
+            (
+                r"\b(?:" + "|".join(re.escape(item) for item in identities) + r")\b",
+                "本平台规则 ID（%d 条，取自 policies/*/*.yaml）" % len(identities),
+            ),
+        )
+    else:
+        head = (RULE_ID_SHAPE_PATTERN,)
+    return head + PROTOCOL_KEY_PATTERNS
 
 # 内容扫描只扫这些后缀（其余当二进制跳过）
 TEXT_SUFFIXES = {
@@ -636,7 +734,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="正向对照：探针**故意**把平台挂上 PYTHONPATH——断言此时必须红（证明探针真的在探）",
     )
-    parser.add_argument("--baseline", default=".", help="基线树（默认仓库自己；**平台自身当基线是结构性不可比的**，见 --baseline-fixture）")
+    parser.add_argument(
+        "--baseline",
+        default=None,
+        help="外部任务树的基线。**平台仓库自己不是受支持的基线**（clean 判据问的是这棵臂树能不能"
+             "读到平台自己的规则集与产物，而平台仓库必然在追溯语料里引用规则 ID）——检出这种输入"
+             "直接按用法错误拒绝（exit 2）；平台自测用 --baseline-fixture。不给基线且不用夹具时"
+             "同样是用法错误，没有「默认仓库自己」这回事",
+    )
     parser.add_argument(
         "--baseline-fixture",
         default=None,
@@ -669,14 +774,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not out_root.is_absolute():
         out_root = REPO_ROOT / out_root
     if args.baseline_fixture:
-        baseline = build_fixture_baseline(args.baseline_fixture, out_root)
+        baseline: Path | None = build_fixture_baseline(args.baseline_fixture, out_root)
         if not args.pass_to_pass and not args.fail_to_pass:
             args.pass_to_pass = list(FIXTURE_NODE_IDS)
-    else:
+    elif args.baseline:
         baseline = Path(args.baseline)
         if not baseline.is_absolute():
             baseline = (REPO_ROOT / baseline).resolve()
+    else:
+        baseline = None  # 只有不需要基线的动作（--list-sanitization / --assert-clean）允许为空
     run_id = args.run_id or (utc_stamp() + "-" + uuid.uuid4().hex[:6])
+
+    def require_baseline(resolved: Path | None) -> Path:
+        """用基线的动作统一走这里：缺基线 / 不受支持的基线都在这里失败关闭。"""
+
+        if resolved is None:
+            raise UsageError(
+                "缺基线：给 --baseline-fixture <name>（夹具项目，例如 shop）或 --baseline <外部任务树>"
+            )
+        assert_supported_baseline(resolved)
+        return resolved
 
     try:
         if args.list_sanitization:
@@ -687,7 +804,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     {"pattern": item.pattern, "reason": item.reason, "added_by": item.added_by}
                     for item in SANITIZATION
                 ],
-                "leak_patterns": [{"regex": pattern, "label": label} for pattern, label in LEAK_PATTERNS],
+                "leak_patterns": [{"regex": pattern, "label": label} for pattern, label in leak_patterns()],
                 "copy_ignore": list(COPY_IGNORE),
                 "kept": "tests/ 只删 fixtures/rules 与 fixtures/decisions；其余保留（可用性 oracle 要用）",
                 "limits": (
@@ -699,9 +816,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_OK
 
         if args.self_proof:
-            if not baseline.is_dir():
-                raise UsageError("基线树不存在：" + display(baseline))
-            payload = self_proof(baseline=baseline, out_root=out_root)
+            current = require_baseline(baseline)
+            if not current.is_dir():
+                raise UsageError("基线树不存在：" + display(current))
+            payload = self_proof(baseline=current, out_root=out_root)
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) if args.json else render_self_proof(payload))
             return EXIT_OK if payload["result"] == "pass" else EXIT_FAIL
 
@@ -730,19 +848,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_OK if clean else EXIT_FAIL
 
         if args.materialize:
-            if not baseline.is_dir():
-                raise UsageError("基线树不存在：" + display(baseline))
+            current = require_baseline(baseline)
+            if not current.is_dir():
+                raise UsageError("基线树不存在：" + display(current))
             run_dir = out_root / run_id
             arms = ARMS if args.arm == "all" else (args.arm,)
             manifests = {}
             for arm in arms:
-                manifests[arm] = prepare_arm(baseline=baseline, arm_dir=run_dir / arm, arm=arm, rules_root=REPO_ROOT)
+                manifests[arm] = prepare_arm(baseline=current, arm_dir=run_dir / arm, arm=arm, rules_root=REPO_ROOT)
             payload = {
                 "ab_arm_schema_version": AB_ARM_SCHEMA_VERSION,
                 "kind": "materialize",
                 "run_id": run_id,
                 "run_dir": display(run_dir),
-                "baseline": display(baseline),
+                "baseline": display(current),
                 "arms": {arm: {"tree": manifest["tree"], "removed": len(manifest["sanitization"]), "seeded": manifest["seeded_fixture"]} for arm, manifest in manifests.items()},
                 "timestamp": reading.utc_now(),
             }
@@ -750,8 +869,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_OK
 
         if args.run:
-            if not baseline.is_dir():
-                raise UsageError("基线树不存在：" + display(baseline))
+            current = require_baseline(baseline)
+            if not current.is_dir():
+                raise UsageError("基线树不存在：" + display(current))
             if args.preset and args.preset not in PRESETS:
                 raise UsageError("未知 preset " + repr(args.preset) + "；有 " + " / ".join(sorted(PRESETS)))
             arms = ARMS if args.arm == "all" else (args.arm,)
@@ -761,7 +881,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for arm in arms:
                 outputs.append(
                     run_one(
-                        baseline=baseline,
+                        baseline=current,
                         out_root=out_root,
                         run_id=run_id,
                         arm=arm,
@@ -966,7 +1086,8 @@ def leak_scan(tree: Path) -> Mapping[str, Any]:
     所以它是**兜底**，主判据是路径删除。扫过的文件数与跳过数都要报出来。
     """
 
-    compiled = [(re.compile(pattern), label) for pattern, label in LEAK_PATTERNS]
+    patterns = leak_patterns()
+    compiled = [(re.compile(pattern), label) for pattern, label in patterns]
     hits: list[Mapping[str, Any]] = []
     scanned = 0
     skipped = 0
@@ -974,6 +1095,10 @@ def leak_scan(tree: Path) -> Mapping[str, Any]:
     for relative in files:
         path = tree / relative
         if path.suffix.lower() not in TEXT_SUFFIXES:
+            skipped += 1
+            continue
+        if relative == SELF_SOURCE:
+            # 扫描器自己的声明不算证据：它写着模式串、载荷键名，还写着自证要植入的规则 ID。
             skipped += 1
             continue
         try:
@@ -1000,10 +1125,16 @@ def leak_scan(tree: Path) -> Mapping[str, Any]:
         "files_with_hits": len({item["path"] for item in hits}),
         "hit_unit": "lines（每行首个命中模式，命中即 break）",
         "scan_root": display(tree),
-        "excludes": "不排除任何目录（净化后的臂树本来就只剩任务树；tests/ 在夹具路线下是测试集）",
+        "excludes": (
+            "只排除扫描器自己的源文件 " + SELF_SOURCE
+            + "（它必然包含模式串、载荷键名与自证植入的规则 ID）；其余不排除"
+        ),
         "suffix_filter": sorted(TEXT_SUFFIXES),
-        "patterns": [{"regex": pattern, "label": label} for pattern, label in LEAK_PATTERNS],
-        "limits": "只认规则身份的形态串；中文意译 / 改名后的 YAML / 编码过的规则它抓不到（主判据是路径删除）",
+        "patterns": [{"regex": pattern, "label": label} for pattern, label in patterns],
+        "limits": (
+            "只认本平台规则 ID 与几个协议键名；中文意译 / 改名后的 YAML / 编码过的规则它抓不到"
+            "（主判据是路径删除）"
+        ),
     }
 
 

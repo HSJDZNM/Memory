@@ -112,9 +112,20 @@ def build_assembly(
     tool_runner: Optional[ToolRunner] = None,
     checkpoint_store: Optional[CheckpointStore] = None,
     clock=None,
+    wall_clock=None,
     router_fns: Optional[Mapping[str, Any]] = None,
 ) -> Assembly:
-    """按配置装配。所有端口都可以注入（测试、闭环与真实部署共用同一条装配路径）。"""
+    """按配置装配。所有端口都可以注入（测试、闭环与真实部署共用同一条装配路径）。
+
+    **两个时钟不是重复**（此前只有一个参数，两种口径混着传）：
+      - `clock` 是**单调秒**：预算与耗时属于*进程的时间*，不受系统时间跳变影响；
+        消费方是 NodeContext / StepExecutor / 引擎。
+      - `wall_clock` 是**墙上时间**（datetime）：审批与授权的签发/过期属于*人的时间*，
+        必须与系统时钟对齐；消费方是 PlatformToolRunner 与 ApprovalGate，
+        不注入就用 enforcement 的 utc_now。
+    把单调秒喂给审批侧不会立刻报错，而是在"比较这张条子有没有过期"那一刻抛 TypeError——
+    那时流程已经走了一半，且报错点离注入点很远。
+    """
 
 
     if client is None:
@@ -123,7 +134,9 @@ def build_assembly(
                 "没有可用的平台客户端：既没有注入 client，也没有声明 api_base_url / token"
             )
         client = ResilientPolicyClient(
-            ApiPolicyClient(config.api_base_url, token=config.api_token),
+            # 租户作为**提示**随每个判定请求上行（服务端仍按令牌核对）；
+            # 不传就是 None——与"请求体里没有 tenant"逐字相同。
+            ApiPolicyClient(config.api_base_url, token=config.api_token, tenant=config.tenant),
             failure_threshold=config.circuit_failure_threshold,
         )
     if tool_runner is None:
@@ -134,7 +147,7 @@ def build_assembly(
             ledger_path=config.ledger_path,
             workspace=config.workspace,
             agent_version=config.agent_version,
-            clock=clock,
+            clock=wall_clock,  # 授权/台账的时间戳是墙上时间，不是单调秒
         )
     store = checkpoint_store
     if store is None:
@@ -153,9 +166,11 @@ def build_assembly(
         client=client,
         runner=tool_runner,
         author=author,
-        approvals=ApprovalGate(config.approvals_dir, clock=clock),
+        approvals=ApprovalGate(config.approvals_dir, clock=wall_clock),
         workspace=config.workspace,
-        clock=clock or node_context_default_clock(),
+        # `or` 会把"给了个假值"与"没给"混为一谈：可调用对象只要定义了 __bool__/__len__ 就可能为假，
+        # 于是注进去的时钟被**静默换掉**。判"是不是 None"，不判真假。
+        clock=node_context_default_clock() if clock is None else clock,
     )
     executor_kwargs: dict[str, Any] = {
         "node_context": node_context,

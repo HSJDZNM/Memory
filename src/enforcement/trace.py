@@ -39,6 +39,11 @@ STAGE_ORDER: tuple[AuditStage, ...] = (
 
 _STAGE_INDEX = {stage: index for index, stage in enumerate(STAGE_ORDER)}
 
+#: dsh 适配器为"没有经过 pre-check 的调用"写下的占位 POST_EVIDENCE 记录（stage_note）。
+#: 它们是**记录一次未受治理的调用**的合法证据（适配器写完还会抛错阻断这次调用），
+#: 不是"链被人动过"。值必须精确匹配——不认识的备注一律按链缺陷处理（失败关闭）。
+_UNGOVERNED_EVIDENCE_NOTES = frozenset({"post_without_pre", "post_without_request"})
+
 
 @dataclass(frozen=True)
 class TraceEntry:
@@ -82,11 +87,21 @@ class TraceReport:
     def has_final(self) -> bool:
         return any(entry.stage is AuditStage.FINAL_DECISION for entry in self.entries)
 
-    def payload_of(self, stage: AuditStage) -> Optional[Mapping[str, Any]]:
-        for entry in self.entries:
-            if entry.stage is stage:
-                return entry.payload
-        return None
+    def payload_of(
+        self, stage: AuditStage, *, latest: bool = True
+    ) -> Optional[Mapping[str, Any]]:
+        """某个阶段的载荷；同一阶段有多条时默认取**最后**一条。
+
+        verify_chain 明确允许重试重新开启一轮 pre-check，因此 pre_decision /
+        final_decision 完全可能出现多条。旧实现无条件返回**第一条**——那是已经被取代的
+        说法（例如"第一次 allow、重试后 block"），调用方问"这次动作的结论"却拿到旧结论。
+        要读第一次尝试就显式传 latest=False，取舍写在签名上。
+        """
+
+        matches = [entry for entry in self.entries if entry.stage is stage]
+        if not matches:
+            return None
+        return matches[-1].payload if latest else matches[0].payload
 
 
 def verify_chain(records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
@@ -109,8 +124,15 @@ def verify_chain(records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
         if position is None:
             issues.append(f"#{index}: 未知阶段 {record.stage!r}")
             continue
-        # 以 action_id 为单位分组；没有 action_id 的记录（如请求阶段）单独成组。
-        group = str(record.action_id or record.trace_id or "<unanchored>")
+        # 以 action_id 为单位分组；没有 action_id 的记录按 **request_id** 分，
+        # 两者都没有的每条自成一组（用序号做锚）。
+        #
+        # 旧实现回落到 trace_id：同一个 trace 里不同请求的记录、以及任何丢了 action_id 的
+        # 动作记录全挤进一个桶——第二条请求又从 request 阶段开始，于是被误报成"阶段顺序倒退"
+        # （阶段顺序本来就是**按动作/请求**判断的，全局单调反而是错的）。
+        group = str(
+            record.action_id or record.request_id or f"<unanchored:{record.sequence}>"
+        )
 
         if record.stage is AuditStage.PRE_DECISION:
             # 重试会重新走一次 pre-check：允许它开启新一轮，但之后仍必须按顺序推进。
@@ -118,12 +140,24 @@ def verify_chain(records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
             decided.add(group)
             continue
 
-        # "没有决策就没有执行"只针对**真的产生了效果**的阶段：
-        # refused 的执行记录恰恰是"没有决策/决策属于别的动作"时的合法留痕。
-        produced_effect = record.stage is AuditStage.EXECUTION and (
-            str((record.payload or {}).get("status", "")) in ("executed", "delegated", "failed")
+        # "没有决策就没有执行"只针对**真的产生了效果**的阶段：refused 的执行记录恰恰是
+        # "没有决策/决策属于别的动作"时的合法留痕。判据取**补集**：只有显式的 refused 才算
+        # 没效果，缺失 / 拼错 / 未来新增的状态一律按"产生了效果"处理——否则一条 status 写坏
+        # 或写错的执行记录会从这条不变式下面溜走（旧实现正是白名单，属于失败打开）。
+        status = str((record.payload or {}).get("status", ""))
+        produced_effect = record.stage is AuditStage.EXECUTION and status != "refused"
+        # 例外只给"声明过自己是未受治理占位"的 POST_EVIDENCE 记录，且必须精确匹配备注值；
+        # 缺字段 / 拼错 / 未来新增的备注都照旧按"没有决策就不能有证据"报出来。
+        ungoverned_note = str((record.payload or {}).get("stage_note", ""))
+        exempt_evidence = (
+            record.stage is AuditStage.POST_EVIDENCE
+            and ungoverned_note in _UNGOVERNED_EVIDENCE_NOTES
         )
-        if (produced_effect or record.stage is AuditStage.POST_EVIDENCE) and group not in decided:
+        if (
+            (produced_effect or record.stage is AuditStage.POST_EVIDENCE)
+            and group not in decided
+            and not exempt_evidence
+        ):
             issues.append(
                 f"#{index}: {group} 出现 {record.stage.value} 之前没有任何 pre_decision "
                 "（没有决策就不能有执行/证据记录）"

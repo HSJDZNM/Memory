@@ -10,16 +10,68 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from enforcement.action import _check_constraints
 from enforcement.models import (
     ActionRequest,
+    ActionRequestError,
     DriverKind,
     EffectKind,
+    ParamSpec,
     ParamType,
     ParamValue,
+    PathKind,
     RiskLevel,
     digest_of,
     utc_now,
 )
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        {"name": "timeoutMs", "type": "integer", "enum": ("1", "2")},
+        {"name": "run_in_background", "type": "boolean", "pattern": "true|false"},
+        {"name": "argv", "type": "string_list", "max_items": 2, "max_chars": 10},
+        {"name": "argv", "type": "string_list", "max_items": 2, "enum": ("a",)},
+    ],
+)
+def test_text_constraints_on_unsupported_types_are_rejected_at_load(declaration):
+    """pattern / max_chars / enum 只对 string 与 path 生效：声明在别的类型上加载期拒绝。
+
+    action._check_constraints 只对字符串取值做这三项校验，静默跳过等于"接受了但不执行"。
+    """
+
+    with pytest.raises(ValidationError) as error:
+        ParamSpec(**declaration)
+
+    assert "只适用于 string 与 path" in str(error.value)
+
+
+def test_declared_text_constraints_are_never_silently_skipped():
+    """绕过加载期校验的 Spec（model_construct）也不许静默跳过已声明的约束。"""
+
+    spec = ParamSpec.model_construct(
+        name="timeoutMs",
+        type=ParamType.INTEGER,
+        required=True,
+        description="",
+        max_chars=None,
+        max_items=None,
+        max_item_chars=None,
+        pattern="\\d+",
+        enum=(),
+        path_scope=None,
+        path_kind=PathKind.FILE,
+        blocked_prefixes=(),
+        escalating_values=(),
+        requires_permission=None,
+        secret=False,
+    )
+
+    with pytest.raises(ActionRequestError) as error:
+        _check_constraints(spec, 5)
+
+    assert "无法执行这些约束" in str(error.value)
 
 
 def param(name: str, value: str) -> ParamValue:
@@ -50,7 +102,32 @@ def request_payload(**overrides):
         created_at=utc_now(),
     )
     payload.update(overrides)
+    if "param_digest" not in overrides:
+        # 请求文档的 param_digest 必须能由 params 复算出来（模型构造期校验）：
+        # 夹具因此不能写一个假摘要——那正是"载荷在撒谎"的形态。
+        payload["param_digest"] = digest_of(
+            {item.name: item.canonical() for item in payload.get("params", ())}
+        )
     return payload
+
+
+def test_a_tampered_param_digest_is_refused():
+    """param_digest 不在 action_hash 的 material 里，但失配必须拒绝。
+
+    它是审计里"这次到底传了什么"的摘要：如果构造期不核，一份被改过（或字段是编的）
+    的请求会带着一个描述别的参数的摘要进入审计与台账。
+    """
+
+    payload = request_payload(params=[param("content", "A")])
+    payload["param_digest"] = "sha256:not-the-params"
+
+    with pytest.raises(ValidationError) as error:
+        ActionRequest.model_validate(payload)
+
+    assert "param_digest" in str(error.value)
+
+    # 反真空：摘要与参数一致时同一个载荷照常还原。
+    assert ActionRequest.model_validate(request_payload(params=[param("content", "A")]))
 
 
 def test_duplicate_param_names_are_rejected():
@@ -63,8 +140,10 @@ def test_duplicate_param_names_are_rejected():
 
     with pytest.raises(ValidationError) as error:
         ActionRequest(
-            **request_payload(),
-            params=(param("content", "A"), param("content", "LAST")),
+            **request_payload(
+                params=(param("content", "A"), param("content", "LAST")),
+                param_digest="sha256:任意值",
+            )
         )
     assert "重复" in str(error.value)
 
@@ -72,8 +151,8 @@ def test_duplicate_param_names_are_rejected():
 def test_distinct_param_values_still_produce_distinct_hashes():
     """反真空：单值请求的参数一变，action_hash 必须跟着变。"""
 
-    first = ActionRequest(**request_payload(), params=(param("content", "A"),))
-    second = ActionRequest(**request_payload(), params=(param("content", "B"),))
+    first = ActionRequest(**request_payload(params=(param("content", "A"),)))
+    second = ActionRequest(**request_payload(params=(param("content", "B"),)))
 
     assert first.action_hash != second.action_hash
     assert first.value_of("content") == "A"

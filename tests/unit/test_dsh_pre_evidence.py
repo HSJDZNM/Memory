@@ -216,6 +216,36 @@ def test_the_shadow_copy_is_pruned_when_it_lives_inside_the_workspace(tmp_root: 
     assert not shadow_root.exists() or list(shadow_root.iterdir()) == []
 
 
+def test_the_shadow_copy_prunes_top_level_excludes(tmp_root: Path) -> None:
+    """影子副本必须真的剪掉**顶层**被排除的目录（.git / node_modules …）。
+
+    `_relative(根, 根)` 给的是 "."（`PurePath.relative_to` 的语义），不是 docstring 承诺的空串：
+    顶层子项于是被拼成 "./.git" 这种相对路径，而排除 glob（`.git/**`）只认 ".git" 与 ".git/"——
+    整棵目录被复制进影子副本，既拖慢取证，又让验证器看见声明明确要排除的文件。
+    """
+
+    source = tmp_root / "project"
+    (source / ".git").mkdir(parents=True)
+    (source / ".git" / "config").write_text("x" + chr(10), encoding="utf-8", newline="")
+    (source / "node_modules" / "pkg").mkdir(parents=True)
+    (source / "node_modules" / "pkg" / "index.js").write_text("x" + chr(10), encoding="utf-8", newline="")
+    (source / "src").mkdir()
+    (source / "src" / "main.py").write_text("VALUE = 1" + chr(10), encoding="utf-8", newline="")
+
+    target = tmp_root / "shadow"
+    copied = pre_evidence_module._copy_workspace(
+        source,
+        target,
+        exclude=[".git/**", "node_modules/**"],
+        shadow_root=target,
+    )
+
+    assert (target / "src" / "main.py").is_file()
+    assert not (target / ".git").exists()
+    assert not (target / "node_modules").exists()
+    assert copied == 1
+
+
 def test_a_shadow_that_would_swallow_the_project_is_refused(tmp_root: Path, monkeypatch) -> None:
     """影子目录一旦与项目重叠，finally 里的整棵删除就会删到项目本身：先拒绝。"""
 

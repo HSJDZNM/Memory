@@ -14,11 +14,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Optional, Protocol, Sequence
+from typing import Any, Iterator, Mapping, Optional, Protocol, Sequence
 
+from .locking import LockError, file_lock
 from .models import (
     AuditError,
     AuditRecord,
@@ -46,6 +49,24 @@ DEFAULT_MAX_RECORD_BYTES = 16384
 _MAX_STRING_CHARS = 2000
 _MAX_DEPTH = 6
 _MAX_ITEMS = 64
+
+#: 抢不到审计锁时的等待上限；超时即失败关闭（拒绝写，绝不在没锁的情况下追加）。
+_LOCK_TIMEOUT_SECONDS = 5.0
+
+
+@contextmanager
+def _audit_lock(path: Path, *, timeout_seconds: float = _LOCK_TIMEOUT_SECONDS) -> Iterator[None]:
+    """审计文件的跨进程互斥（实现见 `locking.file_lock`）。
+
+    抢不到锁**不写**：审计是摘要链，"两个写入方各自算出同一个 sequence/prev_digest"
+    会让链静默分叉，事后只能靠 verify() 发现。
+    """
+
+    try:
+        with file_lock(path.with_name(path.name + ".lock"), timeout_seconds=timeout_seconds):
+            yield
+    except LockError as error:
+        raise AuditError(f"审计日志锁不可用: {path.name}（{error}）：拿不到锁就不写，宁可失败关闭") from error
 
 # 绝对路径与密钥样式：审计里出现它们就等于把环境信息或凭据写进了日志。
 _ABS_PATH_RE = re.compile(
@@ -130,16 +151,37 @@ def sanitize_payload(
     if isinstance(value, str):
         return redact_text(value, workspace=workspace)
     if isinstance(value, Mapping):
-        items = list(value.items())[:_MAX_ITEMS]
-        return {
-            redact_text(key, workspace=workspace, limit=200): sanitize_payload(
-                item, workspace=workspace, depth=depth + 1
+        items = list(value.items())
+        payload: dict[str, Any] = {}
+
+        def place(key_text: str, item_value: Any) -> None:
+            # 脱敏 / 截断会让两个不同的键落成同一个字符串：不能静默丢掉其中一个值
+            # （被丢掉的正是"这次到底测了什么"），换个后缀把两条都留下。
+            candidate = key_text
+            suffix = 2
+            while candidate in payload:
+                candidate = f"{key_text}#{suffix}"
+                suffix += 1
+            payload[candidate] = item_value
+
+        for key, item in items[:_MAX_ITEMS]:
+            place(
+                redact_text(key, workspace=workspace, limit=200),
+                sanitize_payload(item, workspace=workspace, depth=depth + 1),
             )
-            for key, item in items
-        }
+        if len(items) > _MAX_ITEMS:
+            # 超限的条目不能无声消失：留一个显式的截断标记，读者才知道"这份证据不完整"。
+            place("<truncated-items>", len(items) - _MAX_ITEMS)
+        return payload
     if isinstance(value, (list, tuple, set, frozenset)):
-        items = list(value)[:_MAX_ITEMS]
-        return [sanitize_payload(item, workspace=workspace, depth=depth + 1) for item in items]
+        items = list(value)
+        kept = [
+            sanitize_payload(item, workspace=workspace, depth=depth + 1)
+            for item in items[:_MAX_ITEMS]
+        ]
+        if len(items) > _MAX_ITEMS:
+            kept.append(f"<truncated-items:{len(items) - _MAX_ITEMS}>")
+        return kept
     return redact_text(value, workspace=workspace, limit=500)
 
 
@@ -158,6 +200,16 @@ class AuditSink(Protocol):
     ) -> AuditRecord:
         ...
 
+    def chain_records(self) -> tuple[Mapping[str, Any], ...]:
+        """本层的链式记录：重放判据的第二份独立证据源。
+
+        声明在端口上（而不是让调用方靠 hasattr 试探）：只实现 append 的端口会让
+        "台账 + 审计链两处都要看"的判据**静默**退化成只看台账。读不出来（不可读 /
+        端口不提供持久化审计）必须抛 AuditError，由调用方把"证据缺失"写成显式状态。
+        """
+
+        ...
+
 
 @dataclass
 class NullAuditSink:
@@ -167,6 +219,17 @@ class NullAuditSink:
 
     def append(self, stage: AuditStage, **_kwargs: Any) -> AuditRecord:
         raise AuditError("NullAuditSink 不提供持久化审计：按失败策略拒绝继续")
+
+    def chain_records(self) -> tuple[Mapping[str, Any], ...]:
+        """端口不提供持久化审计：没有链记录可读。
+
+        返回空元组会让重放判据把"证明不了"读成"没有重放"；这里显式抛错，
+        由调用方把退化写成结论（审计端口自己不能假装有证据）。
+        """
+
+        raise AuditError(
+            "NullAuditSink 不提供持久化审计：没有链记录可读（这是证据缺失，不是'没有重放'）"
+        )
 
 
 @dataclass
@@ -229,6 +292,25 @@ class AuditChain:
         return tuple(issues)
 
 
+@dataclass(frozen=True)
+class _ScanResult:
+    """一次文件扫描的结果：行 + 坏行诊断。
+
+    `rows` 里的每一项是 `(记录, 是否本层链式记录)`；无法解析的行以 `{"raw": line}`
+    的形式留在 rows 里（照旧计入外来行），但同时被归类：
+
+    - `torn_lines`：**最后一条非空行**——进程在写一半时被杀留下的撕裂尾巴；
+    - `damaged_lines`：文件**中间**无法解析的行——它证明链被截断或改写，必须报成 issue。
+
+    两类分得开是这条注释原本的承诺（"只有最后一行可能被写坏"）；不分开就等于把
+    "中间被人动过"混进一个连合法历史行都算的外来行计数器里。
+    """
+
+    rows: tuple[tuple[Mapping[str, Any], bool], ...]
+    torn_lines: tuple[int, ...]
+    damaged_lines: tuple[int, ...]
+
+
 class FileAuditSink:
     """JSONL 审计端口。
 
@@ -250,38 +332,65 @@ class FileAuditSink:
 
     # ------------------------------------------------------------------ 读
     def records(self) -> tuple[Mapping[str, Any], ...]:
-        return tuple(item for item, _ in self._scan())
+        return tuple(item for item, _ in self._scan().rows)
 
-    def _scan(self) -> list[tuple[Mapping[str, Any], bool]]:
+    def _scan(self) -> _ScanResult:
         if not self.path.is_file():
-            return []
+            return _ScanResult(rows=(), torn_lines=(), damaged_lines=())
         try:
             text = self.path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as error:
             raise AuditError(f"审计日志不可读: {self.path.name}（{error}）") from error
+        lines = [
+            (number, line)
+            for number, line in enumerate(text.splitlines(), start=1)
+            if line.strip()
+        ]
+        tail_number = lines[-1][0] if lines else None
         rows: list[tuple[Mapping[str, Any], bool]] = []
-        for line in text.splitlines():
-            if not line.strip():
-                continue
+        torn: list[int] = []
+        damaged: list[int] = []
+        for number, line in lines:
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
-                # 只有最后一行可能被写坏（进程被杀）；中间行损坏视为审计不可信。
+                # 只有最后一行可能被写坏（进程被杀）——那是可容忍的撕裂尾巴；
+                # 中间行损坏是另一回事：它证明链的中间被截断或改写过，审计不可信，
+                # 必须由 verify() 报成 issue，而不是混进"外来行"计数里。
+                if number == tail_number:
+                    torn.append(number)
+                else:
+                    damaged.append(number)
                 rows.append(({"raw": line}, False))
                 continue
             if isinstance(record, Mapping):
                 rows.append((record, record.get("schema_version") is not None))
             else:
                 rows.append(({"raw": line}, False))
-        return rows
+        return _ScanResult(
+            rows=tuple(rows), torn_lines=tuple(torn), damaged_lines=tuple(damaged)
+        )
 
     def chain_records(self) -> tuple[Mapping[str, Any], ...]:
         """只返回本层的链式记录（用于续链与校验）。"""
 
-        return tuple(item for item, chained in self._scan() if chained)
+        return tuple(item for item, chained in self._scan().rows if chained)
 
     def foreign_records(self) -> int:
-        return sum(1 for _, chained in self._scan() if not chained)
+        return sum(1 for _, chained in self._scan().rows if not chained)
+
+    def _scan_issues(self, scan: _ScanResult) -> tuple[str, ...]:
+        """把一次扫描读成问题列表：链完整性 + 中间行损坏。"""
+
+        issues = list(
+            AuditChain.verify(tuple(item for item, chained in scan.rows if chained))
+        )
+        issues.extend(
+            f"第 {number} 行损坏：审计链中途出现无法解析的行（被截断或被改写）。"
+            "中间行损坏无法与合法历史区分，本层链已不可信"
+            for number in scan.damaged_lines
+        )
+        return tuple(issues)
 
     def verify(self) -> tuple[str, ...]:
         """校验本层摘要链；**产物不存在时不能返回"没有问题"**。
@@ -301,7 +410,7 @@ class FileAuditSink:
                 f"审计日志不存在: {self.path.name}："
                 "没有产物不能被读成链完整（缺证据按失败关闭处理）",
             )
-        return AuditChain.verify(self.chain_records())
+        return self._scan_issues(self._scan())
 
     # ------------------------------------------------------------------ 写
     def append(
@@ -317,46 +426,74 @@ class FileAuditSink:
     ) -> AuditRecord:
         if not self.available:
             raise AuditError("审计端口被标记为不可用：按失败策略拒绝继续")
-        record = AuditChain.next_record(
-            self.chain_records(),
-            stage=stage,
-            payload=payload,
-            trace_id=trace_id,
-            action_id=action_id,
-            request_id=request_id,
-            tool_id=tool_id,
-            now=now,
-            workspace=self.workspace,
-        )
-        line = json.dumps(json.loads(record.model_dump_json()), ensure_ascii=False, sort_keys=True)
-        if len(line.encode("utf-8")) > self.max_record_bytes:
-            raise AuditError(
-                f"审计记录超过 {self.max_record_bytes} 字节上限："
-                "宁可失败关闭，也不写一条被截断的证据"
+        # 读-改-写必须在同一把跨进程锁里：sequence 与 prev_digest 都由"当前链尾"推出，
+        # 两个进程（dsh 每次事件调用都是一个新进程）各自读、各自写就会算出同一序号，
+        # 链静默分叉，只有事后 verify() 才发现。拿不到锁就失败关闭。
+        with _audit_lock(self.path, timeout_seconds=_LOCK_TIMEOUT_SECONDS):
+            record = AuditChain.next_record(
+                self.chain_records(),
+                stage=stage,
+                payload=payload,
+                trace_id=trace_id,
+                action_id=action_id,
+                request_id=request_id,
+                tool_id=tool_id,
+                now=now,
+                workspace=self.workspace,
             )
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(line + "\n")
-                handle.flush()
-        except OSError as error:
-            raise AuditError(f"审计日志不可写: {self.path.name}（{error}）") from error
+            line = json.dumps(
+                json.loads(record.model_dump_json()), ensure_ascii=False, sort_keys=True
+            )
+            if len(line.encode("utf-8")) > self.max_record_bytes:
+                raise AuditError(
+                    f"审计记录超过 {self.max_record_bytes} 字节上限："
+                    "宁可失败关闭，也不写一条被截断的证据"
+                )
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+                    handle.write(line + "\n")
+                    handle.flush()
+                    # flush 只是把数据交给 OS；摘要链是防篡改证据，落盘前 fsync，
+                    # 否则"写入成功但机器随后崩溃"会留下一条读不回来的记录。
+                    os.fsync(handle.fileno())
+            except OSError as error:
+                raise AuditError(f"审计日志不可写: {self.path.name}（{error}）") from error
         return record
 
     def final_digest(self) -> str:
-        records = self.chain_records()
-        return "" if not records else str(records[-1].get("digest", ""))
+        return self._final_digest(self.chain_records())
+
+    def _final_digest(self, chain: Sequence[Mapping[str, Any]]) -> str:
+        return "" if not chain else str(chain[-1].get("digest", ""))
 
     def describe(self) -> dict[str, Any]:
-        """审计健康度摘要（供 CLI / 证据使用，不含任何载荷内容）。"""
+        """审计健康度摘要（供 CLI / 证据使用，不含任何载荷内容）。
 
-        records = self.chain_records()
+        **只扫一次文件**：链记录、外来行计数、final_digest 与 issues 全部从同一次
+        `_scan()` 推出。旧实现为这一份读数把整个文件读了四遍（chain_records /
+        foreign_records / verify / final_digest 各一遍），每行还要 json.loads 四遍；
+        审计是追加写、只会变长的文件，这个代价随历史线性增长。
+        """
+
+        if not self.path.is_file():
+            chain: tuple[Mapping[str, Any], ...] = ()
+            foreign = 0
+            issues = list(self.verify())
+        else:
+            scan = self._scan()
+            chain = tuple(item for item, chained in scan.rows if chained)
+            foreign = sum(1 for _, chained in scan.rows if not chained)
+            issues = list(self._scan_issues(scan))
         return {
             "path": self.path.as_posix(),
-            "chained_records": len(records),
-            "foreign_records": self.foreign_records(),
-            "issues": list(self.verify()),
-            "final_digest": self.final_digest(),
-            "updated_at": to_timestamp(utc_now()),
-            "digest": digest_of([record.get("digest") for record in records]),
+            "chained_records": len(chain),
+            "foreign_records": foreign,
+            "issues": issues,
+            "final_digest": self._final_digest(chain),
+            # updated_at 是**日志最后一次被写入**的时刻（最后一条链式记录的 recorded_at），
+            # 不是"这份摘要什么时候生成的"：旧口径让一份陈旧（或空）的日志看起来刚刚更新过，
+            # 读证据的人会据此以为它是最新的。空日志没有更新时间，如实写空串。
+            "updated_at": "" if not chain else str(chain[-1].get("recorded_at", "")),
+            "digest": digest_of([record.get("digest") for record in chain]),
         }

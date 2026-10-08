@@ -394,6 +394,75 @@ def test_principal_is_declared_not_self_asserted(runtime) -> None:
     assert forged_outcome.outcome_code == "context_error"
 
 
+def test_abandoned_evaluation_threads_are_tracked_and_capped(runtime) -> None:
+    """超时的判定线程会被记账；堆到上限就按失败关闭拒绝继续开新线程。
+
+    Python 没有线程取消原语：超时只能「放弃」，线程会跑到自然结束。不设上限 = 每超时一次
+    泄漏一个线程（外加它的资源）；到上限之后继续开新线程只会让运行时越来越不可信。
+    这条用例同时钉住"记账不改变单次超时的语义"——第一次超时仍然是普通超时。
+    """
+
+    import threading
+    import time as clock
+    from types import SimpleNamespace
+
+    from adapters.runtime import ABANDONED_EVALUATION_LIMIT, PolicyTimeout
+
+    started = threading.Event()
+
+    def wedged(*_args, **_kwargs):
+        started.set()
+        clock.sleep(30)  # 远超过 1ms 预算，也比这个用例活得久
+        raise AssertionError("被放弃的判定线程不该有返回值上的断言")
+
+    runtime.evaluator = wedged
+    tiny = SimpleNamespace(config=SimpleNamespace(timeout_ms=1))
+
+    messages: list[str] = []
+    for _ in range(ABANDONED_EVALUATION_LIMIT + 2):
+        with pytest.raises(PolicyTimeout) as error:
+            runtime._evaluate(object(), tiny)
+        messages.append(str(error.value))
+
+    assert started.wait(5), "判定线程根本没跑起来：这条用例会变成空转"
+    assert "没有退出" not in messages[0], messages[0]
+    assert "没有退出" in messages[-1], messages[-1]
+    assert "拒绝继续开新线程" in messages[-1], messages[-1]
+
+
+def test_a_governed_event_reads_the_ledger_once(runtime, monkeypatch) -> None:
+    """一次受治理事件只**解析**一遍台账（此前「窗口计数」与「幂等 claim」各读一整份）。
+
+    追加写台账每长一行，签名（mtime_ns, size）就变，所以缓存不可能掩盖别的进程刚写入的记录；
+    这条用例钉住"读一次"这个事实，同时上面的幂等 / 熔断用例继续钉住语义没变。
+    """
+
+    from pathlib import Path
+
+    reads: list[str] = []
+    real_read_text = Path.read_text
+
+    def counting(self, *args, **kwargs):
+        if runtime.ledger_path is not None and self == runtime.ledger_path:
+            reads.append(str(self))
+        return real_read_text(self, *args, **kwargs)
+
+    # 第一条事件时台账文件还不存在（没有 read_text），先热身一条再数第二条
+    first = runtime.handle(
+        "generic-json", _generic_read("perf-warmup", "call-0"), execute=lambda event: None
+    )
+    assert first.outcome_code == "allow", first.outcome_code
+
+    monkeypatch.setattr(Path, "read_text", counting)
+
+    outcome = runtime.handle(
+        "generic-json", _generic_read("perf-read-once", "call-1"), execute=lambda event: None
+    )
+
+    assert outcome.outcome_code == "allow", outcome.outcome_code
+    assert len(reads) == 1, reads
+
+
 def test_trace_registry_separates_owners(tmp_root: Path) -> None:
     registry = TraceRegistry(tmp_root / "traces.jsonl")
     registry.register(trace_id="t-a", owner_agent="dsh", request_id="r")
@@ -402,6 +471,20 @@ def test_trace_registry_separates_owners(tmp_root: Path) -> None:
         agent_id="generic-json", trace_id=None, parent_trace_id="t-a"
     )
     assert registry.check(agent_id="dsh", trace_id=None, parent_trace_id="t-a") == ""
+
+
+def test_registering_a_trace_without_a_registry_path_is_refused() -> None:
+    """没有登记表路径 = 根本登记不了：静默返回会让登记方以为成功。
+
+    后续一旦发子 trace，`check` 给的理由是「父 trace 不在登记表里」——真相是「没有地方登记」，
+    卡住这次接入的其实是配置。读侧不变：没有登记表就是什么都没登记。
+    """
+
+    registry = TraceRegistry(None)
+    with pytest.raises(RuntimeLedgerError) as error:
+        registry.register(trace_id="t-1", owner_agent="generic-json")
+    assert "trace 登记表没有路径" in str(error.value)
+    assert registry.known("t-1") is False
 
 
 def test_trace_owner_cannot_be_reassigned(tmp_root: Path) -> None:

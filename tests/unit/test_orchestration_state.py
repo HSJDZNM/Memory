@@ -11,7 +11,7 @@
 - 恢复先比协议世代与版本凭据：规则集 / 索引变了重新评估，工具 schema 变了重新审批，
   世代变了直接拒绝——不兼容时沿用旧 allow 就是绕过治理。
 
-标记用 `pytest.mark.contract`：pytest.ini 与 pyproject.toml 只登记了
+标记用 `pytest.mark.contract`：pytest.ini（配置的唯一来源）只登记了
 contract / integration / security 三个标记（`--strict-markers` 下用未登记的 `unit` 会直接报错），
 `tests/unit/test_precheck.py` 也是同样的选择。
 """
@@ -19,12 +19,13 @@ contract / integration / security 三个标记（`--strict-markers` 下用未登
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from enforcement.approvals import ApprovalRecord
+from enforcement.approvals import ApprovalBinding, ApprovalRecord
 
 from orchestration.approvals import ApprovalGate
 from orchestration.checkpoint import (
@@ -54,6 +55,7 @@ from orchestration.models import (
     Counters,
     Decision,
     FailureCode,
+    FailureRef,
     GraphState,
     NodeId,
     NodeRun,
@@ -67,7 +69,14 @@ from orchestration.models import (
     canonical_digest,
     empty_state,
 )
-from orchestration.nodes import Change
+from orchestration.client import _is_relative
+from orchestration.errors import (
+    ApprovalError,
+    CheckpointError,
+    LimitExceeded,
+    TraceError,
+)
+from orchestration.nodes import Change, _changed_paths
 
 from orchestration_support import (
     INDEX_VERSION,
@@ -644,22 +653,387 @@ def test_approval_gate_accepts_a_valid_record_and_records_the_use(tmp_root) -> N
     assert excinfo.value.code is FailureCode.APPROVAL_CONSUMED
 
 
-def test_approval_use_is_bounded_by_max_approval_uses(tmp_root) -> None:
-    """复用次数是显式策略（RunLimits.max_approval_uses）：到上限即拒，不用猜。"""
+# 合成值：它们只用来验证"凭据形态的文本不许进状态"这条拒绝路径，不是任何真实凭据。
+# secret_scan 门禁按形态匹配，所以逐行显式声明放行并写明理由（门禁的提示语要求这样做）。
+SECRET_LIKE = (
+    "Bearer abcdefgh12345678",  # secret-scan: allow —— 合成形态，用于断言拒绝写入状态
+    "sk-abcdefgh12345678",  # secret-scan: allow —— 合成形态，用于断言拒绝写入状态
+    "glpat-abcdefgh12345678",  # secret-scan: allow —— 合成形态，用于断言拒绝写入状态
+    "-----BEGIN RSA PRIVATE KEY-----",  # secret-scan: allow —— 合成标题行，用于断言拒绝写入状态
+)
+
+
+@pytest.mark.parametrize("secret", SECRET_LIKE)
+def test_free_text_in_long_term_state_cannot_carry_credentials(secret: str) -> None:
+    """状态是长期的：凭据形态的自由文本一律拒绝写入（与 requirements / notes 同一条口径）。
+
+    这几处（ArtifactRef.note / PolicyTraceRef.reason / ViolationRef.message /
+    NodeRun.detail / FailureRef.detail）装的是上游或外部文本——凭据一旦落盘就没有回收路径，
+    所以判据钉在构造期，不靠调用方自觉。
+    """
+
+    with pytest.raises(ValidationError):
+        FailureRef(code=FailureCode.LIMIT_NODE_RUNS, detail=secret)
+    with pytest.raises(ValidationError):
+        NodeRun(
+            node=NodeId.REPAIR,
+            status=StageStatus.OK,
+            idempotency_key="task-1:repair:0",
+            outcome_digest="sha256:" + "0" * 64,
+            detail=secret,
+        )
+    with pytest.raises(ValidationError):
+        ViolationRef(rule_id="ARCH-001", rule_version=1, severity="error", message=secret)
+    with pytest.raises(ValidationError):
+        PolicyTraceRef(
+            node=NodeId.VALIDATION, request_id="req-1", decision=Decision.BLOCK, reason=secret
+        )
+    with pytest.raises(ValidationError):
+        ArtifactRef(
+            artifact_id="change-1",
+            kind=ArtifactKind.CHANGE,
+            digest="sha256:" + "0" * 64,
+            note=secret,
+        )
+
+
+def test_ordinary_free_text_still_enters_the_state() -> None:
+    """反向不变量：正常结论照常进状态——探针只认**确定形态**的凭据，不做宽口径猜测。"""
+
+    detail = "节点超出预算：拒绝继续（limit_node_runs）"
+    assert FailureRef(code=FailureCode.LIMIT_NODE_RUNS, detail=detail).detail == detail
+    assert ViolationRef(
+        rule_id="ARCH-001", rule_version=1, severity="error", message="Controller 不得直接访问 Repository。"
+    ).message.startswith("Controller")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "/abs/x.py",
+        "~/x.py",
+        "..\\x.py",
+        "C:\\x.py",
+        "\\\\server\\share\\x.py",
+        "src/%2e%2e/secret.py",
+        "src//x.py",
+        "../x.py",
+        "src/../../x.py",
+    ],
+)
+def test_client_rejects_anything_that_is_not_a_state_relative_path(value: str) -> None:
+    """进状态的外部路径只收"状态模型也认"的仓库相对路径（两套口径必然漂移）。
+
+    旧判据只看前导 / 与 ~、再按 / 切一层 ..：Windows 形态（反斜杠、盘符、UNC）与百分号编码的
+    穿越都能进状态，而同一个值交给状态模型就会被拒——客户端的"挑得进来"与模型的"收得下来"
+    是两条规则，于是坏值在中间那一段里活着。
+    """
+
+    assert _is_relative(value) is False
+
+
+@pytest.mark.parametrize("value", ["src/order/controller.py", "docs/x.md", "src/a%20b.py", "a.b"])
+def test_client_accepts_plain_relative_paths(value: str) -> None:
+    """反向不变量：普通相对路径照旧收（带一个百分号编码的空格不该被误伤）。"""
+
+    assert _is_relative(value) is True
+
+
+def test_failure_codes_can_be_given_at_construction() -> None:
+    """失败码在**构造期**给，默认值仍是各子类自己的码。
+
+    终态是按码推导的（errors.STATUS_BY_CODE），而调用方此前只能"先构造、再改属性"
+    （`error.code = code`）——任何忘记改属性的抛出点都会静默记成默认码，
+    于是"审批过期"会被记成"没有审批"、终态也跟着走偏。
+    """
+
+    assert ApprovalError("没有审批").code is FailureCode.APPROVAL_MISSING
+    expired = ApprovalError("已过期", code=FailureCode.APPROVAL_EXPIRED)
+    assert expired.code is FailureCode.APPROVAL_EXPIRED
+    assert expired.failure_payload()["code"] == "approval_expired"
+
+    assert LimitExceeded("超了", code=FailureCode.LIMIT_TOKENS).code is FailureCode.LIMIT_TOKENS
+    assert TraceError("断了", code=FailureCode.TRACE_FORGED).code is FailureCode.TRACE_FORGED
+    assert (
+        CheckpointError("坏了", code=FailureCode.CHECKPOINT_CORRUPT).code
+        is FailureCode.CHECKPOINT_CORRUPT
+    )
+
+
+def test_state_models_are_frozen_in_practice() -> None:
+    """状态模型是**真**不可变：就地赋值必须报错。
+
+    文档一直承诺 GraphState「是不可变的」，而 pydantic 默认 `validate_assignment=False`、也没有 frozen——
+    `state.task_id = ...` 会就地改掉一份已经落盘（或即将落盘）的快照，摘要与 checkpoint 的一致性
+    校验随后对不上，而"状态是值语义"正是恢复/重放设计的地基。
+    """
+
+    state = empty_state("task-1")
+
+    with pytest.raises(ValidationError):
+        state.task_id = "task-2"
+    with pytest.raises(ValidationError):
+        state.status = RunStatus.BLOCKED
+    with pytest.raises(ValidationError):
+        state.validation = _summary_for_frozen_probe()
+
+    # 值语义照旧：replace() 返回新实例，原实例不动
+    assert state.replace(task_id="task-2").task_id == "task-2"
+    assert state.task_id == "task-1"
+
+
+def _summary_for_frozen_probe() -> ValidationSummary:
+    return ValidationSummary(decision=Decision.ALLOW, request_id="task-1:validation:0")
+
+
+def _change_artifact(index: int, path: str) -> ArtifactRef:
+    return ArtifactRef(
+        artifact_id=f"change:{index}",
+        kind=ArtifactKind.CHANGE,
+        path=path,
+        digest="sha256:" + "0" * 64,
+    )
+
+
+def test_the_change_set_for_evidence_comes_from_executed_changes() -> None:
+    """要验证的是**这次真的改了**的文件集合，不是写死的任务目标。
+
+    `_apply_change` 允许改 `policies/…`：写死任务目标会让平台去验证一棵没被改的树
+    （验证器选择与 pytest 的 changed_only 都读这个集合），真正改过的文件反而没声明。
+    """
+
+    target = "src/order/controller.py"
+    fresh = empty_state("task-1")
+    # 还没改过任何文件：退回任务目标（新任务第一次验证）
+    assert _changed_paths(fresh, target) == (target,)
+
+    repaired = fresh.replace(artifacts=(_change_artifact(0, "policies/coding/ARCH-001.yaml"),))
+    assert _changed_paths(repaired, target) == ("policies/coding/ARCH-001.yaml",)
+
+    # 多轮修复：按发生顺序去重；非 CHANGE 的 artifact（需求 / 计划 / 报告）不参与
+    accumulated = fresh.replace(
+        artifacts=(
+            ArtifactRef(
+                artifact_id="plan:0", kind=ArtifactKind.PLAN, path="docs/plan.md",
+                digest="sha256:" + "0" * 64,
+            ),
+            _change_artifact(0, "policies/coding/ARCH-001.yaml"),
+            _change_artifact(1, "policies/coding/ARCH-001.yaml"),
+            _change_artifact(2, "src/other.py"),
+        )
+    )
+    assert _changed_paths(accumulated, target) == (
+        "policies/coding/ARCH-001.yaml",
+        "src/other.py",
+    )
+
+
+def test_a_checkpoint_from_another_state_protocol_is_refused_at_load(tmp_root) -> None:
+    """协议世代对不上时不是"列为不兼容维度"，而是**读都读不进来**——更严格，也更难绕过。
+
+    `PlatformSnapshot.incompatible_with` 刻意不比 `state_schema_version`：真正的闸门在 load
+    （`SUPPORTED_STATE_SCHEMA_VERSIONS` 里没有那个版本就直接拒绝）。这条用例把那条闸门钉住，
+    免得后人看到"快照里没比这一项"就把判定挪到更弱的地方。
+    """
+
+    store = JsonCheckpointStore(tmp_root / "checkpoints")
+    record = build_record(empty_state("task-1"), engine="reference", sequence=1)
+    payload = dict(record.state)
+    payload["state_schema_version"] = "0.9"  # 另一个世代的记录
+    swapped = record.model_copy(update={"state": payload})
+    swapped = swapped.model_copy(update={"state_digest": canonical_digest(payload)})
+    swapped = swapped.model_copy(update={"record_digest": swapped.computed_digest()})
+    store.path_for("task-1").write_text(
+        swapped.model_dump_json(indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
+
+    with pytest.raises(CheckpointError) as error:
+        store.load("task-1")
+
+    assert "状态版本不可读" in str(error.value)
+
+
+def test_distinct_task_ids_never_share_a_checkpoint_file(tmp_root) -> None:
+    """task_id 的清洗是有损的：'a:b' 与 'ab' 曾经落到同一个文件（互相覆盖、互相读回来）。
+
+    现在只在"删字符真的改变了 id"时追加 id 摘要；安全字符组成的 id 文件名保持不变，
+    既有 checkpoint 照常读得到。
+    """
+
+    store = JsonCheckpointStore(tmp_root / "checkpoints")
+
+    assert store.path_for("a:b") != store.path_for("ab")
+    assert store.path_for("ab").name == "ab.checkpoint.json"
+
+    store.save(build_record(empty_state("a:b"), engine="reference", sequence=1))
+    store.save(build_record(empty_state("ab"), engine="reference", sequence=1))
+
+    assert store.load("a:b").task_id == "a:b"
+    assert store.load("ab").task_id == "ab"
+
+
+def test_load_refuses_a_checkpoint_belonging_to_another_task(tmp_root) -> None:
+    """文件名只是索引：记录里的 task_id 与请求不一致，就是读到了别的任务的状态，必须拒绝。"""
+
+    store = JsonCheckpointStore(tmp_root / "checkpoints")
+    record = build_record(empty_state("task-1"), engine="reference", sequence=1)
+    swapped = record.model_copy(update={"task_id": "task-2"})
+    swapped = swapped.model_copy(update={"record_digest": swapped.computed_digest()})
+    store.path_for("task-1").write_text(
+        swapped.model_dump_json(indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
+
+    with pytest.raises(CheckpointError) as error:
+        store.load("task-1")
+
+    assert "task_id" in str(error.value)
+
+
+def _pattern_approval(path: Path, *, approval_id: str = "approval-pattern") -> Path:
+    """一份 binding=pattern 的审批：按契约**没有** action_id，是为"将来的某次调用"签的。"""
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    record = ApprovalRecord(
+        approval_id=approval_id,
+        binding=ApprovalBinding.PATTERN,
+        tool_id="orc.fs.write",
+        subject="local-user",
+        granted_by="alice",
+        granted_by_roles=("reviewer",),
+        granted_at=now - timedelta(seconds=1),
+        expires_at=now + timedelta(seconds=300),
+        max_uses=3,
+        param_patterns={"file_path": ".*", "content": ".*"},
+    )
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(record.model_dump_json(indent=2) + "\n", encoding="utf-8", newline="\n")
+    return Path(path)
+
+
+def test_directory_inbox_picks_the_record_whose_action_id_matches(tmp_root) -> None:
+    """收件箱里有无关条目时，仍然按 action_id 挑中**这一次**的那一份。"""
+
+    inbox = tmp_root / "inbox"
+    # 文件名排序把无关的那份排在前面：挑选必须靠 action_id，不靠顺序
+    approval_file(
+        inbox / "a-unrelated.json", action_hash="sha256:" + "a" * 64, action_id="other:0:xyz"
+    )
+    approval_file(inbox / "b-requested.json", action_hash=ACTION_HASH, action_id=ACTION_HASH)
+
+    gate = ApprovalGate(inbox, approval_roles=("reviewer",))
+
+    assert gate.resolve(ACTION_HASH).name == "b-requested.json"
+
+
+def test_directory_inbox_prefers_a_pattern_approval_over_an_unrelated_record(tmp_root) -> None:
+    """没有 action_id 匹配时的兜底顺序：pattern 档优先，其次是无关的 action 档。
+
+    两档都不改变安全性（都不可能通过 verify：action_id / action_hash 必须逐位一致），
+    它们回答的是"该去修哪一份记录"：
+      - pattern 档是唯一**合法地**适用于"未匹配调用"的绑定（它按契约没有 action_id）；
+      - 无关的 action 档照样返回，是为了让拒绝理由说得出"你签的是另一个动作"，
+        而不是退化成笼统的"没有审批"——tests/security 的 forged-action-id 钉住这一点。
+    """
+
+    with_pattern = tmp_root / "with-pattern"
+    approval_file(
+        with_pattern / "a-unrelated.json", action_hash="sha256:" + "a" * 64, action_id="other:0:xyz"
+    )
+    pattern = _pattern_approval(with_pattern / "b-pattern.json")
+
+    assert ApprovalGate(with_pattern, approval_roles=("reviewer",)).resolve(ACTION_HASH) == pattern
+
+    only_action = tmp_root / "only-action"
+    unrelated = approval_file(
+        only_action / "a-unrelated.json", action_hash="sha256:" + "a" * 64, action_id="other:0:xyz"
+    )
+
+    # 返回它**不等于**授权：verify 会按 action_id / action_hash 逐位比对后拒绝（见 security 套件）。
+    assert ApprovalGate(only_action, approval_roles=("reviewer",)).resolve(ACTION_HASH) == unrelated
+
+
+def test_a_single_use_approval_stays_single_use_even_when_the_budget_allows_more(tmp_root) -> None:
+    """条子自己的 max_uses 与编排层的预算数**不是一回事**：单次条子只能用一次。
+
+    旧实现只按 RunLimits.max_approval_uses 算额度，并把 `used >= max_approval_uses` 传给 Phase 4：
+    预算配成 2 时，一张单次条子可以用两次，而且平台那次"这张条子是否已消费"的复核永远收到 False——
+    "单次使用"于是只剩编排层这一层保证，而它当时算错了。
+    """
 
     path = approval_file(
         tmp_root / "approvals" / "approval.json", action_hash=ACTION_HASH, action_id=ACTION_HASH
     )
     gate = ApprovalGate(path, approval_roles=("reviewer",))
     state = _gate_state(max_approval_uses=2)
+
     first = _use(gate, state)
     state = ApprovalGate.consume(state, first)
-    second = _use(gate, state)
-    state = ApprovalGate.consume(state, second)
-    assert state.approvals[0].uses == 2
+    assert state.approvals[0].uses == 1
+
     with pytest.raises(ApprovalError) as excinfo:
         _use(gate, state)
     assert excinfo.value.code is FailureCode.APPROVAL_CONSUMED
+
+
+def test_a_platform_side_rejection_keeps_its_reason_in_the_detail(tmp_root) -> None:
+    """平台拒绝时的理由必须带上它自己那一句——只留异常类名等于把原因丢了。
+
+    失败码这一侧保持类默认值（APPROVAL_MISSING）：Phase 4 的拒绝意味着"这份条子在这件事上
+    不可用"，与"没有可用审批"同级，tests/security 的 approver-without-authority 钉的就是它。
+    """
+
+    path = approval_file(
+        tmp_root / "approvals" / "approval.json",
+        action_hash=ACTION_HASH,
+        action_id=ACTION_HASH,
+        roles=("developer",),
+    )
+    gate = ApprovalGate(path, approval_roles=("reviewer",))
+
+    with pytest.raises(ApprovalError) as error:
+        _use(gate, _gate_state())
+
+    assert "审批人没有审批权" in str(error.value)
+    assert error.value.code is FailureCode.APPROVAL_MISSING
+
+
+def test_the_platform_side_recheck_sees_a_consumed_record(tmp_root) -> None:
+    """平台那次复核必须收得到"这张条子已经消费过"这件事实（used 的口径是 >= 1，不是预算数）。
+
+    这条钉的是**参数口径**：编排层的计数被绕过时，最后一层保证在 Phase 4 侧——
+    而它只有在拿到真实事实时才拦得住。
+    """
+
+    from enforcement.approvals import load_approval, verify_approval
+
+    path = approval_file(
+        tmp_root / "approvals" / "approval.json", action_hash=ACTION_HASH, action_id=ACTION_HASH
+    )
+    record = load_approval(path)
+
+    with pytest.raises(Exception) as error:
+        verify_approval(
+            record,
+            action_hash=ACTION_HASH,
+            action_id=ACTION_HASH,
+            tool_id="orc.fs.write",
+            subject="local-user",
+            approval_roles=("reviewer",),
+            used=True,
+        )
+    assert "已被使用" in str(error.value)
+
+    # 反向：没消费过时必须放行（复核不是"一律拒绝"）
+    verify_approval(
+        record,
+        action_hash=ACTION_HASH,
+        action_id=ACTION_HASH,
+        tool_id="orc.fs.write",
+        subject="local-user",
+        approval_roles=("reviewer",),
+        used=False,
+    )
 
 
 @pytest.mark.parametrize(
@@ -801,6 +1175,30 @@ def test_change_params_never_coerce_missing_values_to_empty() -> None:
         "old_string": "a",
         "new_string": "b",
     }
+
+
+def test_change_path_must_be_canonical() -> None:
+    """路径判据不许是词法的：policies/../src/other.py 以 policies/ 开头，写的却是别的文件。
+
+    词法前缀让"这一改动要不要走受治理的规则工具"由**一个别的文件**的名字决定；
+    构造期用平台自己的规范化器归一，拿不到规范形态就拒绝。
+    """
+
+    for raw in ("policies/../src/other.py", "/etc/passwd", "../outside.py"):
+        with pytest.raises(NodeContractError):
+            Change(path=raw, content="x\n")
+
+    # 等价写法归一：digest、params 与 tool_id 都对着同一个路径算
+    assert Change(path="./policies/ARCH-001.yaml", content="x\n").path == "policies/ARCH-001.yaml"
+
+
+def test_policy_tool_selection_follows_the_canonical_path() -> None:
+    """规则目录**之内**才走受治理的规则工具；判据是路径段，不是裸前缀。"""
+
+    assert Change(path="policies/coding/NEW-001.yaml", content="x\n").tool_id == "orc.policy.write"
+    assert Change(path="src/order/controller.py", content="x\n").tool_id == "orc.fs.write"
+    # 路径恰好是 policies 本身（目录）同样算规则目录之内
+    assert Change(path="policies", content="x\n").tool_id == "orc.policy.write"
 
 
 def test_policy_changes_use_approval_gated_tools_for_create_and_edit() -> None:

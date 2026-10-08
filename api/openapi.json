@@ -265,6 +265,8 @@
           "budget_ms": {
             "anyOf": [
               {
+                "maximum": 600000,
+                "minimum": 1,
                 "type": "integer"
               },
               {
@@ -299,6 +301,7 @@
           "idempotency_key": {
             "anyOf": [
               {
+                "maxLength": 200,
                 "type": "string"
               },
               {
@@ -334,6 +337,8 @@
           "request_id": {
             "anyOf": [
               {
+                "maxLength": 200,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -346,6 +351,7 @@
           "tenant": {
             "anyOf": [
               {
+                "maxLength": 64,
                 "type": "string"
               },
               {
@@ -358,6 +364,7 @@
           "trace_id": {
             "anyOf": [
               {
+                "maxLength": 200,
                 "type": "string"
               },
               {
@@ -404,6 +411,8 @@
           "subject": {
             "anyOf": [
               {
+                "maxLength": 200,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -435,6 +444,8 @@
           "budget_ms": {
             "anyOf": [
               {
+                "maximum": 600000,
+                "minimum": 1,
                 "type": "integer"
               },
               {
@@ -469,6 +480,7 @@
           "decision_ref": {
             "anyOf": [
               {
+                "maxLength": 200,
                 "type": "string"
               },
               {
@@ -481,6 +493,7 @@
           "idempotency_key": {
             "anyOf": [
               {
+                "maxLength": 200,
                 "type": "string"
               },
               {
@@ -493,6 +506,8 @@
           "limit": {
             "anyOf": [
               {
+                "maximum": 50,
+                "minimum": 1,
                 "type": "integer"
               },
               {
@@ -516,6 +531,7 @@
           "query": {
             "anyOf": [
               {
+                "maxLength": 2000,
                 "type": "string"
               },
               {
@@ -528,6 +544,8 @@
           "request_id": {
             "anyOf": [
               {
+                "maxLength": 200,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -540,6 +558,7 @@
           "tenant": {
             "anyOf": [
               {
+                "maxLength": 64,
                 "type": "string"
               },
               {
@@ -552,6 +571,7 @@
           "trace_id": {
             "anyOf": [
               {
+                "maxLength": 200,
                 "type": "string"
               },
               {
@@ -595,6 +615,8 @@
           "budget_ms": {
             "anyOf": [
               {
+                "maximum": 600000,
+                "minimum": 1,
                 "type": "integer"
               },
               {
@@ -644,6 +666,7 @@
           "idempotency_key": {
             "anyOf": [
               {
+                "maxLength": 200,
                 "type": "string"
               },
               {
@@ -694,6 +717,8 @@
           "request_id": {
             "anyOf": [
               {
+                "maxLength": 200,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -718,6 +743,7 @@
           "tenant": {
             "anyOf": [
               {
+                "maxLength": 64,
                 "type": "string"
               },
               {
@@ -730,6 +756,7 @@
           "trace_id": {
             "anyOf": [
               {
+                "maxLength": 200,
                 "type": "string"
               },
               {
@@ -742,6 +769,13 @@
         },
         "title": "ValidationRequest",
         "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "description": "Authorization: Bearer <token>；令牌只以 sha256 存在配置里",
+        "scheme": "bearer",
+        "type": "http"
       }
     }
   },
@@ -933,6 +967,11 @@
             "description": "504：结构化错误（见 ErrorResponse）"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "Retrieve",
         "tags": [
           "knowledge"
@@ -962,6 +1001,11 @@
             "description": "403：结构化错误（见 ErrorResponse）"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "Metrics",
         "tags": [
           "ops"
@@ -1102,6 +1146,11 @@
             "description": "504：结构化错误（见 ErrorResponse）"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "Evaluate",
         "tags": [
           "policy"
@@ -1242,6 +1291,11 @@
             "description": "504：结构化错误（见 ErrorResponse）"
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "Validate",
         "tags": [
           "validation"

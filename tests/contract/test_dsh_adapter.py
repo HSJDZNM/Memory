@@ -483,6 +483,29 @@ def test_proposed_dependencies_reads_relative_and_dynamic_targets():
     assert proposed_dependencies("普通文本，没有 import") == ()
 
 
+def test_a_wrapped_literal_dynamic_import_is_still_proven():
+    """black 把字面量目标折到下一行时，它仍然是**证明得了**的常量目标。
+
+    实参窗口此前在第一个换行处截断：`importlib.import_module(\n    "some.real.module"\n)` 于是
+    落进 unproven，依赖类 checker 对一段其实证明得了的改动失败关闭（cry wolf 的那一侧）。
+    窗口只认右括号之后，多实参调用里的字面量不会被误当成第一个实参（下面第三条反例）。
+    """
+
+    wrapped = propose_dependencies('importlib.import_module(\n    "some.real.module"\n)\n')
+    assert wrapped.names == ("some.real.module",)
+    assert wrapped.unproven_dynamic == ()
+
+    # 反例一：目标不是字面量 → 仍然"证明不了"
+    dynamic = propose_dependencies("importlib.import_module(name)\n")
+    assert dynamic.names == ()
+    assert dynamic.unproven_dynamic == ("import_module",)
+
+    # 反例二：多实参调用里，第一个实参不是字面量 → 不许把后面的字面量当成它
+    multi = propose_dependencies('importlib.import_module(\n    name,\n    "pkg.real",\n)\n')
+    assert multi.names == ()
+    assert multi.unproven_dynamic == ("import_module",)
+
+
 def test_dynamic_import_without_a_literal_is_unproven_not_ignored():
     proposal = propose_dependencies("importlib.import_module(name)\n")
 
@@ -915,6 +938,37 @@ def test_a_relative_path_without_a_session_cwd_is_refused(dsh_config_path, dsh_p
         with pytest.raises(DshEventError) as error:
             to_policy_event(payload, config=config)
         assert "cwd" in str(error.value), fixture
+
+
+def test_the_read_scope_containment_follows_the_path_flavour_case_semantics(
+    dsh_config_path, dsh_project
+) -> None:
+    """只读范围的大小写口径跟路径实现走，不自己 lower()。
+
+    WindowsPath 的比较不区分大小写，PurePosixPath 区分。旧实现两边都 lower()：在区分大小写的
+    文件系统上，`/srv/App/x.py` 会被判成 `/srv/app` 以内，尾巴再被报成「仓库内路径 x.py」——
+    一次越界读按工作区内的文件被记录、被判层。与 `adapters.models._within` 同一口径。
+    """
+
+    from adapters.dsh.adapter import _resolve_read_scope
+
+    config = load_config(dsh_config_path)
+    anchor = Path(config.project_root).resolve()
+
+    # 正例：真正的子路径照常解析成仓库相对路径
+    assert _resolve_read_scope("src/x.py", cwd=str(anchor), config=config, tool="read") == "src/x.py"
+
+    # 反例：只差大小写的**兄弟目录**。Windows 上它们本来就是同一个目录（不敏感），
+    # POSIX 上是两棵树——判据是"路径实现怎么说"，不许由 lower() 决定。
+    sibling = anchor.parent / (
+        anchor.name.upper() if anchor.name.islower() else anchor.name.lower()
+    )
+    target = sibling / "x.py"
+    if anchor in target.parents:  # Windows：同一个目录，越界判定不成立
+        assert _resolve_read_scope(str(target), cwd=None, config=config, tool="read") == "x.py"
+    else:  # POSIX：兄弟目录，必须拒绝
+        with pytest.raises(DshEventError):
+            _resolve_read_scope(str(target), cwd=None, config=config, tool="read")
 
 
 def test_a_relative_path_is_resolved_against_the_session_cwd(dsh_config_path, dsh_project):

@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Optional, Protocol, Sequence
+from typing import Any, Mapping, Optional, Protocol, Sequence
 
 from .action import blocked_path_prefix
 from .models import (
@@ -48,6 +50,8 @@ __all__ = [
 ]
 
 _MAX_OUTPUT_CHARS = 8000
+#: 每条流**读进内存**的上限：先整份读进来再截断等于把命令的输出量变成进程的内存占用。
+_MAX_OUTPUT_BYTES = 64 * 1024
 _SAFE_TEXT_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
@@ -92,6 +96,30 @@ class ToolDriver(Protocol):
         ...
 
 
+def _read_bounded(stream: Any, limit: int = _MAX_OUTPUT_BYTES) -> bytes:
+    """从管道读最多 limit 字节；超出部分照样读掉，只是不保留。
+
+    **不能读到上限就不读了**：管道写满后子进程会阻塞在 write 上永远不退出，那会把一次
+    "输出很多"变成一次假的"超时"。所以超限的部分继续读、直接丢掉——内存有界，语义不变。
+    """
+
+    kept = bytearray()
+    while True:
+        chunk = stream.read(8192)
+        if not chunk:
+            break
+        if len(kept) < limit:
+            kept.extend(chunk[: limit - len(kept)])
+    return bytes(kept)
+
+
+def _drain(stream: Any, sink: list[bytes]) -> None:  # pragma: no cover - 线程体
+    try:
+        sink.append(_read_bounded(stream))
+    except Exception:  # noqa: BLE001 - 管道被强杀时的读取异常不影响判定
+        sink.append(b"")
+
+
 def _clean(text: str, limit: int = _MAX_OUTPUT_CHARS) -> str:
     """输出里可能带控制字符与超长内容：落盘前统一中和并截断。"""
 
@@ -103,14 +131,93 @@ def _clean(text: str, limit: int = _MAX_OUTPUT_CHARS) -> str:
     return text
 
 
-def _resolve(workspace: Optional[Path], relative: str) -> Path:
+def _workspace_root(workspace: Optional[Path]) -> Path:
     if workspace is None:
         raise DriverError("执行文件类动作必须声明受控工作区（workspace）")
-    root = Path(workspace).resolve()
+    return Path(workspace).resolve()
+
+
+def _inside(root: Path, candidate: Path) -> bool:
+    return root == candidate or root in candidate.parents
+
+
+def _resolve(workspace: Optional[Path], relative: str) -> Path:
+    root = _workspace_root(workspace)
     target = (root / relative).resolve()
-    if root != target and root not in target.parents:
+    if not _inside(root, target):
         raise DriverError(f"目标路径 {relative!r} 逃出工作区，拒绝执行")
     return target
+
+
+def _is_link_like(path: Path, info: os.stat_result) -> bool:
+    """符号链接与目录联接（junction）都算"落点可被改写"。
+
+    Windows 上 junction 不是 symlink（`os.path.islink` 为 False），但同样会把写入重定向到
+    别处：3.12+ 用 `os.path.isjunction`，更早的版本看 `st_reparse_tag`。
+    """
+
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    isjunction = getattr(os.path, "isjunction", None)
+    if isjunction is not None:
+        return bool(isjunction(path))
+    return getattr(info, "st_reparse_tag", 0) == 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT
+
+
+def _assert_no_link_components(root: Path, relative: str) -> None:
+    """逐段 lstat：路径上任何**已存在**的组件是链接就拒绝。
+
+    链接会让"resolved 之后在工作区内"这个结论在写到磁盘时失效——目标或它的父目录被换成
+    指向工作区外的链接，mkdir/write_text 会照写（TOCTOU）。
+    """
+
+    current = root
+    for part in Path(relative).parts:
+        current = current / part
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            raise DriverError(
+                f"无法确认目标 {relative!r} 的落点（{error}）：证明不了就不写"
+            ) from error
+        if _is_link_like(current, info):
+            raise DriverError(
+                f"目标 {relative!r} 的路径组件 {current.name!r} 是符号链接 / 目录联接："
+                "链接会改写落点，证明不了写入还在工作区内，拒绝执行"
+            )
+
+
+def _write_confined(text: str, *, workspace: Optional[Path], relative: str) -> None:
+    """写文件之前**再证明一次**落点，并用 O_NOFOLLOW 打开。
+
+    `_resolve()` 与真正写盘之间隔着参数处理与内容计算，这期间并发方可以把目标或它的父目录
+    换成链接，把写入重定向到工作区之外。所以这里：重新解析并复核范围 → 逐段拒绝链接组件 →
+    用 `O_NOFOLLOW`（平台支持时）打开。证明不了就 DriverError，绝不写。
+    """
+
+    root = _workspace_root(workspace)
+    fresh = (root / relative).resolve()
+    if not _inside(root, fresh):
+        raise DriverError(f"目标路径 {relative!r} 逃出工作区，拒绝执行")
+    _assert_no_link_components(root, relative)
+    try:
+        fresh.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise DriverError(f"{relative} 的父目录创建失败：{error}") from error
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    handle: Optional[int] = None
+    try:
+        handle = os.open(str(fresh), flags, 0o644)
+        with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
+            handle = None  # 交给 with 关
+            stream.write(text)
+    except OSError as error:
+        raise DriverError(f"{relative} 写入失败：{error}") from error
+    finally:
+        if handle is not None:
+            os.close(handle)
 
 
 def snapshot_of(path: Path, *, relative: str) -> FileSnapshot:
@@ -187,8 +294,7 @@ class FileDriver:
                     f"{relative} 里匹配到 {occurrences} 处原文，replace_all=false 时替换有歧义"
                 )
             updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(updated, encoding="utf-8", newline="")
+            _write_confined(updated, workspace=workspace, relative=relative)
             structured = {
                 "path": relative,
                 "occurrences": occurrences,
@@ -203,8 +309,7 @@ class FileDriver:
                     "把缺省当空内容会把已存在的文件截成 0 字节，而且仍然报 executed"
                 )
             content = content_value
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8", newline="")
+            _write_confined(content, workspace=workspace, relative=relative)
             structured = {
                 "path": relative,
                 "bytes_before": snapshot.size,
@@ -238,10 +343,12 @@ class ProcessDriver:
                 argv = [single]
         if not isinstance(argv, list) or not argv or not all(isinstance(item, str) for item in argv):
             raise DriverError("process 驱动需要非空的 argv 字符串列表")
+        _refuse_background(request)
         return _run_process(
             [str(item) for item in argv],
-            timeout_ms=spec.timeout_ms + self.timeout_grace_ms,
+            timeout_ms=_requested_timeout_ms(request, spec) + self.timeout_grace_ms,
             workspace=workspace,
+            cwd=_requested_workdir(request, workspace=workspace),
         )
 
 
@@ -258,7 +365,14 @@ class ShellCommandDriver:
     def execute(
         self, request: ActionRequest, spec: ToolSpec, *, workspace: Optional[Path] = None
     ) -> DriverResult:
-        assert spec.command_param is not None
+        # 不用 assert：`python -O` 会把断言整条剥掉，之后 request.value_of(None) 只报
+        # 「缺少命令参数 None」——把"注册表没声明 command_param"这个配置错误说成参数缺失，
+        # 读的人会去查请求而不是查注册表。
+        if spec.command_param is None:
+            raise DriverError(
+                "shell_command 驱动要求注册表声明 command_param（命令文本所在参数）："
+                "证明不了哪个参数是命令就不执行"
+            )
         command = request.value_of(spec.command_param)
         if not isinstance(command, str) or not command.strip():
             raise DriverError(f"缺少命令参数 {spec.command_param}")
@@ -283,58 +397,312 @@ class ShellCommandDriver:
                 f"命令包含被禁片段 {blocked}（路径穿越 / 会写文件的选项 / 外部 diff）："
                 "驱动层的第二道防线，拒绝执行"
             )
+        _refuse_background(request)
         return _run_process(
             [*self.shell, text],
-            timeout_ms=spec.timeout_ms,
+            timeout_ms=_requested_timeout_ms(request, spec),
             workspace=workspace,
+            cwd=_requested_workdir(request, workspace=workspace),
         )
 
+
+
+
+def _requested_workdir(request: ActionRequest, *, workspace: Optional[Path]) -> Optional[Path]:
+    """注册表声明的 workdir 参数 → 受控工作区里的绝对目录；没声明就不改 cwd。
+
+    "参数在数据里声明了、驱动却不看"等于静默忽略：命令会在工作区根跑，而调用方
+    （模型 / 用户）以为自己指定了目录。归一化与范围校验在 action.normalize_params /
+    pre-check 已经做过一遍，这里是驱动层的第二道：证明不了就拒绝，绝不回落到默认 cwd。
+    """
+
+    raw = request.value_of("workdir")
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise DriverError("workdir 必须是非空字符串（受控工作区相对路径）")
+    if workspace is None:
+        raise DriverError("请求声明了 workdir，却没有受控工作区锚点：拒绝执行")
+    root = Path(workspace).resolve()
+    target = (root / raw.strip()).resolve()
+    if root != target and root not in target.parents:
+        raise DriverError(f"workdir {raw!r} 不在受控工作区内：拒绝在证明不了的位置执行")
+    if not target.is_dir():
+        raise DriverError(f"workdir {raw!r} 不是已存在的目录：拒绝执行")
+    return target
+
+
+def _requested_timeout_ms(request: ActionRequest, spec: ToolSpec) -> int:
+    """注册表声明的 timeoutMs 参数 → 本次调用的超时预算；缺省用注册表的 timeout_ms。
+
+    预算是授权面的一部分：请求**超过**注册表声明的上限时拒绝，而不是悄悄按上限跑——
+    "悄悄改小"与"悄悄改大"都是在执行一个和批准内容不同的动作。
+    """
+
+    raw = request.value_of("timeoutMs")
+    if raw is None:
+        return spec.timeout_ms
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        raise DriverError("timeoutMs 必须是正整数毫秒")
+    if raw > spec.timeout_ms:
+        raise DriverError(
+            f"请求的超时 {raw}ms 超过注册表声明的 {spec.timeout_ms}ms："
+            "要更长预算请改注册表并重新审核，驱动层不放宽"
+        )
+    return raw
+
+
+def _refuse_background(request: ActionRequest) -> None:
+    """run_in_background=true 显式拒绝（不是静默忽略）。
+
+    平台拿不到后台进程的退出码：post_checks 里的 exit_code_zero 会必然退化成
+    repair_required（§5.35），平台也没有进程树回收与回滚语义——声明不了就不假装支持。
+    """
+
+    value = request.value_of("run_in_background")
+    if value not in (None, False):
+        raise DriverError(
+            "run_in_background=true 本平台显式拒绝：后台进程没有退出码，"
+            "exit_code_zero 事后核对必然退化成 repair_required，也没有进程树回收与回滚语义。"
+            "需要后台执行请另立工具，并在注册表里写清事后核对与回滚方式"
+        )
 
 def _run_process(
-    argv: Sequence[str], *, timeout_ms: int, workspace: Optional[Path]
+    argv: Sequence[str], *, timeout_ms: int, workspace: Optional[Path],
+    cwd: Optional[Path] = None,
 ) -> DriverResult:
     started = time.monotonic()
+    working_directory = cwd if cwd is not None else workspace
+    popen_kwargs: dict[str, Any] = {
+        "cwd": None if working_directory is None else str(working_directory),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "shell": False,
+    }
+    if os.name == "nt":
+        # Windows：新进程组 + job object（见 _assign_windows_job）。TerminateJobObject
+        # 带走整棵进程树——只 kill 直接子进程会留下它启动的命令继续跑。
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        # POSIX：独立会话 = 独立进程组，超时时 killpg(-pid) 一次带走整组。
+        popen_kwargs["start_new_session"] = True
+    if working_directory is not None and not Path(working_directory).is_dir():
+        # 工作目录不存在时 Popen 在子进程里 chdir 失败、回报 ENOENT，旧实现把它说成
+        # "命令不可执行"——归因错了地方（要启动什么与在哪个目录启动必须分开写）。
+        # 自己先证明目录存在，其它启动失败（EACCES / NotADirectoryError …）也一律
+        # 翻成 DriverError，不让裸 OSError 破坏本模块的错误契约。
+        raise DriverError(
+            f"工作目录不存在或不是目录：{working_directory}（拒绝在证明不了的位置执行）"
+        )
     try:
-        completed = subprocess.run(
-            list(argv),
-            cwd=None if workspace is None else str(workspace),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_ms / 1000,
-            check=False,
-            shell=False,
-        )
-    except subprocess.TimeoutExpired as error:
-        stdout = error.stdout if isinstance(error.stdout, str) else ""
-        stderr = error.stderr if isinstance(error.stderr, str) else ""
-        return DriverResult(
-            status=ExecutionStatus.FAILED,
-            detail=f"命令在 {timeout_ms}ms 内没有结束：已终止（部分输出不代表完整结果）",
-            exit_code=None,
-            timed_out=True,
-            stdout=_clean(stdout),
-            stderr=_clean(stderr),
-            duration_ms=int((time.monotonic() - started) * 1000),
-        )
+        process = subprocess.Popen(list(argv), **popen_kwargs)
+        _assign_windows_job(process)
     except FileNotFoundError as error:
         raise DriverError(f"命令不可执行：{error}") from error
+    except OSError as error:
+        raise DriverError(f"无法启动进程（{type(error).__name__}）：{error}") from error
 
-    status = (
-        ExecutionStatus.EXECUTED
-        if completed.returncode == 0
-        else ExecutionStatus.FAILED
-    )
+    # 边跑边读、读到上限就只丢不存：communicate() 会先把整份输出缓冲进内存，
+    # 一条 verbose（但仍在白名单里）的命令就能把执行进程的内存吃光——超时只限时间、不限产量。
+    out_box: list[bytes] = []
+    err_box: list[bytes] = []
+    readers = [
+        threading.Thread(target=_drain, args=(process.stdout, out_box), daemon=True),
+        threading.Thread(target=_drain, args=(process.stderr, err_box), daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+
+    timed_out = False
+    try:
+        try:
+            process.wait(timeout=timeout_ms / 1000)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            # 终止**整棵进程树**：ShellCommandDriver 的直接子进程是声明的 shell，
+            # 真正干活的往往是它再启动的命令（孙子进程）；旧实现用 subprocess.run，
+            # 它只 kill 直接子进程，孙子进程会继续运行并继续写文件。
+            _terminate_tree(process)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:  # pragma: no cover - 已经终止过
+                pass
+    finally:
+        _close_windows_job(process)
+        for reader in readers:
+            reader.join(5)
+
+    stdout = _clean((out_box[0] if out_box else b"").decode("utf-8", errors="replace"))
+    stderr = _clean((err_box[0] if err_box else b"").decode("utf-8", errors="replace"))
+    if timed_out:
+        return DriverResult(
+            status=ExecutionStatus.FAILED,
+            detail=(
+                f"命令在 {timeout_ms}ms 内没有结束：已终止整棵进程树"
+                "（部分输出不代表完整结果）"
+            ),
+            exit_code=None,
+            timed_out=True,
+            stdout=stdout,
+            stderr=stderr,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+    returncode = process.returncode
+    status = ExecutionStatus.EXECUTED if returncode == 0 else ExecutionStatus.FAILED
     return DriverResult(
         status=status,
-        detail=f"exit={completed.returncode}",
-        exit_code=completed.returncode,
-        stdout=_clean(completed.stdout or ""),
-        stderr=_clean(completed.stderr or ""),
-        structured={"exit_code": completed.returncode},
+        detail=f"exit={returncode}",
+        exit_code=returncode,
+        stdout=stdout,
+        stderr=stderr,
+        structured={"exit_code": returncode},
         duration_ms=int((time.monotonic() - started) * 1000),
     )
+
+
+def _terminate_tree(process: subprocess.Popen) -> None:
+    """终止子进程及其后代。
+
+    - POSIX：进程组（start_new_session 已把子进程放进自己的组，killpg 带走全组）；
+    - Windows：优先 TerminateJobObject（见 _assign_windows_job），再退到 taskkill /T，
+      最后 process.kill()。为什么不用 taskkill 当主路径：在受限环境（沙箱 / 受限令牌）里
+      它可能直接 Access denied，而 job object 仍然有效。
+
+    实现与 `validators.adapters.base._terminate_tree` 同型：那一份属于 Phase 5 的验证器层，
+    enforcement 不反向导入它（分层方向相反），所以这里保留一份最小实现。
+    """
+
+    if process.poll() is not None:
+        return
+    try:
+        job = getattr(process, "_enforcement_job_handle", None)
+        if job:
+            _terminate_windows_job(job)
+        elif os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                capture_output=True,
+                check=False,
+            )
+        else:
+            os.killpg(os.getpgid(process.pid), 9)
+    except Exception:  # pragma: no cover - 尽力而为，随后再 kill 一次
+        pass
+    finally:
+        try:
+            process.kill()
+        except Exception:  # pragma: no cover
+            pass
+
+
+# Windows 的 job object：把子进程绑进一个 job，TerminateJobObject 会带走它的整棵进程树。
+# 只用标准库 ctypes（不引入 pywin32），非 Windows 上是空操作。
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+
+
+def _windows_job_api() -> Any:  # pragma: no cover - 平台分支
+    if os.name != "nt":
+        return None
+    cached = getattr(_windows_job_api, "_cached", None)
+    if cached is not None:
+        return cached
+    import ctypes
+    from ctypes import wintypes
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class _BasicLimit(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+            ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_void_p),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class _ExtendedLimit(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _BasicLimit),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    bundle = (kernel32, _ExtendedLimit)
+    _windows_job_api._cached = bundle  # type: ignore[attr-defined]
+    return bundle
+
+
+def _assign_windows_job(process: subprocess.Popen) -> None:
+    """把子进程绑进一个"关闭即杀"的 job object；失败就退回 taskkill 路径。"""
+
+    api = _windows_job_api()
+    if api is None:  # pragma: no cover - POSIX
+        return
+    kernel32, extended_limit = api
+    try:
+        import ctypes
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return
+        info = extended_limit()
+        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        kernel32.SetInformationJobObject(
+            job,
+            _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not kernel32.AssignProcessToJobObject(job, ctypes.c_void_p(int(process._handle))):
+            kernel32.CloseHandle(job)
+            return
+        process._enforcement_job_handle = job  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - 尽力而为
+        return
+
+
+def _terminate_windows_job(job: int) -> None:
+    api = _windows_job_api()
+    if api is None:  # pragma: no cover
+        return
+    kernel32, _ = api
+    try:
+        kernel32.TerminateJobObject(job, 1)
+    except Exception:  # pragma: no cover
+        pass
+
+
+def _close_windows_job(process: subprocess.Popen) -> None:
+    job = getattr(process, "_enforcement_job_handle", None)
+    if not job:
+        return
+    api = _windows_job_api()
+    if api is None:  # pragma: no cover
+        return
+    kernel32, _ = api
+    try:
+        kernel32.CloseHandle(job)
+    except Exception:  # pragma: no cover
+        pass
+    process._enforcement_job_handle = None  # type: ignore[attr-defined]
 
 
 class DelegatingDriver:
@@ -386,15 +754,3 @@ def default_drivers(*, shell: Sequence[str] | None = None) -> Mapping[DriverKind
     if shell:
         drivers[DriverKind.SHELL_COMMAND] = ShellCommandDriver(shell=shell)
     return drivers
-
-
-def python_executable() -> str:
-    """当前解释器路径：测试与示例用它构造确定性的 argv，而不是猜系统里有什么。"""
-
-    return sys.executable or "python"
-
-
-def environment_with(extra: Mapping[str, str]) -> dict[str, str]:
-    env = dict(os.environ)
-    env.update(extra)
-    return env

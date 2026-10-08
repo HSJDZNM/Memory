@@ -164,7 +164,9 @@ class OrderRepository:
 }
 
 # 模板里的占位符形态：替换完还剩下它们，说明 `str.replace` 漏了一条。
-_PLACEHOLDER_RE = re.compile(r"\{[a-z_]+\}")
+# 字符类必须含数字：模板里真实存在 `{token_sha2}`（以 `{token_sha}` 为前缀的那一条），
+# 只写 [a-z_] 会让它**永远不被检出**，漏替换的后果是配置里留下字面量而不是当场失败。
+_PLACEHOLDER_RE = re.compile(r"\{[A-Za-z0-9_]+\}")
 
 # 验证器数据文件：注册表的默认路径是**相对 root 的** "validation/validators.yaml"
 # （见 validators.registry.DEFAULT_REGISTRY / load_config），另外 tool.config 也是相对 root 的
@@ -275,7 +277,13 @@ def write_api_config(
     """
 
     root = Path(root)
-    project = _write_project(Path(project), docs=docs)
+    # project 先解析成绝对路径再使用：下面两处都要求"绝对"——`_relative_to_repo(project)`
+    # 写进配置的 project_root，而 `_copy_extra_rules` 返回的目录会**原样**写进 rules 列表，
+    # TenantSpec 又把每一项相对**租户项目根**解析。调用方给相对路径（例如
+    # `write_api_config(..., project="out/project")`）时，相对目录会被拼成
+    # `<project>/out/project/rules-extra/...` —— 一个不存在的路径，装配直接失败。
+    project = Path(project).resolve()
+    project = _write_project(project, docs=docs)
     if validation_root is not None:
         _write_validation(Path(validation_root))
     if (corpus_root is None) != (db is None):

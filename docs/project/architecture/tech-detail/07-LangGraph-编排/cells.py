@@ -90,6 +90,7 @@ import orchestration_support as support  # noqa: E402
 from orchestration import langgraph_engine  # noqa: E402
 from orchestration.approvals import ApprovalGate  # noqa: E402
 from orchestration.checkpoint import JsonCheckpointStore, build_record, plan_resume  # noqa: E402
+from orchestration.errors import ResumeError  # noqa: E402
 from orchestration.client import (  # noqa: E402
     DecisionOutcome,
     PlatformReadiness,
@@ -395,10 +396,19 @@ tampered = build_record(initial, engine="reference", sequence=3).model_copy(
     update={"state_digest": "sha256:" + "0" * 64})
 tampered_credentials = build_record(initial, engine="reference", sequence=4).model_copy(
     update={"compatibility": PlatformSnapshot(rule_set_hash="sha256:" + "9" * 64)})
+tampered_results = {
+    "state_digest 与状态不一致": save_problem(tampered),
+    "改掉兼容性凭据": save_problem(tampered_credentials),
+}
 print(pad("写一份什么样的记录", 28) + "结果")
 print("-" * 96)
-print(pad("state_digest 与状态不一致", 28) + save_problem(tampered))
-print(pad("改掉兼容性凭据", 28) + save_problem(tampered_credentials))
+for label, detail in tampered_results.items():
+    print(pad(label, 28) + detail)
+# 与上面的 refusals 同一条口径：**没被拒绝就是缺陷**。只打印的话，store 的摘要 / 兼容性检查
+# 一旦回归，这两行会变成"写进去了（缺陷）"而整个单元照样绿——这一节讲的正是"写进去之前要挡住"。
+assert not [
+    value for value in tampered_results.values() if value.endswith("（缺陷）")
+], tampered_results
 
 probe_config = support.graph_config(TEMP, name="commit-probe")
 probe_assembly = build_assembly(
@@ -454,13 +464,30 @@ base = build_record(fresh, engine="reference", sequence=9, compatibility=current
 rows = []
 
 
-def judge(name, record, snapshot):
-    """跑一次 plan_resume，把结论、改变的维度与恢复后的状态记成一行。"""
+def judge(name, record, snapshot, *, expect_error=None):
+    """跑一次 plan_resume，把结论、改变的维度与恢复后的状态记成一行。
+
+    `expect_error` 给出这一行**期望被拒绝**的异常类型。拒绝也是一种结论，但"被哪种错误拒绝"
+    同样是要验证的规格：`judge` 原来把任何异常都记成一行"拒绝（类型）"，于是 plan_resume 里
+    哪怕是个 TypeError（在真正的比对之前就炸）也会打印出与"拒绝恢复"一模一样的一行。
+    """
 
     try:
         plan = plan_resume(record, snapshot, fresh_state=fresh)
     except Exception as error:  # noqa: BLE001 - 拒绝恢复也是一种结论
         rows.append((name, f"拒绝（{type(error).__name__}）", "-", "不沿用任何旧结论"))
+        if expect_error is None:
+            # 这一行**期望正常返回**：异常不是"另一种结论"，而是这一行根本没跑起来。以前它返回
+            # None，调用方紧接着 `.mode.value` 抛 AttributeError——"plan_resume 里炸了"于是被
+            # 伪装成"讲解代码写错了"，真正的类型与消息（真正的原因）被这层 AttributeError 盖掉。
+            raise AssertionError(
+                f"{name}：plan_resume 抛了 {type(error).__name__}，但这一行期望正常返回：{error}"
+            ) from error
+        if not isinstance(error, expect_error):
+            raise AssertionError(
+                f"{name}：期望被 {expect_error.__name__} 拒绝，实际是 "
+                f"{type(error).__name__}：{error}"
+            ) from error
         return None
     state = plan.state
     kept = []
@@ -493,7 +520,11 @@ reapprove = judge("工具 schema 变了",
 assert reapprove.mode.value == "reapprove" and reapprove.state.approvals == ()
 
 generation = current.model_copy(update={"decision_schema_version": "9.9"})
-judge("协议世代变了", base, generation)
+# 这一行以前**没有断言**：协议世代变了要求"直接拒绝恢复"，但打印出来的"拒绝（…）"也可能是
+# 任何别的异常（比如在真正的比对之前就抛的 TypeError）。`expect_error` 把"被拒绝"升级成
+# "被**哪一种**错误拒绝"——它盯的是 plan_resume 里那条显式的 ResumeError。
+protocol = judge("协议世代变了", base, generation, expect_error=ResumeError)
+assert protocol is None, "协议世代变了却正常给出了恢复计划：" + repr(protocol)
 
 unknown = PlatformSnapshot(rule_set_hash=None, index_version=None, tool_schema_hash=None)
 blinded = judge("凭据拿不到（None）", base, unknown)
@@ -686,9 +717,16 @@ def run_mini(task_id, *, client, runner, name, approvals=None):
 
 
 BROKEN = support.write_change(summary="第 0 轮：会被验证挡住的改动")
+# **替换的针必须与默认正文逐字相同**：`support.write_change()` 里那句话是
+# "处理创建请求（编排层改写过的版本）。"，而这里原来找的是 "处理创建请求。"——replace 静默
+# 不生效，两轮的 content 逐字节相同（只有 summary 不同）；`Change.digest` 覆盖 summary，
+# 于是两轮连 action_id 都不一样，更掩盖了"修复轮其实什么都没改"。
+# 下面那条断言让这种"夹具其实是空操作"再也不可能悄悄通过。
 FIXED = support.write_change(
     summary="第 1 轮：按结构化 violation 修复",
-    content=support.write_change().content.replace("处理创建请求。", "处理创建请求（修复版）。"))
+    content=support.write_change().content.replace(
+        "处理创建请求（编排层改写过的版本）。", "处理创建请求（修复版）。"))
+assert FIXED.content != BROKEN.content, "修复夹具与初始改动逐字节相同：第 1 轮什么都没改"
 repair_client = support.scripted_client(
     evaluate=(support.allow_outcome(), support.allow_outcome()),
     retrieve=(support.retrieval_ok(),),

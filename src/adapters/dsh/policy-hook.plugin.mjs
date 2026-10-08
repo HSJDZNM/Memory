@@ -252,6 +252,10 @@ function buildOrigin(fields) {
   // 闭集外的取值 / 写不出修复动作 → **那条指控不许成立**：落 unknown_origin，因果链标成
   // unproven，fix 换成一条具体的下一步动作（原来那条 fix 属于已经作废的指控，不能留下）。
   const dropped = !claimHolds;
+  // 调用方**自称** unknown_origin 时，claimHolds 为真、dropped 为假；但"归因没有建立起来"
+  // 是一个整体：verified / causal_link 也必须一并作废，不许从调用方照抄（否则
+  // {origin:'unknown_origin', verified:true, causalLink:'proven'} 这种自相矛盾的记录照样过）。
+  const invalidated = dropped || claimed === 'unknown_origin';
   const effectiveFix = dropped && claimed !== 'unknown_origin' ? '' : fix;
   return {
     kind: ORIGIN_OBJECT_KIND,
@@ -267,12 +271,12 @@ function buildOrigin(fields) {
     observation: {
       method: OBSERVATION_METHODS.includes(fields.method) ? fields.method : 'none',
       result: typeof fields.result === 'string' && fields.result !== '' ? fields.result : '没有可读的取证结果',
-      verified: dropped ? false : fields.verified === true,
+      verified: invalidated ? false : fields.verified === true,
       verified_at: new Date().toISOString(),
       run_scoped: true,
     },
     fix: effectiveFix !== '' ? effectiveFix : FIX_MISSING_ACTION,
-    causal_link: !dropped && fields.causalLink === 'proven' ? 'proven' : 'unproven',
+    causal_link: !invalidated && fields.causalLink === 'proven' ? 'proven' : 'unproven',
   };
 }
 
@@ -509,8 +513,16 @@ export function createRunHook(ctx, config) {
    * 放行路径**不产出**任何归因（不许给放行的调用编造一个"为什么"）。
    */
   const runHook = async (exec, { hookEvent, fields }) => {
-    const hasProjectDir = config.projectDir !== undefined && config.projectDir !== null;
-    const cwd = config.projectDir ?? exec.agent?.session?.header?.cwd;
+    // 空串 / 非字符串的 projectDir 与「没写」同义（头部文档：「不填则用会话工作目录」）：
+    // `??` 只兜 null/undefined，于是 `projectDir: ""` 会被当成「声明过了」——会话 cwd 永远
+    // 不被采纳、cwdSource 谎报成 config.projectDir，`workdir: ""` 还会一路传给 spawn，
+    // 之后连"这次在哪个目录启动"都归因不出来（inspectWorkdir 只能落 unknown_origin）。
+    const declaredProjectDir =
+      typeof config.projectDir === 'string' && config.projectDir.trim() !== ''
+        ? config.projectDir
+        : undefined;
+    const hasProjectDir = declaredProjectDir !== undefined;
+    const cwd = hasProjectDir ? declaredProjectDir : exec.agent?.session?.header?.cwd;
     const cwdSource = hasProjectDir ? 'config.projectDir' : '会话 cwd（config.projectDir 未声明）';
     // spawn 之前先看工作目录：能证明它不可用时直接失败关闭，理由点名那个目录。
     const workdir = inspectWorkdir(cwd, cwdSource);
@@ -548,31 +560,43 @@ export function createRunHook(ctx, config) {
       return { allowed: false, reason: outcome.reason, origin: outcome.origin };
     }
 
-    const exitCode = result.exitCode;
-    const stderr = String(result.stderr?.text ?? '').trim();
+    // 结果形状只信我们认得的部分：`result` 缺失、`exitCode` 改名、`stderr` 变成裸字符串，
+    // 都不能让「翻译失败关闭」这一步自己抛出去——那会由 dsh 的错误处理接管，
+    // 「只有 exit 0 放行」就不再由本插件保证。形状不认识 = 明确拒绝（未知状态不放行）。
+    const exitCode = result?.exitCode;
+    const stderr = (
+      typeof result?.stderr === 'string' ? result.stderr : String(result?.stderr?.text ?? '')
+    ).trim();
     // N18：判定行是 Hook 自己写的策略事实；退出码只说明"进程怎么结束的"。
     const verdict = verdictOf(stderr);
     const detail = withoutVerdict(stderr);
-    if (exitCode === 2) {
-      if (verdict !== null) {
-        return { allowed: false, reason: policyReason(verdict, detail, exitCode) };
-      }
-      return { allowed: false, reason: stderr || 'blocked by policy hook' };
+
+    if (exitCode === 0) {
+      return { allowed: true, reason: '' };
     }
-    if (exitCode !== 0) {
-      if (verdict !== null) {
-        return { allowed: false, reason: policyReason(verdict, detail, exitCode) };
-      }
+    if (typeof exitCode !== 'number' || !Number.isFinite(exitCode)) {
       return {
         allowed: false,
         reason:
-          'policy-hook: Hook 退出码 ' +
-          String(exitCode) +
-          '，未知状态按失败关闭拒绝' +
+          'policy-hook: Hook 返回值里没有可读的退出码，未知状态按失败关闭拒绝' +
           (stderr ? '：' + stderr : ''),
       };
     }
-    return { allowed: true, reason: '' };
+    if (verdict !== null) {
+      // exit 2 与"其余非 0"共用同一份转译：两处各写一份，修一处就会漏另一处。
+      return { allowed: false, reason: policyReason(verdict, detail, exitCode) };
+    }
+    if (exitCode === 2) {
+      return { allowed: false, reason: stderr || 'blocked by policy hook' };
+    }
+    return {
+      allowed: false,
+      reason:
+        'policy-hook: Hook 退出码 ' +
+        String(exitCode) +
+        '，未知状态按失败关闭拒绝' +
+        (stderr ? '：' + stderr : ''),
+    };
   };
 
   return runHook;
@@ -595,7 +619,17 @@ export function apply(ctx, config) {
     // 避免把"结果形状变了"静默变成"空结果"（事后核对会因此看不到任何偏差）。
     // 只算一次并复用：转发给 Hook 与（阻断时）附回模型的是同一份截断结果，
     // 不存在第二条无上限的路径。
-    const toolResponse = truncate(blocksToText(result?.content ?? result), MAX_TOOL_RESPONSE_CHARS);
+    //
+    // 「退回结果本身」必须真的退得回去：`blocksToText` 对**裸对象**返回空串，而「结果对象
+    // 没有 content」正好是这种形状——工具输出于是静默变成空串，事后核对分不出「工具什么都
+    // 没输出」与「形状我们不认识」。非数组的对象一律 JSON 序列化后转发（仍走同一个截断上限）。
+    const rawResult = result?.content ?? result;
+    const toolResponse = truncate(
+      rawResult !== null && typeof rawResult === 'object' && !Array.isArray(rawResult)
+        ? JSON.stringify(rawResult)
+        : blocksToText(rawResult),
+      MAX_TOOL_RESPONSE_CHARS,
+    );
     const outcome = await runHook(exec, {
       hookEvent: 'PostToolUse',
       fields: {

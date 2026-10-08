@@ -47,6 +47,7 @@ __all__ = [
     "ValidationSummary",
     "ViolationRef",
     "canonical_digest",
+    "is_relative_state_path",
     "empty_state",
 ]
 
@@ -65,9 +66,16 @@ _MAX_PATH = 512
 
 
 class StrictModel(BaseModel):
-    """未知字段一律报错：编排状态与平台载荷之间不许有"悄悄多出来"的字段。"""
+    """未知字段一律报错，且**不可变**：编排状态与平台载荷之间不许有"悄悄多出来"或"被就地改掉"的字段。
 
-    model_config = ConfigDict(extra="forbid")
+    为什么 frozen 不是形式主义：本模块的文档一直声称 GraphState「是不可变的」，而
+    pydantic 默认 `validate_assignment=False`、也没有 frozen——`state.task_id = ...` 会**就地改掉**
+    一份已经落盘（或即将落盘）的快照，摘要与 checkpoint 的一致性校验随后对不上，
+    而"状态是值语义"正是整个恢复/重放设计的地基。节点与引擎本来就只用 `replace()` / `model_copy`，
+    所以这里改成真冻结不改变任何合法调用，只是把不合法的那种变成报错。
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 def canonical_digest(value: Any) -> str:
@@ -90,6 +98,22 @@ def _relative_path(value: str) -> str:
     if any(part in ("", ".", "..") for part in parts):
         raise ValueError("路径不得包含空段、. 或 ..")
     return value
+
+
+def is_relative_state_path(value: Any) -> bool:
+    """这个值能不能作为**状态里的**仓库相对路径（与 _relative_path 逐条同口径）。
+
+    给"过滤外部载荷"的地方用（例如编排客户端从平台响应里挑 source_path）：
+    它们需要的是"能不能进状态"这一个判断，而不是自己再写一套更松的规则——
+    两套口径必然漂移（实测过：松的那套放 Windows 形态与百分号编码进状态，
+    而同一个值交给状态模型就会被拒）。
+    """
+
+    try:
+        _relative_path(value)
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _short_text(value: str, *, limit: int = _MAX_TEXT) -> str:
@@ -117,6 +141,18 @@ def _safe_text(value: str, *, limit: int = _MAX_NOTE) -> str:
     if contains_secret_value(text):
         raise ValueError("状态里的文本不得包含凭据形态的取值：拒绝把凭据写进长期状态")
     return text
+
+
+def _safe_state_text(value: str) -> str:
+    """进长期状态的自由文本统一过一遍：短、无控制字符、无**凭据形态**的取值。
+
+    为什么不是"只给 requirements/notes 用"：状态是**长期**的（checkpoint 落盘，还可能进审计与
+    报告），凭据一旦写进去就没有回收路径；而这几处（ArtifactRef.note / PolicyTraceRef.reason /
+    ViolationRef.message / NodeRun.detail / FailureRef.detail）装的都是上游或外部文本，
+    不能靠"调用方自觉"。长度沿用各字段自己的上限（400）——这次只加凭据探针，不顺手改长度。
+    """
+
+    return _safe_text(value, limit=_MAX_TEXT)
 
 
 class NodeId(str, Enum):
@@ -204,7 +240,7 @@ class ArtifactRef(StrictModel):
     _check_path = field_validator("path")(
         lambda value: None if value is None else _relative_path(value)
     )
-    _check_note = field_validator("note")(lambda value: _short_text(value))
+    _check_note = field_validator("note")(_safe_state_text)
 
 
 class ContextRef(StrictModel):
@@ -228,6 +264,8 @@ class PolicyTraceRef(StrictModel):
     trace_id: Optional[str] = Field(default=None, max_length=_MAX_ID)
     rule_set_hash: Optional[str] = Field(default=None, max_length=80)
     reason: str = Field(default="", max_length=_MAX_TEXT)
+
+    _check_reason = field_validator("reason")(_safe_state_text)
 
 
 # H1：一次 block 属于哪一类——**受控闭集**（不留自由文本）。
@@ -305,6 +343,8 @@ class ViolationRef(StrictModel):
     evidence_kind: str = Field(default="", max_length=_MAX_ID)
     evidence_value: str = Field(default="", max_length=_MAX_TEXT)
 
+    _check_message = field_validator("message")(_safe_state_text)
+
     @field_validator("file")
     @classmethod
     def _check_file(cls, value: str) -> str:
@@ -357,7 +397,10 @@ class ValidationSummary(StrictModel):
                 f"未知的 reason_code {self.reason_code!r}；只接受 {sorted(REASON_CODES)}，"
                 "拒绝在未知理由下继续"
             )
-        if derived is not None and derived != self.reason_code:
+        if derived != self.reason_code:
+            # **无条件**比：只在"派生出东西"时才比，会让 allow（或 block + 空 violations +
+            # 无审批要求）的摘要带上任意受控 reason——这个字段就变成了第二个判定通道，
+            # 而消费方（修复节点）会按一个发现并不支持的理由分流。派生不出理由时只能是 None。
             raise ValueError(
                 f"reason_code 与发现不一致：{self.reason_code!r} != {derived!r}"
                 "（受控 reason 是从发现派生的，不许成为第二个判定通道）"
@@ -439,11 +482,15 @@ class NodeRun(StrictModel):
     failure_code: Optional[FailureCode] = None
     detail: str = Field(default="", max_length=_MAX_TEXT)
 
+    _check_detail = field_validator("detail")(_safe_state_text)
+
 
 class FailureRef(StrictModel):
     code: FailureCode
     node: Optional[NodeId] = None
     detail: str = Field(default="", max_length=_MAX_TEXT)
+
+    _check_detail = field_validator("detail")(_safe_state_text)
 
 
 class PlatformSnapshot(StrictModel):
@@ -460,7 +507,15 @@ class PlatformSnapshot(StrictModel):
     tool_schema_hash: Optional[str] = Field(default=None, max_length=80)
 
     def incompatible_with(self, other: "PlatformSnapshot") -> Tuple[str, ...]:
-        """返回不兼容的维度名（有序、去重），供恢复时报告与重新评估。"""
+        """返回不兼容的维度名（有序、去重），供恢复时报告与重新评估。
+
+        **`state_schema_version` 刻意不在这张表里**（审查报告问过一次，这里把判定写下来）：
+        协议世代对不上时，"继续恢复"根本不是选项——`checkpoint.load` 会**硬拒绝**整份记录
+        （`SUPPORTED_STATE_SCHEMA_VERSIONS` 里没有这个版本就抛 CheckpointError），
+        比"列成不兼容维度、由 plan_resume 报一个模式"更严格。而 plan_resume 的输入永远是
+        `store.load` 的返回值，所以这里再加一条只会是一段**不可达**的分支，
+        还会让人以为"不列出来就等于没查"。字段本身保留（快照里要留下当时写的是哪一版）。
+        """
 
         changed: list[str] = []
         for name in (

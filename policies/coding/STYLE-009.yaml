@@ -22,6 +22,8 @@ source:
   kind: standard
   path: docs/mirrors/python-pep-code-style/pep-8-python-code/index.md
   note: >
-    E721 覆盖 type(x) == type(y) 与 type(x) == SomeType；PEP 8 的 Wrong 例子
-    "type(obj) is type(1)" 用的是 is，Ruff 新版本只对 == 形态报 E721，
-    因此"用 is 比较 type()"目前没有码位可查，本规则不声称覆盖它。
+    E721 覆盖 type(x) == type(y)、type(x) != type(y) 与 type(x) == SomeType（实测 ruff 0.14.13：
+    三种形态都报，== 与 != 都在内——note 此前只列了 == 形态，把检查器说窄了）。
+    PEP 8 的 Wrong 例子 "type(obj) is type(1)" 用的是 is；实测 type(x) is type(y) 与
+    type(x) is not type(y) **都不报**，因此"用 is / is not 比较 type()"目前没有码位可查，
+    本规则不声称覆盖它。

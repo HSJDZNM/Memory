@@ -5,6 +5,16 @@
 # 出处：docs/mirrors/python-pep-code-style/pep-8-python-code/index.md（L314）§"Imports"：
 #   "Wildcard imports (`from <module> import *`) should be avoided, as they make it unclear
 #    which names are present in the namespace, confusing both readers and many automated tools."
+# 严重级别（2026-10-08 记录，**刻意**与覆盖报告 §10.4 的建议不一致）：
+#   §10.4 的负面清单把本条列进「降级 error→warning 6 条」，理由是 PEP 8 原文用
+#   "should be avoided"（RFC 2119 的 SHOULD），且同段承认存在可辩护的写法；同族的
+#   STYLE-003 / STYLE-004 也都是 warning。这里仍然保留 error，理由不是措辞而是**判定链**：
+#   通配符导入之后，名字的来源在 AST 上不可归属——依赖集证明不了完整性，而本平台的
+#   forbidden_dependency 与依赖图证据都以「依赖可见」为前提（AGENTS 核心约束 5 的
+#   「相同输入得到相同结论」也要求依赖集确定）。换句话说：这条命中时，同一次判定里
+#   依赖类规则给出的 allow 是**没有依据**的 allow。
+#   这是政策选择，不是笔误：要降级请连同上面的理由一起改，并同步 AGENTS.md §43 的
+#   级别分布读数（24 error / 19 warning）与 docs/project/rule-effects/规则效果演示报告.md 的同一行。
 id: STYLE-005
 version: 1
 name: no-wildcard-imports

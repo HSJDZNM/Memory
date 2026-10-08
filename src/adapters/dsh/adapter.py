@@ -1186,10 +1186,11 @@ def _resolve_read_scope(
     target = candidate.resolve()
     if target == anchor:
         return "."
-    head = target.parts[: len(anchor.parts)]
-    if len(target.parts) <= len(anchor.parts) or [item.lower() for item in head] != [
-        item.lower() for item in anchor.parts
-    ]:
+    # 包含性判定的**大小写口径跟路径实现走**（WindowsPath 不敏感、PurePosixPath 敏感）：
+    # 两边都 lower() 等于把"不区分大小写"强加到所有平台，在区分大小写的文件系统上
+    # `/srv/App/x.py` 会被判成 `/srv/app` 以内，尾巴再被报成"仓库内路径 x.py"——
+    # 一次越界读于是按工作区内的文件被记录与判层。与 `adapters.models._within` 同一口径。
+    if anchor not in target.parents:
         # N22：拒绝方向不变（只读同样受 path_scope=workspace 约束），但理由要能一次改对。
         # 实测代价：模型拿 glob 去摸仓库根时被拦，理由只说"越界一律拒绝"，它只能白试一次。
         # 这里给出**可用的替代**：受控项目根本身是合法目标（记为 "."），项目内的路径要写成

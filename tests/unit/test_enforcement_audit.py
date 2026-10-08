@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import timedelta
 
 import pytest
@@ -95,9 +96,26 @@ def test_payload_container_limits_are_applied(tmp_root):
     payload = {f"k{index}": index for index in range(100)}
     sanitized = sanitize_payload(payload, workspace=tmp_root)
 
-    assert len(sanitized) <= 64
+    # 64 条内容 + 一条显式截断标记：超限的条目只能"标出来"，不能无声消失。
+    assert len(sanitized) == 65
+    assert sanitized["<truncated-items>"] == 36
     nested = {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": 1}}}}}}}}
     assert sanitize_payload(nested, workspace=tmp_root)
+
+
+def test_sanitize_payload_does_not_silently_drop_values(tmp_root):
+    """脱敏/截断撞名与超限条目都不能静默消失：审计里"少了一条"必须看得出来。"""
+
+    # 两个长键截断后是同一个字符串：旧实现的字典推导会吞掉其中一个值。
+    collided = sanitize_payload(
+        {"k" * 250 + "A": 1, "k" * 250 + "B": 2}, workspace=tmp_root
+    )
+    assert sorted(collided.values()) == [1, 2], collided
+
+    # 列表超限时也要有显式标记。
+    truncated = sanitize_payload(list(range(70)), workspace=tmp_root)
+    assert len(truncated) == 65
+    assert truncated[-1] == "<truncated-items:6>"
 
 
 def test_oversized_record_fails_closed(tmp_root):
@@ -191,6 +209,121 @@ def test_deleting_a_record_breaks_the_chain(tmp_root):
     assert any("序号" in issue for issue in issues)
 
 
+def test_describe_reports_the_log_write_time_not_the_read_time(tmp_root):
+    """updated_at 必须是日志最后一次写入的时刻：陈旧/空日志不能看起来"刚刚更新过"。"""
+
+    sink = sink_for(tmp_root)
+    stamp = utc_now() - timedelta(seconds=3600)
+    sink.append(AuditStage.REQUEST, payload={"a": 1}, now=stamp)
+
+    assert sink.describe()["updated_at"] == to_timestamp(stamp)
+
+    # 空日志没有"更新时间"：不许拿读取时刻顶上。
+    empty = FileAuditSink(tmp_root / "empty.jsonl", workspace=tmp_root)
+    assert empty.describe()["updated_at"] == ""
+
+
+def test_describe_reads_the_audit_file_once(tmp_root, monkeypatch):
+    """一份 describe() 只扫一次文件：链记录、外来行、final_digest 与 issues 同源。
+
+    旧实现把整份文件读了四遍（chain_records / foreign_records / verify / final_digest），
+    审计是只会变长的追加写文件，这个代价随历史线性增长。
+    """
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.REQUEST, payload={"a": 1})
+    second = sink.append(AuditStage.FINAL_DECISION, payload={"b": 2})
+
+    calls: list[int] = []
+    original = sink._scan
+
+    def counted():  # type: ignore[no-untyped-def]
+        calls.append(1)
+        return original()
+
+    monkeypatch.setattr(sink, "_scan", counted)
+    described = sink.describe()
+
+    assert len(calls) == 1, "describe() 只应扫一次文件"
+    assert described["chained_records"] == 2
+    assert described["foreign_records"] == 0
+    assert described["issues"] == []
+    assert described["final_digest"] == second.digest
+
+
+def test_append_refuses_to_write_while_another_writer_holds_the_lock(tmp_root, monkeypatch):
+    """审计 append 是跨进程的读-改-写：拿不到锁必须失败关闭，绝不"没锁也写"。
+
+    两个 dsh 事件各自是一个进程：若各自读链尾再各自追加，就会写出同一个 sequence 与
+    prev_digest，链静默分叉——而 verify() 只能事后发现，那时动作已经执行完了。
+    """
+
+    from enforcement import audit as audit_module
+
+    sink = sink_for(tmp_root)
+    monkeypatch.setattr(audit_module, "_LOCK_TIMEOUT_SECONDS", 0.2)
+    holding = threading.Event()
+    release = threading.Event()
+
+    def hold() -> None:
+        with audit_module._audit_lock(sink.path, timeout_seconds=5.0):
+            holding.set()
+            release.wait(5)
+
+    writer = threading.Thread(target=hold, daemon=True)
+    writer.start()
+    try:
+        assert holding.wait(5)
+        with pytest.raises(AuditError) as error:
+            sink.append(AuditStage.REQUEST, payload={"a": 1})
+        assert "锁" in str(error.value)
+    finally:
+        release.set()
+        writer.join(5)
+
+    # 锁释放后写入恢复：失败关闭没有把审计端口永久锁死。
+    sink.append(AuditStage.REQUEST, payload={"a": 1})
+    assert sink.verify() == ()
+
+
+def test_mid_file_damage_is_reported_as_an_issue(tmp_root):
+    """只有**末行**撕裂是可容忍的；中间行读不出来说明链被截断或改写过。
+
+    旧行为把两类坏行一律降级成 `{"raw": line}`，只让 foreign_records() 的计数变大——
+    而那个计数器同样把合法的 Phase 2 外来行算进去，于是"中间被人动过"没有任何读数。
+    """
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.REQUEST, payload={"a": 1})
+    sink.append(AuditStage.PRE_DECISION, payload={"b": 2})
+    sink.append(AuditStage.FINAL_DECISION, payload={"c": 3})
+
+    path = tmp_root / "audit.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines[1] = lines[1][: len(lines[1]) // 2]  # 中间那条被截断
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    issues = sink.verify()
+    assert any("第 2 行损坏" in issue for issue in issues), issues
+
+
+def test_a_torn_tail_line_is_tolerated_but_counted(tmp_root):
+    """末行撕裂是"进程被杀"的正常形态：链完整性不报问题，但它仍以 raw 行计入外来行。"""
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.REQUEST, payload={"a": 1})
+
+    path = tmp_root / "audit.jsonl"
+    path.write_text(
+        path.read_text(encoding="utf-8") + '{"schema_version": "1.0", "sequence": 2, "st',
+        encoding="utf-8",
+    )
+
+    assert sink.verify() == ()
+    assert len(sink.chain_records()) == 1
+    assert sink.foreign_records() == 1
+
+
 def test_unknown_protocol_version_is_rejected():
     with pytest.raises(AuditError):
         parse_audit_record({"schema_version": "9.9", "sequence": 1, "stage": "request"})
@@ -244,6 +377,73 @@ def test_trace_replay_orders_the_chain_and_requires_a_final_decision(tmp_root):
     assert verify_chain(report.records) == ()
 
 
+def test_declared_post_without_pre_records_are_not_chain_defects(tmp_root):
+    """dsh 会为"没有经过 pre-check 的调用"写占位 POST_EVIDENCE：那是合法证据，不是链损坏。
+
+    这些记录（stage_note=post_without_pre / post_without_request）让 load_trace(...).ok
+    变成 False、CLI 以 EXIT_ERROR 收场——把"记下了一次未受治理的调用"读成"链被人动过"。
+    """
+
+    for note in ("post_without_pre", "post_without_request"):
+        sink = sink_for(tmp_root, name=f"{note}.jsonl")
+        sink.append(
+            AuditStage.POST_EVIDENCE,
+            payload={"stage_note": note, "tool": "edit"},
+            action_id="act-1",
+        )
+        assert verify_chain(sink.chain_records()) == (), note
+
+    # 反真空：没有这条声明的 POST_EVIDENCE 仍按"没有决策就不能有证据"拦下。
+    plain = sink_for(tmp_root, name="plain.jsonl")
+    plain.append(AuditStage.POST_EVIDENCE, payload={"status": "validated"}, action_id="act-2")
+    issues = verify_chain(plain.chain_records())
+    assert any("没有决策就不能有执行" in issue for issue in issues), issues
+
+
+def test_unanchored_records_are_not_collapsed_into_one_bucket(tmp_root):
+    """同一 trace 下多个请求的记录不能共用一个桶：第二条请求会被误报"阶段顺序倒退"。
+
+    旧实现的分组回落到 trace_id，而 demo 会在多个动作间复用 trace_id——那时第二条请求的
+    request 阶段排在第一条请求的 pre_decision 之后，链上明明合法却报倒退。
+    """
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.REQUEST, payload={}, trace_id="trace-1", request_id="req-1")
+    sink.append(
+        AuditStage.PRE_DECISION,
+        payload={"decision": "allow"},
+        trace_id="trace-1",
+        request_id="req-1",
+    )
+    sink.append(AuditStage.REQUEST, payload={}, trace_id="trace-1", request_id="req-2")
+    # 连 request_id 都没有的记录：每条自成一组，同样不互相干扰。
+    sink.append(AuditStage.REQUEST, payload={}, trace_id="trace-1")
+    sink.append(AuditStage.REQUEST, payload={}, trace_id="trace-1")
+
+    issues = verify_chain(sink.chain_records())
+
+    assert not any("阶段顺序倒退" in issue for issue in issues), issues
+
+
+def test_payload_of_returns_the_latest_reading_by_default(tmp_root):
+    """重试会重新走一次 pre-check：同一阶段可能有多条，默认取"这次动作的最终说法"。
+
+    旧实现无条件返回第一条，调用方拿到的是已经被取代的结论（allow → block 的重试）。
+    """
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.PRE_DECISION, payload={"decision": "allow"}, action_id="act-1")
+    sink.append(AuditStage.EXECUTION, payload={"status": "refused"}, action_id="act-1")
+    sink.append(AuditStage.PRE_DECISION, payload={"decision": "block"}, action_id="act-1")
+    sink.append(AuditStage.FINAL_DECISION, payload={"outcome": "blocked"}, action_id="act-1")
+
+    report = load_trace(tmp_root / "audit.jsonl", action_id="act-1")
+
+    assert report.payload_of(AuditStage.PRE_DECISION)["decision"] == "block"
+    assert report.payload_of(AuditStage.PRE_DECISION, latest=False)["decision"] == "allow"
+    assert report.payload_of(AuditStage.POST_EVIDENCE) is None
+
+
 def test_trace_replay_reports_an_unparsable_record_instead_of_raising(tmp_root):
     """链上有一条读不出来的记录时，重放要给出诊断，而不是把 AuditError 抛给 CLI。
 
@@ -277,6 +477,61 @@ def test_execution_without_a_pre_decision_is_reported(tmp_root):
 
     issues = verify_chain(sink.chain_records())
     assert any("没有决策就不能有执行" in issue for issue in issues)
+
+
+def test_an_execution_with_an_unknown_status_still_needs_a_decision(tmp_root):
+    """判据取补集：只有显式 refused 才算"没产生效果"，status 缺失/拼错一律按产生了效果算。"""
+
+    sink = sink_for(tmp_root)
+    sink.append(AuditStage.EXECUTION, payload={"status": "executed-typo"}, action_id="act-11")
+
+    issues = verify_chain(sink.chain_records())
+
+    assert any("没有决策就不能有执行" in issue for issue in issues), issues
+
+
+def test_unreadable_timestamps_count_as_inside_the_window(tmp_root):
+    """时间戳读不出来的行必须计入窗口：少算等于放宽限流与熔断（fail-open）。"""
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    ledger.append({"kind": "pre_decision", "limit_key": "local-user|fs.edit"})
+    ledger.append({"kind": "pre_decision", "limit_key": "local-user|fs.edit"})
+    ledger.append(
+        {
+            "kind": "pre_decision",
+            "limit_key": "local-user|fs.edit",
+            "recorded_at": "2026/10/08 06:00",  # 不可解析：不是 ISO
+        }
+    )
+
+    counted = ledger.count_since(
+        kind="pre_decision",
+        key_field="limit_key",
+        key_value="local-user|fs.edit",
+        window_seconds=60,
+    )
+
+    assert counted == 3, "读不出时间戳的行不许被静默跳过"
+
+
+def test_unreadable_timestamps_count_as_failures(tmp_root):
+    """ok=false 的执行行本来就失败：时间戳读不出来时按"在窗口内"计（熔断宁可早开）。"""
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    ledger.append(
+        {
+            "kind": "execution",
+            "limit_key": "local-user|exec.pwsh",
+            "ok": False,
+            "recorded_at": "not-a-timestamp",
+        }
+    )
+
+    counted = ledger.failures_since(
+        key_field="limit_key", key_value="local-user|exec.pwsh", window_seconds=60
+    )
+
+    assert counted == 1
 
 
 def test_refused_execution_without_a_decision_is_not_flagged(tmp_root):
@@ -363,6 +618,23 @@ def _grant(grant_id: str = "grant-1") -> AuthorizationGrant:
     )
 
 
+def test_a_claim_swallowed_by_a_stale_release_raises_ledger_error(tmp_root):
+    """认领写入后读不回来必须报 LedgerError：旧实现直接 [0]，抛的是裸 IndexError。
+
+    台账里若已经有一条同 claim_id 的 claim_released 行，新写入的认领会被释放集合立刻
+    吞掉，active_claims 返回空——而调用方（precheck）只捕 LedgerError，IndexError 会
+    直接穿透失败关闭处理。
+    """
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    ledger.append({"kind": "claim_released", "claim_id": "c-1", "action_key": "fs.edit:a-1"})
+
+    with pytest.raises(LedgerError):
+        ledger.claim(
+            action_id="a-1", tool_id="fs.edit", action_hash="sha256:h", claim_id="c-1"
+        )
+
+
 def test_grant_claim_identity_is_not_derived_from_the_clock(tmp_root, monkeypatch):
     """两个并发方拿到同一个 now 时，不能因为 claim_id 相同而双双得手。
 
@@ -432,6 +704,103 @@ def test_approval_quota_race_loser_returns_its_own_slot(tmp_root):
     assert len(EnforcementLedger(ledger.path).approval_uses("approval-1")) == 1
 
 
+def test_claim_reads_the_ledger_a_bounded_number_of_times(tmp_root, monkeypatch):
+    """一次认领只读两遍台账：认领前一遍、追加后复核一遍（旧实现四遍）。"""
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    ledger.append({"kind": "pre_decision", "limit_key": "local-user|fs.edit"})
+    calls: list[int] = []
+    original = ledger._read
+
+    def counted():  # type: ignore[no-untyped-def]
+        calls.append(1)
+        return original()
+
+    monkeypatch.setattr(ledger, "_read", counted)
+    claimed = ledger.claim(
+        action_id="a-1", tool_id="fs.edit", action_hash="sha256:h", claim_id="c-1"
+    )
+
+    assert claimed.claimed is True
+    assert len(calls) == 2, f"claim() 读了 {len(calls)} 遍台账"
+
+
+def test_claim_approval_use_reads_the_ledger_a_bounded_number_of_times(tmp_root, monkeypatch):
+    """占用审批额度同样只读两遍（旧实现四遍：approval_used 与 released 各扫两轮）。"""
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    calls: list[int] = []
+    original = ledger._read
+
+    def counted():  # type: ignore[no-untyped-def]
+        calls.append(1)
+        return original()
+
+    monkeypatch.setattr(ledger, "_read", counted)
+    claim = ledger.claim_approval_use(
+        approval_id="approval-1",
+        action_id="a-1",
+        tool_id="fs.edit",
+        action_hash="sha256:h",
+        max_uses=3,
+    )
+
+    assert claim.claimed is True
+    assert len(calls) == 2, f"claim_approval_use() 读了 {len(calls)} 遍台账"
+
+
+def test_release_claim_requires_a_matching_live_claim(tmp_root):
+    """按 claim_id 释放必须证明它存在、仍生效、且属于同一个动作。
+
+    旧实现只按 id 追加一行 claim_released：写错 id、拿别处的 id、或重复释放都会静默
+    放开另一条认领的幂等保护。
+    """
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    claimed = ledger.claim(
+        action_id="a-1", tool_id="fs.edit", action_hash="sha256:h", claim_id="c-1"
+    )
+    assert claimed.claimed is True
+
+    with pytest.raises(LedgerError):
+        ledger.release_claim(
+            action_id="a-1", tool_id="fs.edit", claim_id="c-typo", reason="审计不可写"
+        )
+    with pytest.raises(LedgerError):
+        ledger.release_claim(
+            action_id="a-2", tool_id="fs.edit", claim_id="c-1", reason="另一个动作"
+        )
+    assert len(ledger.active_claims(action_id="a-1", tool_id="fs.edit")) == 1
+
+    # 反真空：正确的释放照常生效，而且不能释放第二次。
+    ledger.release_claim(
+        action_id="a-1", tool_id="fs.edit", claim_id="c-1", reason="审计不可写"
+    )
+    assert ledger.active_claims(action_id="a-1", tool_id="fs.edit") == ()
+    with pytest.raises(LedgerError):
+        ledger.release_claim(
+            action_id="a-1", tool_id="fs.edit", claim_id="c-1", reason="重复释放"
+        )
+
+
+def test_release_approval_use_requires_a_matching_live_use(tmp_root):
+    """归还审批额度同样要证明那次消费存在、仍生效、且属于这张审批。"""
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    use_id = ledger.record_approval_use("approval-1", action_hash="sha256:h")
+
+    with pytest.raises(LedgerError):
+        ledger.release_approval_use(approval_id="approval-1", use_id="use-typo", reason="x")
+    with pytest.raises(LedgerError):
+        ledger.release_approval_use(approval_id="approval-2", use_id=use_id, reason="x")
+    assert ledger.approval_use_count("approval-1") == 1
+
+    ledger.release_approval_use(approval_id="approval-1", use_id=use_id, reason="x")
+    assert ledger.approval_use_count("approval-1") == 0
+    with pytest.raises(LedgerError):
+        ledger.release_approval_use(approval_id="approval-1", use_id=use_id, reason="重复归还")
+
+
 def test_rate_limit_windows_count_only_recent_records(tmp_root):
     ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
     ledger.append({"kind": "pre_decision", "limit_key": "local-user|fs.edit"})
@@ -460,6 +829,30 @@ def test_rate_limit_windows_count_only_recent_records(tmp_root):
         )
         == 0
     )
+
+
+def test_a_torn_ledger_tail_is_skipped_and_reported(tmp_root):
+    """一行写一半（进程被杀）不能把台账变成永久只读：跳过它并报出行号。
+
+    旧行为是"任何一行读不出来 → LedgerError"，于是一次崩溃就让所有受治理动作
+    永久锁死，且没有任何修复路径。写坏的**尾行**对应的那条记录没有落盘成功，
+    跳过它等于回到写入之前；中间行损坏仍然失败关闭（下一条用例）。
+    """
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    ledger.append({"kind": "claim", "action_key": "fs.edit:a-1", "claim_id": "c-1"})
+
+    path = tmp_root / "ledger.jsonl"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + '{"ledger_schema_version": "1.0", "kind": "gra',
+        encoding="utf-8",
+    )
+
+    assert [item["kind"] for item in ledger.records()] == ["claim"]
+    assert ledger.torn_tail() == (2,)
+    # 反真空：跳过尾行之后，幂等判据照常可算（认领仍然生效）。
+    assert len(ledger.active_claims(action_id="a-1", tool_id="fs.edit")) == 1
 
 
 def test_ledger_records_reject_malformed_or_foreign_lines(tmp_root):

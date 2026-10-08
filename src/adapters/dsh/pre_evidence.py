@@ -222,7 +222,7 @@ def _collect_evidence(
         # 目标在提议之前是否已经存在：按**当前磁盘树**判定（write 新建 vs edit 改已有）。
         # 不能看影子副本：exclude 可能恰好不复制这个目标，那时"副本里没有"会被读成
         # "这次是新建"，而事实是"本次不复制它"——两件事不能混。
-        target_existed_before = (workspace / event.file).is_file()
+        target_existed_before = _contained(workspace, event.file).is_file()
         _write_proposal(shadow, event.file, proposal.content)
         # 树指纹与缺口必须在**验证器跑之前**取：验证器可能在副本里留下 __pycache__ 之类的
         # 副产物，那之后再取指纹，"同一份输入"就会得到两个值。
@@ -361,8 +361,31 @@ def _apply_replacement(original: str, old: str, new: str, *, field: str) -> str:
     return original.replace(old, new, 1)
 
 
+def _contained(workspace: Path, repo_path: str) -> Path:
+    """把目标解析到工作区内；越界直接拒绝。
+
+    读路径（取"改动前的基准内容"、判 target_existed_before）与写路径（_write_proposal）
+    必须同一口径：否则一个绝对路径 / ../ 形态的 event.file，或工作区内一个指向外面的符号
+    链接目录，就能让平台**先读到工作区之外的文本**，再把它交给验证器——验证器判的就不再是
+    受治理的那棵树。
+    """
+
+    root = Path(workspace).resolve()
+    try:
+        target = (root / repo_path).resolve()
+    except OSError as error:
+        raise PreEvidenceError(
+            f"目标 {repo_path!r} 解析不了（{type(error).__name__}）：证明不了它落在工作区内"
+        ) from error
+    if root != target and root not in target.parents:
+        raise PreEvidenceError(
+            f"目标 {repo_path!r} 逃出工作区：证明不了它属于受控范围，拒绝读取取证基准"
+        )
+    return target
+
+
 def _read_current(workspace: Path, repo_path: str) -> str:
-    target = workspace / repo_path
+    target = _contained(workspace, repo_path)
     try:
         data = target.read_bytes()
     except OSError as error:
@@ -382,12 +405,20 @@ def _read_current(workspace: Path, repo_path: str) -> str:
 
 
 def _relative(path: Path, root: Path) -> str:
-    """仓库相对路径（POSIX 分隔符）；等于根目录时返回空串。"""
+    """仓库相对路径（POSIX 分隔符）；**等于根目录时返回空串**。
+
+    `PurePath.relative_to` 在两路径相同时给的是 "."，不是空串。`_copy_workspace` 靠这个空串
+    拼顶层子项的相对路径（`f"{relative_dir}/{name}" if relative_dir else name`）："." 会让每一项
+    变成 "./.git" 这种写法，而排除 glob（`.git/**`）只认 ".git" 与 ".git/"——顶层被排除的目录
+    因此整棵被复制进影子副本（.git / node_modules / .venv …），既拖慢取证，又让验证器看见
+    声明明确要排除的文件。
+    """
 
     try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
+        relative = path.resolve().relative_to(root.resolve()).as_posix()
     except (OSError, ValueError):  # pragma: no cover - os.walk 只会给出 root 之下的路径
         return path.as_posix()
+    return "" if relative == "." else relative
 
 
 def _excluded(relative: str, exclude: Sequence[str]) -> bool:

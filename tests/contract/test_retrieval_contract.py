@@ -13,6 +13,7 @@ from retrieval.corpus import load_expansion
 from retrieval.indexer import ingest
 from retrieval.models import (
     AccessScope,
+    CorpusPolicy,
     RetrievalMethod,
     RetrievalQuery,
     RetrievalResult,
@@ -245,6 +246,100 @@ def test_vector_retriever_reports_stale_vector_dim_instead_of_crashing(tmp_root)
         assert repaired.status is RetrievalStatus.OK
     finally:
         store.close()
+
+
+def test_vector_scores_are_a_true_cosine_for_unnormalized_ports(tmp_root) -> None:
+    """评分侧自己算真余弦：端口只承诺"稳定维度 + 可复现"，不承诺 L2 归一（复核发现）。"""
+
+    class Skewed:
+        """查询向量 (1,100)、文档向量 (100,1)：点积 = 200，真余弦 ≈ 0.02。"""
+
+        name = "skewed-test-embedding"
+        dim = 2
+
+        def embed(self, texts):
+            return tuple(
+                (1.0, 100.0) if "zzq" in text else (100.0, 1.0) for text in texts
+            )
+
+    loaded = load_fixture_corpus(tmp_root)
+    store = ChunkStore(tmp_root / "index.sqlite3")
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        retriever = VectorRetriever(store, policy=loaded.policy, embedder=Skewed())
+        assert retriever.build() > 0
+        scope = AccessScope(subject="u", datasets=frozenset(loaded.manifest.dataset_names))
+        result = retriever.retrieve(RetrievalQuery(text="zzq"), scope)
+        # 点积 200 远高于 vector_min_similarity(0.25)，真余弦只有约 0.02：
+        # 按"没有达到相关性下限"处理，而不是把正交候选当成高分命中。
+        assert result.status is RetrievalStatus.EMPTY
+        assert result.reason is UnavailableReason.NO_RESULTS
+    finally:
+        store.close()
+
+
+def test_cosine_helper_normalizes_both_sides() -> None:
+    from retrieval.vector import _cosine
+
+    assert _cosine((3.0, 4.0), (3.0, 4.0)) == pytest.approx(1.0)
+    assert _cosine((3.0, 4.0), (6.0, 8.0)) == pytest.approx(1.0)  # 同向、长度不同
+    assert _cosine((1.0, 0.0), (0.0, 5.0)) == pytest.approx(0.0)  # 正交、模长很大
+    assert _cosine((0.0, 0.0), (1.0, 0.0)) == 0.0  # 零向量不给 NaN
+    with pytest.raises(ValueError):
+        _cosine((1.0,), (1.0, 2.0))
+
+
+def test_result_cache_tolerates_disabled_and_refreshes_without_evicting() -> None:
+    """max_entries=0 = 关缓存（不炸）；刷新已有键不许淘汰无关条目（复核发现）。"""
+
+    def result(text: str) -> RetrievalResult:
+        return RetrievalResult(
+            status=RetrievalStatus.EMPTY,
+            query=text,
+            index_version="idx",
+            reason=UnavailableReason.NO_RESULTS,
+        )
+
+    disabled = ResultCache(max_entries=0)
+    disabled.put("k", result("k"))  # 旧实现在这里 StopIteration
+    assert disabled.get("k") is None
+    assert disabled.size == 0
+
+    cache = ResultCache(max_entries=2)
+    cache.put("a", result("A"))
+    cache.put("b", result("B"))
+    cache.put("a", result("A2"))  # 刷新已有键
+    assert cache.get("b").query == "B", "刷新不该淘汰无关条目"
+    assert cache.get("a").query == "A2"
+    cache.put("c", result("C"))  # 真的满了才淘汰最旧的
+    assert cache.get("b") is None
+    assert cache.get("a").query == "A2"
+    assert cache.get("c").query == "C"
+
+
+def test_empty_query_and_missing_grant_do_not_need_the_index() -> None:
+    """空查询 / 无授权是查询自身的结论：库坏了也必须给 EMPTY，不是 UNAVAILABLE（复核发现）。"""
+
+    store = ChunkStore(":memory:")
+    retriever = FtsRetriever(store, policy=CorpusPolicy())
+    scope = AccessScope(subject="u", datasets=frozenset({"guides"}))
+    store.close()  # 之后任何库读都抛 StoreError——模拟"索引库打不开"
+
+    empty = retriever.retrieve(RetrievalQuery(text="   "), scope)
+    assert empty.status is RetrievalStatus.EMPTY
+    assert empty.reason is UnavailableReason.EMPTY_QUERY
+
+    denied = retriever.retrieve(
+        RetrievalQuery(text="review checklist"),
+        AccessScope(subject="u", datasets=frozenset()),
+    )
+    assert denied.status is RetrievalStatus.EMPTY
+    assert denied.reason is UnavailableReason.ACCESS_DENIED
+
+    # 对照：真的需要索引的查询在同一个坏库上仍然是 UNAVAILABLE/INDEX_MISSING。
+    broken = retriever.retrieve(RetrievalQuery(text="review checklist"), scope)
+    assert broken.status is RetrievalStatus.UNAVAILABLE
+    assert broken.reason is UnavailableReason.INDEX_MISSING
 
 
 def test_result_cache_key_covers_subject_permissions_index_and_plan(indexed) -> None:

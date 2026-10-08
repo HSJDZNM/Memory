@@ -37,7 +37,6 @@ from typing import Any, Callable, Iterator, Mapping, Optional, Tuple
 from policy.evidence import EvidenceBundle
 from policy.engine import EngineError, evaluate
 from policy.models import (
-    SCHEMA_VERSION,
     Decision,
     Operation,
     PolicyContextError,
@@ -72,6 +71,10 @@ __all__ = [
 AGENT_RUNTIME_SCHEMA_VERSION = "1.0"
 DEFAULT_BREAKER_LIMIT = 50
 DEFAULT_WINDOW_SECONDS = 60
+# 判定超时后**还活着**的判定线程上限。Python 没有线程取消原语（见 `_evaluate` 的注释）：
+# 超时只能"放弃"，线程会跑到自然结束。不设上限就等于每超时一次泄漏一个线程；到上限之后
+# 继续开新线程只会让运行时越来越不可信，所以按失败关闭拒绝。
+ABANDONED_EVALUATION_LIMIT = 4
 
 # 面向 Agent 的受控原因码。Adapter 只能从这里取，不能自己编——
 # 否则"错误响应能被 Agent 理解"就退化成每个 Adapter 各说各话。
@@ -338,7 +341,14 @@ class TraceRegistry:
         request_id: str = "",
     ) -> None:
         if self.path is None:
-            return
+            # 没有登记表路径 = 这个模式**根本登记不了** trace：静默返回会让登记方以为登记成功，
+            # 而它发出去的子 trace 会被 `check` 以「父 trace 不在登记表里」拒绝——真相是
+            # 「没有地方登记」，卡住这次接入的其实是配置。证明不了就失败关闭。
+            # 读侧（owner / known / check）不变：没有登记表就是什么都没登记。
+            raise RuntimeLedgerError(
+                "trace 登记表没有路径（TraceRegistry(path=None)）：无法登记 trace；"
+                "请给运行时一个 trace_path，或不要在这一模式下引用父 trace"
+            )
         if not isinstance(trace_id, str) or not trace_id.strip():
             raise RuntimeLedgerError("trace_id 必须是非空字符串")
         if not isinstance(owner_agent, str) or not owner_agent.strip():
@@ -523,6 +533,11 @@ class AgentRuntime:
         self.enforcers = dict(enforcers or {})
         self.evidence_providers = dict(evidence_providers or {})
         self._memory: list[dict[str, Any]] = []
+        # 台账解析缓存：(文件签名, 记录)。签名 = (mtime_ns, size)，追加写每长一行就变，
+        # 因此它不可能掩盖别的进程刚写入的记录；见 `_read_entries_unlocked`。
+        self._entries_cache: Optional[tuple[tuple[int, int], list[dict[str, Any]]]] = None
+        # 被放弃的判定线程（超时后仍在跑的那些）：只用于记账与上限，见 `_evaluate`。
+        self._abandoned: list[threading.Thread] = []
         self._lock = threading.RLock()
 
     # ------------------------------------------------------------------ 台账
@@ -538,12 +553,29 @@ class AgentRuntime:
                 yield
 
     def _read_entries_unlocked(self) -> list[dict[str, Any]]:
+        """解析整份台账（调用方必须已持有台账锁）。
+
+        结果按「文件签名（mtime_ns, size）」缓存：追加写台账每长一行签名就变，因此缓存不可能
+        掩盖别的进程刚写进去的记录；而同一次判定里「窗口计数」与「幂等 claim」要读同一份台账，
+        缓存让**每长一条记录只解析一次**（此前每次判定解析两遍，一个会话下来是 O(n²)）。
+        """
+
         if self.ledger_path is None:
             return [dict(item) for item in self._memory]
         if not self.ledger_path.exists():
             return []
         if not self.ledger_path.is_file():
             raise RuntimeLedgerError(f"运行时台账不是文件: {self.ledger_path.name}")
+        try:
+            stat = self.ledger_path.stat()
+        except OSError as error:
+            raise RuntimeLedgerError(
+                f"运行时台账不可读: {self.ledger_path.name}（{error}）"
+            ) from error
+        signature = (stat.st_mtime_ns, stat.st_size)
+        cached = self._entries_cache
+        if cached is not None and cached[0] == signature:
+            return [dict(item) for item in cached[1]]
         try:
             text = self.ledger_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as error:
@@ -567,7 +599,8 @@ class AgentRuntime:
                     f"运行时台账第 {line_number} 行协议版本未知或缺失"
                 )
             records.append(item)
-        return records
+        self._entries_cache = (signature, records)
+        return [dict(item) for item in records]
 
     def _entries(self) -> list[dict[str, Any]]:
         with self._ledger_guard():
@@ -582,6 +615,9 @@ class AgentRuntime:
         if self.ledger_path is None:
             self._memory.append(payload)
             return
+        # 自己写进去的那一行也要让缓存失效：签名比对是主判据，这里顺手清掉是第二道保险
+        # （某些文件系统的 mtime 粒度很粗）。
+        self._entries_cache = None
         try:
             self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
             with self.ledger_path.open("a", encoding="utf-8", newline="\n") as handle:
@@ -1315,11 +1351,36 @@ class AgentRuntime:
         worker.start()
         worker.join(budget_ms / 1000)
         if worker.is_alive():
+            # 线程杀不掉（Python 没有取消原语）：这次判定按失败关闭返回，但那个线程会继续跑到
+            # 自然结束。三件事因此写下来并被执行——
+            #   1. 它的返回值**一律丢弃**：`box` 是本次调用私有的，超时之后没有任何读者；
+            #   2. 判定器必须**线程安全**：被放弃之后不得再改共享状态（平台自己的 `evaluate`
+            #      是纯函数：读规则集与上下文、返回结果，不写任何东西）；
+            #   3. 放弃的线程要**记账**：同一时刻还活着的超过 `ABANDONED_EVALUATION_LIMIT`
+            #      就说明判定器已经卡死，继续开新线程只会无限泄漏——按失败关闭拒绝。
+            live = self._track_abandoned(worker)
+            if live > ABANDONED_EVALUATION_LIMIT:
+                raise PolicyTimeout(
+                    f"策略判定超过内部预算 {budget_ms} ms，且已有 {live} 个判定线程没有退出："
+                    "判定器已经卡死，拒绝继续开新线程（避免无限泄漏）"
+                )
             raise PolicyTimeout(f"策略判定超过内部预算 {budget_ms} ms")
         error = box.get("error")
         if error is not None:
             raise error
         return box["result"]
+
+    def _track_abandoned(self, worker: threading.Thread) -> int:
+        """记下被放弃的判定线程，返回当前**还活着**的数量（含刚记下的这个）。
+
+        已经结束的线程顺手清掉：这个清单只回答"此刻有几个判定线程还在跑"，不做历史账
+        （历史读数属于审计，不属于运行时内存）。
+        """
+
+        with self._lock:
+            self._abandoned = [item for item in self._abandoned if item.is_alive()]
+            self._abandoned.append(worker)
+            return len(self._abandoned)
 
     def _record(
         self,

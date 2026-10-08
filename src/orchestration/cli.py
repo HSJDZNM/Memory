@@ -18,10 +18,10 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
-from .checkpoint import JsonCheckpointStore
+from .checkpoint import JsonCheckpointStore, build_record
 from .client import ApiPolicyClient, ResilientPolicyClient
 from .engines import StepExecutor
-from .errors import OrchestrationError
+from .errors import OrchestrationError, status_for
 from .graph import DEFAULT_SPEC, END
 from .models import STATE_SCHEMA_VERSION, GraphState, RunLimits, RunStatus, empty_state
 from .nodes import Change, NODES, ScriptedAuthor, TaskSpec
@@ -46,8 +46,40 @@ def _load_document(path: Path | str) -> Mapping[str, Any]:
     return document
 
 
-def task_from_document(document: Mapping[str, Any]) -> tuple[TaskSpec, ScriptedAuthor]:
-    """任务文件 → (TaskSpec, 作者)。作者是**可替换端口**：这里用声明式的脚本作者。"""
+def _optional_int(source: Mapping[str, Any], key: str, *, default: int = 0) -> int:
+    """载荷里的可选整数：形状不对是**用法错误**（ValueError），不是 TypeError。
+
+    为什么不能让它抛 TypeError：main() 的退出码契约是"配置或用法错误 → 2、编排自身损坏 → 1"，
+    而 `int({...})` 抛的 TypeError 会穿透那一层 except——用户看到的是一段栈回溯 + 退出码 1，
+    与"编排坏了"同码，且没人告诉他坏的是哪个字段。
+    """
+
+    value = source.get(key, default)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"changes[].{key} 必须是整数，得到 {type(value).__name__}")
+    return value
+
+
+def _text_items(source: Mapping[str, Any], key: str) -> tuple[str, ...]:
+    """载荷里的字符串列表：给了就必须是列表（字符串本身不算列表——它会被逐字符展开）。"""
+
+    value = source.get(key)
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(f"{key} 必须是字符串列表，得到 {type(value).__name__}")
+    return tuple(str(item) for item in value)
+
+
+def task_from_document(document: Mapping[str, Any]) -> tuple[TaskSpec, list[Change]]:
+    """任务文件 → (TaskSpec, 候选改动列表)。
+
+    返回**改动列表**而不是作者：作者是可替换端口，由调用方决定用哪个实现
+    （CLI 这里包成 `ScriptedAuthor(changes)`）。此前注解写的是 ScriptedAuthor、返回值却是列表，
+    靠一个 `type: ignore[return-value]` 压住类型检查——注解与实现不一致时，读的人会信注解。
+    """
 
     changes = document.get("changes")
     if not isinstance(changes, Sequence) or not changes:
@@ -63,8 +95,8 @@ def task_from_document(document: Mapping[str, Any]) -> tuple[TaskSpec, ScriptedA
                 old=None if item.get("old") is None else str(item["old"]),
                 replacement=None if item.get("replacement") is None else str(item["replacement"]),
                 content=None if item.get("content") is None else str(item["content"]),
-                tokens=int(item.get("tokens", 0) or 0),
-                cost_units=int(item.get("cost_units", 0) or 0),
+                tokens=_optional_int(item, "tokens"),
+                cost_units=_optional_int(item, "cost_units"),
             )
         )
     task = TaskSpec(
@@ -75,13 +107,22 @@ def task_from_document(document: Mapping[str, Any]) -> tuple[TaskSpec, ScriptedA
         language=str(document.get("language", "python")),
         module=None if document.get("module") is None else str(document["module"]),
         query=str(document.get("query", "")),
-        principal=dict(
-            document.get("principal") or {"subject": "orchestrator", "roles": ["developer"]}
-        ),
-        acceptance=tuple(str(item) for item in document.get("acceptance", []) or []),
+        principal=_principal(document),
+        acceptance=_text_items(document, "acceptance"),
         trace_id=None if document.get("trace_id") is None else str(document["trace_id"]),
     )
-    return task, parsed  # type: ignore[return-value]
+    return task, parsed
+
+
+def _principal(document: Mapping[str, Any]) -> dict[str, Any]:
+    """主体声明：缺省是一份显式的最小声明；给了就必须是对象（列表 / 标量是用法错误）。"""
+
+    value = document.get("principal")
+    if value is None:
+        return {"subject": "orchestrator", "roles": ["developer"]}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"principal 必须是对象，得到 {type(value).__name__}")
+    return dict(value)
 
 
 def build_config(args: argparse.Namespace, document: Mapping[str, Any]) -> OrchestrationConfig:
@@ -166,9 +207,9 @@ def self_check(args: argparse.Namespace) -> int:
     try:
         store = JsonCheckpointStore(directory)
         state = empty_state("self-check", limits=RunLimits())
-        record = __import__("orchestration.checkpoint", fromlist=["build_record"]).build_record(
-            state, engine="self-check", sequence=1
-        )
+        # 相对导入：这个包被改名 / 被 vendored 时，绝对包名会指向别处（或不存在），
+        # 而同一文件上面每一行导入都是相对的——同一份文件里两种口径，坏的那一种只在改名时发作。
+        record = build_record(state, engine="self-check", sequence=1)
         store.save(record)
         loaded = store.load("self-check")
         ok = loaded.state_digest == record.state_digest
@@ -297,7 +338,7 @@ def status_command(args: argparse.Namespace) -> int:
 
 def run_command(args: argparse.Namespace) -> int:
     document = _load_document(args.task)
-    task, changes = task_from_document(document)  # type: ignore[misc]
+    task, changes = task_from_document(document)
     config = build_config(args, document)
     assembly = build_assembly(config, task=task, author=ScriptedAuthor(changes))
     state = empty_state(
@@ -329,8 +370,15 @@ def run_command(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="orchestration", description="Phase 8 编排层 CLI")
     # `--json` 在子命令前后都能用：脚本里更常见的写法是放在子命令后面。
+    #
+    # 为什么子解析器那份要 SUPPRESS：argparse 解析完子解析器后会把**整个**命名空间拷回父命名空间，
+    # 包括它自己的默认值——于是 `orchestration --json self-check` 里父级设好的 True
+    # 会被子级的默认 False 悄悄盖掉，用户拿到的仍是人读文本。SUPPRESS = "没传就什么都不贡献"，
+    # 只有真的传了才写进命名空间；父解析器仍然持有这个开关的默认值。
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--json", action="store_true", help="输出机器可读载荷")
+    common.add_argument(
+        "--json", action="store_true", default=argparse.SUPPRESS, help="输出机器可读载荷"
+    )
     parser.add_argument("--json", action="store_true", help="输出机器可读载荷")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -375,7 +423,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return int(args.handler(args))
     except OrchestrationError as error:
         print(f"[{error.code.value}] {error.detail}", file=sys.stderr)
-        return EXIT_UNHEALTHY
+        # 退出码跟**终态**走（status_for 就是那份口径），不再"凡是编排错误都算不健康"：
+        #   NEEDS_HUMAN / BLOCKED = 需要人或平台出手 → 1（unhealthy）；
+        #   FAILED = 编排/状态/用法自己坏了 → 2（error）。
+        # 这与 run_command 对 RunStatus 的处理是同一条规则（那边 FAILED 也返回 2），
+        # 此前两条路径自相矛盾：同一类问题走异常是 1、走返回值是 2。
+        status = status_for(error)
+        return (
+            EXIT_UNHEALTHY
+            if status in (RunStatus.NEEDS_HUMAN, RunStatus.BLOCKED)
+            else EXIT_ERROR
+        )
     except (OSError, ValueError, KeyError) as error:
         print(f"配置或用法错误：{type(error).__name__}: {error}", file=sys.stderr)
         return EXIT_ERROR

@@ -36,10 +36,27 @@ class OrchestrationError(Exception):
 
     code: FailureCode = FailureCode.STATE_INVALID
 
-    def __init__(self, detail: str, *, node: Optional[NodeId] = None) -> None:
+    def __init__(
+        self,
+        detail: str,
+        *,
+        code: Optional[FailureCode] = None,
+        node: Optional[NodeId] = None,
+    ) -> None:
+        """失败码可以在**构造期**指定；不指定就用类上那个默认值。
+
+        为什么要开这个口子：几个子类各自覆盖一族兄弟码（审批有 missing / expired /
+        subject_mismatch / param_mismatch / consumed，上限有六种 limit_*），而调用方此前只能
+        "先构造、再改属性"（`error.code = code`）——那条契约很脆：任何忘记改属性的抛出点都会
+        **静默**记成默认码，而终态是按码推导的（errors.STATUS_BY_CODE），于是"审批过期"会被
+        记成"没有审批"、终态也跟着走偏。
+        """
+
         super().__init__(detail)
         self.detail = detail
         self.node = node
+        if code is not None:
+            self.code = code
 
     def failure_payload(self) -> dict[str, Any]:
         return {
@@ -75,8 +92,7 @@ class PlatformUnavailableError(OrchestrationError):
         node: Optional[NodeId] = None,
         status: Optional[int] = None,
     ) -> None:
-        super().__init__(detail, node=node)
-        self.code = code
+        super().__init__(detail, code=code, node=node)
         self.status = status
 
 

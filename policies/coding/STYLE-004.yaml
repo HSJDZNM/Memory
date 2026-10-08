@@ -8,7 +8,7 @@
 id: STYLE-004
 version: 1
 name: imports-at-top-of-file
-description: import 必须位于文件顶部，即模块注释与 docstring 之后、模块级赋值之前。
+description: import 必须位于文件顶部，即模块注释与 docstring 之后、其它模块级语句之前（E402 判的是"import 之前已经有模块级语句"，不只针对赋值）。
 scope:
   language: python
 severity: warning

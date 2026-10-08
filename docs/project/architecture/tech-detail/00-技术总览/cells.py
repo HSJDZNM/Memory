@@ -118,10 +118,59 @@ def from_targets(node, package):
     return [node.module or ""]
 
 
+def _is_type_checking(test):
+    """`if TYPE_CHECKING:` 的判断（含 `typing.TYPE_CHECKING` 形态）。"""
+
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    if isinstance(test, ast.Attribute):
+        return test.attr == "TYPE_CHECKING"
+    return False
+
+
+def module_level_imports(tree):
+    """模块**导入期真的会执行**的 import 节点（返回 id 集合）。
+
+    只看 `tree.body` 的直接子节点，会把 `try: import x / except ImportError: ...`、
+    `if sys.version_info >= ...: import y` 这类整块算成"延迟导入"——它们在导入期就会执行，
+    分量与"函数内真正调用时才导入"**正好相反**（前者是改不掉的硬约束，后者是可以商量的豁免）。
+
+    规则：函数 / 类体不算（那才是延迟导入）；`if TYPE_CHECKING:` 的体在运行时根本不执行，
+    两边都不算；`try` / `with` 的各个分支照算（它们在导入期会走到其中之一）。
+    """
+
+    found: set[int] = set()
+
+    def walk(statements) -> None:
+        for node in statements:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(node, ast.If):
+                if not _is_type_checking(node.test):
+                    walk(node.body)
+                    walk(node.orelse)
+                continue
+            if isinstance(node, ast.Try):
+                walk(node.body)
+                walk(node.orelse)
+                walk(node.finalbody)
+                for handler in node.handlers:
+                    walk(handler.body)
+                continue
+            if isinstance(node, (ast.With, ast.AsyncWith)):
+                walk(node.body)
+                continue
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                found.add(id(node))
+
+    walk(tree.body)
+    return found
+
+
 def file_imports(path):
     """一个文件 import 到的仓库内部顶层包，返回 (模块级目标, 函数内目标)。"""
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    top_level = {id(node) for node in tree.body}
+    top_level = module_level_imports(tree)
     package = path.relative_to(SRC).parts[:-1]  # 本文件所在的包（__init__.py 同理）
     eager, lazy = set(), set()
     for node in ast.walk(tree):
@@ -212,32 +261,74 @@ assert not dirty_core, f"判定核心的业务模块出现了出边：{dirty_cor
 assert set(policy_edges) == {"src/policy/check.py"}, f"出边来源不止 CLI 装配点：{sorted(policy_edges)}"
 assert policy_edges["src/policy/check.py"][0] == ["provenance", "validators"], policy_edges["src/policy/check.py"]
 
+# 第 2 条的说法是**绝对的**（"没有任何包 import policy_api 或 orchestration"），
+# 所以判据也必须覆盖两类边：只看 eager 的话，某个包在函数里 `import policy_api` 同样违反
+# 那句话，断言却会通过——"入口层入度为 0"于是变成一句没有对应检查的口号。
 for package in PACKAGES:
-    hit = edges[package]["eager"] & {"policy_api", "orchestration"}
-    assert not hit, f"{package} 反向依赖了入口层：{sorted(hit)}"
+    hit = (edges[package]["eager"] | edges[package]["lazy"]) & {"policy_api", "orchestration"}
+    assert not hit, f"{package} 反向依赖了入口层（含函数内延迟导入）：{sorted(hit)}"
 
 
-def framework_importers(framework):
-    """真的导入了某个框架的文件清单：含 importlib.import_module("框架…") 这种延迟导入。"""
+def framework_importers(framework, *, root=SRC):
+    """**平台运行时代码（`src/`）**里真的导入了某个框架的文件清单。
 
-    def touches(node):
+    含 importlib.import_module("框架…") 这种延迟导入。范围刻意只到 `src/`：`tools/` 与 `tests/`
+    是开发期仪器（`api_loop` / `orchestration_loop` 会起真实 uvicorn 跑协议闭环），它们用 Web
+    框架是**有意为之**，不属于"平台运行时代码不许依赖 Web 框架"这句话的射程。
+    """
+
+    def callee_name(func):
+        """把调用目标渲染成点分名（`im` / `importlib.import_module`）。"""
+
+        parts = []
+        current = func
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if isinstance(current, ast.Name):
+            parts.append(current.id)
+        return ".".join(reversed(parts))
+
+    def dynamic_import_names(tree):
+        """本文件里"就是 importlib.import_module"的**本地名字**（含别名）。
+
+        `from importlib import import_module as im` 之后 `im("langgraph")` 同样是延迟导入工作流
+        框架，而只看 `func.id == "import_module"` 会整个漏掉——"框架导入点唯一"于是可能在别名
+        写法下被违反，检查却仍然是绿的。`src/validators/python_ast.py` 的依赖提取早就维护了同一张
+        别名表（`_MODULE_BINDINGS` + 文件内绑定名），这里是它的最小版本。
+        """
+
+        names = {"importlib.import_module"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and (node.module or "") == "importlib":
+                for alias in node.names:
+                    if alias.name == "import_module":
+                        names.add(alias.asname or "import_module")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "importlib":
+                        names.add((alias.asname or "importlib") + ".import_module")
+        return names
+
+    def touches(node, names):
         if isinstance(node, ast.Import):
             return any(alias.name.split(".")[0] == framework for alias in node.names)
         if isinstance(node, ast.ImportFrom):
             return (node.module or "").split(".")[0] == framework
-        if isinstance(node, ast.Call):
-            # import_module(...) 与 importlib.import_module(...) 两种写法都要认：
-            # 延迟导入框架时用的是前一种（from importlib import import_module）。
-            called = getattr(node.func, "attr", "") or getattr(node.func, "id", "")
-            if called == "import_module":
-                first = node.args[0] if node.args else None
-                return isinstance(first, ast.Constant) and str(first.value).startswith(framework)
+        if isinstance(node, ast.Call) and callee_name(node.func) in names:
+            first = node.args[0] if node.args else None
+            if not isinstance(first, ast.Constant) or not isinstance(first.value, str):
+                return False
+            # **按第一段精确比对**：`startswith` 会把 `import_module("langgraphx.graph")` 也算成
+            # 框架导入——将来真出现同前缀的包，就会误报"导入点唯一"被破坏。
+            return first.value.split(".")[0] == framework
         return False
 
     found = []
-    for path in sorted(SRC.rglob("*.py")):
+    for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        if any(touches(node) for node in ast.walk(tree)):
+        names = dynamic_import_names(tree)
+        if any(touches(node, names) for node in ast.walk(tree)):
             found.append(path.relative_to(REPO_ROOT).as_posix())
     return found
 
@@ -247,11 +338,47 @@ workflow = framework_importers("langgraph")
 
 print(pad("检查项", 24) + "结果")
 print("-" * 88)
-print(pad("Web 框架导入点", 24) + (", ".join(web) or "（无）"))
-print(pad("工作流框架导入点", 24) + (", ".join(workflow) or "（无）"))
+print(pad("Web 框架导入点（src/）", 24) + (", ".join(web) or "（无）"))
+print(pad("工作流框架导入点（src/）", 24) + (", ".join(workflow) or "（无）"))
 print()
 
-# Web 框架只允许出现在传输层（policy_api）；工作流框架只允许出现在编排层的引擎适配文件。
+# **自证这把尺子**：上面两行是读数，而读数本身也得能被证明是活的——在本次独占的临时目录里造两个
+# 文件：一个用 `from importlib import import_module as im` 的别名写法（必须被认出），一个调用同前缀
+# 的包名 `langgraphx`（必须**不**被误认成 langgraph）。没有这一步，"导入点唯一"只是在今天这棵树上
+# 偶然成立，尺子对别名写法是不是瞎的没人知道。
+probe_root = REPO_ROOT / ".tmp" / "tech-detail" / "00" / "framework-probe"
+probe_pkg = probe_root / "policy_import_probe"
+probe_pkg.mkdir(parents=True, exist_ok=True)
+(probe_pkg / "__init__.py").write_text("", encoding="utf-8", newline="")
+(probe_pkg / "aliased.py").write_text(
+    """from importlib import import_module as im
+
+
+def load():
+    return im("langgraph.graph")
+""",
+    encoding="utf-8",
+    newline="",
+)
+(probe_pkg / "prefixed.py").write_text(
+    """from importlib import import_module
+
+
+def load():
+    return import_module("langgraphx.graph")
+""",
+    encoding="utf-8",
+    newline="",
+)
+probe_hits = framework_importers("langgraph", root=probe_root)
+expected_probe = (probe_pkg / "aliased.py").relative_to(REPO_ROOT).as_posix()
+assert probe_hits == [expected_probe], probe_hits
+print("自证：别名写法被认出、同前缀包名不被误认 →", probe_hits[0])
+
+# **在平台运行时代码（src/）里**：Web 框架只允许出现在传输层（policy_api），
+# 工作流框架只允许出现在编排层的引擎适配文件。这两句话的射程就是上面那次扫描的范围——
+# 写成无限定词的话，`tools/api_loop.py` / `tools/orchestration_loop.py` 里那两处
+# `import uvicorn`（开发期闭环要起真实服务器）会让它当场变成假话。
 assert web and all(path.startswith("src/policy_api/") for path in web), web
 assert not [path for path in web if path.startswith("src/policy/")], web
 assert workflow == ["src/orchestration/langgraph_engine.py"], workflow

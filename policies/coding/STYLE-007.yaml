@@ -22,5 +22,10 @@ source:
   kind: standard
   path: docs/mirrors/python-pep-code-style/pep-8-python-code/index.md
   note: >
-    E712 默认只覆盖 == / !=；PEP 8 同节还写了更糟的 `if greeting is True:`，
-    但 validation/ruff.toml 没有启用对应码位（E712 的 strict 检查属于 preview），故不在本规则范围内。
+    E712 默认只覆盖 == / !=（实测 ruff 0.14.13：`greeting == True` 与 `flag != False` 都报）。
+    PEP 8 同节还写了更糟的 `if greeting is True:`，**当前版本没有任何码位覆盖它**——
+    实测 `--preview --select ALL` 下该形态零诊断；note 此前写的"没有启用对应码位（E712 的 strict
+    检查属于 preview）"也不可审计：`lint.pycodestyle.strict` 这个选项在 0.14.13 已不存在
+    （`--config lint.pycodestyle.strict=true` 直接报 unknown field，该节只剩 max-line-length /
+    max-doc-length / ignore-overlong-task-comments）。所以那个形态不是"没启用"，而是"没有码位"，
+    本规则不声称覆盖它。

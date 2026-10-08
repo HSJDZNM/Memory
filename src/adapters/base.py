@@ -68,7 +68,6 @@ __all__ = [
     "AdapterList",
     "AdapterRegistry",
     "AdapterSpec",
-    "EventAdapter",
     "PathRule",
     "RegistryError",
     "SupportCeiling",
@@ -276,18 +275,10 @@ def ceiling_from_capabilities(manifest: AdapterManifest) -> SupportCeiling:
     return SupportCeiling(level=level, requested=requested, reasons=tuple(reasons))
 
 
-class EventAdapter(Protocol):
-    """每个具体 Adapter 必须实现的端口。
-
-    只做协议转换：把 Agent Runtime 的原始事件映射成规范事件，
-    再把决策翻译回该 Runtime 能理解的响应形态。
-    """
-
-    manifest: AdapterManifest
-
-    @property
-    def agent_id(self) -> str:
-        ...
+# 这里曾有一个 `EventAdapter(Protocol)` 的「端口」声明：全仓只有声明处与 `__all__` 提到它，
+# 真正被装配、被导入、被类型检查用的是 `Adapter`（本模块的抽象基类）与 `event_adapter.py` 里的
+# 具体 `EventAdapter`。它与包级同名导出撞名（`adapters.EventAdapter` 指的是另一个东西），
+# 读的人要在两个同名类型之间猜——死声明 + 同名两义，按第 50 条删除。
 
     def to_policy_event(
         self, raw_event: Any, *, workspace: Optional[Path] = None
@@ -584,11 +575,10 @@ class Adapter:
         if file is None:
             # 没有文件维度的动作（执行类工具）：以工作区根为范围，规则按 layer 匹配。
             file = "."
-            layer = self.layer_for(file) or (
-                None
-                if self.config.default_layer is None
-                else canonical_identifier(self.config.default_layer)
-            )
+            # layer_for() 内部已经回落到 default_layer（并做同一套 canonical_identifier），
+            # 这里再抄一遍是死代码：两份实现一旦漂移，声明了 default_layer 的配置就会出现
+            # "同一路径两个层"。默认层只认 layer_for 那一处。
+            layer = self.layer_for(file)
         else:
             layer = self.layer_for(file)
         if layer is None:

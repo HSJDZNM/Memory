@@ -88,7 +88,9 @@ class AttemptVerdict:
     detail: str
     action_id: Optional[str] = None
     tool: Optional[str] = None
-    #: 依据的记录序号（1-based 行号），便于第三方回到原始产物上重算。
+    #: 依据的记录位置：调用方给了原始行号就是**产物里的 1-based 行号**（第三方可回到产物
+    #: 上重算），否则是它在传入序列里的 1-based 序号——两种口径由 grade_attempt 的入参决定，
+    #: 不能混着读。
     records: tuple[int, ...] = ()
 
     @property
@@ -153,12 +155,27 @@ def grade_attempt(
     action_id: Optional[str] = None,
     tool: Optional[str] = None,
     artifact_changed: bool = False,
+    line_numbers: Optional[Sequence[int]] = None,
 ) -> AttemptVerdict:
     """把一批审计记录读成一条结论。
 
     选择器：给 `action_id` 就只看那个动作；只给 `tool` 就按工具聚合；都不给就用全部记录。
     `artifact_changed` 是**调用方自己测出来的**目标产物是否变化——本模块不去猜。
+
+    `line_numbers` 是与 records 等长的**原始产物行号**（load_audit 的第三个返回值）。
+    给了它，结论里的 `records` 就是产物里的真实行号；不给则是"在传入序列里的序号"。
+    两者在有空白行 / 坏行的产物上**不相等**，所以不能混：长度对不上直接 ValueError。
     """
+
+    lines = None if line_numbers is None else list(line_numbers)
+    if lines is not None and len(lines) != len(records):
+        raise ValueError(
+            f"line_numbers 有 {len(lines)} 项、records 有 {len(records)} 项："
+            "行号必须与记录一一对应，对不上就不能拿来复核"
+        )
+
+    def label(position: int) -> int:
+        return position if lines is None else int(lines[position - 1])
 
     candidates: list[tuple[int, Mapping[str, Any]]] = []
     for position, record in enumerate(records, start=1):
@@ -190,7 +207,7 @@ def grade_attempt(
             tool=tool,
         )
 
-    positions = tuple(position for position, _ in candidates)
+    positions = tuple(label(position) for position, _ in candidates)
     blocked = [(position, record) for position, record in candidates if _is_block(record)]
     if blocked:
         position, record = blocked[0]
@@ -206,7 +223,7 @@ def grade_attempt(
             ),
             action_id=action_id,
             tool=tool,
-            records=(position,),
+            records=(label(position),),
         )
 
     allowed = [(position, record) for position, record in candidates if _is_allow(record)]
@@ -217,7 +234,7 @@ def grade_attempt(
             detail="有允许记录：reason_code=" + str(record.get("reason_code")),
             action_id=action_id,
             tool=tool,
-            records=(position,),
+            records=(label(position),),
         )
 
     downgraded = [
@@ -234,7 +251,7 @@ def grade_attempt(
             ),
             action_id=action_id,
             tool=tool,
-            records=(position,),
+            records=(label(position),),
         )
 
     # 有该动作的 PreToolUse 记录，但没有一条表达了"允许/拒绝"——例如只有 context_injection
@@ -252,16 +269,25 @@ def grade_attempt(
     )
 
 
-def load_audit(path: Path | str) -> tuple[list[dict[str, Any]], list[int]]:
-    """读一份审计 JSONL，返回（记录, 无法解析的行号）。
+def load_audit(path: Path | str) -> tuple[list[dict[str, Any]], list[int], list[int]]:
+    """读一份审计 JSONL，返回（记录, 无法解析的行号, 每条记录在原始产物里的行号）。
 
     无法解析的行**显式返回**而不是静默跳过：审计是摘要链，读不出来的部分不能被当成
     "没有记录"——那会把"产物坏了"错读成"没人尝试"（与 `ChannelReport.audit_bad_lines` 同口径）。
+
+    第三个返回值与 records 一一对应：空白行与坏行都被跳过，**序号不等于行号**
+    （产物第 1、2 行是空行/坏行时，第 3 行那条记录在序列里是第 1 条）。行号必须一路带到
+    `grade_attempt(..., line_numbers=...)`，否则结论里"依据在第几行"会指错位置。
+
+    **整份读不出来时（文件不存在 / 没权限 / 不是 UTF-8）抛 OSError / UnicodeDecodeError**：
+    这是刻意的——调用方绝不能把异常吞成"没有记录"，那正是本模块禁止的混淆
+    （"产物坏了"与"没人尝试"必须分得开）。CLI 侧把它翻成显式的命令行错误。
     """
 
     target = Path(path)
     records: list[dict[str, Any]] = []
     bad: list[int] = []
+    lines: list[int] = []
     for position, line in enumerate(target.read_text(encoding="utf-8").splitlines(), start=1):
         text = line.strip()
         if not text:
@@ -273,6 +299,7 @@ def load_audit(path: Path | str) -> tuple[list[dict[str, Any]], list[int]]:
             continue
         if isinstance(item, dict):
             records.append(item)
+            lines.append(position)
         else:
             bad.append(position)
-    return records, bad
+    return records, bad, lines

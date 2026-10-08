@@ -18,7 +18,7 @@ budget 语义）已经在 `policy_api.models` / `runtime` 里固定，并能脱�
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Optional
+from typing import Annotated, Any, Mapping, Optional
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -76,11 +76,20 @@ def _handshake(name: str, source: Any) -> Any:
 
     校验锚点只有一个（运行时的 DTO）。这里放宽是为了让框架的 pre-validation
     不会用"另一套错误形状"抢先回答，同时 OpenAPI 仍然如实描述协议。
+
+    **约束要带进文档**：`field.metadata` 里的 Ge/Le/MinLen/MaxLen 原样放进 `Annotated`——
+    它们是契约的一部分（`budget_ms` 的 1..600000、`limit` 的 1..50、`subject` 的 1..200）。
+    丢掉的话文档比实现**宽**：照文档写的客户端会在服务端撞上 400，而它没有任何办法从
+    契约里知道边界。这些约束不参与框架的请求校验——请求体是 `openapi_extra` 里的 $ref，
+    处理器签名里没有这个模型，框架只把它当 schema 用。
     """
 
-    fields = {
-        key: (Optional[field.annotation], None) for key, field in source.model_fields.items()
-    }
+    fields: dict[str, Any] = {}
+    for key, field in source.model_fields.items():
+        annotation: Any = field.annotation
+        if field.metadata:
+            annotation = Annotated[annotation, *field.metadata]
+        fields[key] = (Optional[annotation], None)
     return create_model(name, __config__=_PERMISSIVE, **fields)  # type: ignore[call-overload]
 
 
@@ -278,6 +287,10 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
             "responses": {
                 str(code): _error_response_doc(code) for code in _ROUTE_STATUS_CODES[route]
             },
+            # 受治理路由的凭据形态写进契约（scheme 见 _install_contract_schemas）：调用方从
+            # "不知道要不要认证"变成"知道怎么认证"。**这是补文档缺失，不是协议变更**——
+            # 请求 / 响应载荷一个字节没变，老客户端照常工作（API_SCHEMA_VERSION 不动）。
+            "security": [{"BearerAuth": []}],
         }
         app.add_api_route(
             path,
@@ -311,7 +324,8 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
         openapi_extra={
             "responses": {
                 str(code): _error_response_doc(code) for code in _METRICS_ERROR_STATUS_CODES
-            }
+            },
+            "security": [{"BearerAuth": []}],
         },
     )
 
@@ -418,6 +432,22 @@ def _install_contract_schemas(app: FastAPI) -> None:
     # 422 只在组件里也去掉（HTTPValidationError / ValidationError 是框架的产物）。
     for unused in ("HTTPValidationError", "ValidationError"):
         components.pop(unused, None)
+    # 凭据形态：`Authorization: Bearer <token>`。这是**补文档缺失**，不是协议变更——
+    # 四条受治理路由一直在返回 401/403，契约里却从没说过怎么认证。
+    # 请求体里的 `credentials.token`（Credentials 组件）只服务进程内调用路径，因此不为它
+    # 另建 scheme；探针（/v1/health/*）按设计不要求认证，所以**不设顶层 security**
+    # （那会把探针也说成需要凭据）。注意这里必须写在**顶层 components** 上，
+    # 上面的 `components` 变量指的是 `components.schemas`。
+    document.setdefault("components", {}).setdefault(
+        "securitySchemes",
+        {
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "description": "Authorization: Bearer <token>；令牌只以 sha256 存在配置里",
+            }
+        },
+    )
     components["ErrorResponse"] = {
         "title": "ErrorResponse",
         "type": "object",

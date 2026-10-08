@@ -93,13 +93,32 @@ def _collect(tree: ast.AST, declaration: CodeCheckSpec) -> list[tuple[int, str, 
                 if matched is not None:
                     hits.append((node.lineno, "import", node.module))
         elif isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id in declaration.forbidden_calls:
-                hits.append((node.lineno, "call", node.func.id))
+            # 调用名同样走点分还原 + 前缀匹配（与 forbidden_imports / forbidden_attributes
+            # 同一口径）：_check_entries 的正则允许声明 subprocess.run 这类点分条目，
+            # 只认裸 ast.Name 会让这些条目**加载期通过、运行时永远不命中**——
+            # 一条声明了却不起作用的禁止面就是失败打开。
+            candidate = dotted_name(node.func)
+            if candidate is not None and _matches(candidate, declaration.forbidden_calls):
+                hits.append((node.lineno, "call", candidate))
         if isinstance(node, ast.Attribute):
             candidate = dotted_name(node)
             if candidate is not None and _matches(candidate, declaration.forbidden_attributes):
                 hits.append((node.lineno, "attribute", candidate))
-    return sorted(set(hits))
+    ordered = sorted(set(hits))
+    # 同一条属性链上的嵌套节点只算一处：os.path.join(...) 会同时命中 os.path.join 与
+    # 内层的 os.path，重复条目既抬高"命中 N 处"，又吃掉 8 条的上报预算。
+    attributes = {(line, name) for line, kind, name in ordered if kind == "attribute"}
+    return [
+        (line, kind, name)
+        for line, kind, name in ordered
+        if not (
+            kind == "attribute"
+            and any(
+                other_line == line and other.startswith(name + ".")
+                for other_line, other in attributes
+            )
+        )
+    ]
 
 
 def _describe(hits: Sequence[tuple[int, str, str]]) -> tuple[str, ...]:
@@ -151,7 +170,9 @@ def check_code(source: object, declaration: CodeCheckSpec) -> CodeCheckOutcome:
                 f"代码命中 {len(hits)} 处禁止面（kind={declaration.kind}）：{shown}{more}。"
                 "检查项来自注册表数据，这里是结构性检查而不是沙箱"
             ),
-            hits=described,
+            # hits 与 detail 同一个上限：hits 只保留已上报的那几条（总数在 detail 里），
+            # 否则这个字段就是"单条审计记录有体积上限"这条理由的漏口。
+            hits=described[:_MAX_REPORTED_HITS],
         )
 
     gaps = "；".join(declaration.known_gaps) or "（注册表未登记已知绕过形态，这本身是一个待补项）"

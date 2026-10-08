@@ -29,6 +29,7 @@ from enforcement.ledger import EnforcementLedger
 from enforcement.models import (
     CheckStatus,
     Decision,
+    ExecutionStatus,
     ReasonCode,
     ToolSpec,
     digest_of,
@@ -93,6 +94,32 @@ class ApprovalBinding:
     action_id: str
     tool_id: str
     subject: str
+
+
+#: `ArtifactRef.artifact_id` 的上限（models._MAX_ID）：超长路径用摘要收口，
+#: 而不是让 id 溢出把一次**已经发生的**受治理写入变成崩溃。
+_ARTIFACT_ID_LIMIT = 128
+
+
+def _param_text(action: Any, name: str) -> Optional[str]:
+    """从平台**规范化后**的参数里取一个非空文本值。
+
+    `action.params` 是 `ParamValue` 的**元组**（不是映射）：每一项带 name / type / value / digest，
+    值已经过 `build_action_request` 的规范化（工作区内的绝对路径在那里被转成仓库相对路径）。
+    取规范化后的值，才能保证"记下来的证据"与"真正写下去的那份"是同一个路径。
+    """
+
+    for item in action.params:
+        if item.name == name and isinstance(item.value, str) and item.value:
+            return item.value
+    return None
+
+
+def _artifact_id(tool_name: str, path: str) -> str:
+    candidate = f"{tool_name}:{path}"
+    if len(candidate) <= _ARTIFACT_ID_LIMIT:
+        return candidate
+    return f"{tool_name}:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:16]}"
 
 
 @dataclass(frozen=True)
@@ -173,15 +200,28 @@ class PlatformToolRunner:
         except Exception:  # noqa: BLE001 - 读不出来等于没有审批
             return None
 
-    def _changed(self, spec: ToolSpec, request: ToolRequest) -> Tuple[ArtifactRef, ...]:
-        """执行后按目标文件计算 artifact 引用（只留路径与哈希，不留正文）。"""
+    def _changed(
+        self, spec: ToolSpec, action: Any, request: ToolRequest
+    ) -> Tuple[ArtifactRef, ...]:
+        """执行后按目标文件计算 artifact 引用（只留路径与哈希，不留正文）。
 
-        raw = request.params.get("file_path")
-        if not isinstance(raw, str) or not raw:
+        两个口径必须与**真正执行时**的一致，否则这条证据要么指向另一个文件、要么让一次成功的写入变崩溃：
+
+        - 根目录按 `request.workspace` 解析（与 `_action` / `run` 同一条规则），不是永远用
+          `self.workspace`：带 per-request workspace 时，同一个相对路径在另一个根下是**另一个文件**，
+          记下来的摘要与大小就与平台实际写的那份无关；
+        - 路径取**平台规范化后**的值（`build_action_request` 把工作区内的绝对路径转成仓库相对形式），
+          而不是调用方原样给的参数——`ArtifactRef.path` 拒绝对路径、`artifact_id` 还有 128 字符上限，
+          用原始值会让 pydantic 在**副作用与审计都已经落盘之后**抛出去，把一次成功的受治理写入变成崩溃。
+        """
+
+        raw = _param_text(action, "file_path")
+        if raw is None:
             return ()
-        candidate = (self.workspace / raw).resolve()
+        root = (Path(request.workspace) if request.workspace else self.workspace).resolve()
+        candidate = (root / raw).resolve()
         try:
-            candidate.relative_to(self.workspace.resolve())
+            relative = candidate.relative_to(root).as_posix()
         except ValueError:
             return ()
         if not candidate.is_file():
@@ -189,9 +229,9 @@ class PlatformToolRunner:
         payload = candidate.read_bytes()
         return (
             ArtifactRef(
-                artifact_id=f"{spec.tool_name}:{raw}",
+                artifact_id=_artifact_id(spec.tool_name, relative),
                 kind=ArtifactKind.CHANGE,
-                path=raw,
+                path=relative,
                 digest="sha256:" + hashlib.sha256(payload).hexdigest(),
                 bytes=len(payload),
             ),
@@ -301,15 +341,25 @@ class PlatformToolRunner:
             workspace=workspace,
             now=None if self._clock is None else self._clock(),
         )
+        # 编排层的 status 如实反映**受控链的结论**（此前硬编码 "executed"）：
+        # 链上可能给出 refused（未执行）或 failed（执行了但失败），读 ToolOutcome 的人
+        # 不该靠 final_outcome 去反推"到底跑没跑"。executed 与 delegated 都算"动作发生了"——
+        # 后者是"允许 Agent 运行时执行"的既有语义，不是拒绝。
+        record_status = outcome.record.status
+        orchestration_status = (
+            "executed"
+            if record_status in (ExecutionStatus.EXECUTED, ExecutionStatus.DELEGATED)
+            else "denied"
+        )
         return ToolOutcome(
-            status="executed",
+            status=orchestration_status,
             tool_id=request.tool_id,
             action_id=request.action_id,
             action_hash=action.action_hash,
             reason_code=outcome.record.reason_code.value,
             final_outcome=outcome.final.outcome.value,
             detail="；".join(outcome.notes)[:400],
-            changed=self._changed(spec, request),
+            changed=self._changed(spec, action, request),
         )
 
 

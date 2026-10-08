@@ -69,7 +69,9 @@
 - **被正文引用的实施指南 2 篇**：`guides/dora-metrics.md`、`guides/how-to-transform.md`，
   被能力正文按实施指导的方式引用；
 - `manifest.json`：逐页记录来源 URL、本地路径、角色与收录理由（role / why）、
-  模型层级（model / model_name / model_href / catalog_order）、摘要、字节数与 sha256，便于校验。
+  模型层级（model / model_name / model_href）、摘要、字节数与 sha256，便于校验；
+  `catalog_order` 只出现在 `kind=capability` 的条目上（能力目录页栅格里的序号 1..N，跨全部模型唯一），
+  目录页自己与两篇指南记为 `null`。
 
 **未保存（及原因）**
 

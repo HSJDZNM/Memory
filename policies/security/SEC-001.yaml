@@ -13,6 +13,12 @@
 #    unescaped user input code injection can occur which allows an attacker to subvert
 #    application logic and eventually to gain local access."
 #
+# 覆盖边界（实测 ruff 0.14.13，--isolated --select S102,S307 探针）：
+#   报：直接调用 eval / exec，以及 builtins.eval / builtins.exec 这种属性写法；
+#   不报：别名（runner = eval; runner(x)）、getattr(builtins, "eval")(x)、
+#     env["__builtins__"]["eval"](x)——名字一旦不字面出现就不再被认。
+#   因此"本规则没报"只说明没写那几种形态，不能当作"没有动态执行"。
+#
 # 严重级别：原文是 "DO NOT ..." 的祈使禁止，不是"建议"，因此按 error 阻断。
 id: SEC-001
 version: 1
@@ -32,4 +38,4 @@ message: 禁止用 eval()/exec() 执行动态代码，改用只解析数据的�
 source:
   kind: standard
   path: docs/mirrors/owasp-cheatsheets/12_编程语言与框架专项/Python/Django_REST_Framework_Cheat_Sheet.md
-  note: '小节 "### API8:2019 Injection -> #### RCE"；Django REST Framework (DRF) Cheat Sheet。'
+  note: '小节 "### API8:2019 Injection -> #### RCE"；Django REST Framework (DRF) Cheat Sheet。头部还引了第二个来源：Injection Prevention Cheat Sheet 的 "### Scripting languages"，镜像在 docs/mirrors/owasp-cheatsheets/02_输入验证、注入与文件处理/Injection_Prevention_Cheat_Sheet.md:123（2026-10-08 逐字复核）。两个来源都是 standard、都在镜像里，缺一个会让溯源只讲半句话。'

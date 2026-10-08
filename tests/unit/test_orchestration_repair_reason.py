@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from policy.checkers import (
     UNPROVEN_CHANGED_TEXT,
@@ -25,7 +26,7 @@ from policy.checkers import (
 from policy.evidence import Blocker, ValidatorStatus
 from policy.loader import load_rule_file
 from policy.models import Decision as PolicyDecision
-from policy.models import ValidationResult, Violation
+from policy.models import Evidence, Severity, ValidationResult, Violation
 
 from conftest import ARCH_DIR, REPO_ROOT, make_context
 from orchestration.client import (
@@ -163,6 +164,31 @@ def test_evidence_channels_decide_between_policy_and_platform_failure() -> None:
     assert _summary(violations=dependency_refs).reason_code == REASON_POLICY_VIOLATION
 
 
+def test_a_summary_cannot_carry_a_reason_the_findings_do_not_support() -> None:
+    """给了 reason_code 就必须等于派生值；派生不出来时只能是 None。
+
+    旧实现只在"派生出东西"时才比，于是 allow（或 block + 空 violations + 无审批要求）的摘要
+    可以带任意受控 reason——这个字段成了**第二个判定通道**，消费方按一个发现并不支持的理由分流。
+    """
+
+    with pytest.raises(ValidationError):
+        ValidationSummary(
+            decision=Decision.ALLOW,
+            request_id="task-1:validation:0",
+            reason_code=REASON_POLICY_VIOLATION,
+        )
+
+    with pytest.raises(ValidationError):
+        ValidationSummary(
+            decision=Decision.BLOCK,
+            request_id="task-1:validation:0",
+            reason_code=REASON_EVIDENCE_UNAVAILABLE,
+        )
+
+    # 正例：说得出理由时仍按同一套规则派生
+    assert _summary(required_action="approval").reason_code == "approval_required"
+
+
 def test_a_block_that_cannot_say_why_has_no_reason() -> None:
     """说不出来就是 None：**不许**把 None 读成某一种（那是发明依据）。"""
 
@@ -193,6 +219,42 @@ def test_repair_stops_at_the_approval_gate_instead_of_failing_the_run(tmp_root) 
         run.node is NodeId.REPAIR and run.status is StageStatus.PENDING
         for run in outcome.state.runs
     )
+
+
+def test_an_approval_gate_with_violations_still_stops_instead_of_writing(tmp_root) -> None:
+    """审批门禁**带 violation** 时同样不许动手：`decision_reason` 第 1 条优先于 violations。
+
+    所以「block + required_action=approval + 有 violation」是一个**能构造出来**的形态，
+    而旧代码把审批只放在「空 violations」分支里判——这种形态会滑到下面，
+    去规划一次正需要人来批准的写入（AGENTS 第 38 条）。
+    """
+
+    violation = Violation(
+        rule_id="ARCH-001",
+        rule_version=1,
+        severity=Severity.ERROR,
+        message="测试违规",
+        evidence=Evidence(
+            kind="dependency", subject="src/order/controller.py", value="repository"
+        ),
+    )
+    refs = _platform_refs(violation)
+    assert refs, "前提：这条 violation 真的会被投影出来"
+    assert decision_reason(
+        Decision.BLOCK, required_action="approval", violations=refs
+    ) == "approval_required", "前提：审批优先于 violations（派生规则第 1 条）"
+
+    state = _state_with(_summary(required_action="approval", violations=refs))
+    context = node_context(tmp_root, task=task_spec("task-1"))
+
+    outcome = repair(state, context)
+
+    assert outcome.label == "needs_human"
+    assert outcome.state.failure is not None
+    assert outcome.state.failure.code is FailureCode.APPROVAL_MISSING
+    assert outcome.state.status is RunStatus.NEEDS_HUMAN
+    assert outcome.state.counters.repair_rounds == 0
+    assert not outcome.state.artifacts, "审批门禁不许产生任何改动 artifact"
 
 
 def test_repair_stops_when_the_platform_could_not_check(tmp_root) -> None:

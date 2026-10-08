@@ -246,13 +246,15 @@ def call_action_id(raw_payload: Any) -> Optional[str]:
 
     if not isinstance(raw_payload, Mapping):
         return None
-    session_id = str(raw_payload.get("session_id") or "")
-    tool_use_id = str(raw_payload.get("tool_use_id") or "")
-    if session_id and tool_use_id:
-        return f"{session_id}:{tool_use_id}"
-    if tool_use_id or session_id:
-        return tool_use_id or session_id
-    return None
+    session_id = str(raw_payload.get("session_id") or "").strip()
+    tool_use_id = str(raw_payload.get("tool_use_id") or "").strip()
+    if not session_id or not tool_use_id:
+        # 缺任何一个都**不编标识**：拼出来的"半个 id"会让同一会话里所有缺该字段的调用
+        # 共用同一个 action_id（裸 session_id），pre / post 于是按错误的键配对——
+        # 正是 docstring 说的"比没有标识更危险"。调用方拿到 None 时按缺标识处理
+        # （审计记录不带 action_id 键；确实需要占位的地方显式写 "unknown"）。
+        return None
+    return f"{session_id}:{tool_use_id}"
 
 
 class PolicyTimeout(Exception):
@@ -594,8 +596,15 @@ def feedback_text(
     event: Optional[PolicyEvent],
     decision: Optional[ValidationResult],
     detail: str = "",
+    project_root: Optional[Path] = None,
 ) -> str:
-    """面向模型的阻断理由：规则 ID、严重级别、原因、证据与期望修复方向。"""
+    """面向模型的阻断理由：规则 ID、严重级别、原因、证据与期望修复方向。
+
+    规则作者写的 message 与验证器给的 evidence 都是**不可信文本**（可能带本机绝对路径或凭据）：
+    这是唯一一条把这些字段直接送进模型上下文的路径，因此与审计走同一份 `sanitize`——
+    否则同一条违规在账本里是 `<repo>/…`、在模型面前却是本机布局（AGENTS 第 16/19 条：
+    证据与理由都不许出现绝对路径，脱敏不开例外）。
+    """
 
     lines: list[str] = []
     header = "[policy] BLOCKED" + (f" {event.tool}" if event else "")
@@ -607,14 +616,17 @@ def feedback_text(
     if decision is not None:
         for violation in decision.violations:
             lines.append(
-                f"rule {violation.canonical_id} severity={violation.severity.value}: "
-                f"{violation.message}"
+                sanitize(
+                    f"rule {violation.canonical_id} severity={violation.severity.value}: "
+                    f"{violation.message}",
+                    project_root=project_root,
+                )
             )
             evidence = violation.evidence
             evidence_line = f"evidence: {evidence.kind}={evidence.value}"
             if evidence.detail:
                 evidence_line += f" ({evidence.detail})"
-            lines.append(evidence_line)
+            lines.append(sanitize(evidence_line, project_root=project_root))
         if decision.required_action is not None:
             lines.append(f"required_action: {decision.required_action.value}")
         lines.append(
@@ -807,17 +819,27 @@ class DshPreExecuteHook:
 
         if self.capture_dir is None:
             return
-        self.capture_dir.mkdir(parents=True, exist_ok=True)
-        self.sequence += 1
-        safe_tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool_name) or "unknown"
-        call_id = str(raw_payload.get("tool_use_id") or f"{self.sequence:03d}")
-        safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", call_id) or f"{self.sequence:03d}"
-        target = self.capture_dir / f"{safe_tool}-{safe_id}.json"
-        target.write_text(
-            json.dumps(dict(raw_payload), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-            newline="\n",
-        )
+        try:
+            self.capture_dir.mkdir(parents=True, exist_ok=True)
+            self.sequence += 1
+            safe_tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool_name) or "unknown"
+            call_id = str(raw_payload.get("tool_use_id") or f"{self.sequence:03d}")
+            safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", call_id) or f"{self.sequence:03d}"
+            target = self.capture_dir / f"{safe_tool}-{safe_id}.json"
+            target.write_text(
+                json.dumps(dict(raw_payload), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+        except OSError as error:
+            # 采集是**诊断**（`--capture` 的帮助写着"不影响判定"）：写不了就喊一声，
+            # 但绝不让它换掉这次的判定理由——让 OSError 逃出去会被 main 读成
+            # startup_error，而 handle 承诺过"任何异常路径都返回阻断，绝不抛给解释器"。
+            print(
+                "[policy] CAPTURE UNAVAILABLE "
+                + sanitize(str(error), project_root=self.config.project_root),
+                file=sys.stderr,
+            )
 
     def _pre_evidence(
         self, raw_payload: Any, *, event: PolicyEvent, context: Any
@@ -1162,10 +1184,33 @@ class DshPreExecuteHook:
                 "action_id": call_action_id(raw_payload),
             }
 
-        outcome = self._handle_guarded(raw_payload, started=started, base_record=base_record)
+        try:
+            outcome = self._handle_guarded(raw_payload, started=started, base_record=base_record)
+        except OSError as error:
+            # 审计 / 台账写不进去：`_fail` 自己也要写审计，所以它会在 except 处理器里再抛一次。
+            # 仍然失败关闭（退出码 2），但理由用**既有**原因码 config_error（模块本来就把 OSError
+            # 归到它），而不是把它读成"Hook 起不来"的 startup_error——那是错误归因，
+            # 会让人去查配置而不是查审计目标。这里不再尝试写审计（刚证明写不进去）。
+            return HookOutcome(
+                exit_code=EXIT_BLOCK,
+                reason_code="config_error",
+                stderr=sanitize(
+                    f"[policy] BLOCKED (config_error) detail: 审计与台账均不可写：{error}",
+                    project_root=self.config.project_root,
+                ),
+                elapsed_ms=int((self.clock() - started) * 1000),
+            )
         # G11：放在判定记录**之后**写。既有消费方（测试与工具）按"首行 = 本次判定"读审计，
         # 把留痕插到前面会改变这条既有约定（只增不改的意思是不动已有记录，不是随便插队）。
-        self._record_context_injection(base_record=base_record, started=started)
+        try:
+            self._record_context_injection(base_record=base_record, started=started)
+        except OSError as error:
+            # 留痕写不进去**不改判定**（G11 的那条留痕本来就是旁注）：喊一声，原样返回判定。
+            print(
+                "[policy] CONTEXT INJECTION LEDGER UNAVAILABLE "
+                + sanitize(str(error), project_root=self.config.project_root),
+                file=sys.stderr,
+            )
         return outcome
 
     def _handle_guarded(
@@ -1372,7 +1417,10 @@ class DshPreExecuteHook:
                 exit_code=EXIT_BLOCK,
                 reason_code="policy_block",
                 stderr=feedback_text(
-                    reason_code="policy_block", event=event, decision=decision
+                    reason_code="policy_block",
+                    event=event,
+                    decision=decision,
+                    project_root=self.config.project_root,
                 ),
                 decision=decision,
                 event=event,
@@ -1676,7 +1724,11 @@ class DshPreExecuteHook:
             exit_code=EXIT_BLOCK,
             reason_code=reason_code,
             stderr=feedback_text(
-                reason_code=reason_code, event=event, decision=None, detail=detail
+                reason_code=reason_code,
+                event=event,
+                decision=None,
+                detail=detail,
+                project_root=self.config.project_root,
             ),
             elapsed_ms=int((self.clock() - started) * 1000),
             origin=origin,
@@ -2158,12 +2210,16 @@ def _three_term_reading(config: AdapterConfig, timeout_sec: Optional[float]) -> 
     # hooks.json 没写 timeout 时 dsh 用桥的 defaultTimeoutMs（README §2.5）：
     # "没写"不等于"没有上限"，所以这里用显式常量而不是跳过检查。
     if timeout_sec is None:
-        limit_ms: float | int = DEFAULT_HOOK_TIMEOUT_MS
+        limit_exact: float = float(DEFAULT_HOOK_TIMEOUT_MS)
         limit_source = BUDGET_LIMIT_DSH_DEFAULT
     else:
-        limit_ms = int(timeout_sec * 1000)
+        # 与 _two_term_reading 同一口径：比较用**原样的浮点值**。先 int() 会把
+        # timeout=5.0005s（=5000.5ms）截成 5000，于是"5000 < 5000.5"被反判成 violated，
+        # 报出一个并不存在的接线错误、把 Hook 拦下。
+        limit_exact = float(timeout_sec) * 1000
         limit_source = BUDGET_LIMIT_HOOKS_JSON
-    if budget_ms >= limit_ms:
+    limit_ms: float | int = _ms_reading(limit_exact)
+    if budget_ms >= limit_exact:
         default_note = (
             "（hooks.json 没写 timeout，按 dsh 默认 600000ms 计）" if timeout_sec is None else ""
         )

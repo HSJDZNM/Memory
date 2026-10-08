@@ -74,6 +74,50 @@ def _manifest_document(**overrides) -> dict:
 # --------------------------------------------------------------------------- manifest
 
 
+def test_the_hook_wire_names_come_from_the_manifest() -> None:
+    """事件名是 manifest 声明的一部分：改了名的 Agent 不能再被判成「未支持事件」。
+
+    `HookNames.pre_execute` / `post_execute` 就是为了承载 Agent 侧的事件名（conformance 的
+    渲染器也按它生成事件），但取值此前只查硬编码的 `AGENT_WIRE`：声明了非默认名的 manifest
+    于是「声明了却接不上」——它发的每个事件都被判未支持，而套件渲染出来的正是那个名字。
+    """
+
+    from adapters.base import AdapterSpec
+    from adapters.loader import load_adapter
+
+    adapter = load_adapter("legacy-post-only", root=REPO_ROOT)
+    document = yaml.safe_load(
+        (ADAPTERS_ROOT / "legacy-post-only" / "manifest.yaml").read_text(encoding="utf-8")
+    )
+    document["hooks"]["post_execute"] = "AfterTool"
+    renamed_manifest = AdapterSpec.model_validate(document).to_manifest(
+        path=ADAPTERS_ROOT / "legacy-post-only" / "manifest.yaml"
+    )
+    renamed = type(adapter)(
+        manifest=renamed_manifest,
+        config=adapter.config,
+        config_path="<memory>",
+        base_dir=REPO_ROOT,
+    )
+
+    raw = json.loads(
+        (ADAPTERS_ROOT / "legacy-post-only" / "fixtures" / "post-tool-use-save.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    raw.pop("_fixture")
+    raw["cwd"] = str(adapter.workspace)
+    raw["hook_event_name"] = "AfterTool"
+
+    event = renamed.to_policy_event(raw, workspace=adapter.workspace)
+    assert event.event_type is EventType.TOOL_POST_EXECUTE
+
+    # 两个集合都没有的名字照旧拒绝（未知事件不得静默放行）
+    raw["hook_event_name"] = "OnToolCall"
+    with pytest.raises(AdapterEventError):
+        renamed.to_policy_event(raw, workspace=adapter.workspace)
+
+
 def test_manifest_rejects_unknown_field() -> None:
     with pytest.raises((ManifestError, ValidationError)):
         AdapterManifest.model_validate(_manifest_document(unexpected="x"))
@@ -322,6 +366,33 @@ def test_normalize_event_path_rejects_relative_escape() -> None:
     with pytest.raises(AdapterEventError) as error:
         normalize_event_path("../outside.py", workspace=workspace, path_base=workspace)
     assert "越界" in str(error.value) or "逃出" in str(error.value)
+
+
+def test_render_event_uses_the_callers_outside_path() -> None:
+    """`outside` 形参此前被整个忽略：调用方指定的越界目标必须真的出现在渲染结果里。
+
+    形参没接进渲染逻辑时，「这个场景测的是哪个越界目标」只能靠读 `render_event` 的实现才知道，
+    而调用方（契约测试 / 安全用例）传的正是它自己要测的那个路径。
+    """
+
+    from adapters.conformance import SCENARIOS, render_event
+    from adapters.loader import load_adapter
+
+    adapter = load_adapter("generic-json", root=REPO_ROOT)
+    workspace = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
+    scenario = next(item for item in SCENARIOS if item.path and "{outside}" in item.path)
+
+    raw = render_event(
+        adapter,
+        scenario,
+        index=0,
+        workspace=workspace,
+        outside=str(REPO_ROOT.parent / "outside.py"),
+    )
+    dumped = json.dumps(raw, ensure_ascii=False)
+
+    assert "outside.py" in dumped
+    assert "outside-workspace.py" not in dumped
 
 
 def test_normalize_event_path_rejects_absolute_escape() -> None:
@@ -729,6 +800,95 @@ def test_generic_json_response_accepts_the_pending_findings_channel() -> None:
     result = _decision_result(decision="allow_with_warnings", pending_findings=[finding])
     response = agent_response_from_decision(result)
     assert response["executable"] is True
+
+
+def test_canonical_event_with_an_unhashable_version_is_a_protocol_error() -> None:
+    """不可哈希的 schema_version 必须是一条 AdapterEventError，不是 TypeError。
+
+    版本取值来自不可信的第三方文档：`["1.0"]` 会让 `version not in frozenset(...)` 抛
+    `TypeError: unhashable type`，调用方按 AdapterEventError 兜底，于是失败关闭变成未处理崩溃。
+    """
+
+    for bad in (["1.0"], {"v": "1.0"}, 1.0):
+        with pytest.raises(AdapterEventError) as error:
+            parse_canonical_event(_event_document(schema_version=bad), agent_id="generic-json")
+        assert "未知规范事件版本" in str(error.value)
+
+
+def test_the_payload_digest_only_keeps_type_names_for_unsupported_values(tmp_root) -> None:
+    """摘要只由载荷本身决定：不认识的类型只留类型名，不带路径、不带 repr、不受顺序影响。
+
+    docstring 早就这么承诺，但 `default=str` 对任何不认识的类型调用 `str()`/`repr()`：
+    `pathlib.Path` 把绝对路径整条写进摘要输入，默认 `repr` 写成 `<Foo object at 0x…>`，
+    `set` 的顺序还受哈希随机化影响——同一份逻辑载荷在不同进程里得到不同摘要，而摘要是
+    幂等与关联的依据。
+    """
+
+    from adapters.models import event_payload_digest
+
+    first = event_payload_digest({"path": tmp_root / "secret-project" / "creds.txt"})
+    # ① 换一个绝对路径（同一个逻辑载荷形态）：摘要必须一样
+    other = event_payload_digest({"path": tmp_root / "another-place" / "creds.txt"})
+    assert first == other
+    # ② 与把路径展成字符串的载荷不同：对象本身没有被 str() 进摘要
+    assert first != event_payload_digest({"path": str(tmp_root / "secret-project" / "creds.txt")})
+
+    class Custom:
+        pass
+
+    # ③ 默认 repr 带内存地址：两个实例必须同摘要
+    assert event_payload_digest({"value": Custom()}) == event_payload_digest({"value": Custom()})
+
+
+def test_the_generic_json_adapter_normalises_the_tool_alias_at_construction() -> None:
+    """别名归一发生在构造期：`validate_event` 只校验，不改写调用方手里的 frozen 事件。
+
+    `AgentEvent` 是 frozen dataclass。旧写法在 `validate_event` 里用 `object.__setattr__` 强写：
+    对象若已被放进 set/dict，hash/eq 当场失效；`super().validate_event(...)` 紧接着抛错时，
+    调用方手里还会留着一个改了一半的对象。校验本身也不需要它（`spec_for` 内部会归一工具名）。
+    """
+
+    from adapters.loader import load_adapter
+
+    adapter = load_adapter("generic-json", root=REPO_ROOT)
+    workspace = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
+
+    # ① 返回给调用方的事件是规范形态（别名已经归一）
+    event = adapter.to_policy_event(_event_document(tool="Edit"), workspace=workspace)
+    assert event.tool == "edit"
+
+    # ② validate_event 不改写调用方手里的对象
+    raw = parse_canonical_event(_event_document(tool="Edit"), agent_id="generic-json")
+    adapter.validate_event(raw, workspace=workspace)
+    assert raw.tool == "Edit"
+
+
+def test_generic_json_response_rejects_a_malformed_violation_entry() -> None:
+    """不是映射的 violations 条目必须拒绝，不能静默丢掉。
+
+    这个函数的姿态是「未知就拒绝」（未知键、非列表都拒绝），而旧写法把非映射条目直接过滤：
+    一次 block 于是以**空清单**回应 Agent，读的人分不出「平台丢了东西」与「本来就没有违规」。
+    """
+
+    from adapters.json_adapter import agent_response_from_decision
+
+    payload = _decision_result(
+        decision="allow_with_warnings",
+        violations=[
+            {
+                "rule_id": "DOC-001@1",
+                "rule_version": 1,
+                "severity": "warning",
+                "message": "缺模块 docstring",
+                "evidence": {"kind": "checker", "subject": "x", "value": "docstring"},
+            },
+        ],
+    ).to_decision_dict()
+    # 协议载荷是外部输入：模型构造得出来，第三方拼出来的却可能带一个不是映射的条目
+    payload["violations"].append("not-a-mapping")
+    with pytest.raises(AdapterEventError) as error:
+        agent_response_from_decision(payload)
+    assert "violations[1]" in str(error.value)
 
 
 def test_generic_json_response_still_rejects_unknown_decision_field() -> None:

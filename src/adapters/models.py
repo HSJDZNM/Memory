@@ -767,15 +767,28 @@ def _relative_to(candidate: Path, anchor: Path) -> str:
         raise AdapterEventError(str(error)) from error
 
 
+def _type_placeholder(item: Any) -> str:
+    """非 JSON 可序列化的值在摘要里只留类型名（与 docstring 的承诺一致）。"""
+
+    return "<" + type(item).__name__ + ">"
+
+
 def event_payload_digest(value: Any) -> str:
     """载荷摘要：稳定序列化后取 sha256。
 
     非 JSON 可序列化的值只留类型名，绝不把原始对象 `repr` 进摘要输入——
     `repr` 可能带出绝对路径或凭据，而这里的结果会进审计。
+
+    `default=str` 曾经与这句话相反：它对任何不认识的类型调用 `str()`/`repr()`，于是
+    `pathlib.Path` 把**绝对路径**整条写进摘要，默认 `repr` 写成 `<Foo object at 0x7f…>`
+    （跨进程不稳定），`set` 的迭代顺序还受哈希随机化影响——同一份逻辑载荷在不同进程里
+    得到不同摘要。摘要要当幂等与关联的依据，就必须只由载荷本身决定。
     """
 
     try:
-        canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        canonical = json.dumps(
+            value, ensure_ascii=False, sort_keys=True, default=_type_placeholder
+        )
     except (TypeError, ValueError):
         canonical = json.dumps(str(type(value).__name__), ensure_ascii=False)
     return "sha256:" + sha256(canonical.encode("utf-8")).hexdigest()
@@ -797,7 +810,10 @@ def parse_canonical_event(document: Mapping[str, Any], *, agent_id: Optional[str
     version = document.get("schema_version")
     if version is None:
         raise AdapterEventError("规范事件缺少 schema_version，拒绝消费")
-    if version not in SUPPORTED_CANONICAL_VERSIONS:
+    # 版本取值来自**不可信的第三方文档**：不可哈希的形态（list / dict）会让成员测试抛
+    # `TypeError: unhashable type` 逃出 AdapterEventError 契约——调用方按后者兜底，
+    # 于是失败关闭变成未处理崩溃。先判类型，再判取值。
+    if not isinstance(version, str) or version not in SUPPORTED_CANONICAL_VERSIONS:
         raise AdapterEventError(
             f"未知规范事件版本 {version!r}；本实现只接受 "
             f"{sorted(SUPPORTED_CANONICAL_VERSIONS)}，拒绝消费"
@@ -832,14 +848,20 @@ def parse_canonical_event(document: Mapping[str, Any], *, agent_id: Optional[str
             f"未知事件类型 {raw_type!r}；受控枚举为 {list(EVENT_TYPES)}，拒绝并记录协议错误"
         ) from None
 
-    principal = document.get("principal") or {}
+    # 显式判 None：`or {}` 会把 [] / "" / 0 / False 这些**畸形的非映射**折成空映射，
+    # 让下面这条拒绝分支对它们永远不可达——失败关闭因此悄悄降级成"当成空的收下"。
+    principal = document.get("principal")
+    if principal is None:
+        principal = {}
     if not isinstance(principal, Mapping):
         raise AdapterEventError("principal 必须是 {subject, roles} 结构")
     unknown_principal = sorted(set(principal) - {"subject", "roles"})
     if unknown_principal:
         raise AdapterEventError(f"principal 出现未知字段 {unknown_principal}")
 
-    payload = document.get("payload") or {}
+    payload = document.get("payload")
+    if payload is None:
+        payload = {}
     if not isinstance(payload, Mapping):
         raise AdapterEventError("payload 必须是映射")
     payload = dict(payload)

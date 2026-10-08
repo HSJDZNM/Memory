@@ -407,6 +407,9 @@ print()
 # 直接读源码核对"表达式是参数，不是拼进 SQL 的字符串"。
 search_source = inspect.getsource(ChunkStore.search)
 sql_block = search_source.partition("sql = (")[2]
+# 先证明**锚点真的在**：`partition` 找不到分隔符时返回的尾巴是空串，下面那条断言会因此
+# 空过——单元照样绿、还照样打印"源码核对"的结论（一条不可能失败的规格等于没有规格）。
+assert sql_block, "在 ChunkStore.search 里没找到 `sql = (`：源码核对的锚点没了，拒绝空过"
 assert "chunks_fts MATCH ?" in search_source
 assert "expression" not in sql_block, "表达式变量不得出现在 SQL 拼接块里"
 print("源码核对：ChunkStore.search 的 SQL 里写的是 chunks_fts MATCH ?，")
@@ -433,7 +436,14 @@ SQL 的形状是固定的：`chunks_fts MATCH ?` 加一串**参数化**的过滤
         code(
             '''
 # ---- 6) 检索：参数化查询 + 权限过滤 + 结果带来源 ----
-from retrieval.models import AccessScope, RetrievalQuery, RetrievalResult, RetrievalStatus, UnavailableReason
+from retrieval.models import (
+    AccessScope,
+    RetrievalQuery,
+    RetrievalResult,
+    RetrievalStatus,
+    RetrievedChunk,
+    UnavailableReason,
+)
 from retrieval.retriever import FtsRetriever
 
 retriever = FtsRetriever(store, policy=policy)
@@ -457,8 +467,13 @@ assert result.status is RetrievalStatus.OK and len(result.results) == 1
 assert all(hit.source_path and hit.source_url and hit.license and hit.text_hash for hit in result.results)
 assert [hit.rank for hit in result.results] == list(range(1, len(result.results) + 1))
 # 检索结果里没有任何"授权"字段：分数不可能被当成放行依据。
+# **扫描要覆盖真正给出去的那一层**：上面展示的结果是 `result.results` 里的 `RetrievedChunk`，
+# 只扫信封（`RetrievalResult`）的话，命中模型上新增一个 `allow_restricted` / `granted` 之类的
+# 字段不会被抓到，而打印出来的结论照样是"检索结果里没有任何授权字段"。
 auth_fields = [
-    name for name in RetrievalResult.model_fields
+    f"{model.__name__}.{name}"
+    for model in (RetrievalResult, RetrievedChunk)
+    for name in model.model_fields
     if "author" in name or "grant" in name or name.startswith("allow")
 ]
 assert not auth_fields, auth_fields

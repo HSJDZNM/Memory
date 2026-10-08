@@ -72,6 +72,26 @@ def _require_identifier(value: Any, *, where: str) -> str:
     return token
 
 
+def _require_token(value: Any, *, where: str) -> str:
+    """角色 / 权限这类标识：必须是非空字符串，规范化（去空白 + 小写）后仍非空。
+
+    与 _require_identifier 分开写：角色的取值面比 action_id 宽（例如中文标签），
+    这里只要求"能进哈希的字符串"，但**不接受**非字符串——旧实现把非字符串交给
+    canonical_identifier，抛的是裸 TypeError，绕过了本模块统一的类型化错误通道。
+    """
+
+    if not isinstance(value, str) or not value.strip():
+        raise _fail(
+            ReasonCode.PARAM_INVALID, f"{where} 的每一项必须是非空字符串，得到 {value!r}"
+        )
+    token = canonical_identifier(value)
+    if not token:
+        raise _fail(
+            ReasonCode.PARAM_INVALID, f"{where} 的每一项规范化后不得为空，得到 {value!r}"
+        )
+    return token
+
+
 def _normalize_path(
     value: Any,
     *,
@@ -170,10 +190,26 @@ def _normalize_scalar(spec: ParamSpec, raw: Any, *, workspace: Optional[Path]) -
 
 
 def _check_constraints(spec: ParamSpec, value: Any) -> None:
+    """按声明的约束校验取值；**声明的约束不许被静默跳过**。
+
+    只有字符串有"文本形态"，所以 pattern / max_chars / enum 只对 string / path 生效；
+    ParamSpec._check_shape 已经在加载期拒绝把它们声明在别的类型上。这里再证一次：
+    万一有 Spec 绕过加载期校验（model_construct / 手搓），宁可报参数非法，也不静默放行。
+    """
+
     name = spec.name
+    declared_text_constraint = (
+        spec.max_chars is not None or spec.pattern is not None or bool(spec.enum)
+    )
     text = None
     if isinstance(value, str):
         text = value
+    elif declared_text_constraint:
+        raise _fail(
+            ReasonCode.PARAM_INVALID,
+            f"参数 {name} 声明了文本约束（max_chars / pattern / enum），"
+            f"但取值类型是 {type(value).__name__}，无法执行这些约束：拒绝静默跳过",
+        )
     if text is not None:
         if spec.max_chars is not None and len(text) > spec.max_chars:
             raise _fail(
@@ -331,7 +367,9 @@ def build_action_request(
         action_id=_require_identifier(action_id, where="action_id"),
         request_id=_require_identifier(request_id, where="request_id"),
         trace_id=None if trace_id is None else str(trace_id).strip() or None,
-        agent=agent,
+        # agent 是身份字段里唯一一个"原样落库"的：与 action_id / request_id / agent_version
+        # 同一口径校验并规范化，否则 "dsh" / "dsh " / "DSH" 会为同一个调用方算出三个 action_hash。
+        agent=canonical_identifier(_require_identifier(agent, where="agent")),
         agent_version=None if agent_version is None else canonical_identifier(str(agent_version)),
         tool_id=spec.id,
         tool_name=spec.tool_name,
@@ -343,8 +381,12 @@ def build_action_request(
         params=params,
         param_digest=digest_of({item.name: item.canonical() for item in params}),
         subject=None if subject is None else str(subject).strip() or None,
-        roles=tuple(sorted({canonical_identifier(role) for role in roles if str(role).strip()})),
-        permissions=tuple(sorted(set(permissions))),
+        # 两个集合都进 action_hash：逐项校验类型（非法条目走 ActionRequestError，
+        # 不是裸 TypeError），并统一规范化，同一个主体因此总是映射到同一个哈希。
+        roles=tuple(sorted({_require_token(role, where="roles") for role in roles})),
+        permissions=tuple(
+            sorted({_require_token(item, where="permissions") for item in permissions})
+        ),
         context_digest=context_digest(context, sources=sources, extra=context_extra),
         workspace=None if workspace is None else Path(workspace).as_posix(),
         created_at=moment,

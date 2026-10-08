@@ -197,6 +197,30 @@ def test_unknown_validator_filter_is_rejected() -> None:
     assert "tool.absent" in completed.stderr
 
 
+def test_changed_from_git_rejects_option_like_refs(tmp_root: Path) -> None:
+    """--changed-from-git 的 ref 不能以 '-' 开头：git 会把它当选项（复核发现：选项注入）。"""
+
+    leak = tmp_root / "leak.txt"
+    for ref in ("--output=" + str(leak), "--no-index", "--ext-diff"):
+        completed = cli(
+            "check",
+            "src/shop/order_service.py",
+            "--layer",
+            "service",
+            "--workspace",
+            PROJECT,
+            "--operation",
+            "edit",
+            "--changed-from-git=" + ref,
+            "--rules",
+            str(REPO_ROOT / "policies"),
+        )
+        assert completed.returncode == 2, (ref, completed.stderr)
+        assert "不能以" in completed.stderr, (ref, completed.stderr)
+        assert "Traceback" not in completed.stderr, ref
+    assert not leak.exists(), "git 不许被诱导把输出写到别处"
+
+
 def test_changed_from_git_uses_the_working_tree(tmp_root: Path) -> None:
     """--changed-from-git 直接问 git 要变更集；没有 git 时会显式失败而不是当作没有变更。"""
 

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -229,3 +230,63 @@ def test_probe_is_deterministic_across_runs(report: dict) -> None:
     assert len(set(payload.get("run_ids", []))) == 2, (
         f"两次运行用了同一个工作目录：{payload.get('run_ids')}"
     )
+
+# --------------------------------------------------------------------------- G12 的行为判据
+
+#: 变异锚点：插件里「其余退出码 -> 失败关闭拒绝」那一支的返回块。
+#: 把它改成 allowed: true，退出码 7 就会被放行——同一份行为读数必须因此变红。
+G12_MUTATION_ANCHOR = (
+    "      allowed: false," + chr(10) +
+    "      reason:" + chr(10) +
+    "        'policy-hook: Hook 退出码 ' +"
+)
+
+
+def _probe_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("governance_gap_probe_g12", PROBE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_g12_exit_map_is_measured_by_behaviour_not_by_source_regex(tmp_root: Path) -> None:
+    """G12 的判据：真 node 驱动真插件，喂五种返回值形状；源码正则不算读数。
+
+    这条用例同时是**变异证明**：把插件里"其余退出码 -> deny"那一支改成放行之后，
+    同一份判据必须变红（仪器测得准，不是只会绿）。
+    """
+
+    if shutil.which("node") is None:
+        pytest.skip("本机没有 node：退出码映射无法真驱动（探针侧会把它记成不成立，而不是通过）")
+
+    probe = _probe_module()
+    plugin = PROBE_ROOT / "src" / "adapters" / "dsh" / "policy-hook.plugin.mjs"
+    work = tmp_root / "g12"
+
+    real = probe.plugin_exit_cases("node", plugin, work / "real", cwd=REPO_ROOT)
+    assert {mode: real[mode]["kind"] for mode in probe.PLUGIN_EXIT_MODES} == {
+        "zero": "enter",
+        "two": "deny",
+        "seven": "deny",
+        "string_code": "deny",
+        "no_code": "deny",
+    }, real
+    assert probe.exit_map_verdict(real) is True
+
+    source = plugin.read_text(encoding="utf-8")
+    mutated_source = source.replace(
+        G12_MUTATION_ANCHOR,
+        G12_MUTATION_ANCHOR.replace("allowed: false", "allowed: true"),
+        1,
+    )
+    assert mutated_source != source, "变异锚点没命中：这条证明要按当前插件重写"
+    mutated = work / "plugin-mutated.mjs"
+    mutated.write_text(mutated_source, encoding="utf-8", newline=chr(10))
+
+    leaked = probe.plugin_exit_cases("node", mutated, work / "mutated", cwd=REPO_ROOT)
+    assert leaked["seven"]["kind"] == "enter", "变异体应当把退出码 7 放行"
+    assert probe.exit_map_verdict(leaked) is False, "判据在变异体上必须变红"

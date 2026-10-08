@@ -102,7 +102,18 @@ def repo_relative_path(
         raise PolicyContextError(f"绝对路径需要 repo_root 才能转成仓库相对路径: {raw!r}")
 
     anchor = Path(repo_root).resolve()
-    target = Path(raw).resolve()
+    try:
+        target = Path(raw).resolve()
+    except OSError as error:
+        # 解析不到的绝对路径**也是**"不在仓库之内"，必须用同一条拒绝理由说出去。
+        # 实测（阶段门禁在 Windows 上）：UNC 路径 \\server\share\file.py 会在这里触发
+        # 宿主环境的网络查找，负载高时抛 OSError [WinError 64] 指定的网络名不再可用——
+        # 那是一个**宿主环境错误**，不是"这条路径合法"，而它此前会原样抛给调用方
+        # （既不是 PolicyContextError，也让"绝对路径一律拒绝"这条判据时灵时不灵）。
+        raise PolicyContextError(
+            f"路径无法解析为受控范围内的位置，拒绝处理: {raw!r}（{type(error).__name__}: {error}）。"
+            + USABLE_REPO_PATH_HINT
+        ) from error
     anchor_parts = anchor.parts
     target_parts = target.parts
     head = target_parts[: len(anchor_parts)]

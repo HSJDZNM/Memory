@@ -260,8 +260,20 @@ def candidates(*, include_venv: bool = False) -> list[Path]:
     if not include_venv:
         found = [path for path in found if not _is_under_venv(path)]
 
-    unique = sorted(set(found), key=lambda item: (len(item.parts), str(item)))
-    return [path for path in unique if not any(parent in unique for parent in path.parents)]
+    return _drop_nested(found)
+
+
+def _drop_nested(paths: list[Path]) -> list[Path]:
+    """只留最外层：任何祖先也在候选里的路径都丢掉。
+
+    成员判定用**集合**：旧实现拿排好序的列表做 `parent in unique`，每个候选都要线性扫一遍
+    整张表，候选阶段因此是 O(n²·depth)——`--include-venv` 打开、或仓库里有大量散落 .pyc 时
+    unique 会到 10⁴ 量级，而且 `--dry-run` 也要先付这笔钱。语义不变（unique 就是 set(found)）。
+    """
+
+    unique = sorted(set(paths), key=lambda item: (len(item.parts), str(item)))
+    known = set(unique)
+    return [path for path in unique if not any(parent in known for parent in path.parents)]
 
 
 def is_allowed(path: Path, *, include_venv: bool = False) -> bool:

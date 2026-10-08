@@ -745,6 +745,11 @@ def test_live_check_flags_a_stale_record(tmp_root, capsys):
     assert finding["observed_version"] == "1.0.0"
     assert any("记录过期" in item for item in payload["failures"])
     assert any("--record" in item for item in payload["failures"])
+    # 账本要说得出口「这次覆盖了几个」：stale 的那条**参与过**比对（活体探测成功、版本一致），
+    # 不能一边写「观测记录…参与了比对」一边写「本次没有任何 Adapter 真正参与比对」。
+    assert payload["covered"] == 1
+    assert not any("什么都没有覆盖" in note for note in payload["notes"])
+    assert any("参与了比对" in note for note in payload["notes"])
 
 
 def test_live_check_is_green_when_the_record_matches_the_host(tmp_root, capsys):

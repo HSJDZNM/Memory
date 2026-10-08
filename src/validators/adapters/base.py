@@ -25,6 +25,7 @@ pending_implementation 刻意不在这张表的失败侧：它不是"工具没�
 
 from __future__ import annotations
 
+import codecs
 import json
 import os
 import re
@@ -475,6 +476,21 @@ def _classify_failure(completed: ToolRun) -> ValidatorStatus:
     return ValidatorStatus.CRASHED
 
 
+def _truncate_utf8(payload: bytes, limit: int) -> bytes:
+    """把字节串截到 limit 字节以内，且**不切开多字节字符**（不完整的尾部序列丢掉）。
+
+    直接 payload[:limit] 会把一份合法 UTF-8 输出切成非法字节串，下面的严格 decode 于是报
+    OUTPUT_INVALID——那刀是我们自己切的，不该把"输出非法"记在工具头上（复核发现）。
+    真正非法的字节仍然会在这里抛 UnicodeDecodeError，由调用方按 OUTPUT_INVALID 处理。
+    """
+
+    if len(payload) <= limit:
+        return payload
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    # final=False：结尾不完整的那个序列留在解码器缓冲里，不报错也不产出字符。
+    return decoder.decode(payload[:limit], final=False).encode("utf-8")
+
+
 def _run_process(
     argv: Sequence[str],
     *,
@@ -557,8 +573,8 @@ def _run_process(
     output_bytes = len(raw)
     truncated = output_bytes > max_output_bytes
     if truncated:
-        out = out[:max_output_bytes]
-        err = err[:max_output_bytes]
+        out = _truncate_utf8(out, max_output_bytes)
+        err = _truncate_utf8(err, max_output_bytes)
     try:
         stdout = out.decode("utf-8")
         stderr = err.decode("utf-8")

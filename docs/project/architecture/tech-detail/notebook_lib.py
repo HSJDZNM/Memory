@@ -42,14 +42,15 @@ def code(text: str) -> Cell:
 class NotebookSpec:
     """一份讲解 notebook 的规格。"""
 
-    stem: str
     #: 产物文件名（不带扩展名），与章节目录名逐字相同
-    title: str
+    stem: str
     #: notebook 一级标题
-    summary: str
+    title: str
     #: 一句话说明（索引表用）
-    temp_dir: str
+    summary: str
     #: 本 notebook 独占的临时目录（相对仓库根），必须落在 .tmp/tech-detail/ 下
+    temp_dir: str
+    #: 全部单元，顺序即 notebook 顺序（代码单元会被真的执行）
     cells: Tuple[Cell, ...]
     #: 生成期结构核对：拿到全部代码单元执行完的命名空间，返回问题列表
     structure: Optional[Callable[[dict], Sequence[str]]] = None

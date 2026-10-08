@@ -57,7 +57,7 @@ from .models import (
 )
 from .observability import Metrics, RequestLog, RequestLogEntry
 from .services import LoadedTenant, TenantStore
-from .timeout import run_with_budget
+from .timeout import Elapsed, run_with_budget
 
 __all__ = [
     "ROUTES",
@@ -211,6 +211,12 @@ def _context_from_dto(
 class ApiRuntime:
     """服务端的核心：一个进程一份，线程安全（多 worker 部署时每个 worker 各一份）。"""
 
+    # `_decisions`（decision_ref 的存储）的容量上限：TTL 之外的**第二道闸**。
+    # 这份存储只是"检索可以引用本服务算过的决策"的缓存，不是台账——丢掉只会让调用方
+    # 重新 evaluate 一次，因此有界是安全的；没有它，调用方每换一个 request_id 就能让长跑
+    # 服务的内存单调增长（request_id 由调用方提供，DTO 只限 200 字符）。
+    _MAX_REMEMBERED_DECISIONS = 4096
+
     def __init__(
         self,
         config: ApiConfig,
@@ -235,7 +241,8 @@ class ApiRuntime:
         self.rate_limiter = RateLimiter(config.rate_limit, clock=clock)
         self._idempotency: dict[str, IdempotencyLedger] = {}
         self._idempotency_lock = threading.Lock()
-        self._decisions: dict[str, ValidationResult] = {}
+        # 值带上写入时刻：TTL 与容量两道闸都按它判（clock 是注入的单调时钟）。
+        self._decisions: dict[str, Tuple[float, ValidationResult]] = {}
         self._decisions_lock = threading.RLock()
         self._semaphore = threading.BoundedSemaphore(config.limits.max_concurrency)
         self._readiness: Optional[Tuple[float, Mapping[str, Any], int]] = None
@@ -390,6 +397,9 @@ class ApiRuntime:
                 ErrorCode.RETRIEVE_TIMEOUT,
                 ErrorCode.VALIDATE_TIMEOUT,
             ):
+                # **超时只在这里计一次**：三条路由的预算耗尽时都在这里以错误码收敛，
+                # 在 raise 点再计一遍就是同一件事两处表达——实测每个超时被记了 2 次，
+                # 指标里的 timeouts 因此是真实值的两倍。
                 self.metrics.count_timeout()
             if error.code is ErrorCode.REQUEST_BUDGET_EXCEEDED:
                 self.metrics.count_budget_exceeded()
@@ -539,14 +549,14 @@ class ApiRuntime:
 
         result, elapsed = run_with_budget(work, budget_ms=budget_ms, clock=self.clock)
         if result is None:
-            self.metrics.count_timeout()
             raise ApiError(
                 ErrorCode.EVALUATE_TIMEOUT,
                 f"策略判定超出预算 {budget_ms}ms；未给出结论（不伪造 allow）",
                 retryable=True,
             )
-        with self._decisions_lock:
-            self._decisions[_decision_key(auth.tenant, request.request_id)] = result
+        self._remember_decision(
+            _decision_key(auth.tenant, auth.client_id, request.request_id), result
+        )
         body: dict[str, Any] = {
             "api_version": API_SCHEMA_VERSION,
             "tenant": auth.tenant,
@@ -660,7 +670,6 @@ class ApiRuntime:
 
         outcome, elapsed = run_with_budget(work, budget_ms=budget_ms, clock=self.clock)
         if outcome is None:
-            self.metrics.count_timeout()
             raise ApiError(
                 ErrorCode.RETRIEVE_TIMEOUT,
                 f"检索超出预算 {budget_ms}ms；未返回片段（不回退到模型记忆）",
@@ -709,6 +718,34 @@ class ApiRuntime:
         facts = {"index_version": retrieval.index_version, "decision": "", "violations": 0}
         return 200, body, facts
 
+    def _decision_fresh(self, recorded_at: float, *, now: float) -> bool:
+        """决策引用的保留窗口；`idempotency_ttl_seconds == 0` 表示"不过期"（与幂等台账同口径）。"""
+
+        ttl = self.config.idempotency_ttl_seconds
+        return ttl == 0 or (now - recorded_at) < ttl
+
+    def _remember_decision(self, key: str, result: ValidationResult) -> None:
+        """记住一次决策供检索引用（`decision_ref`）；**有界**：TTL + 容量上限。
+
+        没有上限时，调用方每换一个 `request_id` 就能把长跑服务的内存撑满。上限复用配置里
+        已有的 `idempotency_ttl_seconds`（同一条"多久之内算同一次调用"的语义），容量上限用
+        类常量——不为它新增配置键。
+        """
+
+        now = self.clock()
+        with self._decisions_lock:
+            self._decisions[key] = (now, result)
+            if self.config.idempotency_ttl_seconds:
+                for stale in [
+                    item
+                    for item, (recorded_at, _) in self._decisions.items()
+                    if not self._decision_fresh(recorded_at, now=now)
+                ]:
+                    self._decisions.pop(stale, None)
+            while len(self._decisions) > self._MAX_REMEMBERED_DECISIONS:
+                # dict 保持插入序：最旧的先走
+                self._decisions.pop(next(iter(self._decisions)))
+
     def _policy_facts(
         self, tenant: LoadedTenant, auth: AuthContext, decision_ref: Optional[str]
     ) -> Tuple[Any, ...]:
@@ -716,13 +753,20 @@ class ApiRuntime:
 
         if not decision_ref:
             return ()
+        now = self.clock()
         with self._decisions_lock:
-            result = self._decisions.get(_decision_key(auth.tenant, decision_ref))
-        if result is None:  # noqa: SIM108 - 保持显式分支，便于阅读状态机
+            entry = self._decisions.get(
+                _decision_key(auth.tenant, auth.client_id, decision_ref)
+            )
+            if entry is not None and not self._decision_fresh(entry[0], now=now):
+                entry = None
+        if entry is None:  # noqa: SIM108 - 保持显式分支，便于阅读状态机
             raise ApiError(
                 ErrorCode.FORBIDDEN,
-                "decision_ref 指向的决策不在本服务上；拒绝用未经验证的决策扩权",
+                "decision_ref 指向的决策不在本服务上（或已超出保留窗口 "
+                f"{self.config.idempotency_ttl_seconds}s）；拒绝用未经验证的决策扩权",
             )
+        result = entry[1]
         current = tenant.rule_set_hash()
         if result.rule_set_hash and current and result.rule_set_hash != current:
             raise ApiError(
@@ -781,13 +825,33 @@ class ApiRuntime:
 
         report, elapsed = run_with_budget(work, budget_ms=budget_ms, clock=self.clock)
         if report is None:
-            self.metrics.count_timeout()
             raise ApiError(
                 ErrorCode.VALIDATE_TIMEOUT,
                 f"验证器流水线超出预算 {budget_ms}ms；未产出证据（不把缺失当通过）",
                 retryable=True,
             )
-        result = evaluate(rules, context, evidence=report.bundle) if request.include_decision else None
+        result = None
+        if request.include_decision:
+            # 合并证据后的判定**也要在预算内**：它跑的是同一个引擎、读的是刚产出的证据，
+            # 不受约束的话 validate 路由的总耗时就没有上限（预算只管住了流水线那一段），
+            # 而 504 是这条路由对"超出预算"的唯一口径。剩余预算 = 总预算 − 流水线已用。
+            remaining_ms = max(1, budget_ms - int(elapsed.milliseconds))
+            result, decision_elapsed = run_with_budget(
+                lambda: evaluate(rules, context, evidence=report.bundle),
+                budget_ms=remaining_ms,
+                clock=self.clock,
+            )
+            if result is None:
+                raise ApiError(
+                    ErrorCode.VALIDATE_TIMEOUT,
+                    f"合并证据后的判定超出剩余预算 {remaining_ms}ms；未给出结论（不伪造 allow）",
+                    retryable=True,
+                )
+            # 响应里的耗时是**这条路由的总耗时**，不是流水线那一段的
+            elapsed = Elapsed(
+                milliseconds=elapsed.milliseconds + decision_elapsed.milliseconds,
+                timed_out=False,
+            )
         report_payload = dict(report.to_payload())
         truncated = 0
         evidence_items = list(report_payload.get("evidence") or [])
@@ -961,8 +1025,16 @@ def _canonical_body(body: Mapping[str, Any]) -> Mapping[str, Any]:
     return json.loads(json.dumps(dict(body), ensure_ascii=False, sort_keys=True))
 
 
-def _decision_key(tenant: str, request_id: str) -> str:
-    return f"{tenant}:{request_id}"
+def _decision_key(tenant: str, client_id: str, request_id: str) -> str:
+    """决策引用的键：**租户 + 客户端 + request_id**。
+
+    只看 `(tenant, request_id)` 不够：`request_id` 由调用方提供，同一个租户里的另一个客户端
+    只要猜中/复用这个 id，就能用 `decision_ref` 引用别人算过的决策——检索的 policy_facts 会
+    因此把别人的违规与规则集事实读出来（同租户内的越权读取）。把客户端并入键，
+    引用就只对"算这次决策的那个客户端"成立。
+    """
+
+    return f"{tenant}:{client_id}:{request_id}"
 
 
 def _recordable(status: int, facts: Mapping[str, Any]) -> bool:

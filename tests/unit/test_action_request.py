@@ -62,6 +62,49 @@ def test_params_are_sorted_and_types_are_checked(enforcement_paths):
     assert file_path.value == "src/shop/order_controller.py"
 
 
+def test_malformed_roles_and_permissions_are_typed_errors(enforcement_paths):
+    """角色/权限里的非法条目必须走 ActionRequestError，而不是裸 TypeError。
+
+    旧实现里 roles=(5,) 会一路走到 canonical_identifier 抛 TypeError，permissions=([],)
+    则在 set() 上抛 TypeError——两者都绕过了这个模块统一的类型化错误通道。
+    """
+
+    registry = enforcement_paths.registry_object()
+    spec = spec_of(registry, "fs.edit")
+    common = dict(action_id="act-roles", request_id="req-roles", agent="dsh")
+
+    with pytest.raises(ActionRequestError) as error:
+        build_action_request(spec, edit_params(), roles=(5,), **common)
+    assert ReasonCode.PARAM_INVALID.value in str(error.value)
+
+    with pytest.raises(ActionRequestError):
+        build_action_request(spec, edit_params(), roles=("",), **common)
+    with pytest.raises(ActionRequestError):
+        build_action_request(spec, edit_params(), permissions=([],), **common)
+
+    # 反真空：大小写/空白变体规范化成同一个主体，哈希也相同。
+    upper = build_action_request(spec, edit_params(), roles=(" Developer ",), **common)
+    lower = build_action_request(spec, edit_params(), roles=("developer",), **common)
+    assert upper.roles == ("developer",)
+    assert upper.action_hash == lower.action_hash
+
+
+def test_agent_is_canonicalised_like_the_other_identity_fields(enforcement_paths):
+    """agent 曾经是唯一原样落库的身份字段：大小写/空白会让同一调用方得到不同 action_hash。"""
+
+    registry = enforcement_paths.registry_object()
+    spec = spec_of(registry, "fs.edit")
+    common = dict(
+        action_id="act-agent", request_id="req-agent", workspace=enforcement_paths.workspace
+    )
+
+    ragged = build_action_request(spec, edit_params(), agent="  DSH ", **common)
+    plain = build_action_request(spec, edit_params(), agent="dsh", **common)
+
+    assert ragged.agent == "dsh"
+    assert ragged.action_hash == plain.action_hash
+
+
 def test_unknown_parameter_is_rejected_with_the_allowlist(enforcement_paths):
     registry = enforcement_paths.registry_object()
 
@@ -275,6 +318,11 @@ def test_tampered_request_is_rejected_by_the_hash_guard(enforcement_paths):
         {**item, "value": "from repository import OrderRepository"} if item["name"] == "new_string" else item
         for item in payload["params"]
     ]
+    # 摘要跟着改，才能走到 action_hash 那一关——本次要验证的是哈希守卫本身
+    # （摘要与参数失配是另一条判据，另有专门用例）。
+    payload["param_digest"] = digest_of(
+        {item["name"]: item["value"] for item in payload["params"]}
+    )
 
     with pytest.raises(ValidationError) as error:
         ActionRequest.model_validate(payload)

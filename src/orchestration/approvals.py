@@ -20,7 +20,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
-from enforcement.approvals import ApprovalRecord, load_approval, verify_approval
+from enforcement.approvals import (
+    ApprovalBinding,
+    ApprovalRecord,
+    load_approval,
+    verify_approval,
+)
 
 from .errors import ApprovalError
 from .models import ApprovalUse, FailureCode, GraphState, NodeId
@@ -72,6 +77,15 @@ class ApprovalGate:
         `action_id` 匹配的记录。按 action_id 而不是 action_hash 挑选，是为了让
         "主体不符 / 参数漂移 / 已过期"能给出**具体**的失败码，而不是笼统的"没有审批"。
 
+        没有记录的 action_id 匹配时，按下面的顺序兜底——两档都不改变安全性，它们回答的是
+        "该去修哪一份记录"：
+
+        1. `binding=pattern` 的记录：它按契约**没有** action_id，本来就是为"将来的某次调用"签的；
+        2. 否则取收件箱里第一条 action 档记录：它**不可能**通过 verify（action_id 与 action_hash
+           必须逐位一致），放在这里只为了让拒绝理由说得出"你签的是另一个动作"
+           （tests/security 的 forged-action-id 用例钉住这个具体失败码：退化成"没有审批"，
+           人就不知道要去改哪一份记录）。
+
         返回文件路径是必要的：这份审批随后要**原样**交给 Phase 4 的 pre-check
         （判定权在平台，编排层只负责找到它）。
         """
@@ -85,7 +99,8 @@ class ApprovalGate:
                 return None
         if not self.path.is_dir():
             return None
-        fallback: Optional[Tuple[Path, ApprovalRecord]] = None
+        fallback: Optional[Tuple[Path, ApprovalRecord]] = None  # pattern 档
+        unrelated: Optional[Tuple[Path, ApprovalRecord]] = None  # action 档（只为具体失败码）
         for candidate in sorted(self.path.glob("*.json")):
             try:
                 record = load_approval(candidate)
@@ -93,9 +108,13 @@ class ApprovalGate:
                 continue
             if action_id is not None and record.action_id == action_id:
                 return candidate, record
-            if fallback is None:
-                fallback = (candidate, record)
-        return fallback
+            if record.binding is ApprovalBinding.PATTERN:
+                if fallback is None:
+                    fallback = (candidate, record)
+            elif unrelated is None:
+                unrelated = (candidate, record)
+        # pattern 档优先：它是唯一"合法地适用于未匹配调用"的绑定。两档都没有就是真的没有审批。
+        return fallback if fallback is not None else unrelated
 
     def _record(self, action_id: Optional[str] = None) -> Optional[ApprovalRecord]:
         located = self.locate(action_id)
@@ -155,10 +174,15 @@ class ApprovalGate:
             if item.approval_id == (record.approval_id if record else "")
             and item.action_hash == action_hash
         )
-        uses_left = min(
-            state.limits.max_approval_uses - used,
-            state.limits.max_approval_uses,
-        )
+        # 额度取"本地预算"与"**这张条子自己的上限**"中更小的那个：
+        # binding=action 的条子在构造期就被钉死 max_uses=1（"单次使用"是条子自己写的），
+        # 而 RunLimits.max_approval_uses 是编排层的预算数——两者语义不同。
+        # 只按预算算的话，配置成 2 就能让一张**单次**条子用两次（平台那边收不到"已消费"的事实，
+        # 见下面 verify_approval 的 used 参数）。
+        allowed = state.limits.max_approval_uses
+        if record is not None:
+            allowed = min(allowed, record.max_uses)
+        uses_left = max(allowed - used, 0)
         code = self._classify(
             record,
             action_hash=action_hash,
@@ -168,15 +192,22 @@ class ApprovalGate:
             uses_left=uses_left,
         )
         if code is not None:
-            error = ApprovalError(
+            # 码在**构造期**给（不再"先构造再改属性"）：忘改属性的抛出点会静默记成默认码，
+            # 而终态是按码推导的。
+            raise ApprovalError(
                 _message_for(code, node=node, action_hash=action_hash, action_id=action_id),
+                code=code,
                 node=node,
             )
-            error.code = code
-            raise error
         assert record is not None  # _classify 已经排除了 None
         try:
             # 判定权仍然在 Phase 4：角色、签发时间与单次使用都由它复核。
+            #
+            # used 的口径按 Phase 4 的契约来（enforcement.approvals.verify_approval）：
+            # 它问的是"**这张条子**是否已经消费过"（binding=action 时 max_uses 恒为 1），
+            # 所以判据是 used >= 1。此前传的是 used >= max_approval_uses——那是编排层的预算数，
+            # 与条子无关：预算配成 2 时，一张已经用过的单次条子会被平台看成"没用过"，
+            # 平台那次复核于是**永远不可能触发**（这正是"单次使用"最后一层保证）。
             verify_approval(
                 record,
                 action_hash=action_hash,
@@ -184,12 +215,19 @@ class ApprovalGate:
                 tool_id=tool_id,
                 subject=subject,
                 approval_roles=self.approval_roles,
-                used=used >= state.limits.max_approval_uses,
+                used=used >= 1,
                 now=self._now(),
             )
         except Exception as error:  # noqa: BLE001 - Phase 4 拒绝即拒绝，只翻译分类
+            # 理由必须带上**平台自己那一句**：只写异常类名的话，"审批人没有审批权"与
+            # "签发时间在未来"在状态、报告与审计里长得一模一样（都只剩一个类名），
+            # 而这两件事对人该做什么的指示完全不同。
+            #
+            # 失败码这一侧保持类默认值（APPROVAL_MISSING）：Phase 4 的拒绝意味着"这份条子
+            # 在这件事上不可用"，与"没有可用审批"同级——tests/security 的
+            # approver-without-authority 用例钉的正是这个码，换码等于改一条安全期望。
             raise ApprovalError(
-                f"审批被平台拒绝：{type(error).__name__}", node=node
+                f"审批被平台拒绝：{type(error).__name__}: {error}", node=node
             ) from error
         return ApprovalUse(
             node=node,

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import array
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -52,6 +53,17 @@ __all__ = [
 ]
 
 DEFAULT_DB_PATH = ".tmp/retrieval/index.sqlite3"
+
+# embeddings_for 的 IN 批大小：SQLite 的历史参数上限是 999。
+_EMBEDDING_BATCH = 900
+
+
+def _decode_vector(payload: bytes) -> Tuple[float, ...]:
+    """float32 小端字节 -> 浮点元组（向量列的唯二读取点共用同一份解码）。"""
+
+    values = array.array("f")
+    values.frombytes(payload)
+    return tuple(float(item) for item in values)
 
 SCHEMA_STATEMENTS: Tuple[str, ...] = (
     """
@@ -293,16 +305,29 @@ class ChunkStore:
             finally:
                 self._depth -= 1
             return
-        self._raw.execute("BEGIN IMMEDIATE")
+        self._run_control("BEGIN IMMEDIATE")
         self._depth = 1
         try:
             try:
                 yield
-            except BaseException:
-                self._raw.execute("ROLLBACK")
+            except BaseException as error:
+                try:
+                    self._run_control("ROLLBACK")
+                except StoreError as rollback_error:
+                    # 回滚失败不许盖掉原始异常：类型与因果链不变，失败只作为 note 附上。
+                    error.add_note(f"另外：ROLLBACK 也失败了：{rollback_error}")
                 raise
             else:
-                self._raw.execute("COMMIT")
+                try:
+                    self._run_control("COMMIT")
+                except StoreError:
+                    # COMMIT 失败后连接仍停在事务里，后续 autocommit 语句会静默加入它：
+                    # 尽力回滚把连接交回干净状态，然后如实抛出提交失败。
+                    try:
+                        self._run_control("ROLLBACK")
+                    except StoreError:
+                        pass
+                    raise
         finally:
             self._depth = 0
 
@@ -311,6 +336,18 @@ class ChunkStore:
             return self._raw.execute(sql, tuple(parameters))
         except sqlite3.Error as error:
             raise StoreError(f"索引库操作失败: {error} ({sql.strip().split()[0]})") from error
+
+    def _run_control(self, sql: str) -> None:
+        """事务控制语句（BEGIN / COMMIT / ROLLBACK）也走 StoreError 契约。
+
+        它们旧实现直接 execute：失败时抛的是裸 sqlite3.Error，而调用方（CLI、indexer）
+        按 StoreError 归类成"配置或执行错误"，裸异常会以另一种方式逃出去。
+        """
+
+        try:
+            self._raw.execute(sql)
+        except sqlite3.Error as error:
+            raise StoreError(f"索引库事务失败: {error} ({sql.split()[0]})") from error
 
     def _initialize(self) -> None:
         try:
@@ -478,7 +515,9 @@ class ChunkStore:
                 document_id = str(row["document_id"])
                 self._delete_document(document_id)
                 removed.append(document_id)
-            return tuple(sorted(removed))
+        if removed:
+            self.bump_generation()
+        return tuple(sorted(removed))
 
     def delete_document(self, document_id: str) -> int:
         document = self.document(document_id)
@@ -486,6 +525,7 @@ class ChunkStore:
             return 0
         count = len(self.chunks(document_id))
         self._delete_document(document_id)
+        self.bump_generation()
         return count
 
     def _delete_document(self, document_id: str) -> None:
@@ -563,12 +603,17 @@ class ChunkStore:
                     self._delete_chunk(chunk_id)
                     removed.append(chunk_id)
 
-            return ChunkChange(
+            change = ChunkChange(
                 created=tuple(sorted(created)),
                 updated=tuple(sorted(updated)),
                 unchanged=tuple(sorted(unchanged)),
                 removed=tuple(sorted(removed)),
             )
+        if change.changed or change.removed:
+            # 改变可检索内容的操作自己递增 generation：不能指望每个调用方记得
+            # （缓存键 = schema + generation + 输入指纹，漏掉一次就会回放旧视图）。
+            self.bump_generation()
+        return change
 
     def _update_ordinal(self, chunk_id: str, ordinal: int) -> None:
         self._execute("UPDATE chunks SET ordinal = ? WHERE chunk_id = ?", (ordinal, chunk_id))
@@ -739,7 +784,10 @@ class ChunkStore:
         row = self._execute(
             "SELECT text_hash FROM quarantined_chunks WHERE chunk_id = ?", (chunk_id,)
         ).fetchone()
-        # 源文一变，旧隔离自动失效（保留记录由 reconcile_quarantine 负责清理）。
+        # 源文一变，旧隔离自动失效。**收敛点在 indexer._apply_quarantine**（本仓库没有
+        # reconcile_quarantine 这个函数，旧注释点了一个不存在的名字）：记录会留到下一次
+        # ingest 才被释放，因此"记录表里有行"与"这个 chunk 现在真的被隔离"是两件事——
+        # 后者以 chunks.quarantined 为准（检索过滤用的就是它），stats 也按它计数。
         return row is not None and str(row["text_hash"]) == text_hash
 
     def quarantine(self, chunk_id: str, *, reason: str, text_hash: str, quarantined_at: str,
@@ -767,6 +815,7 @@ class ChunkStore:
             )
             self._execute("DELETE FROM chunks_fts WHERE chunk_id = ?", (chunk_id,))
             self._execute("UPDATE chunks SET quarantined = 1 WHERE chunk_id = ?", (chunk_id,))
+        self.bump_generation()
         return QuarantinedChunk(
             chunk_id=chunk_id,
             document_id=document_id,
@@ -790,9 +839,16 @@ class ChunkStore:
             if chunk is not None:
                 self._execute("UPDATE chunks SET quarantined = 0 WHERE chunk_id = ?", (chunk_id,))
                 self._index_chunk_fts(chunk_id, chunk.text, chunk.heading_path)
-            return True
+        self.bump_generation()
+        return True
 
     def quarantined(self) -> Tuple[QuarantinedChunk, ...]:
+        """隔离**记录**（含尚未收敛的过期记录：正文变了、但还没跑下一次 ingest）。
+
+        要问"现在有多少 chunk 被隔离"请用 stats().quarantined 或 integrity()['quarantined']
+        ——它们数的是 chunks.quarantined，也就是检索过滤真正用的那一份状态。
+        """
+
         rows = self._execute(
             "SELECT * FROM quarantined_chunks ORDER BY quarantined_at, chunk_id"
         ).fetchall()
@@ -930,8 +986,11 @@ class ChunkStore:
     def stats(self) -> IndexStats:
         documents = int(self._execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"])
         chunks = int(self._execute("SELECT COUNT(*) AS n FROM chunks").fetchone()["n"])
+        # 与 integrity()['quarantined'] 同一口径："隔离了多少片段"问的是生效状态
+        # （chunks.quarantined，检索过滤用的那一份），不是记录表里还剩几行——
+        # 正文变化后记录会留到下一次 ingest 才被释放，两份读数不能在那段时间里打架。
         quarantined = int(
-            self._execute("SELECT COUNT(*) AS n FROM quarantined_chunks").fetchone()["n"]
+            self._execute("SELECT COUNT(*) AS n FROM chunks WHERE quarantined = 1").fetchone()["n"]
         )
         truncated = int(
             self._execute("SELECT COUNT(*) AS n FROM chunks WHERE truncated = 1").fetchone()["n"]
@@ -1017,6 +1076,7 @@ class ChunkStore:
 
     def store_embedding(self, *, chunk_id: str, model: str, vector: bytes, dim: int,
                         embedded_at: str) -> None:
+        # 向量也改变"可检索内容"（向量检索的结果会变）：写入后递增 generation。
         self._execute(
             "INSERT INTO chunk_embeddings(chunk_id, model, dim, vector, embedded_at) "
             "VALUES (?,?,?,?,?) ON CONFLICT(chunk_id) DO UPDATE SET "
@@ -1024,20 +1084,49 @@ class ChunkStore:
             "embedded_at=excluded.embedded_at",
             (chunk_id, model, dim, vector, embedded_at),
         )
+        self.bump_generation()
 
     def embeddings(self, *, model: str) -> Tuple[Tuple[str, Tuple[float, ...]], ...]:
         stored = self._execute(
-            "SELECT chunk_id, dim, vector FROM chunk_embeddings WHERE model = ? ORDER BY chunk_id",
+            "SELECT chunk_id, vector FROM chunk_embeddings WHERE model = ? ORDER BY chunk_id",
             (model,),
         ).fetchall()
-        import array
+        return tuple((str(row["chunk_id"]), _decode_vector(row["vector"])) for row in stored)
 
-        result: list[Tuple[str, Tuple[float, ...]]] = []
-        for row in stored:
-            values = array.array("f")
-            values.frombytes(row["vector"])
-            result.append((str(row["chunk_id"]), tuple(float(item) for item in values)))
-        return tuple(result)
+    def embedding_index(self, *, model: str) -> Tuple[Tuple[str, int], ...]:
+        """已写入向量的 (chunk_id, dim) 清单——**不解码向量**。
+
+        build() 只需要知道"哪些 chunk 已经有当前维度的向量"：解码整表在那是纯浪费
+        （O(corpus) 次 array + tuple 构造，只为拿 id）。
+        """
+
+        rows = self._execute(
+            "SELECT chunk_id, dim FROM chunk_embeddings WHERE model = ? ORDER BY chunk_id",
+            (model,),
+        ).fetchall()
+        return tuple((str(row["chunk_id"]), int(row["dim"])) for row in rows)
+
+    def embeddings_for(
+        self, chunk_ids: Sequence[str], *, model: str
+    ) -> Mapping[str, Tuple[float, ...]]:
+        """只取这些 chunk 的向量（分批 IN 查询，值语义与 embeddings() 逐值一致）。
+
+        retrieve() 只关心候选集：整表解码会把与本次权限/过滤无关的向量也读出来。
+        SQLite 的参数上限（历史默认 999）按批切；空输入不查库。
+        """
+
+        wanted = [str(item) for item in chunk_ids]
+        result: dict[str, Tuple[float, ...]] = {}
+        for start in range(0, len(wanted), _EMBEDDING_BATCH):
+            batch = wanted[start : start + _EMBEDDING_BATCH]
+            rows = self._execute(
+                "SELECT chunk_id, vector FROM chunk_embeddings "
+                "WHERE model = ? AND chunk_id IN (" + ",".join("?" for _ in batch) + ")",
+                (model, *batch),
+            ).fetchall()
+            for row in rows:
+                result[str(row["chunk_id"])] = _decode_vector(row["vector"])
+        return result
 
     def embedding_metadata(self) -> Mapping[str, Any]:
         row = self._execute(
