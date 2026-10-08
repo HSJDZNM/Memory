@@ -634,13 +634,26 @@ print("请求级日志条数:", len(rows), "| 锚:", json.dumps(
 print("校验锚:", "一致" if not issues else issues)
 tampered = TEMP / "run" / "audit.tampered.jsonl"
 lines = log.path.read_text(encoding="utf-8").splitlines()
+# `lines[:-1]` 假定至少两行：日志为空或只有一行时，"删尾"得到的是一份**空文件**，而
+# `verify_seal` 对空文件同样报问题（记录数与锚不符）——`tamper_issues > 0` 于是照样被满足，
+# 却什么都没证明。实测三种形态（`.tmp/la-tamper-probe.py`）：0 行 → 删尾后 0 行 / 问题数 2；
+# 1 行 → 删尾后 0 行 / 问题数 2；完整 18 行 → 删尾后 17 行 / 问题数 2。前两种是**退化**。
+assert len(lines) >= 2, (
+    f"请求日志至少要有两行才能演示「删掉尾部一条」（实际 {len(lines)} 行）："
+    "先看观测路径是不是没在写日志"
+)
 tampered.write_text(chr(10).join(lines[:-1]) + chr(10), encoding="utf-8", newline=chr(10))
+tampered_rows = RequestLog(tampered).read_back()
 tamper_issues = len(verify_seal(RequestLog(tampered), seal))
 print("删掉尾部一条后再校验:", tamper_issues, "条问题（删尾是发现得了的）")
+print("  被改的那份日志还剩", len(tampered_rows), "行（原", len(rows), "行）——比锚少一条")
 print("指标（进程内，重启即归零）:",
       json.dumps(RUNTIME.metrics.to_payload()["status_classes"]))
 assert not issues
 assert seal["records"] >= 1 and seal["chain_digest"].startswith("sha256:")
+# "删掉一条能被发现"要真的成立：**被改的那份必须仍然非空、且恰好少一条**——否则上面那条
+# `tamper_issues > 0` 由"空文件与锚不符"满足，读起来却像"删尾被发现了"。
+assert len(tampered_rows) == len(rows) - 1, (len(tampered_rows), len(rows))
 assert tamper_issues > 0
 print("小结：同一份上下文经本地与经 API 得到整份相等的决策载荷；")
 print("      而超时、忙碌、依赖不可用与审计不可写，全部是显式错误码，没有一条被翻译成 allow。")
