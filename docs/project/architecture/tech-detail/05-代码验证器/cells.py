@@ -585,6 +585,11 @@ print("  拿到证据的 checker:", ", ".join(broken_report.served_checkers))
 print("  同一批验证器的状态:",
       ", ".join(item.validator + "=" + item.status.value for item in broken_report.validators))
 critical = [item for item in broken_result.violations if item.severity.value == "critical"]
+# **先自证真的产生了 critical 违规，再取 `critical[0]`**：管线回归（例如关键验证器不可用却没能
+# 转成 critical 阻断）时，原来这里先抛的是 `IndexError: list index out of range`——读者看到的是
+# "讲解写错了"，而这一格要给的判据是"PASS 抵消不了关键验证器缺失"。同一族问题本章还有别处，
+# 判据统一成一句话：**解引用之前先断言它存在**。
+assert critical, "关键验证器不可用时没有产生 critical 违规：失败关闭链路回归了"
 print("  critical 违规:", len(critical), "条 | 第一条:", critical[0].message[:70])
 assert broken_result.decision.value == "block"
 assert [item.validator_id for item in broken_report.blockers] == ["tool.ruff"]
