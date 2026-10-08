@@ -470,23 +470,37 @@ assert loaded.rule.enforcement.type is EnforcementType.DETERMINISTIC
 print(pad("typecheck-rule", 20) + pad("加载成功（没拦住）", 16) + pad("<无>", 16) + "shape 合法、但当前判不了")
 print()
 
-# 原子性：目录里一条好 + 一条坏，整批都不加载（错的顺序不影响结论）。
-good = TEMP / "atomic-good.yaml"
+# 原子性：目录里**一条好 + 一条坏**，整批都不加载（错的顺序不影响结论）。
+# 用独占的干净目录：`TEMP` 是全章共用的，前面已经往里写了 ghost-source.yaml、七个变异副本、
+# typecheck-rule.yaml……直接拿 TEMP 演示，读出来的"N 个规则文件"其实是历次写入的堆积（还包含
+# 上一轮运行的残留），"一条好 + 一条坏"这个前提根本不成立——数字会变、坏文件数却是固定的。
+import shutil
+
+atomic_dir = TEMP / "atomic"
+if atomic_dir.exists():
+    shutil.rmtree(atomic_dir)
+atomic_dir.mkdir(parents=True)
 document = yaml.safe_load(yaml.safe_dump(BASE, allow_unicode=True, sort_keys=False))
 document["id"] = "ARCH-999"
+good = atomic_dir / "atomic-good.yaml"
 good.write_text(yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
                 encoding="utf-8", newline="")
-atomic_files = sorted(path.name for path in TEMP.glob("*.yaml"))
-broken_files = {measured[name][0].name for name, _, _, _ in CASES}
+# 坏的那条**直接搬一个真实变异文件**过去（不是另造一个"看起来像坏"的东西）。
+bad_source = measured[CASES[0][0]][0]
+bad = atomic_dir / bad_source.name
+shutil.copyfile(bad_source, bad)
+
+atomic_files = sorted(path.name for path in atomic_dir.glob("*.yaml"))
+assert atomic_files == sorted([good.name, bad.name]), atomic_files
 try:
-    load_rules(TEMP, repo_root=REPO_ROOT)
-    raise AssertionError("临时目录里有坏文件，整批加载本该失败")
+    load_rules(atomic_dir, repo_root=REPO_ROOT)
+    raise AssertionError("目录里有一条坏规则，整批加载本该失败")
 except RuleFileError as error:
     blamed = str(error.repo_path).rsplit("/", 1)[-1]
-    print("原子加载：" + str(len(atomic_files)) + " 个规则文件，其中 " + str(len(broken_files))
-          + " 个是坏的 → 整批不加载（" + type(error).__name__ + "）")
+    print("原子加载：" + str(len(atomic_files)) + " 个规则文件（1 好 + 1 坏）→ 整批不加载（"
+          + type(error).__name__ + "）")
     print("  它抱怨的是 " + blamed + " —— 一条坏，整批不成。")
-    assert blamed in broken_files, blamed
+    assert blamed == bad.name, blamed
 print()
 print("小结：判据一/二/三/四里的 ★ 部分全在这里被真的拦下来了；这也正是'用户看不懂的规则'进不了引擎的原因。")
 '''
