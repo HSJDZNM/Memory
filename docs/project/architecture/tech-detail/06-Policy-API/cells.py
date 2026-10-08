@@ -338,6 +338,9 @@ assert failure_of(developer_metrics) == (403, "metrics_forbidden") and ops_metri
 
 # 观测只记摘要：把字段名列出来，并确认凭据与绝对路径都没进去。
 rows = RUNTIME.request_log.read_back()
+# **先自证日志非空再取 rows[0]**：观测路径一旦回归（没写日志、写到别处），原来这里先抛的是
+# 一句裸 `IndexError: list index out of range`，而这一格想说的是"请求级日志里应该有一条"。
+assert rows, "请求级日志是空的：观测路径没有记录任何请求"
 log_text = json.dumps(rows, ensure_ascii=False)
 print()
 print("请求级日志条数:", len(rows), "| 字段:", ", ".join(sorted(rows[0])))
@@ -515,6 +518,9 @@ assert not ({"budget_ms", "idempotency_key", "api_version"} & set(local_decision
 
 evidence_view = post("policy/evaluate", {**BASE, "request_id": "06:skipped", "include_evidence": True}).json()
 skipped = evidence_view["skipped_rules"]
+# 同一族：先自证**真的产生了 skipped 规则**，再取 `skipped[0]`（原来那条 `assert skipped` 在
+# 打印之后，读的人会先看到 IndexError，而不是"这条路由本该有跳过项"）。
+assert skipped, "这条只提供上下文的路由没有产生任何 skipped 规则：证据视图回归了"
 print()
 print("这条路由只提供上下文: matched =", evidence_view["summary"]["matched"],
       "| skipped =", evidence_view["summary"]["skipped"],
