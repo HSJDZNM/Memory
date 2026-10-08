@@ -40,6 +40,11 @@ components:
   - name: model
     description: 领域模型
     match:
+      # 与兄弟组件对称：既认后缀约定（**/*_repository.py 那种），也认复数包目录
+      # （**/repositories/** 那种）。旧写法只有精确文件名 **/models.py——order_model.py、
+      # 或 models/ 包下的文件一律落到 unmatched（顶层包名），layer 级依赖规则于是不生效（复核发现）。
+      - "**/*_model.py"
       - "**/models.py"
       - "**/model/**"
+      - "**/models/**"
       - "**/entities/**"
