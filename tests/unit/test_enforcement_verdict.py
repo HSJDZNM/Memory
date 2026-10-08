@@ -9,7 +9,10 @@ AGENTS.md 后自审拒绝，文件没变，但审计里**没有任何** policy_b
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from conftest import REPO_ROOT
 
@@ -227,6 +230,26 @@ def test_verdict_records_the_real_source_line_not_the_ordinal() -> None:
         assert "一一对应" in str(error)
     else:  # pragma: no cover - 走到这里说明校验丢了
         raise AssertionError("长度不一致的 line_numbers 必须被拒绝")
+
+
+def test_unreadable_audit_is_a_declared_cli_failure_not_a_traceback() -> None:
+    """「读不出来」不等于「没有记录」：CLI 必须显式报错，而不是抛 traceback 或被吞成 unproven。"""
+
+    from enforcement.cli import CliError, _verdict
+
+    work = REPO_ROOT / ".tmp" / "tests" / "enforcement-verdict-charset"
+    work.mkdir(parents=True, exist_ok=True)
+    path = work / "audit.jsonl"
+    path.write_bytes(b"\xff\xfe not utf-8" + chr(10).encode("utf-8"))
+
+    args = SimpleNamespace(
+        audit=str(path), action_id=None, tool=None, artifact_changed=False, json=False
+    )
+
+    with pytest.raises(CliError) as error:
+        _verdict(args, REPO_ROOT)
+
+    assert "读不出来" in str(error.value)
 
 
 def test_load_audit_reports_unparsable_lines_instead_of_skipping() -> None:

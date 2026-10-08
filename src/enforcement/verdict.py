@@ -278,6 +278,10 @@ def load_audit(path: Path | str) -> tuple[list[dict[str, Any]], list[int], list[
     第三个返回值与 records 一一对应：空白行与坏行都被跳过，**序号不等于行号**
     （产物第 1、2 行是空行/坏行时，第 3 行那条记录在序列里是第 1 条）。行号必须一路带到
     `grade_attempt(..., line_numbers=...)`，否则结论里"依据在第几行"会指错位置。
+
+    **整份读不出来时（文件不存在 / 没权限 / 不是 UTF-8）抛 OSError / UnicodeDecodeError**：
+    这是刻意的——调用方绝不能把异常吞成"没有记录"，那正是本模块禁止的混淆
+    （"产物坏了"与"没人尝试"必须分得开）。CLI 侧把它翻成显式的命令行错误。
     """
 
     target = Path(path)

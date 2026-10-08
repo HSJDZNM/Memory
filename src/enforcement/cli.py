@@ -766,7 +766,14 @@ def _verdict(args: argparse.Namespace, _repo: Path) -> int:
     path = Path(args.audit)
     if not path.is_file():
         raise CliError(f"审计文件不存在：{args.audit}")
-    records, bad, lines = load_audit(path)
+    try:
+        records, bad, lines = load_audit(path)
+    except (OSError, UnicodeDecodeError) as error:
+        # 「读不出来」不等于「没有记录」：吞掉异常退化成 unproven 正是这条判据要防的错误，
+        # 所以这里显式失败，而不是把 traceback 抛给用户。
+        raise CliError(
+            f"审计文件读不出来（{type(error).__name__}）：先修产物，再下结论"
+        ) from error
     if bad:
         shown = ", ".join(str(item) for item in bad[:5])
         raise CliError(
