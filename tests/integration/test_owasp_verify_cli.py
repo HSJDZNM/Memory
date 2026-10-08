@@ -113,3 +113,39 @@ def test_root_relative_link_resolves_against_the_mirror_root(tmp_root: Path) -> 
     assert "断链" not in completed.stdout, completed.stdout
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "PASS" in completed.stdout
+
+def test_broken_manifest_json_is_a_diagnostic_not_a_traceback(tmp_root: Path) -> None:
+    """manifest.json 不是合法 JSON：报问题、退出 1，不许栈回溯。"""
+
+    root = _mirror(tmp_root)
+    (root / "bad.md").unlink()
+    (root / "missing.md").write_text("# 目标" + chr(10), encoding="utf-8", newline="")
+    (root / "manifest.json").write_text("{ 不是 JSON", encoding="utf-8", newline="")
+
+    completed = _run(tmp_root)
+
+    output = completed.stdout + completed.stderr
+    assert "Traceback" not in output, output
+    assert "manifest.json 读不出来" in completed.stdout, output
+    assert completed.returncode == 1
+
+
+def test_manifest_entry_without_fields_is_reported(tmp_root: Path) -> None:
+    """条目缺 local_path / bytes / sha256：报形状问题，不许 KeyError。"""
+
+    root = _mirror(tmp_root)
+    (root / "bad.md").unlink()
+    (root / "missing.md").write_text("# 目标" + chr(10), encoding="utf-8", newline="")
+    _write(
+        root / "manifest.json",
+        json.dumps({"pages": [{"local_path": "good.md"}], "pages_excluded": 0, "pages_candidate": 1})
+        + chr(10),
+    )
+
+    completed = _run(tmp_root)
+
+    output = completed.stdout + completed.stderr
+    assert "Traceback" not in output, output
+    assert "manifest 校验失败" in completed.stdout
+    assert "字节数不符" in completed.stdout, output
+    assert completed.returncode == 1
