@@ -71,8 +71,14 @@ async def main():
     strat = AsyncHTTPCrawlerStrategy(browser_config=HTTPCrawlerConfig(), max_connections=8)
     cfg = CrawlerRunConfig(cache_mode=CacheMode.BYPASS, page_timeout=45000,
                            css_selector="article.md-content__inner")
-    jobs = [(SEED, "seed")] + [(u, "sheet") for u in SHEETS] + [(BASE+u, "index") for u in INDEXES]
-    kinds = {u: k for u, k in jobs}
+    # SEED 也在 SHEETS 里（index.html 的站内链接本身含种子页），不去重就会被抓两遍；
+    # 而 `{u: k for u, k in jobs}` 让后写的 kind 覆盖前面的（seed 变成 sheet）。
+    # setdefault = 先写优先：种子页保持 kind="seed"，其余按 sheet / index 归属。
+    kinds = {}
+    for url, kind in ([(SEED, "seed")] + [(u, "sheet") for u in SHEETS]
+                      + [(BASE + u, "index") for u in INDEXES]):
+        kinds.setdefault(url, kind)
+    jobs = list(kinds.items())
     sem = asyncio.Semaphore(6)
     meta = {}
     reset_content()

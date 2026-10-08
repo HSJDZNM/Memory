@@ -170,3 +170,21 @@ def test_stale_content_and_meta_from_a_previous_run_are_replaced(
     meta = json.loads((work / "meta.json").read_text(encoding="utf-8"))
     assert "old" not in meta
     assert meta[SEED]["saved"] is True
+
+def test_seed_sheet_is_fetched_once_and_keeps_its_kind(
+    monkeypatch: pytest.MonkeyPatch, tmp_root: Path
+) -> None:
+    """种子页同时出现在 SHEETS 里：只抓一次，且 kind 保持 seed。"""
+
+    crawler = _Crawler(_responses())
+    module = _load(monkeypatch, crawler, tmp_root)
+    module.SHEETS = [SEED, SHEET]  # index.html 的站内链接本身含种子页
+
+    asyncio.run(module.main())
+
+    assert crawler.calls.count(SEED) == 1, crawler.calls
+    assert sorted(crawler.calls) == sorted(set(crawler.calls)), "任何 URL 都只该抓一次"
+    meta = json.loads(
+        (tmp_root / "_work" / "owasp-cheatsheets" / "meta.json").read_text(encoding="utf-8")
+    )
+    assert meta[SEED]["kind"] == "seed"
