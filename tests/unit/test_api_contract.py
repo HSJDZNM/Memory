@@ -127,6 +127,31 @@ def test_every_error_code_has_a_status_and_api_error_derives_it() -> None:
     assert {code for code, status in STATUS_BY_CODE.items() if status < 400} == set()
 
 
+def test_a_missing_status_mapping_degrades_readably_instead_of_raising_keyerror(monkeypatch) -> None:
+    """映射表漏一行时：加载期就拒绝；万一运行期被改脏，也不许把 4xx 变成"没有理由的 500"。
+
+    修前读数（第一手）：删掉映射后 `ApiError(ErrorCode.FORBIDDEN, "跨租户").status` 抛
+    `KeyError: <ErrorCode.FORBIDDEN: 'forbidden'>`——它发生在**错误处理内部**，框架只会兜成裸 500，
+    结构化错误码一起丢掉。
+    """
+
+    from policy_api.errors import ApiError, ErrorCode, STATUS_BY_CODE, error_payload, missing_status_codes
+
+    # ① 现在的表是完整的（加载期守卫用的就是这个函数）
+    assert missing_status_codes() == ()
+
+    # ② 变异：删掉一条映射 → 清单立刻报出来（守卫因此会在 import 期拒绝）
+    monkeypatch.delitem(STATUS_BY_CODE, ErrorCode.FORBIDDEN)
+    assert missing_status_codes() == (ErrorCode.FORBIDDEN,)
+
+    # ③ 运行期真的漏了：按 500 失败关闭，且响应体里仍然是这次真实的错误码
+    error = ApiError(ErrorCode.FORBIDDEN, "该凭据没有被授权")
+    assert error.status == 500
+    payload = error_payload(error)["error"]
+    assert payload["code"] == "forbidden"
+    assert payload["detail"] == "该凭据没有被授权"
+
+
 def test_error_payload_shape_is_fixed_and_hides_debug() -> None:
     """错误响应只有一个形状：`{"error": {code, detail, retryable, request_id, trace_id}}`。
 
