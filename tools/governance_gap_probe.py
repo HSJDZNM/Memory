@@ -862,9 +862,19 @@ def _node_path() -> Optional[str]:
 
 # dsh 实现包（第三方）里的静态事实：事件名与回调形参个数。
 # 它只用于把"对 dsh 运行期签名的假设"降级为"已核对实现里的字符串事实"。
-DSH_IMPL_ASAR = Path(
-    "C:/Users/ZNM/AppData/Local/Programs/DeepSeek Harness/resources/app.asar"
-)
+#
+# **路径不由仓库常量给出**（2026-10-08 更正）：旧写法写死了作者本机的 Windows 路径，并用
+# "这个文件存不存在"在运行期改写**评分预期表**（下面两处 `check.after[...] = True`）——
+# 于是在别人机器上那两条"修后声明"会静默消失，**同一棵树按不同契约评分**，`--phase after`
+# 也不再可复现。现在由环境变量显式给出；没给就如实记成"没有实现包可核对"（不猜、也不牵动其它判据）。
+DSH_IMPL_ASAR_ENV = "DSH_IMPL_ASAR"
+
+
+def dsh_impl_asar() -> Optional[Path]:
+    """第三方 dsh 实现包的位置：只认环境变量 `DSH_IMPL_ASAR`；没给返回 None。"""
+
+    raw = os.environ.get(DSH_IMPL_ASAR_ENV, "").strip()
+    return Path(raw) if raw else None
 
 
 def _dsh_impl_signature(asar: Path) -> dict[str, Any]:
@@ -1044,18 +1054,25 @@ def check_g02(env: Env) -> Check:
 
     # 第三层（静态）：与 dsh 实现包里的字符串事实比对事件名与回调形参个数。
     # 这条断言只在实现包存在时进入"修后预期"（否则它在别的机器上会变成环境失败）。
-    impl = _dsh_impl_signature(DSH_IMPL_ASAR)
-    check.facts["dsh_impl_asar"] = str(DSH_IMPL_ASAR)
-    check.facts["dsh_impl_asar_exists"] = DSH_IMPL_ASAR.is_file()
+    asar = dsh_impl_asar()
+    impl = _dsh_impl_signature(asar) if asar is not None else {
+        "present": False, "arity_three": False, "pre_present": False, "sample": "",
+    }
+    # 来源写进 facts：读数必须说得出"这两条声明是从哪来的"，否则它在别人机器上消失时无从解释。
+    check.facts["dsh_impl_asar"] = str(asar) if asar is not None else ""
+    check.facts["dsh_impl_asar_source"] = (
+        ("env:" + DSH_IMPL_ASAR_ENV) if asar is not None else "absent"
+    )
+    check.facts["dsh_impl_asar_exists"] = bool(asar is not None and asar.is_file())
     check.facts["dsh_impl_post_event_present"] = impl["present"]
     check.facts["dsh_impl_post_arity_three"] = impl["arity_three"]
     if impl["sample"]:
         check.facts["dsh_impl_sample"] = " ".join(impl["sample"].split())[:220]
     check.evidence.append(
-        f"dsh 实现包静态检索：tools/post-execute 存在={impl['present']}，"
+        f"dsh 实现包静态检索（来源 {check.facts['dsh_impl_asar_source']}）：tools/post-execute 存在={impl['present']}，"
         f"三参回调形态={impl['arity_three']}，tools/pre-execute 存在={impl['pre_present']}"
     )
-    if DSH_IMPL_ASAR.is_file():
+    if asar is not None and asar.is_file():
         check.after["dsh_impl_post_event_present"] = True
         check.after["dsh_impl_post_arity_three"] = True
 

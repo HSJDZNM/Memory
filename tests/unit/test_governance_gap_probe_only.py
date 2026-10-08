@@ -95,3 +95,31 @@ def test_only_skips_factories_before_calling_them(tmp_root: Path, monkeypatch) -
     assert calls == ["check_g02"], "过滤发生在调用之后：没点名的缺口也被跑了"
     assert [item["id"] for item in report["checks"]] == ["G02"]
     assert report["ok"] is True
+
+
+def test_no_personal_absolute_path_is_hard_coded():
+    """探针不许写死某人本机的路径。
+
+    旧写法把第三方 dsh 实现包写死成作者的 Windows 路径，并用"这个文件存不存在"在运行期改写
+    **评分预期表**（两条 `check.after[...] = True`）——于是在别人机器上那两条"修后声明"静默消失，
+    同一棵树按不同契约评分、`--phase after` 不可复现。现在路径只从环境变量来。
+    """
+
+    source = (REPO_ROOT / "tools" / "governance_gap_probe.py").read_text(encoding="utf-8")
+
+    assert "C:/Users/" not in source
+    assert "C:\\Users\\" not in source
+
+
+def test_dsh_impl_asar_comes_from_the_environment(monkeypatch):
+    """实现包路径只认环境变量：没给 = None（如实记 absent），给了就用给的那条。"""
+
+    module = _load_probe()
+    monkeypatch.delenv(module.DSH_IMPL_ASAR_ENV, raising=False)
+    assert module.dsh_impl_asar() is None
+
+    monkeypatch.setenv(module.DSH_IMPL_ASAR_ENV, "C:/somewhere/app.asar")
+    assert module.dsh_impl_asar() == Path("C:/somewhere/app.asar")
+
+    monkeypatch.setenv(module.DSH_IMPL_ASAR_ENV, "   ")
+    assert module.dsh_impl_asar() is None, "空白串等于没给（别把空白当路径）"
