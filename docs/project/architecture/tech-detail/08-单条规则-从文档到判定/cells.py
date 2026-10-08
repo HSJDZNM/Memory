@@ -556,20 +556,26 @@ mini_digest = "sha256:" + hashlib.sha256(mini_doc.read_bytes()).hexdigest()
     ) + chr(10),
     encoding="utf-8", newline="",
 )
+real_dataset = corpus.dataset(registered.dataset)
 mini_corpus = TEMP / "corpus.yaml"
 mini_corpus.write_text(
     yaml.safe_dump(
         {
             "version": 1,
             "policy": policy.model_dump(mode="json"),
+            # 数据集级字段**照真实 manifest 抄**（`corpus.dataset(...)` 拿到的那一份），不是借用
+            # 页级 `entry` 上的同名字段：`entry.title` 是**页面**标题（"PEP 257 – Docstring
+            # Conventions"），而数据集级 `title` 是清单里声明的数据集名；`license_source` 同理
+            # （页级那份是来源路径，数据集级是许可出处）。唯一的例外是 `mirror`——它必须指向本次
+            # 的临时镜像目录，这正是这个最小语料存在的意义。
             "datasets": [{
-                "name": registered.dataset,
-                "title": entry.title,
+                "name": real_dataset.name,
+                "title": real_dataset.title,
                 "mirror": mini_root.relative_to(REPO_ROOT).as_posix(),
-                "license": entry.license,
-                "license_source": str(source.path),
-                "tier": entry.tier.value,
-                "visibility": entry.visibility.value,
+                "license": real_dataset.license,
+                "license_source": real_dataset.license_source,
+                "tier": real_dataset.tier.value,
+                "visibility": real_dataset.visibility.value,
                 "entries": [registered.source_path],
             }],
             "restricted_datasets": [],
