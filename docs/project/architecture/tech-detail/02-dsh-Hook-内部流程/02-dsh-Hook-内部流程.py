@@ -475,6 +475,13 @@ assert {outcome.reason_code for _, outcome in cases} == {
     "policy_timeout",
     "event_replay",
 }, sorted(outcome.reason_code for _, outcome in cases)
+# 集合相等只证明"这三个码出现过"，**没有**证明"哪条路径给出哪个码"：把超时与重放的码对调，
+# 上面那条断言照样通过——而矩阵要证明的恰恰是"每条路径都给得出**它自己**的原因码"
+# （第 52 条：拦住之外还得说得出对的原因）。逐个绑定，才能让"理由写错"变成会失败的事。
+reasons = {label: outcome.reason_code for label, outcome in cases}
+assert reasons["判定超时"] == "policy_timeout", reasons
+assert reasons["重放 event_id"] == "event_replay", reasons
+assert reasons["未知工具"] == reasons["未知事件"] == reasons["越界路径"] == "context_error", reasons
 assert replay_first.exit_code == EXIT_ALLOW and len(replay_executor.calls) == 1
 assert len(slow_executor.calls) == 0
 print()
