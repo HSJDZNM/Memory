@@ -417,6 +417,26 @@ def prepare_arm(*, baseline: Path, arm_dir: Path, arm: str, rules_root: Path) ->
     return manifest
 
 
+def write_action_counts(*, arm: str, decision: str, action: str) -> dict:
+    """三个写动作计数的**唯一口径**（run.json 的 counts.bypass_definition 必须与它逐字一致）。
+
+    - write_actions：真的尝试过写（应用成功或应用失败）；
+    - governed_write_actions：这次写**经过了能给出判定的治理入口**（入口跑成 allow/block，
+      被拒也算——"被治理地拒了"与"没被治理"是两件事）；
+    - bypass_actions：写动作没经过治理入口就落到树上——唯一来源是
+      「入口没跑成（decision=unavailable）而改动仍然应用」。off 臂不算：它按构造就没有治理路径。
+    """
+
+    entry_governed = arm != ARM_OFF and decision in ("allow", "block")
+    touched = action in (ACTION_APPLIED, ACTION_REFUSED, "apply_failed")
+    landed = action == ACTION_APPLIED
+    return {
+        "write_actions": 1 if action in (ACTION_APPLIED, "apply_failed") else 0,
+        "governed_write_actions": 1 if (entry_governed and touched) else 0,
+        "bypass_actions": 1 if (landed and not entry_governed and arm != ARM_OFF) else 0,
+    }
+
+
 def run_one(
     *,
     baseline: Path,
@@ -688,15 +708,14 @@ def run_one(
                 "本工具的计数是**装置自检**（三臂的构造差异读得出来），不是结局变量："
                 "off 臂 governed_write_actions=0 是构造出来的，不是测出来的"
             ),
-            "write_actions": 1 if action in (ACTION_APPLIED, "apply_failed") else 0,
-            "governed_write_actions": 1 if (arm != ARM_OFF and action in (ACTION_APPLIED, ACTION_REFUSED, "apply_failed")) else 0,
-            "bypass_actions": 0,
+            **write_action_counts(arm=arm, decision=decision, action=action),
             "human_interventions": 0,
             "retries": 0,
             "bypass_definition": (
                 "bypass = 写动作没有经过治理入口就落到树上。off 臂恒为 0（构造上没有治理路径）；"
-                "advisory/enforced 的每次写动作都先过入口，所以也是 0；"
-                "非 0 只可能来自「入口没跑成但改动仍然应用」——那种情况记 action=apply_failed + unavailable，不记 0-1 计数"
+                "advisory/enforced 的写动作先过入口，所以也是 0——除非入口没跑成"
+                "（decision=unavailable）而改动仍然应用：那种情况 unavailable 里有 entry 条目、"
+                "action=applied，计数落在 bypass_actions，并且不再计入 governed_write_actions。"
             ),
         },
         "oracle": {
