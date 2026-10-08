@@ -227,20 +227,25 @@ def _check_existing(path: Path) -> None:
         _parse_record(lines[-1], path=path, line_number=len(lines))
 
 
+def _prefix(path: Path, line_number: int) -> str:
+    """坏记录消息的前缀：**带上账本路径**，否则多份账本并存时读的人不知道是哪一份坏了。"""
+
+    return str(path) + " 第 " + str(line_number) + " 行"
+
+
 def _parse_record(text: str, *, path: Path, line_number: int) -> Mapping:
     try:
         record = json.loads(text)
     except json.JSONDecodeError as error:
         raise ObligationsError(
-            "义务账本第 " + str(line_number) + " 行不是合法 JSON：" + str(error)
+            _prefix(path, line_number) + " 不是合法 JSON：" + str(error)
         ) from error
     if not isinstance(record, Mapping):
-        raise ObligationsError("义务账本第 " + str(line_number) + " 行不是对象")
+        raise ObligationsError(_prefix(path, line_number) + " 不是对象")
     if record.get("schema_version") != LEDGER_SCHEMA_VERSION:
         raise ObligationsError(
-            "义务账本第 "
-            + str(line_number)
-            + " 行的 schema_version="
+            _prefix(path, line_number)
+            + " 的 schema_version="
             + repr(record.get("schema_version"))
             + " 不是本实现认识的 "
             + repr(LEDGER_SCHEMA_VERSION)
@@ -253,15 +258,14 @@ def _parse_record(text: str, *, path: Path, line_number: int) -> Mapping:
         expected = _TEST_RUN_KEYS
     else:
         raise ObligationsError(
-            "义务账本第 " + str(line_number) + " 行的 kind=" + repr(kind) + " 是未知记录类型"
+            _prefix(path, line_number) + " 的 kind=" + repr(kind) + " 是未知记录类型"
         )
     unknown = sorted(set(record) - set(expected))
     missing = sorted(set(expected) - set(record))
     if unknown or missing:
         raise ObligationsError(
-            "义务账本第 "
-            + str(line_number)
-            + " 行的键集合与 "
+            _prefix(path, line_number)
+            + " 的键集合与 "
             + str(LEDGER_SCHEMA_VERSION)
             + " 不一致：多 "
             + repr(unknown)
@@ -275,9 +279,8 @@ def _parse_record(text: str, *, path: Path, line_number: int) -> Mapping:
         # 于是"跑没跑成"由**写记录的人随手打的字**决定——正是本模块要防的"跳过被读成通过"。
         # 类型不对属于账本不可用（失败关闭），不是"这条不算数"。
         raise ObligationsError(
-            "义务账本第 "
-            + str(line_number)
-            + " 行的 python_tests_executed="
+            _prefix(path, line_number)
+            + " 的 python_tests_executed="
             + repr(record.get("python_tests_executed"))
             + " 不是布尔值；它是解除义务的唯一凭据，不接受真值性判定"
         )
@@ -447,7 +450,7 @@ def load(path) -> LedgerState:
     with path.open("r", encoding="utf-8") as handle:
         for number, line in enumerate(handle, start=1):
             if not line.strip():
-                raise ObligationsError("义务账本第 " + str(number) + " 行是空行")
+                raise ObligationsError(_prefix(path, number) + " 是空行")
             record = _parse_record(line, path=path, line_number=number)
             if record["kind"] == KIND_PENDING:
                 pending_records += 1
