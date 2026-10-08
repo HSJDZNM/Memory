@@ -33,7 +33,9 @@ REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "src"
 SCRATCH = REPO / ".tmp" / "provenance-loop"
 ARTIFACT = REPO / ".tmp" / "artifacts" / "provenance-loop-result.json"
-SCHEMA_VERSION = "1.0"
+# 读数载荷自己的轴：1.0 = 五个场景的公共记录 + 各自 extra；1.1 = pass 场景多一条
+# digest_present（R-e 的正面读数，与 4 号场景的 digest_absent 成对）。加键就升版。
+SCHEMA_VERSION = "1.1"
 
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -148,15 +150,23 @@ def scenario_pass_sealed_check() -> Dict[str, Any]:
             sys.executable, "-m", "pytest", "-q", "tests/unit/test_provenance_worktree.py",
         ]
     )
-    return _scenario(
+    receipt = _read_json(receipt_path)
+    record = _scenario(
         scenario_id="pass-sealed-check",
         what="真判据（本台阶单测）跑完，声明输入与工作树都没有变",
         expected_state="pass",
         expected_exit=EXIT_PASS,
-        receipt=_read_json(receipt_path),
+        receipt=receipt,
         exit_code=completed.returncode,
         extra={"receipt": str(receipt_path.relative_to(REPO).as_posix())},
     )
+    # R-e 的**正面**：判 pass 的检查必须真的交出 referenced_inputs_digest。
+    # 旧写法只看 state/exit，回执里没有这个键也照样绿；4 号场景验的是反面
+    # （空壳声明里不许出现它），正反两半都要有读数。
+    digest = receipt.get("referenced_inputs_digest")
+    record["digest_present"] = isinstance(digest, str) and bool(digest)
+    record["ok"] = bool(record["ok"]) and record["digest_present"]
+    return record
 
 
 def scenario_external_write() -> Dict[str, Any]:

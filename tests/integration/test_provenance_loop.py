@@ -32,6 +32,8 @@ def test_provenance_loop_reads_r_e(tmp_root: Path) -> None:
     assert report["result"] == "pass"
     assert scenarios["pass-sealed-check"]["observed_state"] == "pass"
     assert scenarios["pass-sealed-check"]["observed_exit"] == 0
+    # R-e 的正面：判 pass 的回执必须真的带 referenced_inputs_digest（下面第 4 个场景验反面）。
+    assert scenarios["pass-sealed-check"]["digest_present"] is True
 
     # R-e 的另一半：对不上就是 external_write + 退出码 3，而不是 pass。
     assert scenarios["external-write"]["observed_state"] == "external_write"
