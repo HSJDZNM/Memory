@@ -183,13 +183,19 @@ def _resolve_dataset(
                 f"数据集 {dataset.name} 的条目不在镜像 manifest 中: {source_path}"
                 "（清单只能引用镜像里真实存在的页面）"
             )
-        if page.get("saved") is False:
+        saved = page.get("saved")
+        if saved is not True:
+            # 只有精确的 True 才算"已保存"：`saved: 0` / `"false"` / 根本不写这个键（手改过的
+            # manifest）都不能当成"这页存下来了"——旧写法只判 `is False`，那三种形态会被静默
+            # 当成已保存，与模块自述的"报告哪些页没存下来"相反（复核发现）。失败关闭：证明不了
+            # 就报告出来。实测当前语料 255/255 页都是精确 True，所以这条收紧不产生新的假报警。
+            shown = repr(saved) if "saved" in page else "缺键"
             issues.append(
                 EntryIssue(
                     dataset=dataset.name,
                     source_path=source_path,
                     kind="not_saved",
-                    detail="镜像 manifest 把该页标记为 saved=false",
+                    detail="镜像 manifest 没有把该页标记为已保存（saved=" + shown + "）",
                 )
             )
         url = page.get("source_url")
