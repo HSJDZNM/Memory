@@ -391,6 +391,36 @@ def _stop_unrepairable(
     return NodeOutcome(state=stopped, label="blocked", detail=detail)
 
 
+def _stop_approval_gate(
+    state: GraphState, node: NodeId, reason: str, summary: ValidationSummary
+) -> NodeOutcome:
+    """审批门禁不是「发现」：**带不带 violation 都**不产生任何 Change，交给人（AGENTS 第 38 条）。
+
+    「图到达了审批节点」永远不等于「用户批准」，所以即便这次 block 同时带着规则报的 violation，
+    也不该由修复节点去规划一次**正需要人来批准**的写入。
+    """
+
+    detail = (
+        f"本次 block 是审批门禁（required_action=approval，violations={len(summary.violations)}）："
+        "审批不是可以「修」掉的东西——需要人来批准"
+    )
+    stopped = state.replace(
+        **_failure_updates(FailureCode.APPROVAL_MISSING, node, detail),
+        notes=state.notes + (f"{node.value} 停在审批门禁：交给人",),
+    )
+    stopped = _record_run(
+        stopped,
+        node,
+        label="needs_human",
+        status=StageStatus.NEEDS_HUMAN,
+        key=f"{state.task_id}:{node.value}:{reason}",
+        outcome={"reason_code": reason, "violations": len(summary.violations)},
+        detail=detail,
+        failure=FailureCode.APPROVAL_MISSING,
+    )
+    return NodeOutcome(state=stopped, label="needs_human", detail=detail)
+
+
 def _trace(
     state: GraphState, node: NodeId, outcome: DecisionOutcome, *, status: StageStatus
 ) -> GraphState:
@@ -568,30 +598,25 @@ def repair(state: GraphState, context: NodeContext) -> NodeOutcome:
             node=NodeId.REPAIR,
         )
     reason = summary.reason
-    # 「平台没能查」类与审批门禁都要在**空 violations 之前**判掉：前者可能带着 violation
-    # 进场（uncovered_checker / blocker 在判定侧就长这样），拿它去规划改动等于用"改代码"
-    # 回应"平台没查"——R3 要的正是"不产生任何 Change"。
+    # **白名单先判**：只有 policy_violation 这一条路允许「改文件」。
+    # 顺序也有讲究——「平台没能查」与审批门禁都必须在**空 violations 之前**判掉：
+    #   前者可能带着 violation 进场（uncovered_checker / blocker 在判定侧就长这样），
+    #   拿它去规划改动等于用「改代码」回应「平台没查」；
+    #   后者带 violation 时同样不许动手——`decision_reason` 的第 1 条优先于 violations，
+    #   所以「block + 审批 + 有 violation」是一个**能构造出来**的形态。
+    # 早先的写法把审批门禁只放在「空 violations」分支里，于是那种形态会滑到下面，
+    # 去规划一次正需要人来批准的写入（AGENTS 第 38 条）。
     if reason in _UNREPAIRABLE_REASONS:
         return _stop_unrepairable(state, NodeId.REPAIR, reason, summary)
+    if reason == REASON_APPROVAL_REQUIRED:
+        return _stop_approval_gate(state, NodeId.REPAIR, reason, summary)
+    if reason not in _REPAIRABLE_REASONS:
+        raise NodeContractError(
+            f"修复节点只认 {sorted(_REPAIRABLE_REASONS)} 这一类理由（本次是 {reason!r}）："
+            "说不出理由的 block 不许拿来做改动依据",
+            node=NodeId.REPAIR,
+        )
     if not summary.violations:
-        if reason == REASON_APPROVAL_REQUIRED:
-            # 审批不是"发现"：没有可修的对象，也不许放行（AGENTS 第 38 条）。
-            detail = "本次 block 是审批门禁（required_action=approval）：没有可修的 violation，需要人来批准"
-            stopped = state.replace(
-                **_failure_updates(FailureCode.APPROVAL_MISSING, NodeId.REPAIR, detail),
-                notes=state.notes + (f"{NodeId.REPAIR.value} 停在审批门禁：交给人",),
-            )
-            stopped = _record_run(
-                stopped,
-                NodeId.REPAIR,
-                label="needs_human",
-                status=StageStatus.NEEDS_HUMAN,
-                key=f"{state.task_id}:{NodeId.REPAIR.value}:approval_required",
-                outcome={"reason_code": reason},
-                detail=detail,
-                failure=FailureCode.APPROVAL_MISSING,
-            )
-            return NodeOutcome(state=stopped, label="needs_human", detail=detail)
         raise NodeContractError(
             "修复节点没有结构化 violation 可用：拒绝在没有依据的情况下修改文件",
             node=NodeId.REPAIR,
