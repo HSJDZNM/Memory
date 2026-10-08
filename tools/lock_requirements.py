@@ -14,7 +14,11 @@ import json
 import sys
 from pathlib import Path
 
-REQUIREMENTS_IN = Path("requirements.in")
+# 锚在仓库根，不跟 cwd：从别的目录跑（例如 `cd tools; python lock_requirements.py …`）时
+# 旧写法会 a) 直接 FileNotFoundError，或 b) 读到一个**不相干的** requirements.in，
+# 于是锁文件头部记的摘要描述的不是这次真正用的那份声明。与 check_repo_consistency.py 同口径。
+ROOT = Path(__file__).resolve().parents[1]
+REQUIREMENTS_IN = ROOT / "requirements.in"
 HEADER_LINES = (
     "# 由 tools/lock_requirements.py 生成，请勿手改。",
     "# 重新生成：见 tools/lock_requirements.py 的模块说明。",

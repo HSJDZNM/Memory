@@ -7,6 +7,7 @@ pip 当成"没有依赖的选项行"丢弃（pip 只给一句 warning）——�
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import check_repo_consistency
@@ -67,3 +68,19 @@ def test_generated_lock_is_readable_by_the_repo_parser(tmp_root, monkeypatch):
 
     assert locked == {"pyyaml": "6.0.3", "pydantic": "2.13.5"}
     assert unparsed == []
+
+
+def test_requirements_in_is_anchored_to_the_repo(monkeypatch, tmp_root):
+    """`requirements.in` 锚在仓库根：换 cwd 不能读不到、更不能读到别处的同名文件。
+
+    旧写法是 `Path("requirements.in")`（相对 cwd）：从 tools/ 等目录跑会 FileNotFoundError，
+    而 cwd 里恰好有另一份 requirements.in 时，锁文件头部记的摘要描述的是**错的那一份**。
+    """
+
+    monkeypatch.chdir(tmp_root)
+
+    assert lock_requirements.REQUIREMENTS_IN.is_absolute()
+    assert lock_requirements.REQUIREMENTS_IN.is_file()
+    assert lock_requirements.requirements_digest() == hashlib.sha256(
+        lock_requirements.REQUIREMENTS_IN.read_bytes()
+    ).hexdigest()
