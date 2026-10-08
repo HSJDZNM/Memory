@@ -497,7 +497,23 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     for failure in failures:
         print(failure, file=sys.stderr)
-    print("代码单元执行:", "全部通过" if not failures else f"{len(failures)} 个失败")
+    # 收尾读数必须说清"这一档到底做没做那件事"：`--check` / `--no-exec` 都**不执行单元**，
+    # 却一度统一打印「代码单元执行: 全部通过」——把自己的局限说成了"查过了"（2026-10-08 裁定）。
+    # 真执行的那一档照旧报执行结果；另外两档报同步/写入结果，并显式写明未执行单元。
+    if args.check:
+        print(
+            "产物与内容源: "
+            + ("一致" if not failures else f"{len(failures)} 处不一致")
+            + "（未执行单元；执行由 Tech-detail notebooks execute 步骤负责）"
+        )
+    elif args.no_exec:
+        print(
+            "产物与内容源: "
+            + ("已写入" if not failures else f"写入时 {len(failures)} 处不一致")
+            + "（未执行单元：--no-exec）"
+        )
+    else:
+        print("代码单元执行:", "全部通过" if not failures else f"{len(failures)} 个失败")
     return 1 if failures else 0
 
 
