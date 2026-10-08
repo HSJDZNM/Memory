@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import threading
@@ -474,6 +475,47 @@ class AuditLedger:
 
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
+
+    @property
+    def claims_dir(self) -> Path:
+        """认领标记目录：`<审计文件>.claims/`（与审计同处，便于一起清理/备份）。"""
+
+        return self.path.with_name(self.path.name + ".claims")
+
+    def reserve(self, event_id: str, *, payload_digest: str) -> Optional[str]:
+        """为 event_id **原子认领**一次处理权；返回 None 表示认领成功。
+
+        为什么不能只查台账：查（`lookup`）与写（`_audit` 的 append）之间隔着取证与判定（可能几秒），
+        两个并发投递可以双双查到"没判过"再各执行一次工具——每个 hook 调用都是**独立进程**，
+        没有内存里的锁能兜住它。
+
+        实现用**独占创建**（`O_CREAT|O_EXCL`）而不是锁：创建是原子的，且只针对同一个 event_id，
+        不同事件之间零串行化，因此也不存在与其它锁的锁序问题（本模块不取任何跨进程锁）。
+        认领成功与否只看"文件是不是由我创建的"——这一点由 `os.open` 的 `O_EXCL` 保证。
+
+        返回值：认领失败时返回**先前那次认领**记下的载荷摘要（可能是空串），调用方据此区分
+        「同一载荷的重放」与「同一个 event_id 被换了参数」。
+        """
+
+        if self.path is None:  # pragma: no cover - 内存台账只在测试里出现
+            return None
+        marker = self.claims_dir / (sha256(str(event_id).encode("utf-8")).hexdigest() + ".claim")
+        try:
+            self.claims_dir.mkdir(parents=True, exist_ok=True)
+            handle = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            try:
+                return marker.read_text(encoding="utf-8").strip()
+            except OSError:  # pragma: no cover - 标记刚被清理 / 读不了
+                # 认领过但摘要读不出来：不能猜成「同一个载荷」（那是编一个事实）。
+                # 返回空串，让调用方落到更严的那一支（event_id_reuse：拒绝执行）。
+                return ""
+        # 其余 OSError 故意不接：认领目录写不了 = 证明不了「只有我在处理这个 event_id」，
+        # 交给 _handle_guarded 的 OSError 分支按 config_error 失败关闭——与审计写不进去同一条路，
+        # 绝不退回「没有认领也算通过」。
+        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(payload_digest)
+        return None
 
     def _entries(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
@@ -1220,6 +1262,10 @@ class DshPreExecuteHook:
 
         try:
             return self._decide(raw_payload, started=started, base_record=base_record)
+        # 子句顺序**就是**语义：`DshEventError` 现在继承 `AdapterEventError`（两者同族），
+        # 因此这一条必须排在更宽的族之前。将来若在同一 try 里加 `except AdapterEventError`，
+        # 必须放在这一条**之后**——否则 dsh 的载荷错误会被更宽的族收走，hook 的理由码与退出码
+        # 会跟着变，而"变的是哪一档"这件事在 diff 里看不出来。
         except DshEventError as error:
             return self._fail(
                 "context_error", sanitize(str(error), project_root=self.config.project_root),
@@ -1327,6 +1373,26 @@ class DshPreExecuteHook:
                     "该 event_id 已经判定过：为避免重复执行工具，重放一律阻断"
                     if same_payload
                     else "该 event_id 被复用到了不同参数：事件标识不再可信，拒绝执行"
+                )
+                return self._fail(
+                    "event_replay" if same_payload else "event_id_reuse",
+                    detail,
+                    started=started,
+                    base_record=record,
+                )
+            # 查完之后**立刻原子认领**这个 event_id：查（上面那行）与写（`_audit` 在判定末尾 append）
+            # 之间隔着取证与判定（可能几秒），而每个 hook 调用都是**独立进程**——两个并发投递会双双
+            # 查到「没判过」再各执行一次工具。认领失败说明另一路投递已在处理（或它崩在半路、没留下
+            # 判定）：两种情况的正确处置都是**不重复执行**，理由按能否证明「同一个载荷」分开写。
+            claimed = self.ledger.reserve(event.event_id, payload_digest=event.payload_digest)
+            if claimed is not None:
+                same_payload = claimed != "" and claimed == event.payload_digest
+                detail = (
+                    "该 event_id 已被另一路投递认领且载荷相同：在它给出判定之前一律阻断，"
+                    "避免同一次工具调用被执行两遍（若它已崩溃，请人工确认副作用状态）"
+                ) if same_payload else (
+                    "该 event_id 已被另一路投递认领，而载荷摘要对不上或读不到："
+                    "事件标识不再可信，拒绝执行"
                 )
                 return self._fail(
                     "event_replay" if same_payload else "event_id_reuse",

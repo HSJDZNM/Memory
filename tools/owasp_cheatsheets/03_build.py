@@ -115,7 +115,12 @@ extra   = sorted(set(P) - set(sheets_saved))
 print("PLACED:", len(P), "SAVED SHEETS:", len(sheets_saved))
 print("MISSING (saved but unplaced):", missing)
 print("EXTRA (placed but not saved):", extra)
-assert not missing and not extra, "placement mismatch"
+if missing or extra:
+    # **不许写成 assert**：`python -O` / PYTHONOPTIMIZE 会把 assert 整条删掉，而这条门禁
+    # （人工表格 vs meta.json 的一致性）恰恰是"跑在别人机器上、被优化过"时最需要存在的。
+    print("ERROR: placement mismatch：MISSING（保存了但没归类）=" + repr(missing)
+          + " EXTRA（归类了但没保存）=" + repr(extra))
+    raise SystemExit(2)
 
 INDEX_FILES = {
     "index": ("00_索引与标准", "00_OWASP-Cheat-Sheet-Series-总览.md"),
@@ -150,6 +155,12 @@ url2path["https://cheatsheetseries.owasp.org/index.html"] = dest_of("index")
 LINKRE = re.compile(r'\[([^\]]*)\]\(\s*(https?://cheatsheetseries\.owasp\.org/[^)\s]+?)(\s+"[^"]*")?\s*\)')
 
 def rewrite(md, src_path):
+    """把站内链接改成本地相对路径。**围栏与行内代码一个字都不动**。
+
+    旧实现在整篇 Markdown 上跑 LINKRE.sub：代码样例里指向 cheatsheetseries.owasp.org 的
+    markdown 链接会被改成相对路径，发布出去的示例代码与上游原文不一致（读者复制走就是坏链接）。
+    """
+
     src_dir = os.path.dirname(src_path)
     def repl(m):
         url = m.group(2)
@@ -158,7 +169,21 @@ def rewrite(md, src_path):
         if not tgt: return m.group(0)
         rel = os.path.relpath(tgt, src_dir).replace("\\", "/")
         return "[" + m.group(1) + "](" + rel + (("#" + anchor) if anchor else "") + ")"
-    return LINKRE.sub(repl, md)
+    out, in_fence = [], False
+    for line in md.split("\n"):
+        if line.lstrip().startswith(FENCE):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence:
+            out.append(line)
+            continue
+        # 行内代码（`...`）同样跳过：里面写的是示例，不是本页要维护的引用。
+        pieces = line.split(BT)
+        for index in range(0, len(pieces), 2):
+            pieces[index] = LINKRE.sub(repl, pieces[index])
+        out.append(BT.join(pieces))
+    return "\n".join(out)
 
 def tags(m):
     a = sorted(asvs_ch.get(m["url"], set()), key=lambda x: int(x[1:]))
@@ -169,13 +194,31 @@ def tags(m):
     if mas.get(m["url"]): out.append("MASVS " + " ".join(sorted(mas[m["url"]])))
     return " | ".join(out) if out else "未收录于 OWASP 四大索引"
 
+# 预检：**先把每一份源文件读出来**，全都读得出来才删旧产物。
+# 旧实现是"先 rmtree(OUT) 再逐篇读 SRC"：SRC 缺失、半截或某一篇读不出来时，已发布的镜像
+# 要么被清空、要么在循环中途停下留半份，而且没有回滚——这正是"失败关闭"要避免的形状。
+sources = {}
+preflight = []
+for slug in sorted(set(sheets_saved) | set(indexes_saved)):
+    path = os.path.join(SRC, slug + ".md")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            sources[slug] = handle.read()
+    except (OSError, UnicodeDecodeError) as error:
+        preflight.append(path + "（" + type(error).__name__ + ": " + str(error) + "）")
+if preflight:
+    print("ERROR: 源文件预检失败（旧镜像保持原样，未删除）：")
+    for item in preflight:
+        print("  - " + item)
+    raise SystemExit(2)
+
 if os.path.isdir(OUT): shutil.rmtree(OUT)
 os.makedirs(OUT)
 
 written = []
 for slug, m in sorted(sheets_saved.items()):
     dst = dest_of(slug); os.makedirs(os.path.dirname(dst), exist_ok=True)
-    raw = open(os.path.join(SRC, slug + ".md"), encoding="utf-8").read()
+    raw = sources[slug]
     body = rewrite(raw, dst)
     folder = P[slug][0] + (os.sep + P[slug][1] if P[slug][1] else "")
     hdr = ("<!--\n" + "source: " + m["url"] + "\nfetched: " + TODAY +
@@ -188,7 +231,7 @@ for slug, m in sorted(sheets_saved.items()):
 
 for slug, m in sorted(indexes_saved.items()):
     dst = dest_of(slug); os.makedirs(os.path.dirname(dst), exist_ok=True)
-    body = rewrite(open(os.path.join(SRC, slug + ".md"), encoding="utf-8").read(), dst)
+    body = rewrite(sources[slug], dst)
     hdr = ("<!--\nsource: " + m["url"] + "\nfetched: " + TODAY + "\nkind: site-index\n-->\n\n")
     open(dst, "w", encoding="utf-8").write(hdr + body)
 

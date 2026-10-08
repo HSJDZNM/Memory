@@ -28,7 +28,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Callable, Dict, Optional, Sequence
 
 from . import worktree
 from .wiring_scope import WiringScopeError, load_wiring_scope
@@ -169,10 +169,21 @@ def _run_seal(args: argparse.Namespace) -> int:
     peer_evidence: Optional[Dict[str, Any]] = None
     if args.peer_evidence:
         try:
-            peer_evidence = json.loads(Path(args.peer_evidence).read_text(encoding="utf-8"))
+            parsed = json.loads(Path(args.peer_evidence).read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
             print(f"用法错误：peer-evidence 读不了（{error}）", file=sys.stderr)
             return EXIT_USAGE
+        # json.loads 可以返回任何 JSON 类型：非对象会在下游按映射取键时抛 AttributeError
+        # （裸 traceback + 解释器默认退出码 1），而 1 的含义是"判据跑完且是红的"——
+        # 这里连判据都还没跑。信任边界上先证明它是对象。
+        if not isinstance(parsed, dict):
+            print(
+                "用法错误：peer-evidence 必须是 JSON 对象，得到 "
+                f"{type(parsed).__name__}",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        peer_evidence = parsed
     try:
         landing = worktree.resolve_landing_state(args.landing, peer_evidence=peer_evidence)
     except worktree.LandingStateError as error:
@@ -248,12 +259,23 @@ def _finish_seal(args: argparse.Namespace, receipt: Dict[str, Any], code: int) -
         # 给了 --out 就把回执写文件、stdout 留给判据命令自己：两者混在一个流里，
         # 读的人要靠猜哪几行是回执（子进程的输出也在这个 stdout 上）。
         target = Path(args.out)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-            newline="",
-        )
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+                newline="",
+            )
+        except OSError as error:
+            # 回执写不出去时不能用判据的结论退出码：1 的含义是"判据跑完且是红的"，
+            # 而这里的问题在写文件这一侧（目录、权限、只读盘）。结论行照样打出来，
+            # 读的人仍然能拿到判据的结果，只是回执没有落地。
+            print(
+                f"用法错误：回执写不出去（{target}：{type(error).__name__}: {error}）",
+                file=sys.stderr,
+            )
+            print(f"seal state: {receipt.get('state')} (exit {EXIT_USAGE})", file=sys.stderr)
+            return EXIT_USAGE
         print(f"receipt: {_display(target, Path(args.root))}", file=sys.stderr)
     else:
         print(json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True))
@@ -265,7 +287,8 @@ def _run_wiring_scope(args: argparse.Namespace) -> int:
     try:
         scope = load_wiring_scope(args.path)
     except WiringScopeError as error:
-        _emit({"result": "fail", "error": str(error)}, as_json=True)
+        # 失败路径也必须看 --json：否则要解析错误的那一方，恰好拿到的是人类可读格式。
+        _emit({"result": "fail", "error": str(error)}, as_json=args.json)
         return EXIT_FAIL
     _emit({"result": "ok", **scope.as_json()}, as_json=args.json)
     return EXIT_PASS
@@ -273,14 +296,15 @@ def _run_wiring_scope(args: argparse.Namespace) -> int:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command_name == "digest":
-        return _run_digest(args)
-    if args.command_name == "seal":
-        return _run_seal(args)
-    if args.command_name == "wiring-scope":
-        return _run_wiring_scope(args)
-    print(f"用法错误：未知子命令 {args.command_name!r}", file=sys.stderr)
-    return EXIT_USAGE
+    # 子解析器是 required=True：缺子命令 / 未知子命令由 argparse 自己退出 2，因此上面这行
+    # 之后 command_name 必然命中下表之一。旧实现在这里留了一条永不执行的"未知子命令"兜底，
+    # 读起来像活的守卫，实际是死代码。
+    handlers: Dict[str, Callable[[argparse.Namespace], int]] = {
+        "digest": _run_digest,
+        "seal": _run_seal,
+        "wiring-scope": _run_wiring_scope,
+    }
+    return handlers[args.command_name](args)
 
 
 if __name__ == "__main__":

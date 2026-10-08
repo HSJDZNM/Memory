@@ -25,18 +25,51 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+class EnvironmentProblem(Exception):
+    """用法或环境错误：退出码 2。
+
+    与"发现漂移"（退出码 1）必须能分开——两者都退 1 时，CI 读不出"这次到底检查了没有"。
+    旧实现在两处用 `raise SystemExit("...")` 表达环境错误：字符串参数的 SystemExit 退出码是 1，
+    而读不到 pytest.ini / README.md / AGENTS.md / tools/README.md 时抛的是裸 FileNotFoundError。
+    """
+
+
+def _read_text(relative: str) -> str:
+    """读仓库内文本文件：读不出来是**环境错误**（退出 2），不是"文档漂移"。"""
+
+    try:
+        return (ROOT / relative).read_text(encoding="utf-8")
+    except OSError as error:
+        raise EnvironmentProblem(
+            "%s 读不出来（%s: %s）——这是环境错误，不是文档漂移"
+            % (relative, type(error).__name__, error)
+        ) from error
+
 DOCS_WITH_CONFIG_CLAIMS = ("README.md", "AGENTS.md")
 WORKFLOW_DIR = Path(".github/workflows")
 
 # 这些脚本属于离线文档镜像流水线，tools/README.md 用一段散文而不是表格登记它们。
 INVENTORY_EXEMPT = {"mirror_docs.py", "learn_site.py", "pep_site.py", "dora_site.py"}
 
-_REQ_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*([<>=!~][^;]*)?$")
-_PIN_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([0-9][0-9A-Za-z.\-+]*)$")
+# 依赖声明：包名 + **可选** extras 段（`httpx[http2]>=0.27`）+ 可选的界定符。
+# 旧正则不认 extras：合法声明直接走 EnvironmentProblem（退出 2 = "查不了"），于是 CI 红在一个
+# **正确**的声明上，人只能改声明来迁就工具——"把自己的局限说成对方的问题"。包名仍取第一段
+# （extras 不改变依赖身份）。
+_REQ_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\s*\[[^\]]*\])?\s*([<>=!~][^;]*)?$")
+# 锁文件里的固定行：可选 extras（pkg[extra]==1.2）与可选环境标记（pkg==1.2 ; python_version >= "3.8"）。
+# 旧正则只认"光秃秃的 pkg==1.2"：带 extras 或标记的行会被**静默丢掉**，随后报成"没有固定 X"
+# ——明明固定了，只是没解析出来。
+_PIN_RE = re.compile(
+    r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?==([0-9][0-9A-Za-z.\-+]*)(?:\s*;.*)?$"
+)
 _SPEC_RE = re.compile(r"^(>=|<=|==|!=|~=|>|<)?\s*([0-9][0-9A-Za-z.\-+]*)$")
 _WORKFLOW_REF_RE = re.compile(r"\.github/workflows/([A-Za-z0-9._-]+\.ya?ml)")
 _SCRIPT_RE = re.compile(r"([a-z0-9_]+\.py)")
 _UV_SYNC_RE = re.compile(r"^\s*uv sync\b")
+# README 里提到的测试**目录**：`tests/<名字>` 后面不能再跟 `.` 或名字字符——`tests/test_cli.py`
+# 是文件不是目录（旧写法 `tests/([a-z_]+)\b` 在点号前也成立，于是把文件名报成"目录不存在"）。
+README_TEST_DIR_RE = re.compile(r"tests/([a-z_]+)(?![a-z_0-9_.])")
 _INSTALL_RE = re.compile(r"\bpip install\s+(?:[^\n]*?)-r\s+([^\s#]+)")
 
 
@@ -135,45 +168,61 @@ def _compatible_release(pinned: str, bound: str) -> bool:
     return candidate + (0,) * (width - len(candidate)) < upper + (0,) * (width - len(upper))
 
 
+def _normalize_specifier(specifier: str) -> str:
+    """比较用的规范化形式：去掉全部空白（界定符之间的空白不改变区间语义）。"""
+
+    return re.sub(r"\s+", "", specifier)
+
+
 def read_requirements_in() -> dict[str, str]:
     result: dict[str, str] = {}
-    for line in (ROOT / "requirements.in").read_text(encoding="utf-8").splitlines():
+    for line in _read_text("requirements.in").splitlines():
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
         match = _REQ_RE.match(line)
         if match is None:
-            raise SystemExit("requirements.in 里有无法解析的行: %r" % line)
+            raise EnvironmentProblem("requirements.in 里有无法解析的行: %r" % line)
         result[match.group(1).lower()] = (match.group(2) or "").strip()
     return result
 
 
-def read_requirements_lock() -> dict[str, str]:
+def read_requirements_lock() -> tuple[dict[str, str], list[str]]:
+    """(固定版本表, 解析不了的行)。
+
+    解析不了的行**不再静默丢弃**：丢了之后它要么让一个真被固定的包报成"没有固定"（误导），
+    要么连报都不报（畸形固定行永远看不见）。返回值带着它们，由 check_lock 记成漂移。
+    """
+
     result: dict[str, str] = {}
-    for line in (ROOT / "requirements.lock").read_text(encoding="utf-8").splitlines():
-        line = line.split("#", 1)[0].strip()
+    unparsed: list[str] = []
+    for number, raw in enumerate(_read_text("requirements.lock").splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
         if not line or line.startswith("--hash"):
             continue
         # 生成的锁文件用行尾反斜杠续行（pip 的 --hash 必须与依赖在同一条逻辑行上）：
         # 解析时先去掉续行符，否则每条固定版本都会被判成"没有锁定"。
         line = line.removesuffix("\\").strip()
+        if not line:
+            continue
         match = _PIN_RE.match(line)
         if match is None:
+            unparsed.append("requirements.lock:%d: %r" % (number, line))
             continue
         result[match.group(1).lower()] = match.group(2)
-    return result
+    return result, unparsed
 
 
 def read_pyproject() -> dict[str, str]:
     """pyproject 的依赖口径：**必装依赖 + 全部 extras**（自引用除外）。
 
     为什么不是"dependencies + dev"：核心层只需要 pydantic 与 PyYAML，HTTP 栈与编排框架住在
-    \`api\` / \`orchestration\` 两个 extra 里（\`dev\` 通过自引用把它们一起装上）。
-    只读 dev 的话，这两个 extra 里的声明对检查器就等于不存在，\`requirements.in\` 与 pyproject
+    `api` / `orchestration` 两个 extra 里（`dev` 通过自引用把它们一起装上）。
+    只读 dev 的话，这两个 extra 里的声明对检查器就等于不存在，`requirements.in` 与 pyproject
     的对照会立刻失真——而这份对照正是"锁文件与声明不许漂移"的闸门。
     """
 
-    document = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    document = tomllib.loads(_read_text("pyproject.toml"))
     project = document.get("project", {})
     own_name = str(project.get("name", "")).lower()
     items = list(project.get("dependencies", []))
@@ -182,12 +231,12 @@ def read_pyproject() -> dict[str, str]:
     result: dict[str, str] = {}
     for item in items:
         text = str(item).strip()
-        # 自引用（\`本包[api,orchestration]\`）不是"另一个依赖"，跳过：它只是"把这两组装上"。
+        # 自引用（`本包[api,orchestration]`）不是"另一个依赖"，跳过：它只是"把这两组装上"。
         if text.lower().startswith(own_name):
             continue
         match = _REQ_RE.match(text)
         if match is None:
-            raise SystemExit("pyproject.toml 里有无法解析的依赖: %r" % item)
+            raise EnvironmentProblem("pyproject.toml 里有无法解析的依赖: %r" % item)
         result[match.group(1).lower()] = (match.group(2) or "").strip()
     return result
 
@@ -195,15 +244,21 @@ def read_pyproject() -> dict[str, str]:
 def check_lock() -> list[str]:
     issues: list[str] = []
     declared = read_requirements_in()
-    locked = read_requirements_lock()
+    locked, unparsed = read_requirements_lock()
     project = read_pyproject()
+
+    # 先报解析不了的行：否则它们会以"没有固定 X"这种错误理由出现（或者根本不出现）。
+    for item in unparsed:
+        issues.append("requirements.lock 里有无法解析的固定行（解析不了就不能当成没锁定）：%s" % item)
 
     for name in sorted(set(declared) - set(project)):
         issues.append("requirements.in 声明了 %s，pyproject.toml 里没有" % name)
     for name in sorted(set(project) - set(declared)):
         issues.append("pyproject.toml 声明了 %s，requirements.in 里没有" % name)
     for name in sorted(set(declared) & set(project)):
-        if declared[name] != project[name]:
+        # 比的是**区间语义**，不是字符串：`>=2.9,<3` 与 `>=2.9, <3` 描述同一个区间，
+        # 旧实现逐字符比较，于是任何一处空白调整都会把 CI 判红（并诱导人去"改回原样"）。
+        if _normalize_specifier(declared[name]) != _normalize_specifier(project[name]):
             issues.append(
                 "%s 的版本区间不一致：requirements.in=%r，pyproject.toml=%r"
                 % (name, declared[name], project[name])
@@ -232,6 +287,15 @@ def check_lock() -> list[str]:
     return issues
 
 
+def mentioned_test_dirs(readme: str) -> list[str]:
+    """README 里提到的 tests/<目录名>：去重、稳定排序。
+
+    纯函数，便于用例直接喂文本（`check_docs_and_config` 读的是真 README）。
+    """
+
+    return sorted(set(README_TEST_DIR_RE.findall(readme)))
+
+
 def check_docs_and_config() -> list[str]:
     issues: list[str] = []
     workflows = sorted(path.name for path in (ROOT / WORKFLOW_DIR).glob("*.y*ml"))
@@ -240,7 +304,7 @@ def check_docs_and_config() -> list[str]:
 
     referenced: dict[str, list[str]] = {}
     for name in DOCS_WITH_CONFIG_CLAIMS:
-        text = (ROOT / name).read_text(encoding="utf-8")
+        text = _read_text(name)
         for match in _WORKFLOW_REF_RE.finditer(text):
             referenced.setdefault(match.group(1), []).append(name)
     for workflow, sources in sorted(referenced.items()):
@@ -255,7 +319,7 @@ def check_docs_and_config() -> list[str]:
     unresolved: list[str] = []
     uv_sync_lines: list[str] = []
     for relative in sources:
-        text = (ROOT / relative).read_text(encoding="utf-8")
+        text = _read_text(relative)
         for number, line in enumerate(text.splitlines(), start=1):
             stripped = line.strip()
             if not stripped or stripped.startswith(("#", ">")):
@@ -274,19 +338,16 @@ def check_docs_and_config() -> list[str]:
     for item in unresolved:
         issues.append("安装指令引用了不存在的锁文件：%s" % item)
 
-    pytest_ini = (ROOT / "pytest.ini").read_text(encoding="utf-8")
+    pytest_ini = _read_text("pytest.ini")
     testpaths = re.search(r"^testpaths\s*=\s*(.+)$", pytest_ini, re.MULTILINE)
     if testpaths:
         for item in testpaths.group(1).split():
             if not (ROOT / item).is_dir():
                 issues.append("pytest.ini 的 testpaths 指向不存在的目录 %s" % item)
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    for match in re.finditer(r"tests/([a-z_]+)\b", readme):
-        candidate = ROOT / "tests" / match.group(1)
-        if candidate.suffix:
-            continue
-        if not candidate.exists():
-            issues.append("README.md 提到的 tests/%s 不存在" % match.group(1))
+    readme = _read_text("README.md")
+    for name in mentioned_test_dirs(readme):
+        if not (ROOT / "tests" / name).is_dir():
+            issues.append("README.md 提到的 tests/%s 不存在" % name)
     return issues
 
 
@@ -346,7 +407,7 @@ def check_tool_inventory() -> list[str]:
     """只认表格第一列的脚本名：散文里提到的别处脚本（例如 enforcement/audit.py）不是本目录的清单。"""
 
     issues: list[str] = []
-    readme = (ROOT / "tools" / "README.md").read_text(encoding="utf-8")
+    readme = _read_text("tools/README.md")
     mentioned: set[str] = set()
     for line in readme.splitlines():
         if not line.startswith("|") or line.startswith("| ---"):
@@ -371,12 +432,17 @@ def main(argv: list[str]) -> int:
     if len(argv) > 1:
         print(__doc__)
         return 2
-    sections = (
-        ("依赖锁", check_lock()),
-        ("文档与配置", check_docs_and_config()),
-        ("手册形态", check_notebook_form()),
-        ("工具清单", check_tool_inventory()),
-    )
+    # 环境错误统一在这里翻成退出码 2：与"发现漂移"（1）分开，CI 才读得出"检查跑了没有"。
+    try:
+        sections = (
+            ("依赖锁", check_lock()),
+            ("文档与配置", check_docs_and_config()),
+            ("手册形态", check_notebook_form()),
+            ("工具清单", check_tool_inventory()),
+        )
+    except EnvironmentProblem as error:
+        print("ERROR: %s" % error, file=sys.stderr)
+        return 2
     total = 0
     for label, issues in sections:
         if issues:

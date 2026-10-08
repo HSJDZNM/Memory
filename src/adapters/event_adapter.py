@@ -130,7 +130,8 @@ class EventAdapter(Adapter):
             known = sorted(wire)
             raise AdapterEventError(
                 f"未支持的 hook 事件 {event_name!r}：{self.agent_id} 只治理 {known}，"
-                "未识别事件不得静默放行"
+                "未识别事件不得静默放行",
+                code="unknown_event",
             )
 
         session_id = _require_text(raw_event.get(hooks.session_field), where=hooks.session_field)
@@ -231,7 +232,10 @@ class EventAdapter(Adapter):
 
 def _require_text(value: Any, *, where: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise AdapterEventError(f"事件字段 {where} 必须是非空字符串，得到 {value!r}")
+        # 同 `dsh_adapter._require_text`：缺字段 = 上下文不合法，不是"未预期异常"。
+        raise AdapterEventError(
+            f"事件字段 {where} 必须是非空字符串，得到 {value!r}", code="context_error"
+        )
     return value.strip()
 
 

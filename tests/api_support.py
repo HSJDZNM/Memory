@@ -233,9 +233,18 @@ def _copy_extra_rules(project: Path, sources: tuple[Path, ...]) -> tuple[Path, .
     targets: list[Path] = []
     for source in sources:
         source = Path(source)
+        items = sorted(source.glob("*.yaml")) + sorted(source.glob("*.yml"))
+        # 空包不是"没有额外规则"，是调用方写错了路径：旧实现照样建目录、写进配置并引用它，
+        # 于是"注册了一份额外规则包"与"一条都没加载"在读数上长得一样——用例的断言看的是别的东西，
+        # 这条静默降级永远不会自己暴露。
+        if not items:
+            raise AssertionError(
+                f"额外规则包 {source} 里没有任何 *.yaml / *.yml：空包会让配置引用一个空目录，"
+                "被测的额外规则一条都不会加载"
+            )
         target = project / "rules-extra" / source.name
         target.mkdir(parents=True, exist_ok=True)
-        for item in sorted(source.glob("*.yaml")) + sorted(source.glob("*.yml")):
+        for item in items:
             _text_copy(item, target / item.name)
         targets.append(target)
     return tuple(targets)

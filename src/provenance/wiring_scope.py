@@ -26,6 +26,7 @@ owner / reason / consequence / expires_at——否则「不在范围内」就成
 from __future__ import annotations
 
 import datetime as _datetime
+import re
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -49,13 +50,26 @@ DECISIONS: Tuple[str, ...] = ("in_scope", "out_of_scope", "expected_absent")
 GOVERNS_TREE_VALUES: Tuple[str, ...] = ("self", "other")
 # 没写 `governs_tree` 时**读取侧**的取值（2026-10-01 裁定④）：不替声明认领 `self`。
 GOVERNS_TREE_UNWRITTEN = "unknown"
+# tree_ref 允许的**唯一**非路径取值：有意治理工作区之外的一棵树（只放指针，不放正文）。
+TREE_REF_OUTSIDE = "<outside-workspace>"
 
 
 class WiringScopeError(Exception):
     """边界声明读不了或不合法：调用方必须失败关闭。"""
 
 
+_CANONICAL_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
 def _require_date(value: str, *, field: str) -> str:
+    # 先钉死**规范**形态：date.fromisoformat 还接受 20261001（基本格式）、2026-W40-1（周日期）
+    # 这类写法，放它们进来会让本文件的日期与仓库其余数据文件（一律 YYYY-MM-DD）口径分叉，
+    # 而"口径一致"正是这条校验存在的理由。
+    if _CANONICAL_DATE.fullmatch(value) is None:
+        raise ValueError(
+            f"{field} 必须是规范 ISO 日期 YYYY-MM-DD，得到 {value!r}"
+            "（date.fromisoformat 还接受 20261001 / 2026-W40-1 这类写法，这里不接受）"
+        )
     try:
         _datetime.date.fromisoformat(value)
     except ValueError as error:
@@ -144,8 +158,44 @@ class ScopeEntry(BaseModel):
             )
         return value
 
+    @field_validator("tree_ref")
+    @classmethod
+    def _tree_ref(cls, value: str | None) -> str | None:
+        """tree_ref 只放**指针**：仓库相对路径，或 <outside-workspace>。
+
+        第 16/34 条对它的承诺（不放正文、不放绝对路径）必须与相邻字段一样被**校验**，
+        不能只写在注释里：绝对路径 / 路径穿越 / 一段说明文字过去都能原样加载，
+        下游若拿它当路径解析就会被带到工作区之外。
+        """
+
+        if value is None:
+            return None
+        if value == TREE_REF_OUTSIDE:
+            return value
+        if not value.strip() or value != value.strip():
+            raise ValueError(f"tree_ref 不能为空或带首尾空白，得到 {value!r}")
+        # chr(92) 是反斜杠：Windows 形态的绝对路径 / 分隔符不属于"仓库相对路径"。
+        if ":" in value or value.startswith("/") or chr(92) in value:
+            raise ValueError(
+                f"tree_ref 只放仓库相对路径或 {TREE_REF_OUTSIDE}，得到绝对/平台路径 {value!r}"
+            )
+        parts = value.split("/")
+        if any(part in ("", ".", "..") for part in parts):
+            raise ValueError(f"tree_ref 不能含空段 / . / ..（路径穿越），得到 {value!r}")
+        if any(re.fullmatch(r"[A-Za-z0-9._-]+", part) is None for part in parts):
+            raise ValueError(
+                f"tree_ref 只放路径形态的指针，得到 {value!r}："
+                "正文、说明性文字、含空格的写法都不属于这里"
+            )
+        return value
+
     @model_validator(mode="after")
     def _consistent(self) -> "ScopeEntry":
+        if self.governs_tree == "self" and self.tree_ref is not None:
+            raise ValueError(
+                f"{self.id}: governs_tree=self 时不得写 tree_ref——"
+                "本仓库这棵树的指针没有意义，写了就是一条自相矛盾的声明"
+            )
         if self.decision == "in_scope":
             if self.expires_at is not None:
                 raise ValueError(
@@ -183,6 +233,25 @@ class WiringScope(BaseModel):
     # 它把"按 kind 分档"变成可读的声明而不是代码里的写死分支；没有映射的发现 kind
     # 一律写 decision=undeclared，不猜。
     channel_kinds: Dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("channel_kinds")
+    @classmethod
+    def _channel_kinds(cls, value: Dict[str, str]) -> Dict[str, str]:
+        """键与值都必须是非空字符串。
+
+        空值 / 拼错的值不会报错，只会让该通道落到 decision=undeclared——一个字的手误
+        就悄悄取消了治理，与本模块"未知取值一律加载期报错、不静默忽略"的口径相反。
+        """
+
+        for key, mapped in value.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError(f"channel_kinds 的键必须是非空字符串，得到 {key!r}")
+            if not isinstance(mapped, str) or not mapped.strip():
+                raise ValueError(
+                    f"channel_kinds[{key!r}] 的值必须是非空字符串，得到 {mapped!r}："
+                    "空值会让该通道静默落到 undeclared"
+                )
+        return value
 
     @field_validator("schema_version")
     @classmethod

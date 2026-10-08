@@ -11,6 +11,7 @@ import yaml
 from conftest import REPO_ROOT, VALIDATION_DIR, fake_tool_spec, write_validation_config
 from policy.evidence import ValidatorKind
 from policy.models import RuleValidationError
+from provenance.reading_context import declaration_digest
 from validators.models import Registry, ToolSpec, ValidatorSpec
 from validators.registry import (
     RegistryError,
@@ -267,6 +268,57 @@ def test_builtin_validator_must_not_declare_a_tool() -> None:
         )
 
     assert "不能声明 tool" in str(error.value)
+
+
+def test_config_digest_returns_none_when_the_file_cannot_be_read(monkeypatch, tmp_path) -> None:
+    """is_file() 之后仍可能读不了（权限 / I/O / 竞态）：与 declaration_digest 同口径返回 None（复核发现）。"""
+
+    target = tmp_path / "ruff.toml"
+    target.write_text("x" + chr(10), encoding="utf-8", newline="")
+    assert (config_digest(target) or "").startswith("sha256:")
+
+    real = Path.read_bytes
+
+    def failing(self, *args, **kwargs):
+        if self.name == "ruff.toml":
+            raise PermissionError(13, "Permission denied")
+        return real(self, *args, **kwargs)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(Path, "read_bytes", failing)
+        assert config_digest(target) is None
+        assert declaration_digest(target) is None
+
+    assert config_digest(None) is None
+
+
+def test_component_name_must_not_canonicalize_to_empty() -> None:
+    """组件名规范化后为空必须报错：空名字会让"没命中"与"命中无名组件"分不清（复核发现）。"""
+
+    from validators.models import ComponentSpec
+
+    with pytest.raises(Exception) as error:
+        ComponentSpec(name="   ", match=("src/**",))
+    assert "不能为空" in str(error.value)
+
+    # 正常名字照常规范化（strip + lower）。
+    assert ComponentSpec(name="  Service ", match=("src/**",)).name == "service"
+
+
+def test_unknown_placeholder_spellings_are_rejected() -> None:
+    """任何花括号词都必须在白名单里：大小写 / 数字 / 带空格都溜不过去（复核发现）。"""
+
+    for bad in ("{Target}", "{target1}", "{python }", "{}", "--flag={Target}"):
+        with pytest.raises(Exception) as error:
+            ToolSpec(command=("ruff", bad))
+        assert "占位符" in str(error.value), bad
+        with pytest.raises(Exception) as argv_error:
+            ToolSpec(command=("ruff",), argv=(bad,))
+        assert "占位符" in str(argv_error.value), bad
+
+    # 合法占位符照常（command 只允许 {python}，argv 允许全部已声明占位符）。
+    spec = ToolSpec(command=("{python}",), argv=("{target}", "--select", "{config}"))
+    assert spec.argv == ("{target}", "--select", "{config}")
 
 
 def test_tool_command_rejects_empty_elements_in_any_position() -> None:

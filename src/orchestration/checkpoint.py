@@ -157,7 +157,15 @@ class JsonCheckpointStore:
         text = json.dumps(
             json.loads(record.model_dump_json()), ensure_ascii=False, indent=2, sort_keys=True
         )
-        temporary.write_text(text + chr(10), encoding="utf-8", newline=chr(10))
+        try:
+            temporary.write_text(text + chr(10), encoding="utf-8", newline=chr(10))
+        except OSError as error:
+            # 磁盘满 / I/O 错误 / 目录消失：这些是**宿主环境**的问题，但调用方需要的是同一种失败。
+            # 让它们以裸 OSError 逃出去，会绕过 CheckpointError 的调用点（引擎按失败码决定终态），
+            # 于是"写不进去"看起来像"程序崩了"。
+            raise CheckpointError(
+                f"checkpoint 临时文件写入失败（{type(error).__name__}: {error}）"
+            ) from error
         # Windows 上"刚写完就替换"偶发 WinError 5（索引器/杀毒短暂持有句柄，实测约 0.5%）：
         # 这是环境噪声，不是编排语义，因此做**有界**重试（3 次，间隔很短）。
         # 重试失败仍然抛出：绝不"写不进去就当写成功"。
@@ -167,8 +175,15 @@ class JsonCheckpointStore:
                 os.replace(temporary, target)
                 return
             except PermissionError as error:  # pragma: no cover - 依赖宿主环境
+                # 只有"句柄被短暂占用"这一类值得重试；其余 OSError 立刻按失败处理。
                 last_error = error
                 time.sleep(0.05 * (attempt + 1))
+            except OSError as error:
+                # ENOSPC / EIO / FileNotFoundError（目录被删）重试多少次都一样：
+                # 立刻翻译成同一种失败，而不是让宿主错误决定调用方看到什么。
+                raise CheckpointError(
+                    f"checkpoint 替换失败（{type(error).__name__}: {error}）"
+                ) from error
         raise CheckpointError(f"checkpoint 写入失败（{type(last_error).__name__}）") from last_error
 
     def load(self, task_id: str) -> CheckpointRecord:
@@ -229,7 +244,10 @@ def plan_resume(
     """决定"能不能接着跑"。
 
     - 没有 checkpoint → `FRESH`（从头开始）；
-    - 协议世代变了（`policy_version` / 决策载荷 schema）→ `REFUSE`：不沿用任何旧决定；
+    - 协议世代变了（`policy_version` / 决策载荷 schema）→ **抛 `ResumeError`**：不沿用任何旧决定
+      （`ResumeMode.REFUSE` 只是 `ResumePlan.mode` 值域里的取值：当前实现用**抛出**表达这件事，
+      见下面的 `refused` 分支。因此按 `plan.mode is ResumeMode.REFUSE` 写分支的调用方是死分支——
+      值域保留是因为它属于恢复计划协议，不能悄悄删）；
     - 规则集或索引变了 → `REVALIDATE`：清掉旧 trace / 旧验证结果，回到检索节点重评；
     - 工具 schema 变了 → `REAPPROVE`：清掉审批引用（旧审批绑的是旧 schema 的哈希）；
     - 其余 → `RESUME`：接着上次的阶段继续。

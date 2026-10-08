@@ -37,7 +37,10 @@ __all__ = [
     "OriginError",
     "ORIGIN_OBJECT_KIND",
     "build_origin",
+    "config_path_in",
+    "family_of",
     "is_known_origin",
+    "payload_is_well_formed",
     "unknown_origin",
 ]
 
@@ -83,9 +86,6 @@ OBJECT_KINDS: tuple[str, ...] = (
 
 # 归因记录自己的载荷版本（与 AUDIT_SCHEMA_VERSION / VERDICT_SCHEMA_VERSION 无关）。
 ORIGIN_OBJECT_KIND = "platform.attribution"
-
-_UNKNOWN_FIX = "补一条可执行的核验：把失败现场的那个路径 / 命令 / 配置显式交给一次 stat / load，再据此重新归因"
-
 
 def _now_iso() -> str:
     """观测时刻（UTC，秒级）。**必须来自真实调用**：核验没有时间戳就等于没有观测。"""

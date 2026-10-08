@@ -326,14 +326,18 @@ for name in sorted(checkers.SUPPORTED_CHECKERS):
 print()
 print(pad("依赖名", 14) + pad("形态", 16) + pad("解析", 12) + pad("文件", 36) + "行")
 print("-" * 100)
-for fact in bundle.dependencies:
-    print(
-        pad(fact.name, 14)
-        + pad(fact.kind.value, 16)
-        + pad(fact.resolution.value, 12)
-        + pad(fact.file or "-", 36)
-        + str(fact.line)
-    )
+# `fact.line` 是 `Optional[int]`（`src/policy/evidence.py`）：没有源位置的依赖行号是 None，
+# 而 `str(None)` 会把**字面量 None** 印进"行"列——旁边的 `file` 列已经用 `or "-"` 守住了，
+# 这一列也该按同一个约定渲染：表格里的 `-` 表示"没有这个值"，`None` 会被读成一个值。
+rows = [
+    (fact.name, fact.kind.value, fact.resolution.value, fact.file or "-",
+     "-" if fact.line is None else str(fact.line))
+    for fact in bundle.dependencies
+]
+# 规格：这张表里不许出现字面量 None（数据怎么变都成立）。
+assert not [row for row in rows if "None" in row], rows
+for row in rows:
+    print(pad(row[0], 14) + pad(row[1], 16) + pad(row[2], 12) + pad(row[3], 36) + row[4])
 
 # 证据到位：ARCH-001 由依赖证据判定，文件与行号来自证据，严重级别来自规则。
 evidenced = engine.evaluate(ARCH_RULES, evidence_context, evidence=bundle)

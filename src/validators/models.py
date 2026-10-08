@@ -55,7 +55,10 @@ KNOWN_PLACEHOLDERS = {
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9]*(\.[a-z0-9]+)*$")
 _PACK_ID_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 _VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.\-+]*$")
-_PLACEHOLDER_RE = re.compile(r"\{[a-z]+\}")
+# 任何**花括号括起来**的词都必须能在白名单里找到：旧写法 \{...\} 只认小写字母，
+# 于是 {Target} / {target1} / {python } 这类拼错（或大小写写错）对检查不可见，原样进命令行
+# ——argv 的契约是"与声明逐字一致（占位符除外）"，拼错的占位符就是字面参数（复核发现）。
+_PLACEHOLDER_RE = re.compile(r"\{[^{}]*\}")
 
 
 def _check_identifier(value: str, *, field: str) -> str:
@@ -355,7 +358,14 @@ class ComponentSpec(StrictModel):
     @field_validator("name")
     @classmethod
     def _check_name(cls, value: str) -> str:
-        return canonical_identifier(value)
+        normalized = canonical_identifier(value)
+        if not normalized:
+            # min_length=1 只约束**原始**输入："   " 规范化之后是空串，组件名于是成了 falsy，
+            # 而消费方 component_for 的约定是 None = 没有命中——空名字的组件会让"没命中"与
+            # "命中了一个没有名字的组件"分不清（同名两义）。与 RulePack._check_id /
+            # LanguageSpec._check_language 等兄弟校验器同口径（复核发现）。
+            raise ValueError(f"component.name 规范化之后不能为空，得到 {value!r}")
+        return normalized
 
 
 class LanguageSpec(StrictModel):

@@ -91,6 +91,33 @@ def test_read_source_rejects_paths_outside_the_workspace(tmp_root: Path) -> None
         assert "工作区" in str(error.value) or "逃出" in str(error.value)
 
 
+def test_a_local_module_shadowing_the_stdlib_is_internal() -> None:
+    """本地与标准库同名（types / test / email）时仍必须认成项目内（复核发现）。"""
+
+    from validators.depgraph import ModuleIndex, _resolve_module
+
+    index = ModuleIndex(
+        modules={"types": "src/types.py", "pkg.types": "src/pkg/types.py"},
+        top_levels=frozenset({"types", "pkg"}),
+        scanned=2,
+        truncated=False,
+    )
+    stdlib = frozenset({"types", "email", "test"})
+
+    resolution, path, reason = _resolve_module("types", index=index, stdlib=stdlib)
+    assert resolution.value == "internal", reason
+    assert path == "src/types.py"
+
+    # 子模块形态同样按精确模块名命中。
+    resolution, path, reason = _resolve_module("pkg.types", index=index, stdlib=stdlib)
+    assert resolution.value == "internal", reason
+    assert path == "src/pkg/types.py"
+
+    # 真正的标准库（索引里没有这个名字）照旧。
+    resolution, _, reason = _resolve_module("email", index=index, stdlib=stdlib)
+    assert resolution.value == "stdlib", reason
+
+
 def test_resolve_runtime_error_is_a_source_error(tmp_root: Path, monkeypatch) -> None:
     """resolve() 也会抛 RuntimeError（符号链接成环）：必须落 SourceError（复核发现）。"""
 
@@ -217,6 +244,73 @@ def test_read_source_bounds_the_read_by_the_descriptor_not_the_path_stat(
 # ------------------------------------------------------------------ AST 事实
 
 
+def test_module_docstring_uses_the_same_blank_rule_as_definitions() -> None:
+    """模块与定义用同一条口径：空 / 全空白字面量不算 docstring（复核发现）。"""
+
+    assert parse_module('"""模块。"""' + chr(10)).module_docstring is True
+    assert parse_module('""' + chr(10)).module_docstring is False
+    assert parse_module('"   "' + chr(10)).module_docstring is False
+
+    # 同一个构造在定义层早就是这个答案——两层必须一致。
+    blank = parse_module("def f():" + chr(10) + "    \"\"" + chr(10))
+    assert blank.definitions[0].docstring is False
+    real = parse_module("def f():" + chr(10) + "    \"\"\"说明。\"\"\"" + chr(10))
+    assert real.definitions[0].docstring is True
+
+
+def test_nested_definitions_are_collected_with_their_kind() -> None:
+    """嵌套类/方法、函数里的函数、模块级 if 里的定义都要收（复核发现：旧实现只走一层）。"""
+
+    source = (
+        "class Outer:" + chr(10)
+        + "    class Inner:" + chr(10)
+        + "        def method(self):" + chr(10)
+        + "            pass" + chr(10)
+        + chr(10)
+        + "def outer():" + chr(10)
+        + "    def inner():" + chr(10)
+        + "        pass" + chr(10)
+        + "    return inner" + chr(10)
+        + chr(10)
+        + "if True:" + chr(10)
+        + "    def conditional():" + chr(10)
+        + "        pass" + chr(10)
+    )
+
+    facts = parse_module(source)
+
+    assert [(item.qualified, item.kind) for item in facts.definitions] == [
+        ("Outer", "class"),
+        ("Outer.Inner", "class"),
+        ("Outer.Inner.method", "method"),
+        ("outer", "function"),
+        ("outer.inner", "function"),  # 函数里的函数仍是 function，不是 method
+        ("conditional", "function"),
+    ]
+
+
+def test_dynamic_import_detection_is_gated_on_the_receiver() -> None:
+    """只有确实绑定到 importlib / builtins 的接收者才算动态 import（复核发现）。"""
+
+    # 方向一：任意对象的同名方法不是动态 import（旧实现会造出 unresolved 假阻断）。
+    unrelated = parse_module("registry.import_module(name)" + chr(10))
+    assert unrelated.dynamic_unresolved == ()
+    assert [item.dotted for item in unrelated.calls] == ["registry.import_module"]
+
+    # 方向二：绑定了模块的接收者（含别名）与点分 __import__ 形态都要认出来。
+    for source in (
+        "import importlib" + chr(10) + "importlib.import_module(name)" + chr(10),
+        "import importlib as il" + chr(10) + "il.import_module(name)" + chr(10),
+        "import builtins" + chr(10) + "builtins.__import__(name)" + chr(10),
+        "import builtins as builtins_alias" + chr(10) + "builtins_alias.__import__(name)" + chr(10),
+        "import importlib" + chr(10) + "importlib.__import__(name)" + chr(10),
+        "from importlib import import_module as im" + chr(10) + "im(name)" + chr(10),
+    ):
+        facts = parse_module(source)
+        assert len(facts.dynamic_unresolved) == 1, source
+        assert facts.dynamic_unresolved[0].constant is False, source
+
+
 def test_ast_collects_imports_aliases_and_relative_imports() -> None:
     facts = parse_module(
         "import os, json.decoder" + chr(10)
@@ -333,6 +427,22 @@ def test_module_index_maps_packages_and_modules() -> None:
     assert index.truncated is False
 
 
+def test_package_initializer_module_name_is_the_package() -> None:
+    """`__init__.py` 的模块名是它所在的包，不是 `pkg.__init__`（复核发现）。"""
+
+    result = dependencies_for("import os" + chr(10), target="src/shop/__init__.py")
+    assert result.module == "shop"
+    assert result.package == ("shop",)
+
+    nested = dependencies_for("import os" + chr(10), target="src/shop/sub/__init__.py")
+    assert nested.module == "shop.sub"
+    assert nested.package == ("shop", "sub")
+
+    # 普通模块照旧。
+    plain = dependencies_for("import os" + chr(10), target="src/shop/order_service.py")
+    assert plain.module == "shop.order_service"
+
+
 def test_relative_import_inside_a_package_initializer_stays_in_that_package() -> None:
     """`__init__.py` 里的相对导入必须展开到**它所在的包**，不是上一层、也不是顶层。
 
@@ -418,6 +528,29 @@ def test_relative_imports_resolve_inside_the_package() -> None:
     assert {fact.module for fact in result.dependencies} == {"shop.order_service"}
     assert {fact.name for fact in result.dependencies} == {"service"}
     assert result.unresolved == ()
+
+
+def test_relative_from_import_of_a_possible_attribute_stays_fail_closed() -> None:
+    """`from . import name` 展开后一律照记：证明不了"它一定存在"，就必须站在能证明的那一侧。
+
+    复核条目 depgraph.py:353 建议"常规包（有 __init__.py）里的 from . import 属性不该阻断"——
+    那条建议**不成立**。跨路径契约用例 EXPECTED_ARCH_BLOCK 对 "相对导入：from . import
+    repository" 要求 block=True，且预执行路径与 AST 路径必须逐字同结论；按建议放行后
+    AST 路径不再阻断（实测读数：预执行=True / AST=False，夹具 src/shop 里并没有 repository.py，
+    所以"它是属性"这件事本来就证明不了），契约当场变红。
+    属性是否存在静态证明不了（变量、函数、__all__ 再导出、__getattr__ 动态给都算），
+    而 AGENTS 第 20 条要求"解析失败"不能当成"没有依赖"——依赖类判据只能失败关闭。
+    """
+
+    result = dependencies_for("from . import OrderService" + chr(10))
+
+    assert [item.module for item in result.unresolved] == ["shop.OrderService"]
+    assert result.dependencies[0].resolution.value == "unresolved"
+
+    # 证明得了的子模块照旧解析成项目内依赖（不误报）。
+    resolved = dependencies_for("from . import order_service" + chr(10))
+    assert [fact.module for fact in resolved.dependencies] == ["shop.order_service"]
+    assert resolved.unresolved == ()
 
 
 def test_relative_import_beyond_the_top_level_package_is_unresolved() -> None:

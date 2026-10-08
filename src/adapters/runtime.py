@@ -1494,7 +1494,14 @@ class AgentRuntime:
 
         text = sanitize_message(str(error))
         lowered = text.lower()
-        if "未知规范事件版本" in text or "版本" in text and "拒绝消费" in text:
+        # 结构化 code 优先：适配器在**抛错处**就知道这是「未知事件」还是「未知版本」，按码分流比按
+        # 文案猜可靠——文案一改，按文案匹配的分支就静默失效（`unknown_event` 那一支就是这么死的：
+        # hook 线协议抛「未支持的 hook 事件 …」，而这里只认「未知事件类型」/「不支持事件」）。
+        # 只接受 `REASON_CODES` 里已有的取值：第三方适配器不能借这个字段发明新原因码。
+        structured = getattr(error, "code", None)
+        if isinstance(structured, str) and structured in REASON_CODES:
+            code = structured
+        elif "未知规范事件版本" in text or "版本" in text and "拒绝消费" in text:
             code = "unknown_version"
         elif "未知事件类型" in text or "不支持事件" in text:
             code = "unknown_event"
@@ -1503,6 +1510,10 @@ class AgentRuntime:
         elif "路径" in text or "上下文" in text or "缺少" in text or "主体" in text:
             code = "context_error"
         else:
+            # **兜底，不是第一判据**：结构化 `code`（见上面的 `structured`）优先，这一串文案匹配只服务
+            # 那些不带 code 的失败（第三方适配器、以及尚未标码的抛错点）。它的代价已经实测过一次：
+            # hook 线协议抛的「未支持的 dsh hook 事件 …」匹配不上任何关键词，于是 `unknown_event`
+            # 那一支永不触发、一律落到这里。新增抛错点时**优先标 `code=`**，不要往这张表里加子串。
             code = "context_error" if "context" in lowered else "internal_error"
         return self._refuse(
             agent_id=agent_id,

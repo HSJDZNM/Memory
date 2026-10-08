@@ -97,9 +97,15 @@ def config_digest(path: Path | str | None) -> Optional[str]:
     if path is None:
         return None
     target = Path(path)
-    if not target.is_file():
+    try:
+        if not target.is_file():
+            return None
+        return "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()
+    except OSError:
+        # is_file() 之后仍可能读不了（权限 / I/O 错误 / 两次调用之间文件被删）。与
+        # provenance.reading_context.declaration_digest 同口径返回 None——两个函数逐字符一致
+        # 由 tests/contract/test_reading_context_digest_parity.py 钉住（复核发现）。
         return None
-    return "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()
 
 
 def _assert_unique(names: list[str], *, path: Path, label: str) -> None:

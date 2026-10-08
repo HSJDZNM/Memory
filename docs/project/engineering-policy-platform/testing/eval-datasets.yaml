@@ -15,6 +15,11 @@
 #   labels          ground truth 的粒度（决定能算什么指标、不能算什么指标）
 #   verified        本次核验到什么程度（核验过什么、什么时候）
 #   admission_todo  准入前还欠的检查（**空列表才允许进门槛**）
+#   note            **只在 tier_b_pending 里出现**：那一节是"入口指针"（只有 id / entry / note），
+#                   没有 tier/role/kind/pin/license/labels/verified/admission_todo/cannot_prove——
+#                   按 id 查登记的消费者在这里拿到的是另一套形状，所以两条规则要写下来：
+#                   ① 要查"能不能进门槛"只读 datasets 与 tier_b_not_admitted（两者字段齐全）；
+#                   ② 要把某条 pending 提进门槛，先按 datasets 那套字段补齐，别在 pending 里改。
 #   cannot_prove    这条语料**证明不了**什么（写在数据里，避免被引用时越界）
 #
 # 两条硬纪律：
@@ -69,7 +74,7 @@ datasets:
 
   - id: pylint-functional
     tier: A
-    role: [差分对照（人工映射，不计入 GV-01）]
+    role: [差分对照]
     title: pylint 功能测试（tests/functional/**，行级期望消息）
     entry: https://github.com/pylint-dev/pylint
     kind: git

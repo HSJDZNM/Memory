@@ -128,7 +128,11 @@ def _principal(document: Mapping[str, Any]) -> dict[str, Any]:
 def build_config(args: argparse.Namespace, document: Mapping[str, Any]) -> OrchestrationConfig:
     repo = _repo_root()
     workspace = Path(args.workspace).resolve() if args.workspace else repo
-    default_root = Path(".tmp/phase-8/cli")
+    # 默认路径锚在**仓库根**（`repo = _repo_root()` 就在上一行）：此前是相对进程 CWD 的
+    # `.tmp/phase-8/cli`，同一个任务在不同目录下跑会看到不同的 checkpoint/审批/台账——
+    # 「恢复」于是看起来像「没有 checkpoint」。`OrchestrationConfig` 的口径是路径显式给出、
+    # 不从当前目录猜；`self_check` 早就用 `_repo_root() / ".tmp/..."`，这里与它对齐。
+    default_root = repo / ".tmp" / "phase-8" / "cli"
     checkpoints = (
         Path(args.checkpoints).resolve() if args.checkpoints else default_root / "checkpoints"
     )

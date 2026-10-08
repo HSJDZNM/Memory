@@ -27,6 +27,9 @@ __all__ = [
 # 因此还要从 import 绑定里收集"本地动态 import 入口"，见 _dynamic_import_bindings。
 _DYNAMIC_IMPORT_NAMES = frozenset({"__import__", "importlib.import_module", "import_module"})
 
+# `X.import_module` / `X.__import__` 只在 X 确实绑定到动态 import 的**模块**时才算动态 import。
+_DYNAMIC_IMPORT_TAILS = frozenset({"import_module", "__import__"})
+
 # 这些模块里导出的动态 import 入口，一旦被 from-import 绑定（含别名）就要盯住。
 _DYNAMIC_IMPORT_SOURCES = {
     "importlib": frozenset({"import_module"}),
@@ -249,28 +252,54 @@ def parse_module(text: str) -> ModuleFacts:
                 )
             )
             call_nodes.append(node)
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            definitions.append(_definition(node, parent=None))
-        if isinstance(node, ast.ClassDef):
-            for child in node.body:
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    definitions.append(_definition(child, parent=node.name))
+    def collect(body: Sequence[ast.stmt], parents: Tuple[str, ...], parent_kind: Optional[str]) -> None:
+        """递归收集定义：嵌套类、类里的方法、函数里的函数、以及模块级 if/try/with 里的定义都算。
+
+        旧实现只走 tree.body 加**一层**类体：嵌套类（及其方法）、函数里的定义、
+        `if TYPE_CHECKING:` / `try:` 里的定义全被静默丢掉——docstring 检查因此整片漏报，
+        而 DefinitionFact.kind/qualified 本来就是要表达模块/类/函数/方法这层嵌套的（复核发现）。
+        """
+
+        for child in body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                fact = _definition(
+                    child, parent=".".join(parents) or None, parent_kind=parent_kind
+                )
+                definitions.append(fact)
+                collect(child.body, (*parents, child.name), fact.kind)
+                continue
+            nested = getattr(child, "body", None)
+            if isinstance(nested, list):
+                collect(nested, parents, parent_kind)
+
+    collect(tree.body, (), None)
 
     # 动态 import 的识别放在最后：先把 import 绑定收齐，别名形式才看得见
     # （from importlib import import_module as im; im(name) 曾经整个漏判）。
     bindings = set(dynamic_import_bindings(imports))
+    receivers = set(dynamic_module_bindings(imports))
     for node in call_nodes:
         name = dotted_name(node.func)
         if name is None:
             continue
-        tail = name.rpartition(".")[2]
-        if name in _DYNAMIC_IMPORT_NAMES or tail == "import_module" or name in bindings:
+        receiver, _, tail = name.rpartition(".")
+        # 后缀判断必须看**接收者**：`registry.import_module(name)` 不是动态 import，而
+        # `builtins.__import__(name)` / `importlib.__import__("os")`（点分 __import__ 形态）
+        # 旧实现两个方向都会判错——前者凭白造出 unresolved 假阻断，后者把真正无法静态解析的
+        # 依赖记成普通调用（=当成没有依赖）（复核发现）。
+        if (
+            name in _DYNAMIC_IMPORT_NAMES
+            or name in bindings
+            or (receiver in receivers and tail in _DYNAMIC_IMPORT_TAILS)
+        ):
             line, column = _location(node)
             imports.append(_dynamic_import(node, name, line, column))
 
     return ModuleFacts(
-        module_docstring=_docstring_of(tree) is not None,
+        # 与定义层同一条口径（_has_docstring：字面量 strip() 之后必须非空）：旧实现只查
+        # "有没有字符串字面量"，于是 module_docstring 对 "" 与 "   " 报 True，而同样构造写在
+        # 函数里报 False——同一个问题在模块层与定义层给出相反答案（复核发现）。
+        module_docstring=_has_docstring(tree),
         imports=tuple(sorted(imports, key=lambda item: (item.line, item.column, item.module))),
         calls=tuple(sorted(calls, key=lambda item: (item.line, item.column, item.dotted))),
         definitions=tuple(
@@ -320,11 +349,16 @@ def _describe_argument(target: Optional[ast.AST]) -> str:
 
 
 def _definition(
-    node: ast.AST, *, parent: Optional[str]
+    node: ast.AST, *, parent: Optional[str], parent_kind: Optional[str] = None
 ) -> DefinitionFact:
     name = str(getattr(node, "name", "<anonymous>"))
     line, column = _location(node)
-    kind = "class" if isinstance(node, ast.ClassDef) else ("method" if parent else "function")
+    # method 只看**紧邻的父定义是不是类**：函数里嵌的函数仍是 function，不是 method。
+    kind = (
+        "class"
+        if isinstance(node, ast.ClassDef)
+        else ("method" if parent_kind == "class" else "function")
+    )
     qualified = f"{parent}.{name}" if parent else name
     return DefinitionFact(
         kind=kind,
@@ -358,6 +392,25 @@ def dynamic_import_bindings(imports: Sequence[ImportFact]) -> Tuple[str, ...]:
         for name, binding in pairs:
             if name in exported:
                 bound.append(binding)
+    return tuple(sorted(set(bound)))
+
+
+def dynamic_module_bindings(imports: Sequence[ImportFact]) -> Tuple[str, ...]:
+    """这批 import 里绑定到动态 import **模块**的本地名字（含 as 别名）。
+
+    import importlib as il     →  "il"（`il.import_module(name)` 靠它才认得出来）
+    import builtins            →  "builtins"（`builtins.__import__(name)` 同理）
+    from importlib import import_module as im → 不在这里（那是入口函数的绑定，见
+    dynamic_import_bindings）。
+    """
+
+    bound: list[str] = []
+    for fact in imports:
+        if fact.level != 0 or fact.kind != "import":
+            continue
+        if fact.module.split(".")[0] not in _DYNAMIC_IMPORT_SOURCES:
+            continue
+        bound.extend(fact.bindings or (fact.module.split(".")[0],))
     return tuple(sorted(set(bound)))
 
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import json, os, re, collections, datetime, shutil
+import json, os, re, collections, shutil
 BT = chr(96); F = BT*3
 def c(x): return BT + str(x) + BT
 OUT = "docs/mirrors/owasp-cheatsheets"
@@ -449,15 +449,31 @@ for slug, (folder, name) in sorted(st["index_files"].items()):
         "crosswalk": {"asvs": [], "proactive_controls": [], "top10_2021": [], "masvs": []},
     })
 
+def saved_cheat_sheets(page_list):
+    """保存下来的 **cheat sheet** 页数。
+
+    三个计数器必须描述同一个总体：candidate = saved + excluded（都是 cheat sheet）。
+    站点索引页（role="site-index"，6 个）仍然在 pages 里，但不进这三个数——旧实现
+    `pages_saved = len(pages)` 把它们算进去，于是 124 / 122 / 4 永远对不上账，
+    而 05_verify 会把这个三元组原样打印出来，读起来像一份数据错误。
+    """
+
+    return sum(1 for page in page_list if page.get("role") == "cheat-sheet")
+
+
 manifest = {
     "source": "https://cheatsheetseries.owasp.org/cheatsheets/Secure_Code_Review_Cheat_Sheet.html",
     "site": "https://cheatsheetseries.owasp.org/",
-    "fetched_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    # 抓取日期只从 build_state 取（= 正文里写的那个 TODAY）：整个流水线里只有这一处曾经用
+    # 墙钟时间，于是同一份语料重跑一次 manifest 的字节就变了，而它是 sha256 键控的产物、
+    # 描述的是**这批文档**，不是一个"生成时刻"。
+    "fetched_at": TODAY,
     "crawler": "crawl4ai 0.9.3 / AsyncHTTPCrawlerStrategy",
     "scope": "种子页导航与正文中出现的全部 /cheatsheets/*.html 链接",
     "taxonomy": "OWASP ASVS 5.0 章节（V1-V17）+ 技术栈／平台／AI／嵌入式专项（主题重排，见 STRUCTURE.md）",
     "pages_candidate": 122,
-    "pages_saved": len(pages),
+    # 与 candidate/excluded 同口径（都只数 cheat sheet）：118 + 4 = 122 能对上账。
+    "pages_saved": saved_cheat_sheets(pages),
     "pages_excluded": len(EXCLUDED),
     "pages": pages,
     "excluded": [

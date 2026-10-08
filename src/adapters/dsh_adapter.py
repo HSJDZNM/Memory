@@ -49,7 +49,8 @@ class DshAdapter(Adapter):
         if event_type is None:
             raise AdapterEventError(
                 f"未支持的 dsh hook 事件 {event_name!r}：本 Adapter 只治理 "
-                f"{sorted(DSH_WIRE)}，未识别事件不得静默放行"
+                f"{sorted(DSH_WIRE)}，未识别事件不得静默放行",
+                code="unknown_event",
             )
 
         session_id = _require_text(raw_event.get("session_id"), where="session_id")
@@ -204,7 +205,12 @@ def _resolve(
 
 def _require_text(value: Any, *, where: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise AdapterEventError(f"dsh 事件字段 {where} 必须是非空字符串，得到 {value!r}")
+        # 缺字段 / 类型不对属于**上下文不合法**：标上结构化码，运行时的失败翻译才不必靠"必须是非空
+        # 字符串"这种措辞去猜——猜不中就是 `internal_error`，而它读起来像"平台崩了"，
+        # 真相是"这份载荷没给出判定需要的字段"（第 52 条）。
+        raise AdapterEventError(
+            f"dsh 事件字段 {where} 必须是非空字符串，得到 {value!r}", code="context_error"
+        )
     return value.strip()
 
 

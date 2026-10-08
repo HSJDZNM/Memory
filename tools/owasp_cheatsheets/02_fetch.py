@@ -71,8 +71,14 @@ async def main():
     strat = AsyncHTTPCrawlerStrategy(browser_config=HTTPCrawlerConfig(), max_connections=8)
     cfg = CrawlerRunConfig(cache_mode=CacheMode.BYPASS, page_timeout=45000,
                            css_selector="article.md-content__inner")
-    jobs = [(SEED, "seed")] + [(u, "sheet") for u in SHEETS] + [(BASE+u, "index") for u in INDEXES]
-    kinds = {u: k for u, k in jobs}
+    # SEED 也在 SHEETS 里（index.html 的站内链接本身含种子页），不去重就会被抓两遍；
+    # 而 `{u: k for u, k in jobs}` 让后写的 kind 覆盖前面的（seed 变成 sheet）。
+    # setdefault = 先写优先：种子页保持 kind="seed"，其余按 sheet / index 归属。
+    kinds = {}
+    for url, kind in ([(SEED, "seed")] + [(u, "sheet") for u in SHEETS]
+                      + [(BASE + u, "index") for u in INDEXES]):
+        kinds.setdefault(url, kind)
+    jobs = list(kinds.items())
     sem = asyncio.Semaphore(6)
     meta = {}
     reset_content()
@@ -86,6 +92,9 @@ async def main():
                 ok = bool(r.success) and len(md) > 300
                 m = {"url": u, "slug": slug, "kind": kinds[u], "success": bool(r.success),
                      "status": r.status_code, "chars": len(md), "words": len(md.split()),
+                     # error 空串而不是缺键：成功与失败读数必须**同一套键**，消费方才能
+                     # 一律按同一形状读（旧实现成功记录没有 error、失败记录缺过 words）。
+                     "error": "",
                      "title": "", "desc": "", "h2": [], "saved": ok, "links_out": []}
                 if ok:
                     h1 = re.search(r"^# (.+)$", md, re.M)

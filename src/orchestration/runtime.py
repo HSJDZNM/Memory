@@ -49,6 +49,11 @@ class OrchestrationConfig:
     tenant: Optional[str] = None
     engine: str = "auto"
     agent_version: str = "0.1.0"
+    # 这个字段是**给调用方用的**默认值，装配路径不消费它：每条调用路径都自己构造初始 `GraphState`
+    # 并显式传 `limits=config.limits`（`cli.py` / `tests/orchestration_support.py` /
+    # `tools/orchestration_loop.py`）。也就是说：只改这里、不读它的调用方，上限一个字都不会变——
+    # 这是刻意留的自由度（状态是显式输入，装配不替调用方决定），但它必须写出来，
+    # 否则「我设了 limits 为什么没生效」只能靠读装配代码回答。
     limits: RunLimits = field(default_factory=RunLimits)
     circuit_failure_threshold: int = 3
 

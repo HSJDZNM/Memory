@@ -829,6 +829,38 @@ def test_the_change_set_for_evidence_comes_from_executed_changes() -> None:
     )
 
 
+def test_a_host_write_failure_is_a_checkpoint_error(monkeypatch, tmp_root) -> None:
+    """磁盘满 / I/O 错误不是"程序崩了"，而是"这份 checkpoint 写不进去"——同一种失败。
+
+    旧实现只把 PermissionError 翻成 CheckpointError：`write_text` 完全没有守卫，
+    `os.replace` 的其它 OSError（ENOSPC / EIO / 目录被删）也直接逃出去——
+    而调用方按失败码决定终态，裸 OSError 会绕过那一层。
+    """
+
+    store = JsonCheckpointStore(tmp_root / "checkpoints")
+    record = build_record(empty_state("task-1"), engine="reference", sequence=1)
+
+    def no_space(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003 - 只求抛出去
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Path, "write_text", no_space)
+    with pytest.raises(CheckpointError) as error:
+        store.save(record)
+    assert "No space left" in str(error.value)
+    monkeypatch.undo()
+
+    # 替换阶段同理：非 PermissionError 的 OSError 不重试，直接翻译
+    import orchestration.checkpoint as checkpoint_module
+
+    def broken_replace(src, dst):  # noqa: ANN001, ANN202 - 只求抛出去
+        raise OSError(5, "I/O error")
+
+    monkeypatch.setattr(checkpoint_module.os, "replace", broken_replace)
+    with pytest.raises(CheckpointError) as error:
+        store.save(record)
+    assert "I/O error" in str(error.value)
+
+
 def test_a_checkpoint_from_another_state_protocol_is_refused_at_load(tmp_root) -> None:
     """协议世代对不上时不是"列为不兼容维度"，而是**读都读不进来**——更严格，也更难绕过。
 

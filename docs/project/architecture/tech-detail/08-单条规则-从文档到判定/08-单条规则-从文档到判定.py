@@ -165,11 +165,15 @@ print(pad("source.path", 20) + str(source.path))
 print(pad("source.note", 20) + str(source.note))
 print()
 
-# 下面两次调用故意写坏，验证"拦得住"的边界在哪：
+# 下面两次调用故意写坏，验证"拦得住"的边界在哪。捕获的异常类型**写窄**：`except Exception`
+# 会把"模型抛了别的错（例如 TypeError、签名改了）"也算成"边界拦住了"——而那正是这条演示要
+# 证明的反面。期望的就是 pydantic 的 ValidationError。
+from pydantic import ValidationError
+
 try:
     SourceRef(kind="conversation", path="chat/2026-09-01.md")
-except Exception as error:  # pydantic 的校验错误：字段校验失败会包成 ValidationError
-    detail = error.errors()[0]["msg"] if hasattr(error, "errors") else str(error)
+except ValidationError as error:  # 字段校验失败：pydantic 包成 ValidationError
+    detail = error.errors()[0]["msg"]
     assert "source.kind 必须是本地来源" in detail, detail
     print("× kind 写成共享对话 →", detail.split("；")[0][:96])
 else:
@@ -178,7 +182,7 @@ else:
     raise AssertionError("SourceRef 接受了 kind='conversation'：本地来源的边界破了")
 try:
     SourceRef(kind="standard", path="../../etc/passwd")
-except Exception as error:  # 域异常 PolicyContextError 会被 pydantic 包成 ValidationError
+except ValidationError as error:  # 域异常 PolicyContextError 被 pydantic 包成 ValidationError
     assert "路径逃出仓库根目录" in str(error), error
     print("× path 用 .. 逃出仓库 → 路径逃出仓库根目录，拒绝处理（来自 normalize_repo_path）")
 else:
@@ -211,11 +215,13 @@ print(pad("字节 / 行数", 24) + str(source_file.stat().st_size) + " / "
 # 2. 如果它是某条规则的来源，还要在 `rule_sources` 里登记
 #    `{rule_id, rule_version, dataset, source_path, heading_path}`——这一步决定"能查回它"。
 #
-# 两处的 `source_path` 写法**不一样**，这是最容易踩的坑：
+# 两处的 `source_path` 写的是**同一种**路径（都相对**数据集镜像根**，见 `datasets[].mirror`），
+# 因为索引器的文档身份就是 `dataset + 镜像根下的路径`。真正容易踩的坑在**另一个文件**里：
 #
-# - `entries` 里的路径是**仓库相对**的（`docs/mirrors/...`）；
-# - `rule_sources` 里的路径是**相对该数据集镜像根**的（`pep-257-docstrings/index.md`），
-#   因为索引器的文档身份是 `dataset + 镜像根下的路径`。
+# - `knowledge/corpus.yaml` 的 `entries` 与 `rule_sources` 都写 `pep-257-docstrings/index.md`；
+# - 而**规则 YAML** 的 `source.path` 写的是**仓库相对**的完整路径
+#   （`docs/mirrors/python-pep-code-style/pep-257-docstrings/index.md`）——两者必须指向同一份文档，
+#   所以下面用 `rule.source.path.endswith(registered.source_path)` 把它们对齐。
 #
 # 下面把两条都查出来对一遍：登记存在、数据集存在、条目的镜像文件在仓库里、
 # 本地内容的 sha256 等于镜像 manifest 记录的哈希（哈希漂移会被 `verify` 报出来，退出码 1）。
@@ -250,7 +256,9 @@ assert registered.heading_path, "没有 heading_path 会退化成'整篇文档�
 
 # 第 2 件事：这个 dataset + source_path 真的是一个语料条目，且本地哈希与 manifest 一致。
 entry = corpus.entry(registered.dataset, registered.source_path)
-mirror_root = REPO_ROOT / "docs" / "mirrors" / "python-pep-code-style"
+# 镜像根**从数据集声明读**（`datasets[].mirror`），不写死字面量：清单把镜像换到别的目录而这里
+# 没跟着改，就会去读一条不存在的路径——而"哈希对得上"这句话正是靠这条路径读出来的。
+mirror_root = REPO_ROOT / corpus.dataset(registered.dataset).mirror
 entry_file = mirror_root / entry.source_path
 assert entry_file.is_file(), "条目文件不存在: " + entry.source_path
 local_hash = "sha256:" + hashlib.sha256(entry_file.read_bytes()).hexdigest()
@@ -486,15 +494,23 @@ ghost_hits = [
     if tuple(draft.heading_path[: len(ghost_path)]) == ghost_path
 ]
 assert ghost_hits == [], "这个标题路径本来就不该匹配到东西"
+# **真的调一次索引器的溯源解析**，而不是自己 raise 再自己 catch（后者只证明 try/except 能工作）。
+# 这里喂的是**真实清单 + 一个刚建好的空索引库**：文档还没被索引，解析必须在动库之前就拒绝——
+# 这正是上面那条注释要防的"清了一半 + 写了一半"。（同一个循环里再往后一步是"标题路径在文档中
+# 不存在"；两条分支是同一个失败关闭契约，本格驱动的是前一条。）
+from retrieval.corpus import load_corpus
+from retrieval.indexer import _resolve_rule_sources
+
+loaded = load_corpus(REPO_ROOT / "knowledge" / "corpus.yaml", repo_root=REPO_ROOT)
+empty_store = ChunkStore(":memory:")
 try:
-    # 索引器抛的就是这个异常（消息形状一致：规则 @ 标题路径 @ 文档）。
-    raise IndexingError(
-        "规则 " + rule.canonical_id + " 的标题路径在文档中不存在: "
-        + " > ".join(ghost_path) + " @ " + registered.source_path
-    )
+    _resolve_rule_sources(loaded, empty_store, repo_root=REPO_ROOT, mirrors={})
 except IndexingError as error:
-    print("× 标题路径写错 →", str(error)[:104], "…")
-    print("  （登记了却解析不到 → 整次索引失败，不静默）")
+    assert "未索引的文档" in str(error), error
+    print("× 溯源指向未索引的文档 →", str(error)[:104], "…")
+    print("  （解析在动库之前就拒绝：溯源表不会留下清了一半 + 写了一半）")
+else:
+    raise AssertionError("空索引库上溯源解析居然成功了：失败关闭破了")
 print()
 
 # (2) 造一个"只含这一篇文档"的最小语料：写进本次独占的临时目录。
@@ -609,6 +625,17 @@ for line in found.stdout.strip().splitlines():
     print("  " + line)
 assert found.returncode == 0, found.stdout + found.stderr
 assert all(draft.chunk_id in found.stdout for draft in matches), "查回来的 chunk 与分块结果对不上"
+
+# **查不到 ≠ 没问题**：索引库是好的、规则却在里面查不到，必须返回退出码 1（EXIT_NEGATIVE），
+# 不是 0。这一条是第 7 步正文明确承诺的契约，而它原来**没有被验证**——上面只跑了"没索引"（2）
+# 与"登记了"（0）两条路径，把 1 这条漏掉了：回归成 0 的话"查不到就当通过"会溜过去。
+missing = run_cli("rules", "--rule", "NOPE-999")
+print("索引库正常、规则没登记时查 NOPE-999：退出码", missing.returncode, "|",
+      (missing.stderr.strip() or missing.stdout.strip())[:70])
+assert missing.returncode == 1, (
+    "没登记的规则必须返回 1（EXIT_NEGATIVE），不能是 0——那等于「查不到就算通过」："
+    + missing.stdout + missing.stderr
+)
 
 back = run_cli("rules", "--chunk", matches[0].chunk_id)
 print("反向查（这段原文被哪条规则引用）：退出码", back.returncode, "|", back.stdout.strip())

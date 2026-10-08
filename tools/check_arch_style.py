@@ -25,27 +25,51 @@ TOKEN = BT + "[^" + BT + "\n]+" + BT
 ANCHOR = re.compile(
     "(" + TOKEN
     + r"|\b[\w./-]+\.(py|md|yaml|json):\d+"
-    + r"|[\w-]+/[\w./-]+"
+    # 路径形态只认 ASCII 路径字符：`\w` 含 CJK，旧写法 `[\w-]+/[\w./-]+` 让"并且/或者"
+    # "对/错"这类普通散文也算"精确锚点"，于是这条判据几乎永不触发（信号价值为零）。
+    + r"|[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+"
     + r"|allow_with_warnings|needs_human|uncovered_checker|action_hash)"
 )
-FENCE_OPEN = "^\\s*(" + BT * 3 + "|~~~)"
+FENCE_OPEN = re.compile(r"^\s*(`{3,}|~{3,})")
 SENTENCE = re.compile(r"[^。；！？\n]+[。；！？]?")
-FENCE = re.compile(FENCE_OPEN)
-
 
 def prose_lines(text: str):
-    """返回 (行号, 内容) 的散文行：跳过围栏代码与表格行。"""
-    inside = False
+    """返回 (行号, 内容) 的散文行：跳过围栏代码与表格行。
+
+    围栏状态按**开启时的标记**跟踪：只有同字符、且不短于开启标记的围栏才算关闭。
+    旧实现"任何围栏行都翻转"——`~~~` 块里出现一个 ``` 就把块内正文当成代码、把块外代码当成
+    正文继续算，既可能假红也可能**假绿**（门禁最怕后者）。
+    """
+
+    inside = None  # 开启中的围栏标记（字符 + 重复长度）
     for index, line in enumerate(text.splitlines(), 1):
-        if FENCE.match(line):
-            inside = not inside
+        match = FENCE_OPEN.match(line)
+        if match:
+            marker = match.group(1)
+            if inside is None:
+                inside = marker
+            elif marker[0] == inside[0] and len(marker) >= len(inside):
+                inside = None
             continue
-        if inside:
+        if inside is not None:
             continue
         stripped = line.strip()
         if stripped.startswith("|") or stripped.startswith("<"):
             continue
         yield index, line
+
+
+def prose_paragraphs(text: str):
+    """只产出**段落散文**行：在 prose_lines 之上再排除标题、引用、列表行。
+
+    为什么要再排除这三类：它们通常不以句末标点结尾，拼进长句统计会与下一行合成"人造长句"，
+    把 >90 字比例推过阈值——那是版式，不是散文质量（实测：三个长标题 + 三句短句能凑出 100%）。
+    """
+
+    for _number, line in prose_lines(text):
+        if line.strip().startswith(("#", ">", "-", "*", "|", "<")):
+            continue
+        yield line
 
 
 def sections(text: str):
@@ -62,6 +86,13 @@ def sections(text: str):
 
 
 def first_paragraph(body) -> str:
+    """每个 H2 小节的第一段散文（跳过表格、围栏、标题、引用块与列表行）。
+
+    **段落开始之后**再遇到列表/引用行就是分界：旧实现照样 `continue`，于是把分界线两侧的行
+    用空格接成一句（概括句长度因此虚高），而 `- **术语**：…` 这种列表开头还会让紧随其后的
+    正文被当成"本节第一段"。
+    """
+
     collected, started = [], False
     for line in body:
         stripped = line.strip()
@@ -69,7 +100,11 @@ def first_paragraph(body) -> str:
             if started:
                 break
             continue
-        if stripped.startswith((">", "-", "*", "#", "---")):
+        if stripped.startswith(("#", "---")):
+            continue
+        if stripped.startswith((">", "-", "*")):
+            if started:
+                break
             continue
         started = True
         collected.append(stripped)
@@ -98,7 +133,7 @@ def check_docs() -> list:
                 problems.append(path.name + " §" + title[:18] + " 概括句过长（" + str(len(first)) + " 字）：" + first[:34] + "…")
             if not ANCHOR.search(" ".join(body)):
                 problems.append(path.name + " §" + title[:18] + " 没有精确锚点（文件:行 / 标识符 / 路径 / 枚举）")
-        prose = " ".join(line for _n, line in prose_lines(text))
+        prose = " ".join(prose_paragraphs(text))
         sentences = [s.strip() for s in SENTENCE.findall(prose) if len(s.strip()) > 3]
         ratio = len([s for s in sentences if len(s) > 90]) / max(1, len(sentences))
         if ratio > 1 / 3:

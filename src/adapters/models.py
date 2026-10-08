@@ -91,7 +91,18 @@ _EVENT_ID_UNSAFE_CHARS = frozenset(chr(code) for code in range(33)) | frozenset(
 
 
 class AdapterEventError(ValueError):
-    """规范事件或适配器声明不合法。一律失败关闭：不猜、不降级、不放行。"""
+    """规范事件或适配器声明不合法。一律失败关闭：不猜、不降级、不放行。
+
+    可选的结构化原因码 `code`：让**上层**（`AgentRuntime._adapt_failure`）按码分流，而不是按错误
+    文案猜。按文案匹配的代价是实测出来的：hook 线协议抛的是「未支持的 hook 事件 …」，而映射表
+    只认「未知事件类型」/「不支持事件」两个子串，于是 `unknown_event` 那一支**永不触发**、一律落到
+    更笼统的原因码（第 52 条：失败关闭不等于理由正确）。
+    """
+
+    def __init__(self, message: str = "", *, code: Optional[str] = None) -> None:
+        super().__init__(message)
+        # 缺省 None：不是每种失败都值得一个专用码，只有调用方真的按码分支的那些才标。
+        self.code = code
 
 
 class ManifestError(AdapterEventError):

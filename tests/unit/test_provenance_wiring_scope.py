@@ -237,3 +237,83 @@ def test_missing_file_and_broken_yaml_are_rejected(tmp_root: Path) -> None:
         load_wiring_scope(tmp_root / "missing.yaml")
     with pytest.raises(WiringScopeError):
         load_wiring_scope(_write(tmp_root, "scope: [unclosed\n"))
+
+# —— 加载期校验（L8 low #8/#9/#10）：三条都是"注释里承诺了、模型里没查"的形态，
+#    用例必须证明它们在加载期真的失败，而不是被静默收下。
+
+def _entry_with(**overrides: str) -> str:
+    fields = {
+        "id": "case-entry",
+        "decision": "out_of_scope",
+        "kind": "agent_runtime",
+        "owner": "host",
+        "reason": "实验通道，不在治理范围。",
+        "consequence": "只报告。",
+        "expires_at": '"2026-12-31"',
+    }
+    fields.update(overrides)
+    return "  - " + "\n    ".join(f"{key}: {value}" for key, value in fields.items()) + "\n"
+
+def test_non_canonical_dates_are_refused(tmp_root):
+    """#8：YYYYMMDD / 周日期这类 ISO 变体不许进声明文件（口径必须与仓库其余数据一致）。
+
+    修复前 _require_date 只调 date.fromisoformat，它把这些写法一并收下并原样回显进报告。
+    """
+
+    for bad in ("20261231", "2026-W40-1", "2026-12-31T00:00:00"):
+        with pytest.raises(WiringScopeError) as error:
+            load_wiring_scope(
+                _write(tmp_root, _document(_entry_with(expires_at=f"'{bad}'")))
+            )
+        assert "YYYY-MM-DD" in str(error.value), error.value
+
+    # 反真空：规范形态照常加载。
+    scope = load_wiring_scope(
+        _write(tmp_root, _document(_entry_with(expires_at="'2026-12-31'")))
+    )
+    assert scope.as_json()["declared"] == 1
+
+def test_tree_ref_must_be_a_pointer_or_outside_marker(tmp_root):
+    """#9：tree_ref 只放指针（仓库相对路径 / <outside-workspace>），且与 governs_tree 不矛盾。
+
+    修复前这一条只写在注释里：绝对路径、路径穿越、一段说明文字、以及
+    governs_tree=self + tree_ref 的自相矛盾声明都能原样加载。
+    """
+
+    for bad in ("/etc/passwd", "../../etc/passwd", "docs/../etc/passwd", "这是一段说明文字", "has space/x"):
+        with pytest.raises(WiringScopeError) as error:
+            load_wiring_scope(
+                _write(tmp_root, _document(_entry_with(tree_ref=f"'{bad}'", governs_tree="other")))
+            )
+        assert "tree_ref" in str(error.value), error.value
+
+    with pytest.raises(WiringScopeError) as error:
+        load_wiring_scope(
+            _write(tmp_root, _document(_entry_with(tree_ref="'docs/x.md'", governs_tree="self")))
+        )
+    assert "governs_tree" in str(error.value), error.value
+
+    # 反真空：合法指针（仓库相对路径 / 工作区外标记）照常加载。
+    for good in ("docs/policies/x.md", "<outside-workspace>"):
+        scope = load_wiring_scope(
+            _write(tmp_root, _document(_entry_with(tree_ref=f"'{good}'", governs_tree="other")))
+        )
+        assert scope.as_json()["declared"] == 1
+
+def test_channel_kinds_must_be_non_empty(tmp_root):
+    """#10：channel_kinds 的空键 / 空值会静默落到 undeclared，必须加载期拒绝。
+
+    修复前这个字段没有任何形状校验：空值不会报错，只会让该通道被判成"没有声明覆盖"。
+    """
+
+    for bad in ('{dsh-profile: ""}', '{"": agent_runtime}'):
+        text = _document(_entry_with()) + f"channel_kinds: {bad}\n"
+        with pytest.raises(WiringScopeError) as error:
+            load_wiring_scope(_write(tmp_root, text))
+        assert "channel_kinds" in str(error.value), error.value
+
+    # 反真空：合法映射照常加载（值可以与任何已声明的 kind 不同——那是"映射存在但暂无匹配
+    # 条目"的已承认状态，不在本用例的判据里）。
+    good = _document(_entry_with()) + "channel_kinds:\n  dsh-profile: agent_runtime\n"
+    scope = load_wiring_scope(_write(tmp_root, good))
+    assert scope.as_json()["channel_kinds"] == {"dsh-profile": "agent_runtime"}

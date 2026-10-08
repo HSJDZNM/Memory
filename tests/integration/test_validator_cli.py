@@ -81,6 +81,21 @@ def test_registry_show_rejects_unknown_ids() -> None:
     assert "config error" in completed.stderr
 
 
+def test_probe_directory_failure_is_a_documented_exit_code(tmp_path: Path) -> None:
+    """探针的目录建不出来时必须给退出码 2，而不是裸 traceback + 1（复核发现）。"""
+
+    root = write_validation_config(tmp_path)
+    blocker = root / ".tmp" / "validators"
+    blocker.parent.mkdir(parents=True, exist_ok=True)
+    blocker.write_text("not a directory" + chr(10), encoding="utf-8", newline="")
+
+    completed = cli("probe", "--config-root", str(root))
+
+    assert completed.returncode == 2, completed.stderr
+    assert "config error" in completed.stderr
+    assert "Traceback" not in completed.stderr
+
+
 def test_probe_reports_tool_availability() -> None:
     completed = cli("probe", "--json")
 
@@ -195,6 +210,33 @@ def test_unknown_validator_filter_is_rejected() -> None:
 
     assert completed.returncode == 2
     assert "tool.absent" in completed.stderr
+
+
+def test_git_paths_are_converted_to_the_workspace_coordinate_system(monkeypatch) -> None:
+    """git 的路径锚在仓库顶层，必须换算成 workspace 坐标系（复核发现）。"""
+
+    from validators import cli as cli_module
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(
+            cli_module, "_git_prefix", lambda anchor: "tests/fixtures/validators/project/"
+        )
+        converted = cli_module._workspace_relative(
+            (
+                "tests/fixtures/validators/project/src/shop/a.py",
+                "tests/fixtures/validators/project/tests/test_a.py",
+                "src/policy/models.py",  # 工作区之外：丢掉
+                "tests/fixtures/validators/project/",  # 目录项：换算后为空，丢掉
+            ),
+            Path("tests/fixtures/validators/project"),
+        )
+
+    assert converted == ("src/shop/a.py", "tests/test_a.py")
+
+    # 顶层工作区（前缀为空）原样返回。
+    with monkeypatch.context() as patcher:
+        patcher.setattr(cli_module, "_git_prefix", lambda anchor: "")
+        assert cli_module._workspace_relative(("src/a.py",), Path(".")) == ("src/a.py",)
 
 
 def test_changed_from_git_rejects_option_like_refs(tmp_root: Path) -> None:

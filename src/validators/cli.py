@@ -145,7 +145,48 @@ def _git_changed(ref: str, anchor: Path) -> Tuple[str, ...]:
             "git diff 失败（" + ref + "）：" + (completed.stderr or "").strip()
             + "；没有变更集时测试验证器会失败关闭"
         )
-    return tuple(line.strip() for line in completed.stdout.splitlines() if line.strip())
+    paths = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    return _workspace_relative(paths, anchor)
+
+
+def _git_prefix(anchor: Path) -> str:
+    """anchor 相对**仓库顶层**的前缀（带结尾斜杠）；顶层或不是 git 仓库时是空串。"""
+
+    import subprocess
+
+    completed = subprocess.run(
+        ["git", "rev-parse", "--show-prefix"],
+        cwd=str(anchor),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if completed.returncode != 0:
+        return ""
+    return completed.stdout.strip().replace("\\", "/")
+
+
+def _workspace_relative(paths: Sequence[str], anchor: Path) -> Tuple[str, ...]:
+    """把 git 的**仓库顶层**相对路径换算成 anchor（workspace）坐标系里的路径。
+
+    `git diff --name-only` 的输出锚在仓库顶层，而本次判定里的一切（target、证据、测试选择）
+    都活在 workspace 坐标系里：`--workspace` 指到子目录时，原样返回会让
+    "sub/dir/file.py" 与 "file.py" 同时出现在一次判定里，选择与证据因此对不上（复核发现）。
+    工作区以外的变更直接丢掉——它们本来就不在这次判定的范围内。
+    """
+
+    prefix = _git_prefix(anchor)
+    if not prefix:
+        return tuple(paths)
+    converted: list[str] = []
+    for path in paths:
+        if not path.startswith(prefix):
+            continue
+        relative = path[len(prefix) :]
+        if relative:
+            converted.append(relative)
+    return tuple(converted)
 
 
 def build_context_from_args(args: argparse.Namespace, root: Path, workspace: Path) -> PolicyContext:
@@ -194,10 +235,17 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         print("config error: " + str(error), file=sys.stderr)
         return EXIT_ERROR
 
-    if args.command == "registry":
-        return _registry(args, config)
-    if args.command == "probe":
-        return _probe(args, config, workspace)
+    if args.command in ("registry", "probe"):
+        try:
+            if args.command == "registry":
+                return _registry(args, config)
+            return _probe(args, config, workspace)
+        except (RegistryError, ValueError, OSError) as error:
+            # registry / probe 以前在 try 之外：_probe 会建目录、起进程，config-root 不可写
+            # （或 .tmp/validators 是个文件）时 OSError 直接穿出去 -> 裸 traceback + 退出码 1，
+            # 而 probe 的契约是"跑得成时恒退 0"、跑不成属于 EXIT_ERROR(2)（复核发现）。
+            print("config error: " + str(error), file=sys.stderr)
+            return EXIT_ERROR
 
     rule_dirs = tuple(Path(item) for item in args.rules) if args.rules else (anchor / "policies",)
     try:

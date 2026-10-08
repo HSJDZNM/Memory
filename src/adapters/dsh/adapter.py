@@ -59,6 +59,7 @@ from policy.models import (
 
 # 依赖提取的**唯一实现**在共享层（Agent 无关）：这里保留同名再导出，
 # Phase 2 的对外接口与行为逐字节不变，Phase 6 的接线点也调同一份实现。
+from ..models import AdapterEventError
 from ..textfacts import (
     DependencyProposal,
     governed_dependencies,
@@ -143,11 +144,15 @@ _CONFIG_FIELDS: Tuple[str, ...] = (
 )
 
 
-class DshEventError(ValueError):
+class DshEventError(AdapterEventError):
     """dsh 事件不符合已核实的线协议，或适配器配置不足以安全判定。
 
     未知事件、未知工具、缺字段、载荷类型错误、缺少 layer 映射——一律失败关闭：
     Adapter 拒绝映射，Hook 据此阻断并给出可诊断信息。
+
+    归入 `AdapterEventError` 这一族（此前是裸 `ValueError`）：运行时只在 Adapter 边界收敛
+    `AdapterEventError`，裸 ValueError 会落到「未预期异常」那一档，理由从「未知事件」退化成
+    `internal_error`——同一类失败在两个适配器家族里得到两个理由。
     """
 
 
@@ -1070,7 +1075,8 @@ def read_payload(raw: Any) -> Mapping[str, Any]:
     if event_name not in SUPPORTED_HOOK_EVENTS:
         raise DshEventError(
             f"未支持的 hook 事件 {event_name!r}；Phase 2 只治理 {list(SUPPORTED_HOOK_EVENTS)}，"
-            "未识别事件不得静默放行"
+            "未识别事件不得静默放行",
+            code="unknown_event",
         )
 
     for name in ("session_id", "tool_name", "tool_use_id", "hook_event_name"):

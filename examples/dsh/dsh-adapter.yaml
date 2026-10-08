@@ -76,7 +76,10 @@ registry_approved: ../../registry/tool-registry.approved.json
 enforcement_ledger: ../../.tmp/artifacts/dsh-enforcement-ledger.jsonl
 # 高风险动作（pwsh / bash / run_code）需要事先签发、且与具体 action_hash 绑定的审批文件。
 # 生成方式见 README：python -m enforcement.cli approve --request <req.json> --out <approval.json>
-# approval_file: .policy/approval.json
+# 路径同样相对**本文件所在目录**（见文件头）：本文件在 <project>/.policy/ 下时，写 approval.json 即可；
+# 写成 .policy/approval.json 会解析成 <project>/.policy/.policy/approval.json —— 那个文件不存在，
+# 于是每个高风险动作都以"审批缺失"失败关闭（看起来像没审批，实际是路径写错）。
+# approval_file: approval.json
 
 # —— G3：动手前取证（可选；默认关闭 = 保持 Phase 2 契约） ——
 # 声明并启用后，pre-execute 会在**影子工作区**（副本，用完即删）上应用"提议的新内容"，
@@ -86,7 +89,11 @@ enforcement_ledger: ../../.tmp/artifacts/dsh-enforcement-ledger.jsonl
 # （evidence_unavailable，退出码 2），绝不回落到"没证据就当跳过"。
 #
 # 预算不等式（check_wiring 会查）：pre_evidence.timeout_ms + timeout_ms < hooks.json 的 timeout。
-# 上面的 hooks.json 写的是 30s，所以这里先只写形状、不启用；要启用就把 timeout 一起调大。
+# 上面的 hooks.json 写的是 30s、本文件的 timeout_ms 是 5000，因此取证预算最多 24999ms；
+# 下面给 20000（和 = 25000 < 30000，直接取消注释就能启用）。
+# **不要**把它调成 60000：65000 > 30000 会让接线自检报不等式不满足，而 dsh 侧 30s 就把 Hook 杀掉——
+# 被杀等于放行，正是这条不等式要防的路径。要更长的取证预算，必须同一次改动里把 hooks.json 的
+# timeout 一起调大。
 #
 # pre_evidence:
 #   enabled: true
@@ -95,4 +102,4 @@ enforcement_ledger: ../../.tmp/artifacts/dsh-enforcement-ledger.jsonl
 #   shadow_root: .policy/pre-evidence   # 影子副本落点（用完必删；与被治理项目重叠会被拒绝）
 #   exclude: [".git/**", ".policy/**", ".tmp/**", "**/__pycache__/**"]
 #   validators: []                  # 省略 = 按规则选择；写死可省时间（例如 [py.source, tool.ruff]）
-#   timeout_ms: 60000
+#   timeout_ms: 20000

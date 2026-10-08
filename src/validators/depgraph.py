@@ -209,14 +209,18 @@ def _resolve_module(
 ) -> Tuple[DependencyResolution, Optional[str], str]:
     """解析一个绝对模块名。返回 (解析结果, 项目内路径, 原因)。"""
 
+    # **项目内优先**：本地完全可以有 types.py、test/、email/、code/ 这类与标准库同名的
+    # 包/模块，被 import 时那是一条真实的项目内依赖。先查标准库会把它归成 STDLIB、
+    # 静默丢掉这条边，而且连 unresolved 记录都不留（复核发现）。
+    path = index.modules.get(module)
+    if path is not None:
+        return DependencyResolution.INTERNAL, path, "项目内模块 " + module + " 指向 " + path
+
     top = module.split(".")[0]
     if top == "__future__":
         return DependencyResolution.STDLIB, None, "标准库 __future__"
     if top in stdlib:
         return DependencyResolution.STDLIB, None, "标准库 " + top
-    path = index.modules.get(module)
-    if path is not None:
-        return DependencyResolution.INTERNAL, path, "项目内模块 " + module + " 指向 " + path
     if top in index.top_levels:
         return (
             DependencyResolution.UNRESOLVED,
@@ -224,6 +228,21 @@ def _resolve_module(
             "看起来是项目内模块（顶层包 " + top + " 存在），但索引里没有 " + module,
         )
     return DependencyResolution.EXTERNAL, None, "外部包 " + top
+
+
+def _module_name(target_path: str, package: Sequence[str]) -> Optional[str]:
+    """目标文件的模块名：包初始化器（`__init__.py`）的名字**就是它所在的包**。
+
+    旧实现一律用 Path(target_path).stem，于是 src/shop/__init__.py 的模块名成了
+    "shop.__init__"（叠加当时 package_of 的缺陷时甚至只剩 "__init__"）：所有读 module /
+    to_payload() 的消费方都拿到一个根本不存在的模块 id（复核发现）。仓库根的 __init__.py
+    没有包名可给，返回 None（说不出名字，好过编一个）。
+    """
+
+    stem = Path(target_path).stem
+    if stem != "__init__":
+        return ".".join([*package, stem])
+    return ".".join(package) or None
 
 
 def _relative_modules(
@@ -357,6 +376,12 @@ def build_dependencies(
                     )
                 )
                 continue
+            # `from . import name` 的展开结果一律照记（解析不了就是 unresolved）：name 可能
+            # 只是包里的属性，但也可能是缺失的子模块，静态证明不了"它一定存在"——**依赖类判据
+            # 只能站在能证明的那一侧**。这条口径由跨路径契约用例钉住：
+            # tests/integration/test_dependency_path_consistency.py 的 EXPECTED_ARCH_BLOCK 对
+            # "相对导入：from . import repository" 要求 block=True，且预执行路径与 AST 路径必须
+            # 给出逐字相同的结论（曾经为了消除"属性假阻断"在这里放行，那条契约当场变红）。
             for module in modules:
                 add(module, kind=DependencyKind.FROM_IMPORT, line=fact.line, column=fact.column)
             continue
@@ -392,8 +417,6 @@ def build_dependencies(
         unresolved=tuple(sorted(unresolved, key=lambda item: item.sort_key)),
         nodes=tuple(sorted(nodes)),
         edges=tuple(sorted(edges, key=lambda item: (item.source, item.target, item.kind))),
-        module=".".join([*absolute_package, Path(target_path).stem])
-        if package is not None
-        else None,
+        module=_module_name(target_path, absolute_package) if package is not None else None,
         package=absolute_package,
     )

@@ -28,14 +28,19 @@ escalation:
     match:
       - "tests/**/test_{stem}.py"
       - "tests/**/{stem}_test.py"
+  # 每一级都要覆盖 test_patterns 声明的**两种**约定（test_*.py 与 *_test.py）：
+  # 只写前缀约定时，tests/shop/order_repository_test.py 这类文件在任何一级都选不中——
+  # "整个测试套件"其实漏了半个套件，而同包测试存在却被报成"没有相关测试"（复核发现）。
   - level: package
     description: 生产文件所在包对应的测试目录
     match:
       - "tests/**/{package}/**/test_*.py"
+      - "tests/**/{package}/**/*_test.py"
   - level: suite
     description: 整个测试套件（相关性不足时的最后一级）
     match:
       - "tests/**/test_*.py"
+      - "tests/**/*_test.py"
 
 limits:
   max_nodeids: 40

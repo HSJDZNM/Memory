@@ -17,9 +17,18 @@ REQUIRED_CELL = ("cell_type", "metadata", "source")
 
 def check(path: Path) -> list[str]:
     problems: list[str] = []
+    # 读与解析分开报：UnicodeDecodeError 是 ValueError 的子类（不是 OSError/JSONDecodeError），
+    # 而"文件不存在/是个目录"这类 OSError 也不是"不是合法 JSON"——旧写法把两者都盖成一句话，
+    # 一半是崩溃（非 UTF-8 直接逃出去），一半是把真实原因说错。
     try:
-        notebook = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        return [f"{path}: 读不出来（{type(error).__name__}: {error}）"]
+    except UnicodeDecodeError as error:
+        return [f"{path}: 不是 UTF-8 文本（{error}）"]
+    try:
+        notebook = json.loads(text)
+    except json.JSONDecodeError as error:
         return [f"{path}: 不是合法 JSON（{error}）"]
 
     # JSON 合法不等于形状正确：json.loads 可以返回 [] / "x" / 42 / null，
@@ -68,7 +77,10 @@ def check(path: Path) -> list[str]:
         try:
             compile(body, f"<cell {index}>", "exec")
         except SyntaxError as error:
-            problems.append(f"{location}: 语法错误 {error.msg}（第 {error.lineno} 行）")
+            # 行号可能缺（NUL 字节这类源码级错误的 lineno 是 None）：旧写法会打印
+            # "（第 None 行）"——读数里写一个假行号比不写更糟。
+            where = f"（第 {error.lineno} 行）" if error.lineno else ""
+            problems.append(f"{location}: 语法错误 {error.msg}{where}")
     return problems
 
 
