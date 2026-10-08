@@ -126,8 +126,18 @@ def agent_adapter() -> dict[str, object]:
     hooks_config = REPO_ROOT / "examples" / "dsh" / "hooks.json"
     hook_timeout: object = None
     if hooks_config.is_file():
-        document = json.loads(hooks_config.read_text(encoding="utf-8"))
-        for groups in document.get("hooks", {}).values():
+        # 这是**手编的仓库配置**：坏掉的 JSON（或根不是对象）不能把整份阶段证据打挂——
+        # 与 _display_path 同一条纪律：证据要写得下来，一个读数读不到就如实记 None 并出声。
+        try:
+            document = json.loads(hooks_config.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            print(
+                "警告：%s 读不出（%s），dsh_hook_timeout_seconds 记 None"
+                % (_display_path(hooks_config), error),
+                file=sys.stderr,
+            )
+            document = None
+        for groups in (document or {}).get("hooks", {}).values():
             for group in groups:
                 for entry in group.get("hooks", []):
                     if "adapters.dsh.hooks" in str(entry.get("command", "")):
