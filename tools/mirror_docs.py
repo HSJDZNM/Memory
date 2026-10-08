@@ -491,7 +491,11 @@ def url_to_relpath(url, spec):
     path = urlparse(url).path
     prefs = spec_prefixes(spec)
     if prefs and spec.get("strip_prefix", True):
-        rel = path[len(max(prefs, key=len)):]
+        longest = max(prefs, key=len)
+        # 只在前缀**真的**是这个路径的前缀时才剥。in_scope_path() 还认 exact 条目
+        # （dora 的 /guides/... 就是靠 exact 进来的），对这类路径按长度硬切会切出
+        # "etrics/index.md" 这种垃圾相对路径——回退到保留完整站点层级。
+        rel = path[len(longest):] if path.startswith(longest) else path.lstrip("/")
     else:
         # 多根镜像必须保留完整站点层级，否则不同专题根都会落到 index.md 而互相覆盖
         rel = path.lstrip("/")
