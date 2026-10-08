@@ -14,7 +14,15 @@ STAGES = ["01_analyze.py", "02_fetch.py", "03_build.py", "04_index.py", "05_veri
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    argv = sys.argv[1:]
+    flags = [item for item in argv if item.startswith("-")]
+    args = [item for item in argv if not item.startswith("-")]
+    if not args and flags:
+        # 只给了开关就不再当成"没给参数"：`pipeline.py --help` 或者手滑敲成 `--dry-run`，
+        # 旧行为是把开关一丢、直接跑完整条流水线（包含真实网络抓取）——那是静默的。
+        print("本工具没有开关（收到：" + " ".join(flags) + "）")
+        print("用法: python pipeline.py [all|01|02|03|04|05]")
+        return 2
     if not args or args[0] == "all":
         todo = STAGES
     else:
