@@ -157,14 +157,19 @@ def measure(
     started = time.perf_counter()
     matched = 0
     violations = 0
-    for _ in range(repeats):
-        for context in contexts:
-            result = evaluate(rules, context)
-            matched += len(result.matched_rules)
-            violations += len(result.violations)
-    elapsed = time.perf_counter() - started
-    _, peak_bytes = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    try:
+        for _ in range(repeats):
+            for context in contexts:
+                result = evaluate(rules, context)
+                matched += len(result.matched_rules)
+                violations += len(result.violations)
+        elapsed = time.perf_counter() - started
+        _, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        # 只在成功路径 stop 的话，`evaluate` 一抛异常（或取内存失败），内存追踪就**全局**留在
+        # 开着的状态：之后每一次分配都多一层开销，同一进程里后续测量全部失真，而且没有人
+        # 看得出来——读数还在，只是不再是"未追踪"时的那个数。
+        tracemalloc.stop()
 
     evaluations = repeats * len(contexts)
     return {
