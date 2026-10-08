@@ -75,7 +75,9 @@ def _get(url):
             except Exception as exc:  # noqa: BLE001 - 重试后统一抛出
                 last = exc
                 time.sleep(1.0)
-    raise RuntimeError("页面抓取失败: " + url + " -> " + repr(last))
+    # 带上 from：这条 raise 在两个循环都退出之后执行，没有隐式 __context__ 链，
+    # 不显式绑因的话原始异常（TLS/网络那一类，docstring 说要能诊断的东西）只剩 repr。
+    raise RuntimeError("页面抓取失败: " + url + " -> " + repr(last)) from last
 
 
 def _norm(text):
