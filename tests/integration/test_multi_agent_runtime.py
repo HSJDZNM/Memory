@@ -463,6 +463,40 @@ def test_a_governed_event_reads_the_ledger_once(runtime, monkeypatch) -> None:
     assert len(reads) == 1, reads
 
 
+def test_an_unknown_hook_event_gets_the_unknown_event_reason(runtime) -> None:
+    """原因码按**结构化 code** 取，不按错误文案猜（第 52 条：失败关闭不等于理由正确）。
+
+    hook 线协议对未识别的事件名抛「未支持的 hook 事件 …」，而旧映射只认「未知事件类型」/
+    「不支持事件」两个子串：`unknown_event` 那一支**永不触发**，一律落到更笼统的原因码
+    （legacy 走 `context_error`，dsh 因为抛的是裸 `ValueError` 而落到 `internal_error`）。
+    """
+
+    legacy = {
+        "hook_event_name": "ToolTeleport",
+        "session_id": "s-1",
+        "tool_name": "save_file",
+        "tool_use_id": "call-1",
+        "cwd": str(WORKSPACE),
+        "tool_input": {"file_path": "src/shop/order_controller.py", "text": "x = 1"},
+    }
+    outcome = runtime.handle("legacy-post-only", legacy)
+    assert outcome.response.reason_code == "unknown_event", outcome.response.reason_code
+
+    dsh = {
+        "hook_event_name": "ToolTeleport",
+        "session_id": "s-2",
+        "tool_name": "Edit",
+        "tool_use_id": "call-2",
+        "tool_input": {
+            "file_path": "src/shop/order_controller.py",
+            "old_string": "a",
+            "new_string": "b",
+        },
+    }
+    dsh_outcome = runtime.handle("dsh", dsh)
+    assert dsh_outcome.response.reason_code == "unknown_event", dsh_outcome.response.reason_code
+
+
 def test_trace_registry_separates_owners(tmp_root: Path) -> None:
     registry = TraceRegistry(tmp_root / "traces.jsonl")
     registry.register(trace_id="t-a", owner_agent="dsh", request_id="r")

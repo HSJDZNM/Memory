@@ -130,7 +130,8 @@ class EventAdapter(Adapter):
             known = sorted(wire)
             raise AdapterEventError(
                 f"未支持的 hook 事件 {event_name!r}：{self.agent_id} 只治理 {known}，"
-                "未识别事件不得静默放行"
+                "未识别事件不得静默放行",
+                code="unknown_event",
             )
 
         session_id = _require_text(raw_event.get(hooks.session_field), where=hooks.session_field)

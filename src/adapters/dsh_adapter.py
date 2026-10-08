@@ -49,7 +49,8 @@ class DshAdapter(Adapter):
         if event_type is None:
             raise AdapterEventError(
                 f"未支持的 dsh hook 事件 {event_name!r}：本 Adapter 只治理 "
-                f"{sorted(DSH_WIRE)}，未识别事件不得静默放行"
+                f"{sorted(DSH_WIRE)}，未识别事件不得静默放行",
+                code="unknown_event",
             )
 
         session_id = _require_text(raw_event.get("session_id"), where="session_id")
