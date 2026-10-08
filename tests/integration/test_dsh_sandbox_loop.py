@@ -1014,10 +1014,10 @@ def test_isolated_home_paths_are_siblings_of_the_project():
     assert loop.PROJECT not in loop.ISOLATED_TMP.parents
 
 
-def test_isolated_home_sets_the_three_child_env_vars(
+def test_isolated_home_sets_the_child_env_vars(
     monkeypatch: pytest.MonkeyPatch, tmp_root: Path
 ):
-    """三条变量只落在**子进程**的 env 里：值来自两个隔离根，既有接线不受影响。"""
+    """四条变量只落在**子进程**的 env 里：值来自两个隔离根，既有接线不受影响。"""
 
     isolated = tmp_root / "phase-2-sandbox"
     monkeypatch.setattr(loop, "ISOLATED_HOME", isolated / "dsh-home")
@@ -1026,6 +1026,7 @@ def test_isolated_home_sets_the_three_child_env_vars(
     assert env["DSH_HOME"] == str(isolated / "dsh-home")
     assert env["TEMP"] == str(isolated / "dsh-tmp")
     assert env["TMP"] == str(isolated / "dsh-tmp")
+    assert env["TMPDIR"] == str(isolated / "dsh-tmp"), "Node/libuv 在 POSIX 上优先读 TMPDIR"
     assert env["PYTHONPATH"] == str(loop.REPO_ROOT / "src"), "既有接线不许被这条开关带坏"
     assert env["PYTHONIOENCODING"] == "utf-8"
 

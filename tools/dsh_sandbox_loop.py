@@ -907,14 +907,19 @@ def acl_temp_root_reason(failure: ConfigFailure) -> str:
 
 
 def isolated_home_env() -> dict[str, str]:
-    """`--isolated-home` 要设的三条环境变量（**只给 dsh 子进程**，不改进程自己的环境）。
+    """`--isolated-home` 要设的四条环境变量（**只给 dsh 子进程**，不改进程自己的环境）。
 
     两个隔离根与受控项目 demo-shop 平级：dsh 的 Windows ACL 沙箱要求临时根在工作区之外，
     把隔离根放进项目里面会被 dsh 拒绝启动（见 `classify_acl_temp_root()`）。
+
+    **三条临时根变量都要设**：Node/libuv 在 POSIX 上**优先**读 `TMPDIR`，只有它不存在才退回
+    `TMP`/`TEMP`。只设后两个时，子进程仍带着父进程的 `TMPDIR`（门禁里那是仓库内的 `.tmp/tmp`），
+    隔离等于没生效——这正是模块 docstring 想避免的"系统 temp 下的 mkdtemp 被拒"场景。
+    本仓库自己的工具链也是三个都设（`tools/ci_local.py` 的每个步骤子进程）。
     """
 
     temp = str(ISOLATED_TMP)
-    return {"DSH_HOME": str(ISOLATED_HOME), "TEMP": temp, "TMP": temp}
+    return {"DSH_HOME": str(ISOLATED_HOME), "TEMP": temp, "TMP": temp, "TMPDIR": temp}
 
 
 def sandbox_state(
@@ -944,7 +949,7 @@ def sandbox_state(
 
 
 def host_facts(*, isolated_home: bool) -> dict:
-    """端到端读数专有的宿主事实（21 号 §2.4）：隔离开关 + 本次子进程实际拿到的三个根。
+    """端到端读数专有的宿主事实（21 号 §2.4）：隔离开关 + 本次子进程实际拿到的四个环境变量。
 
     默认（不给 `--isolated-home`）时子进程继承父进程的环境，三个根通常在工作区之外 →
     按统一口径写成 `<outside-workspace>`；给了开关就是仓库内的 `.tmp/phase-2-sandbox/...`。
@@ -962,6 +967,7 @@ def host_facts(*, isolated_home: bool) -> dict:
         "temp_roots": [
             reading.display_path(os.environ.get("TEMP"), root=REPO_ROOT),
             reading.display_path(os.environ.get("TMP"), root=REPO_ROOT),
+            reading.display_path(os.environ.get("TMPDIR"), root=REPO_ROOT),
         ],
     }
 
