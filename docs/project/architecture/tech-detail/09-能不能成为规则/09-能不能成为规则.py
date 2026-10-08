@@ -411,7 +411,10 @@ BASE = yaml.safe_load((REPO_ROOT / "policies" / "coding" / "DOC-001.yaml").read_
 
 
 def mutate(name, change):
-    """复制真实规则 → 改一处 → 写进临时目录 → 试着加载；返回 (异常名, 出错的字段)。"""
+    """复制真实规则 → 改一处 → 写进临时目录 → 试着加载。
+
+    返回**三元组** `(写出的文件路径, 异常名或「加载成功（没拦住）」, 出错的字段)`：第二个元素是
+    **字符串**而不是异常类（表格直接打印它），第三个元素在整个模型级错误时是占位文本。"""
     document = yaml.safe_load(yaml.safe_dump(BASE, allow_unicode=True, sort_keys=False))
     change(document)
     path = TEMP / (name + ".yaml")
