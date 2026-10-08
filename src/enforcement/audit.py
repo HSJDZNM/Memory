@@ -491,6 +491,9 @@ class FileAuditSink:
             "foreign_records": foreign,
             "issues": issues,
             "final_digest": self._final_digest(chain),
-            "updated_at": to_timestamp(utc_now()),
+            # updated_at 是**日志最后一次被写入**的时刻（最后一条链式记录的 recorded_at），
+            # 不是"这份摘要什么时候生成的"：旧口径让一份陈旧（或空）的日志看起来刚刚更新过，
+            # 读证据的人会据此以为它是最新的。空日志没有更新时间，如实写空串。
+            "updated_at": "" if not chain else str(chain[-1].get("recorded_at", "")),
             "digest": digest_of([record.get("digest") for record in chain]),
         }

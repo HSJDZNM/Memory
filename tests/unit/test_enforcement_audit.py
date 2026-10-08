@@ -209,6 +209,20 @@ def test_deleting_a_record_breaks_the_chain(tmp_root):
     assert any("序号" in issue for issue in issues)
 
 
+def test_describe_reports_the_log_write_time_not_the_read_time(tmp_root):
+    """updated_at 必须是日志最后一次写入的时刻：陈旧/空日志不能看起来"刚刚更新过"。"""
+
+    sink = sink_for(tmp_root)
+    stamp = utc_now() - timedelta(seconds=3600)
+    sink.append(AuditStage.REQUEST, payload={"a": 1}, now=stamp)
+
+    assert sink.describe()["updated_at"] == to_timestamp(stamp)
+
+    # 空日志没有"更新时间"：不许拿读取时刻顶上。
+    empty = FileAuditSink(tmp_root / "empty.jsonl", workspace=tmp_root)
+    assert empty.describe()["updated_at"] == ""
+
+
 def test_describe_reads_the_audit_file_once(tmp_root, monkeypatch):
     """一份 describe() 只扫一次文件：链记录、外来行、final_digest 与 issues 同源。
 
