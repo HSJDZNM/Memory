@@ -594,8 +594,7 @@ print("  删掉 bad.py → 覆盖率门禁会 FAIL 并指名道姓，但那也�
         code(
             '''
 # 结构性淘汰：语言包口径 + 外部工具探针。
-from pathlib import Path
-
+# 这一格不需要 pathlib：镜像与规则目录都通过 REGISTRY / 项目档案的接口拿到，不自己拼路径。
 from validators.adapters.base import probe_tool
 packs = {pack.id: pack.language for pack in REGISTRY.rule_packs}
 print(pad("规则包", 22) + pad("语言", 10) + "包含的验证器")
