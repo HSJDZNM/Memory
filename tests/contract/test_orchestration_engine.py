@@ -31,8 +31,9 @@ from policy import models as policy_models
 from orchestration import models as orchestration_models
 from orchestration.checkpoint import CHECKPOINT_SCHEMA_VERSION, JsonCheckpointStore
 from orchestration.client import API_SCHEMA_VERSION, EvaluateCall, RetrieveCall, ValidateCall
-from orchestration.engines import ReferenceEngine
-from orchestration.errors import CheckpointError, NodeContractError
+from orchestration.engines import ReferenceEngine, StepExecutor
+from orchestration.errors import CheckpointError, EngineUnavailableError, NodeContractError
+from orchestration.langgraph_engine import LangGraphEngine, _load
 from orchestration.graph import (
     DEFAULT_SPEC,
     END,
@@ -335,6 +336,77 @@ def test_graph_problems_reject_a_graph_that_cannot_finish() -> None:
 
     # 反向不变量：真实的图定义一条都不误报（自检不能靠"多报"显得有用）
     assert DEFAULT_SPEC.problems() == ()
+
+
+def test_an_incomplete_langgraph_is_unavailable_not_an_attribute_error(monkeypatch) -> None:
+    """装了一半的 langgraph（StateGraph / GraphRecursionError 缺失）必须判"不可用"。
+
+    旧实现把 `getattr` 放在守卫**外面**：AttributeError 会直接抛出去，而 select_engine("auto")
+    只接 EngineUnavailableError——"自动回落到参考引擎"于是变成一句空话。
+    GraphRecursionError 更关键：它以前缺省回落到 RuntimeError，于是图运行期间的**任何**
+    RuntimeError 都会被 `except lg.GraphRecursionError` 翻译成 LIMIT_NODE_RUNS / NEEDS_HUMAN。
+    """
+
+    import sys
+    import types
+
+    graph_module = types.ModuleType("langgraph.graph")  # 没有 StateGraph
+    errors_module = types.ModuleType("langgraph.errors")
+    monkeypatch.setitem(sys.modules, "langgraph.graph", graph_module)
+    monkeypatch.setitem(sys.modules, "langgraph.errors", errors_module)
+
+    with pytest.raises(EngineUnavailableError):
+        _load()
+
+    # 补上 graph 侧的 API，但 errors 侧仍然没有 GraphRecursionError：同样判不可用
+    graph_module.StateGraph = object
+    graph_module.START = "__start__"
+    graph_module.END = "__end__"
+
+    with pytest.raises(EngineUnavailableError):
+        _load()
+
+
+def test_the_recursion_error_type_is_the_frameworks_own() -> None:
+    """捕获的"递归上限"必须是框架自己的那个类，不能回落到 RuntimeError。
+
+    回落成 RuntimeError 会让 _drive 里的 except 把图运行期间的**任何** RuntimeError
+    （checkpoint 存储 I/O、langgraph 内部错误）都翻译成 LIMIT_NODE_RUNS / NEEDS_HUMAN——
+    真失败被伪装成"预算不够"。
+    """
+
+    loaded = _load()
+
+    assert loaded.GraphRecursionError is not RuntimeError
+    assert issubclass(loaded.GraphRecursionError, Exception)
+
+
+def test_a_node_runtime_error_is_an_invalid_state_not_a_budget_stop(tmp_root) -> None:
+    """节点里冒出的 RuntimeError 由**执行器**翻译成 STATE_INVALID 的失败步。
+
+    这条同时钉住两个边界：(1) 未分类异常不会逃出编排层（失败关闭，且状态里留下 type 与脱敏文本）；
+    (2) 它不会被误报成 LIMIT_NODE_RUNS——后者只有"真的撞了节点上限"才配。
+    """
+
+    def exploding(state, context):  # noqa: ANN001, ANN202 - 只求抛出去
+        raise RuntimeError("节点内部炸了（不是递归上限）")
+
+    nodes = dict(NODES)
+    nodes[NodeId.REQUIREMENT_ANALYSIS] = exploding
+    executor = StepExecutor(
+        node_context=step_executor(tmp_root, name="runtime-error").context,
+        store=None,
+        spec=DEFAULT_SPEC,
+        nodes=nodes,
+    )
+    engine = LangGraphEngine(executor=executor)
+
+    report = engine.run(task_id="runtime-error", state=empty_state("runtime-error"))
+
+    assert report.failure is not None
+    assert report.failure.code is FailureCode.STATE_INVALID
+    assert report.status is RunStatus.FAILED
+    assert "不是递归上限" in report.failure.detail
 
 
 def test_engine_level_failure_keeps_progress_and_persists_it(tmp_root) -> None:

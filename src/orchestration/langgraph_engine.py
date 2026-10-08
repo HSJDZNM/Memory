@@ -86,15 +86,26 @@ def _load() -> _LangGraph:
     try:
         graph_module = import_module("langgraph.graph")
         errors_module = import_module("langgraph.errors")
-    except Exception as error:  # noqa: BLE001 - 导入失败即不可用
+        # **属性访问也在守卫内**：装了一半的 langgraph（StateGraph / START / END 缺失或改名）
+        # 以前会把 AttributeError 抛到外面，而 select_engine("auto") 只接
+        # EngineUnavailableError——"自动回落到参考引擎"于是变成一句空话（失败关闭失效）。
+        state_graph = graph_module.StateGraph
+        start = graph_module.START
+        end = graph_module.END
+        # GraphRecursionError 必须**真的有**：以前缺省回落到 RuntimeError，于是 _drive 里
+        # `except lg.GraphRecursionError` 会把图运行期间**任何** RuntimeError（checkpoint 存储 I/O、
+        # langgraph 内部错误、节点里冒出的 RuntimeError）都翻译成 LIMIT_NODE_RUNS / NEEDS_HUMAN，
+        # 把真失败伪装成"撞了节点上限"。宁可判定这个 langgraph 不可用。
+        recursion_error = errors_module.GraphRecursionError
+    except Exception as error:  # noqa: BLE001 - 导入或 API 缺失即不可用
         raise EngineUnavailableError(
-            f"langgraph 可导入但 API 不完整（{type(error).__name__}）"
+            f"langgraph 可导入但 API 不完整（{type(error).__name__}: {error}）"
         ) from error
     return _LangGraph(
-        StateGraph=getattr(graph_module, "StateGraph"),
-        START=getattr(graph_module, "START"),
-        END=getattr(graph_module, "END"),
-        GraphRecursionError=getattr(errors_module, "GraphRecursionError", RuntimeError),
+        StateGraph=state_graph,
+        START=start,
+        END=end,
+        GraphRecursionError=recursion_error,
         version=version,
     )
 
