@@ -275,6 +275,28 @@ def test_nested_definitions_are_collected_with_their_kind() -> None:
     ]
 
 
+def test_dynamic_import_detection_is_gated_on_the_receiver() -> None:
+    """只有确实绑定到 importlib / builtins 的接收者才算动态 import（复核发现）。"""
+
+    # 方向一：任意对象的同名方法不是动态 import（旧实现会造出 unresolved 假阻断）。
+    unrelated = parse_module("registry.import_module(name)" + chr(10))
+    assert unrelated.dynamic_unresolved == ()
+    assert [item.dotted for item in unrelated.calls] == ["registry.import_module"]
+
+    # 方向二：绑定了模块的接收者（含别名）与点分 __import__ 形态都要认出来。
+    for source in (
+        "import importlib" + chr(10) + "importlib.import_module(name)" + chr(10),
+        "import importlib as il" + chr(10) + "il.import_module(name)" + chr(10),
+        "import builtins" + chr(10) + "builtins.__import__(name)" + chr(10),
+        "import builtins as builtins_alias" + chr(10) + "builtins_alias.__import__(name)" + chr(10),
+        "import importlib" + chr(10) + "importlib.__import__(name)" + chr(10),
+        "from importlib import import_module as im" + chr(10) + "im(name)" + chr(10),
+    ):
+        facts = parse_module(source)
+        assert len(facts.dynamic_unresolved) == 1, source
+        assert facts.dynamic_unresolved[0].constant is False, source
+
+
 def test_ast_collects_imports_aliases_and_relative_imports() -> None:
     facts = parse_module(
         "import os, json.decoder" + chr(10)
