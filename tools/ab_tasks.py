@@ -526,9 +526,6 @@ def run_oracle(instance_id: str, *, root: Path, phase: str, python: str = DEFAUL
 
 
 
-OUTCOME_RE = None  # 延迟构造：见 _outcomes()
-
-
 def _outcomes(text: str) -> dict[str, str]:
     """从 pytest -rA 的短摘要里解析 node id → 结果（PASSED / FAILED / ERROR / SKIPPED）。"""
 
