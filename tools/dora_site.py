@@ -423,7 +423,7 @@ def readme_saved():
     n = _counts()
     return [
         "- **能力目录页 1 篇**：" + C("index.md") + "（Capability catalog），站点对 /capabilities/ 分区的索引，",
-        "  34 张卡片各带一句话摘要与模型徽章——本镜像的清单与层级都取自这一页；",
+        "  " + str(n["caps"]) + " 张卡片各带一句话摘要与模型徽章——本镜像的清单与层级都取自这一页；",
         "- **core 模型能力 " + str(n["core"]) + " 篇**：站点标注 " + C("core") + " 徽章的能力，含本次抓取的入口",
         "  " + C("core/continuous-integration.md") + "（Continuous integration）；",
         "- **AI 能力模型 " + str(n["ai"]) + " 篇**：" + "、".join(
