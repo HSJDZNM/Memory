@@ -29,6 +29,7 @@ from enforcement.ledger import EnforcementLedger
 from enforcement.models import (
     CheckStatus,
     Decision,
+    ExecutionStatus,
     ReasonCode,
     ToolSpec,
     digest_of,
@@ -340,8 +341,18 @@ class PlatformToolRunner:
             workspace=workspace,
             now=None if self._clock is None else self._clock(),
         )
+        # 编排层的 status 如实反映**受控链的结论**（此前硬编码 "executed"）：
+        # 链上可能给出 refused（未执行）或 failed（执行了但失败），读 ToolOutcome 的人
+        # 不该靠 final_outcome 去反推"到底跑没跑"。executed 与 delegated 都算"动作发生了"——
+        # 后者是"允许 Agent 运行时执行"的既有语义，不是拒绝。
+        record_status = outcome.record.status
+        orchestration_status = (
+            "executed"
+            if record_status in (ExecutionStatus.EXECUTED, ExecutionStatus.DELEGATED)
+            else "denied"
+        )
         return ToolOutcome(
-            status="executed",
+            status=orchestration_status,
             tool_id=request.tool_id,
             action_id=request.action_id,
             action_hash=action.action_hash,
