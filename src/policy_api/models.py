@@ -52,7 +52,6 @@ __all__ = [
     "ReadinessState",
     "RetrieveRequest",
     "ValidationRequest",
-    "envelope_of",
     "principal_of",
 ]
 
@@ -395,12 +394,6 @@ class ReadinessReport(StrictModel):
     tenants: Tuple[Mapping[str, Any], ...] = ()
     checks: Tuple[Mapping[str, Any], ...] = ()
     detail: str = ""
-
-
-def envelope_of(model: ApiEnvelope) -> ApiEnvelope:
-    """取信封字段（统一 HTTP 层与进程内调用的口径）。"""
-
-    return model
 
 
 def principal_of(model: Any) -> PrincipalDTO:
