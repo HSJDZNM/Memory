@@ -2210,12 +2210,16 @@ def _three_term_reading(config: AdapterConfig, timeout_sec: Optional[float]) -> 
     # hooks.json 没写 timeout 时 dsh 用桥的 defaultTimeoutMs（README §2.5）：
     # "没写"不等于"没有上限"，所以这里用显式常量而不是跳过检查。
     if timeout_sec is None:
-        limit_ms: float | int = DEFAULT_HOOK_TIMEOUT_MS
+        limit_exact: float = float(DEFAULT_HOOK_TIMEOUT_MS)
         limit_source = BUDGET_LIMIT_DSH_DEFAULT
     else:
-        limit_ms = int(timeout_sec * 1000)
+        # 与 _two_term_reading 同一口径：比较用**原样的浮点值**。先 int() 会把
+        # timeout=5.0005s（=5000.5ms）截成 5000，于是"5000 < 5000.5"被反判成 violated，
+        # 报出一个并不存在的接线错误、把 Hook 拦下。
+        limit_exact = float(timeout_sec) * 1000
         limit_source = BUDGET_LIMIT_HOOKS_JSON
-    if budget_ms >= limit_ms:
+    limit_ms: float | int = _ms_reading(limit_exact)
+    if budget_ms >= limit_exact:
         default_note = (
             "（hooks.json 没写 timeout，按 dsh 默认 600000ms 计）" if timeout_sec is None else ""
         )
