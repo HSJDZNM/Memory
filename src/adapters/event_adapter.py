@@ -232,7 +232,10 @@ class EventAdapter(Adapter):
 
 def _require_text(value: Any, *, where: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise AdapterEventError(f"事件字段 {where} 必须是非空字符串，得到 {value!r}")
+        # 同 `dsh_adapter._require_text`：缺字段 = 上下文不合法，不是"未预期异常"。
+        raise AdapterEventError(
+            f"事件字段 {where} 必须是非空字符串，得到 {value!r}", code="context_error"
+        )
     return value.strip()
 
 

@@ -497,6 +497,41 @@ def test_an_unknown_hook_event_gets_the_unknown_event_reason(runtime) -> None:
     assert dsh_outcome.response.reason_code == "unknown_event", dsh_outcome.response.reason_code
 
 
+def test_the_adapter_error_family_is_refused_with_a_structured_reason(runtime) -> None:
+    """`AdapterEventError` / `DshEventError` 这一族必须落进 `_adapt_failure`（**拒绝 + 具体理由**），
+    而不是运行时的「未预期异常」那一档（`internal_error`）。
+
+    为什么值得一条用例：`DshEventError` 是裸 `ValueError` 时，它会绕过 Adapter 边界的
+    `except AdapterEventError`、落到更宽的兜底，于是一类失败在两个适配器家族里拿到两个理由；
+    继承关系一旦隐式变化，只有用例能钉住「哪一族落哪一档」。两条都断言**决策是 block**：
+    这一族**不比**兜底更宽松——归因更准，但一样拒绝。
+    """
+
+    unknown_tool = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "s-1",
+        "tool_name": "NotATool",
+        "tool_use_id": "call-1",
+        "tool_input": {"file_path": "src/shop/order_controller.py"},
+    }
+    outcome = runtime.handle("dsh", unknown_tool)
+    assert outcome.response.decision.value == "block"
+    assert outcome.response.reason_code == "unknown_tool", outcome.response.reason_code
+
+    # 缺字段 → DshEventError（钉它的族：仍然是「拒绝 + 具体理由」，不是 internal_error）
+    missing_field = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "s-2",
+        "tool_use_id": "call-2",
+        "tool_input": {"file_path": "src/shop/order_controller.py"},
+    }
+    missing = runtime.handle("dsh", missing_field)
+    assert missing.response.decision.value == "block"
+    # 缺字段是**上下文不合法**：结构化码让它落到 context_error，而不是读起来像"平台崩了"的
+    # internal_error（后者只是"文案没匹配上"的兜底）。
+    assert missing.response.reason_code == "context_error", missing.response.reason_code
+
+
 def test_trace_registry_separates_owners(tmp_root: Path) -> None:
     registry = TraceRegistry(tmp_root / "traces.jsonl")
     registry.register(trace_id="t-a", owner_agent="dsh", request_id="r")

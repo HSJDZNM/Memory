@@ -1262,6 +1262,10 @@ class DshPreExecuteHook:
 
         try:
             return self._decide(raw_payload, started=started, base_record=base_record)
+        # 子句顺序**就是**语义：`DshEventError` 现在继承 `AdapterEventError`（两者同族），
+        # 因此这一条必须排在更宽的族之前。将来若在同一 try 里加 `except AdapterEventError`，
+        # 必须放在这一条**之后**——否则 dsh 的载荷错误会被更宽的族收走，hook 的理由码与退出码
+        # 会跟着变，而"变的是哪一档"这件事在 diff 里看不出来。
         except DshEventError as error:
             return self._fail(
                 "context_error", sanitize(str(error), project_root=self.config.project_root),
