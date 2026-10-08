@@ -30,7 +30,7 @@ from validators.adapters.base import (
     tool_environment,
 )
 from validators.adapters.mypy import run_mypy
-from validators.adapters.pytest_runner import run_pytest
+from validators.adapters.pytest_runner import _module_binds_name, run_pytest
 from validators.adapters.ruff import run_ruff
 
 CONFIG = validators_config()
@@ -465,6 +465,40 @@ def test_ruff_treats_a_missing_tool_as_unavailable(tmp_root: Path) -> None:
             config=None,
             paths=(TARGET,),
         )
+
+
+def test_absence_of_a_name_cannot_be_proven_from_the_ast_alone(tmp_path: Path) -> None:
+    """星号导入 / __all__ / 模块级 __getattr__ / 动态绑定都让"这个名字不存在"证明不了（复核发现）。
+
+    证明不了就必须返回 True（=当它存在）：否则一次真实的收集失败会被降级成
+    pending_implementation（warning），而那正是本模块禁止的方向。
+    """
+
+    cases = {
+        "star.py": "from helpers import *" + chr(10),
+        "all.py": "__all__ = [\"thing\"]" + chr(10),
+        "annotated_all.py": "__all__: list = [\"thing\"]" + chr(10),
+        "getattr_module.py": "def __getattr__(name):" + chr(10) + "    return name" + chr(10),
+        "dynamic.py": "globals()[\"thing\"] = 1" + chr(10),
+        "setattr_module.py": (
+            "import sys" + chr(10) + "setattr(sys.modules[__name__], \"thing\", 1)" + chr(10)
+        ),
+    }
+    for filename, source in cases.items():
+        path = tmp_path / filename
+        path.write_text(source, encoding="utf-8", newline="")
+        assert _module_binds_name(path, "thing") is True, filename
+
+    # 普通模块里确实没有这个名字：这一种是真的能证明，返回 False。
+    plain = tmp_path / "plain.py"
+    plain.write_text("VALUE = 1" + chr(10), encoding="utf-8", newline="")
+    assert _module_binds_name(plain, "thing") is False
+
+    # 读不到 / 解析不了同样返回 True（原有口径不变）。
+    assert _module_binds_name(tmp_path / "no_such.py", "thing") is True
+    broken = tmp_path / "broken.py"
+    broken.write_text("def (" + chr(10), encoding="utf-8", newline="")
+    assert _module_binds_name(broken, "thing") is True
 
 
 def test_mypy_with_only_unowned_diagnostics_does_not_claim_there_were_none(tmp_root: Path) -> None:
