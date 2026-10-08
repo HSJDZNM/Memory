@@ -1449,7 +1449,8 @@ def main(argv: list[str] | None = None) -> int:
     actions.add_argument("--record-lock", metavar="ID|all", dest="record_lock", help="记录 lock")
     actions.add_argument("--verify", action="store_true", help="校验 lock 与本地语料")
     actions.add_argument("--annotations", metavar="ID", help="打印注解（配合 --json）")
-    parser.add_argument("--json", action="store_true", help="与 --annotations/--list 搭配")
+    # --list 走的是纯文本报告（_command_list 不读 args.json）：帮助文本不许承诺它没有的行为。
+    parser.add_argument("--json", action="store_true", help="与 --annotations 搭配（--list 只有文本输出）")
     parser.add_argument("--root", default=str(DEFAULT_ROOT), help=f"语料根（默认 {DEFAULT_ROOT}）")
     parser.add_argument(
         "--lock-dir", default=str(DEFAULT_LOCK_DIR), dest="lock_dir",
