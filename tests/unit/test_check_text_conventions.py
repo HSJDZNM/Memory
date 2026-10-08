@@ -149,3 +149,30 @@ def test_real_problems_are_still_reported(monkeypatch, capsys, tmp_root):
 
     assert module.main(["check_text_conventions.py"]) == 1
     assert "行尾有空白" in capsys.readouterr().out
+
+def test_binary_skips_are_counted_in_the_summary(monkeypatch, capsys, tmp_root):
+    """条目 [18]：跳过的二进制要单独报数——旧实现既不算 checked 也不算 skipped，
+    `… some/file.bin`（哪怕名字敲错）会打印"检查 0 个文本文件，问题 0 处"并退 0。"""
+
+    module = _load()
+    blob = tmp_root / "asset.png"
+    blob.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    assert module.main(["check_text_conventions.py", str(blob)]) == 0
+    out = capsys.readouterr().out
+
+    assert "检查 0 个文本文件，问题 0 处" in out
+    assert "跳过二进制 1 个" in out, out
+
+
+def test_nul_sniffed_binary_is_counted_too(monkeypatch, capsys, tmp_root):
+    """按内容判出来的二进制（前缀含 NUL）同样记账。"""
+
+    module = _load()
+    blob = tmp_root / "sneaky.dat"
+    blob.write_bytes(b"text\x00more")
+
+    assert module.main(["check_text_conventions.py", str(blob)]) == 0
+    out = capsys.readouterr().out
+
+    assert "跳过二进制 1 个" in out, out

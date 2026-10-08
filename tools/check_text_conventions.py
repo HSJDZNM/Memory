@@ -120,9 +120,14 @@ def main(argv: list[str]) -> int:
     unreadable: list[str] = []
     checked = 0
     skipped = 0
+    binary = 0
 
     for path in targets:
         if path.suffix.lower() in BINARY_SUFFIXES:
+            # 二进制既不是"查过"也不是"跳过第三方镜像"：单独计数，否则汇总里"检查 N 个"会把
+            # 它藏起来——`check_text_conventions.py some/file.bin`（哪怕名字敲错）会打印
+            # "检查 0 个文本文件，问题 0 处"并退 0，读起来像"查过了"。
+            binary += 1
             continue
         if not explicit and not include_mirrors and is_mirrored(path):
             skipped += 1
@@ -148,6 +153,7 @@ def main(argv: list[str]) -> int:
                 unreadable.append(f"{path}: {type(error).__name__}")
             continue
         if b"\x00" in data[:4096]:
+            binary += 1
             continue
         checked += 1
         # .bat / .cmd / .ps1 只豁免**行尾**：.editorconfig/.gitattributes 对这三个后缀
@@ -175,6 +181,8 @@ def main(argv: list[str]) -> int:
     for item in unreadable:
         print(f"跳过（未跟踪且读取失败）: {item}")
     suffix = f"，跳过第三方镜像 {skipped} 个" if skipped else ""
+    if binary:
+        suffix += f"，跳过二进制 {binary} 个"
     if unreadable:
         suffix += f"，跳过未跟踪且读取失败 {len(unreadable)} 个"
     print(f"检查 {checked} 个文本文件，问题 {len(problems)} 处{suffix}")
