@@ -194,10 +194,17 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         print("config error: " + str(error), file=sys.stderr)
         return EXIT_ERROR
 
-    if args.command == "registry":
-        return _registry(args, config)
-    if args.command == "probe":
-        return _probe(args, config, workspace)
+    if args.command in ("registry", "probe"):
+        try:
+            if args.command == "registry":
+                return _registry(args, config)
+            return _probe(args, config, workspace)
+        except (RegistryError, ValueError, OSError) as error:
+            # registry / probe 以前在 try 之外：_probe 会建目录、起进程，config-root 不可写
+            # （或 .tmp/validators 是个文件）时 OSError 直接穿出去 -> 裸 traceback + 退出码 1，
+            # 而 probe 的契约是"跑得成时恒退 0"、跑不成属于 EXIT_ERROR(2)（复核发现）。
+            print("config error: " + str(error), file=sys.stderr)
+            return EXIT_ERROR
 
     rule_dirs = tuple(Path(item) for item in args.rules) if args.rules else (anchor / "policies",)
     try:
