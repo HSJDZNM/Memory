@@ -663,7 +663,23 @@ def run_pipeline(
             )
         )
         served.add("forbidden_dependency")
-        blocked = [item for item in blocked if "forbidden_dependency" not in item.checkers]
+        # 只把 forbidden_dependency 从每条 blocker 的 checker 集合里摘掉，**不整条丢弃**：
+        # 同一个 blocker 里可能还列着别的 checker（语言缺失的 CONFIG_ERROR 用的就是
+        # checkers=tuple(sorted(needed))，某验证器服务多个 checker 时 _blocked_checkers 同理），
+        # 而上面的 difference_update 已经把这些 checker 从 served 里删掉了——整条丢掉会让它们
+        # 既不服务也不阻断，正是"没查和查了没问题看起来一样"的那类歧义（复核发现）。
+        # 摘空了的 blocker 才丢弃（Blocker.checkers 有 min_length=1，空集合不可表示）。
+        trimmed = [
+            item.model_copy(
+                update={
+                    "checkers": tuple(
+                        checker for checker in item.checkers if checker != "forbidden_dependency"
+                    )
+                }
+            )
+            for item in blocked
+        ]
+        blocked = [item for item in trimmed if item.checkers]
 
     return PipelineReport(
         language_coverage=coverage,

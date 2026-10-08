@@ -167,6 +167,36 @@ def test_narrowing_validators_fails_closed_for_uncovered_checkers() -> None:
     assert any("没有验证器为 checker" in reason for reason in reasons)
 
 
+def test_explicit_dependencies_do_not_swallow_the_rest_of_a_blocker(tmp_root: Path) -> None:
+    """显式声明依赖只摘掉 forbidden_dependency，不许把整条 blocker 丢掉（复核发现）。
+
+    一个验证器可以同时服务多个 checker（_blocked_checkers 返回的正是这一整组），而上面的
+    difference_update 已经把那组 checker 全部从 served 里删掉：整条丢弃会让与
+    forbidden_dependency 同列的 checker 既不服务也不阻断，看起来和"查了没问题"一模一样。
+    这里用一份改过的注册表让 tool.ruff 同时声明 forbidden_dependency 与 style_lint 并让它失败
+    （工具命令不存在 -> critical -> UNAVAILABLE）：style_lint 没有任何别的提供者，
+    所以它只能由这条 blocker 挡住。
+    """
+
+    document = yaml.safe_load(
+        (REPO_ROOT / "validation" / "validators.yaml").read_text(encoding="utf-8")
+    )
+    for item in document["validators"]:
+        if item["id"] == "tool.ruff":
+            item["checkers"] = ["style_lint", "forbidden_dependency"]
+            item["tool"]["command"] = ["definitely-not-a-real-linter-xyz"]
+    root = write_validation_config(tmp_root, registry=document)
+    config = load_config(root=REPO_ROOT, registry=root / "validation" / "validators.yaml")
+
+    report = run_pipeline_for("src/shop/order_controller.py", config=config, explicit=("repository",))
+
+    assert verdict(report) == "block"
+    assert "forbidden_dependency" in report.served_checkers, "显式声明依赖由 cli.explicit 服务"
+    union = {checker for blocker in report.blockers for checker in blocker.checkers}
+    assert "forbidden_dependency" not in union
+    assert "style_lint" in union, "与 forbidden_dependency 同列一条 blocker 的 checker 必须仍被挡住"
+
+
 def test_pipeline_is_deterministic_for_the_same_target() -> None:
     first = run_pipeline_for("src/shop/order_controller_bad.py")
     second = run_pipeline_for("src/shop/order_controller_bad.py")
