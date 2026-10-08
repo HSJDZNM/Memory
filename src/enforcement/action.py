@@ -347,7 +347,9 @@ def build_action_request(
         action_id=_require_identifier(action_id, where="action_id"),
         request_id=_require_identifier(request_id, where="request_id"),
         trace_id=None if trace_id is None else str(trace_id).strip() or None,
-        agent=agent,
+        # agent 是身份字段里唯一一个"原样落库"的：与 action_id / request_id / agent_version
+        # 同一口径校验并规范化，否则 "dsh" / "dsh " / "DSH" 会为同一个调用方算出三个 action_hash。
+        agent=canonical_identifier(_require_identifier(agent, where="agent")),
         agent_version=None if agent_version is None else canonical_identifier(str(agent_version)),
         tool_id=spec.id,
         tool_name=spec.tool_name,

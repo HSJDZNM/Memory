@@ -62,6 +62,22 @@ def test_params_are_sorted_and_types_are_checked(enforcement_paths):
     assert file_path.value == "src/shop/order_controller.py"
 
 
+def test_agent_is_canonicalised_like_the_other_identity_fields(enforcement_paths):
+    """agent 曾经是唯一原样落库的身份字段：大小写/空白会让同一调用方得到不同 action_hash。"""
+
+    registry = enforcement_paths.registry_object()
+    spec = spec_of(registry, "fs.edit")
+    common = dict(
+        action_id="act-agent", request_id="req-agent", workspace=enforcement_paths.workspace
+    )
+
+    ragged = build_action_request(spec, edit_params(), agent="  DSH ", **common)
+    plain = build_action_request(spec, edit_params(), agent="dsh", **common)
+
+    assert ragged.agent == "dsh"
+    assert ragged.action_hash == plain.action_hash
+
+
 def test_unknown_parameter_is_rejected_with_the_allowlist(enforcement_paths):
     registry = enforcement_paths.registry_object()
 
