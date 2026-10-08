@@ -663,7 +663,10 @@ def make_run(
 
     area = DEMO_ROOT / "runs" / tag
     if reset and checkpoint_dir is None:
-        shutil.rmtree(area, ignore_errors=True)
+        # 用 remove_tree()，不要 `ignore_errors=True`：后者会把"删不掉"吞掉，上一轮的
+        # ledger / audit / checkpoints 留在原地，随后被当成本轮读数（`remove_tree` 的 docstring
+        # 记的正是这类事故：删不掉 → 后面的 copytree 撞 FileExistsError，真正的占用原因被盖住）。
+        remove_tree(area)
     area.mkdir(parents=True, exist_ok=True)
     approvals = area / "approvals"
     approvals.mkdir(parents=True, exist_ok=True)
