@@ -8,6 +8,14 @@ on:
 permissions:
   contents: read
 
+# 同一分支上重复触发会各跑一次完整门禁：先 push 分支再开 PR（push 与 pull_request 两个事件）、
+# 以及连续 push 都会叠加。每跑一次都是 20 分钟量级的真跑，而"同一份提交跑两遍"没有任何新信息。
+# 并发组按 workflow + ref 收敛：新的一次取消还在排队/运行中的旧一次；不同 ref（main 与 PR 分支）
+# 各自保留一条，不会互相取消。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   phase-8:
     name: Phase 8 tests (python 3.13)
