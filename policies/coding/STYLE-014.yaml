@@ -24,4 +24,5 @@ source:
   path: docs/mirrors/python-pep-code-style/pep-8-python-code/index.md
   note: >
     PEP 8 允许"主要当可调用对象用、且有文档的接口"改用函数命名约定；这条例外需要文档判断，
-    确定性检查器查不了，项目若要用它必须显式豁免。
+    确定性检查器查不了，项目若要用它必须走**显式豁免**：validation/ruff.toml 的 per-file-ignores，
+    或在那一行写 `# noqa: N801 - <理由>`（本仓库既有的显式豁免口径，见 SEC-006 / STYLE-005 的同款说明）。
