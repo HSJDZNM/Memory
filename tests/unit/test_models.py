@@ -406,3 +406,15 @@ def test_declared_codes_are_uppercased_deduped_and_sorted() -> None:
 
     assert spec.codes == ("F401", "S105")
     assert TypeCheckSpec.model_validate({"tool": "mypy"}).codes == ()
+
+
+def test_union_member_names_are_derived_from_the_rule_body_tuple() -> None:
+    """错误位置过滤用的类名集合必须与 RULE_BODY_CLASSES 同源，不许再抄一份。
+
+    抄一份的代价是静默的：往 RULE_BODY_CLASSES 里加一个规则体而忘了改这份字面量集合，
+    新规则体的校验报错就会带上内部类名（RuleValidationError 本意就是去掉它）。
+    """
+
+    from policy import models
+
+    assert models._UNION_MEMBER_NAMES == {cls.__name__ for cls in models.RULE_BODY_CLASSES}

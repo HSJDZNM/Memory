@@ -1168,16 +1168,9 @@ def parse_decision(payload: Mapping[str, Any]) -> ValidationResult:
 
 
 # 规则体的 union 成员类名：错误位置里去掉它们，错误信息才与规则文件的写法一致。
-_UNION_MEMBER_NAMES = frozenset(
-    {
-        "ForbiddenDependencyRule",
-        "MissingDocstringRule",
-        "StyleLintRule",
-        "TypeCheckRule",
-        "MissingTestsRule",
-        "FailingTestsRule",
-    }
-)
+# 从 RULE_BODY_CLASSES 派生而不是再抄一份名字：抄一份的话，新加一个规则体却忘了同步这里，
+# 就把"错误位置里混进内部类名"这个噪声原样放回来了（KNOWN_CHECKERS 就是这么派生的）。
+_UNION_MEMBER_NAMES = frozenset(cls.__name__ for cls in RULE_BODY_CLASSES)
 
 
 class RuleValidationError(ValueError):
