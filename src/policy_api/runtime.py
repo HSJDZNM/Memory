@@ -1085,9 +1085,10 @@ def _evidence_limit(config: ApiConfig) -> int:
 
 
 def load_runtime_config(path: Path | str, *, root: Optional[Path | str] = None) -> ApiConfig:
-    """便捷函数：加载配置并把 `ConfigError` 原样抛出（CLI 负责翻译成退出码）。"""
+    """便捷函数：加载配置并把 `ConfigError` 原样抛出（CLI 负责翻译成退出码）。
 
-    try:
-        return load_api_config(path, root=root)
-    except ConfigError:
-        raise
+    这里**没有** try/except：曾经有一条 `except ConfigError: raise`——它一个字节都没改变行为，
+    却让读的人以为这一层做了翻译或补偿（真正的翻译在 CLI 的退出码映射里）。
+    """
+
+    return load_api_config(path, root=root)
