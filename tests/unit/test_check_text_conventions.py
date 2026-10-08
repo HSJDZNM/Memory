@@ -194,3 +194,22 @@ def test_vanished_untracked_target_is_an_explicit_skip(monkeypatch, capsys, tmp_
     assert "跳过（未跟踪且工作树里不存在）" in out, out
     assert "tmp-ghost-m9check" in out, out
     assert "跳过未跟踪且工作树里不存在 1 个" in out, out
+
+def test_running_from_a_subdirectory_checks_the_same_set(monkeypatch, capsys):
+    """条目 [17]：从子目录调用必须与从仓库根调用检查**同一批文件**。
+
+    旧实现跑的是不带 `--full-name` 的 `git ls-files`（输出被限制在当前目录、路径也相对它）：
+    从 `docs/` 跑一次只检查 363 个文件（全仓 619），`MIRRORED_PREFIXES` 是仓库相对的、全部匹配不上，
+    上游镜像被当成本仓库文本报出 49 处假问题——而汇总照样打印成一次"全仓"结论。
+    """
+
+    module = _load()
+    summaries: dict[str, str] = {}
+    for label, cwd in (("root", REPO_ROOT), ("docs", REPO_ROOT / "docs")):
+        monkeypatch.chdir(cwd)
+        assert module.main(["check_text_conventions.py"]) == 0, label
+        out = capsys.readouterr().out
+        summaries[label] = [line for line in out.splitlines() if line.startswith("检查 ")][-1]
+
+    assert summaries["root"] == summaries["docs"], summaries
+    assert "mirrors" not in summaries["docs"], summaries["docs"]
