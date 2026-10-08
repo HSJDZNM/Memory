@@ -371,3 +371,26 @@ def test_the_gate_is_about_a_silent_allow_not_a_format_rule() -> None:
     assert result.decision is Decision.ALLOW
     assert not result.violations
     assert not result.skipped_rules, "规则没有 language 限制，所以它会「相关」地判 allow"
+
+
+def test_multiple_roots_without_repo_root_refuse_to_collapse_repo_paths(tmp_root: Path) -> None:
+    """多根加载又没给 repo_root 时，同名文件会塌成同一个 repo_path——必须拒绝加载。
+
+    为什么必须这样：不给 repo_root 时每个文件的 repo_path 相对**它自己那个根**算
+    （load_rules 的 `_relative_to_root(path, Path(root), None)`），两个根下各有一份
+    policies/p.yaml 就都变成 "policies/p.yaml"：source_paths 出现重复项，按 repo_path 排序的
+    稳定次序退化成输入顺序。宁可失败关闭，也不交出一份溯源说不清、次序靠输入的规则集。
+    """
+
+    first = tmp_root / "a" / "policies"
+    second = tmp_root / "b" / "policies"
+    write_rule(first / "p.yaml", rule_document(id="RULE-0", version=1), yaml_module=yaml)
+    write_rule(second / "p.yaml", rule_document(id="RULE-1", version=1), yaml_module=yaml)
+
+    with pytest.raises(LoaderError) as error:
+        load_rule_set([first, second])
+    assert "repo_path" in str(error.value)
+
+    # 反向对照：给了 repo_root 就有唯一的仓库相对路径，加载正常且两条都在。
+    rules = load_rule_set([first, second], repo_root=tmp_root)
+    assert rules.ids == ("RULE-0@1", "RULE-1@1")

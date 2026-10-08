@@ -305,11 +305,48 @@ def load_rule_set(
     for root in roots:
         loaded.extend(load_rules(root, repo_root=repo_root))
     assert_unique(loaded)
+    assert_distinct_repo_paths(loaded, repo_root=repo_root)
     ordered = sorted(loaded, key=lambda item: item.repo_path)
     return RuleSet(
         rules=tuple(item.rule for item in ordered),
         source_paths=tuple(item.repo_path for item in ordered),
     )
+
+
+def assert_distinct_repo_paths(
+    loaded: Sequence[LoadedRule], *, repo_root: Path | str | None
+) -> None:
+    """同一规则集里两个文件不许有同一个 repo_path。
+
+    不给 repo_root 时，每个文件的 repo_path 是相对**它自己那个根**算的（load_rules 的
+    `_relative_to_root(path, Path(root), None)`），于是两个根下各有一份 policies/x.yaml
+    会塌成同一个 "policies/x.yaml"：source_paths 出现重复项，按 repo_path 排序的稳定次序
+    退化成输入顺序。失败关闭：宁可拒绝加载，也不要交出一份溯源说不清、次序靠输入的规则集。
+    """
+
+    seen: dict[str, LoadedRule] = {}
+    for item in loaded:
+        previous = seen.get(item.repo_path)
+        if previous is None:
+            seen[item.repo_path] = item
+            continue
+        if repo_root is None:
+            hint = (
+                "多根加载时没有给 repo_root：各根之下的同名文件都会算成同一个 relative 路径，"
+                "给 repo_root 才能得到唯一的仓库相对路径"
+            )
+        else:
+            hint = "同一个文件被两个根重复收进来了，检查 roots 是否有重叠"
+        raise LoaderError(
+            "两个规则文件解析出同一个 repo_path（"
+            + item.repo_path
+            + "）："
+            + str(previous.path)
+            + " 与 "
+            + str(item.path)
+            + "；"
+            + hint
+        )
 
 
 def assert_unique(loaded: Sequence[LoadedRule]) -> None:
