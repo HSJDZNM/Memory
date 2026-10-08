@@ -62,7 +62,6 @@ CONFORMANCE_SCHEMA_VERSION = "1.0"
 PROBE_CONTROLLER = "src/shop/order_controller.py"
 PROBE_SERVICE = "src/shop/order_service.py"
 PROBE_NEW_FILE = "src/shop/order_cache.py"
-WORKSPACE_FIXTURE = "tests/fixtures/agent_events/workspace"
 
 
 def conformance_evidence(_event: AgentEvent, context: Any) -> EvidenceBundle:
