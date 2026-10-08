@@ -228,10 +228,16 @@ def importers_of(package):
         if isinstance(node, ast.ImportFrom):
             return (node.module or "").split(".")[0] == package
         if isinstance(node, ast.Call):
+            # 同 00 章那把尺子的两个毛病，这里是**另一份拷贝**（两份实现要一起改）：
+            # ① 只看 `import_module`：`__import__("langgraph")` 与
+            #    `from importlib import import_module as im` 之后的 `im(...)` 都会漏判；
+            # ② `startswith(package)` 会把 `import_module("langgraph_extras")` 当成本包。
+            # 判据统一成"末段是 import_module / 内置 __import__，且**第一段**精确等于包名"。
             called = getattr(node.func, "attr", "") or getattr(node.func, "id", "")
-            if called == "import_module" and node.args:
+            tail = called.split(".")[-1]
+            if tail in ("import_module", "__import__") and node.args:
                 first = node.args[0]
-                return isinstance(first, ast.Constant) and str(first.value).startswith(package)
+                return isinstance(first, ast.Constant) and str(first.value).split(".")[0] == package
         return False
 
     found = []
