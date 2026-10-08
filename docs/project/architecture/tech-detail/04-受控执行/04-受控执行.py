@@ -199,9 +199,17 @@ assert first.tool_schema_hash == registry.tool("fs.edit").schema_hash
 assert [item.name for item in first.params] == sorted(item.name for item in first.params)
 
 # ---- 2) 注册表被改一个字符：工具立刻不可使用 ----
+# `str.replace` 找不到那个字面量时**静默返回原串**：注册表哪天被评审改了 max_chars（或改了写法），
+# 这里就什么都没改，而下面那条"哈希变了"的断言会以一句**误导性**的消息失败（读起来像"漂移检测
+# 坏了"，实际是"替换没发生"）。先自证替换真的改了文字。
+registry_text = REGISTRY_PATH.read_text(encoding="utf-8")
+drifted_text = registry_text.replace("max_chars: 20000", "max_chars: 20001")
+assert drifted_text != registry_text, (
+    "注册表里没有 max_chars: 20000 这个字面量：本次漂移演示的替换没有生效"
+)
 drift_path = TEMP / "tool-registry.yaml"
 drift_path.write_text(
-    REGISTRY_PATH.read_text(encoding="utf-8").replace("max_chars: 20000", "max_chars: 20001"),
+    drifted_text,
     encoding="utf-8",
     newline="\n",
 )
