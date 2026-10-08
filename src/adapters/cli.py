@@ -73,7 +73,7 @@ from adapters.loader import (
     load_registry_from_repo,
     repo_root,
 )
-from adapters.models import AdapterManifest, AgentEvent, EnforcementLevel
+from adapters.models import AgentEvent, EnforcementLevel
 from adapters.runtime import AgentRuntime
 from adapters.wiring import (
     DEFAULT_OBSERVED_SESSIONS,
@@ -111,10 +111,6 @@ def _utc_now() -> str:
 
 def _load_rules(root: Path) -> Any:
     return load_rule_set([root / "policies"], repo_root=root)
-
-
-def _manifest_documents(registry: AdapterRegistry) -> dict[str, AdapterManifest]:
-    return {agent_id: registry.manifest(agent_id) for agent_id in registry.manifests}
 
 
 def run_matrix(args: argparse.Namespace) -> int:
