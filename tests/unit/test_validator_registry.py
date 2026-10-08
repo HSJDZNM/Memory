@@ -292,6 +292,22 @@ def test_config_digest_returns_none_when_the_file_cannot_be_read(monkeypatch, tm
     assert config_digest(None) is None
 
 
+def test_unknown_placeholder_spellings_are_rejected() -> None:
+    """任何花括号词都必须在白名单里：大小写 / 数字 / 带空格都溜不过去（复核发现）。"""
+
+    for bad in ("{Target}", "{target1}", "{python }", "{}", "--flag={Target}"):
+        with pytest.raises(Exception) as error:
+            ToolSpec(command=("ruff", bad))
+        assert "占位符" in str(error.value), bad
+        with pytest.raises(Exception) as argv_error:
+            ToolSpec(command=("ruff",), argv=(bad,))
+        assert "占位符" in str(argv_error.value), bad
+
+    # 合法占位符照常（command 只允许 {python}，argv 允许全部已声明占位符）。
+    spec = ToolSpec(command=("{python}",), argv=("{target}", "--select", "{config}"))
+    assert spec.argv == ("{target}", "--select", "{config}")
+
+
 def test_tool_command_rejects_empty_elements_in_any_position() -> None:
     """空（或全空白）元素在任何位置都要拒（复核发现：any() 只要有一个非空就放行）。"""
 
