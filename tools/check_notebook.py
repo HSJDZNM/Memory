@@ -77,7 +77,10 @@ def check(path: Path) -> list[str]:
         try:
             compile(body, f"<cell {index}>", "exec")
         except SyntaxError as error:
-            problems.append(f"{location}: 语法错误 {error.msg}（第 {error.lineno} 行）")
+            # 行号可能缺（NUL 字节这类源码级错误的 lineno 是 None）：旧写法会打印
+            # "（第 None 行）"——读数里写一个假行号比不写更糟。
+            where = f"（第 {error.lineno} 行）" if error.lineno else ""
+            problems.append(f"{location}: 语法错误 {error.msg}{where}")
     return problems
 
 

@@ -95,3 +95,33 @@ def test_syntax_error_is_reported(tmp_root: Path) -> None:
     problems = module.check(path)
 
     assert any("语法错误" in item for item in problems), problems
+
+def test_nul_byte_source_is_reported_without_a_fake_line_number(tmp_root: Path) -> None:
+    """正文含 NUL 字节（JSON 里合法写作 \u0000）：记这一条，且不许写"第 None 行"。
+
+    实测（Python 3.13）：compile 对 NUL 抛的是 SyntaxError（msg=source code string cannot
+    contain null bytes，lineno=None）而不是 ValueError，所以旧处理器并没有漏掉它——漏掉的是
+    行号：读数里出现了一个不存在的行号。
+    """
+
+    module = _load()
+    path = tmp_root / "nul.ipynb"
+    path.write_text(_notebook([_code_cell(["value = 1" + chr(0)])]), encoding="utf-8", newline="")
+
+    problems = module.check(path)
+
+    assert len(problems) == 1, problems
+    assert "null bytes" in problems[0]
+    assert "None 行" not in problems[0]
+
+
+def test_syntax_error_keeps_its_line_number(tmp_root: Path) -> None:
+    """阳性对照：真语法错误照旧带行号。"""
+
+    module = _load()
+    path = tmp_root / "syntax2.ipynb"
+    path.write_text(_notebook([_code_cell(["def broken(:"])]), encoding="utf-8", newline="")
+
+    problems = module.check(path)
+
+    assert any("第 1 行" in item for item in problems), problems
