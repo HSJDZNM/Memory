@@ -252,6 +252,10 @@ function buildOrigin(fields) {
   // 闭集外的取值 / 写不出修复动作 → **那条指控不许成立**：落 unknown_origin，因果链标成
   // unproven，fix 换成一条具体的下一步动作（原来那条 fix 属于已经作废的指控，不能留下）。
   const dropped = !claimHolds;
+  // 调用方**自称** unknown_origin 时，claimHolds 为真、dropped 为假；但"归因没有建立起来"
+  // 是一个整体：verified / causal_link 也必须一并作废，不许从调用方照抄（否则
+  // {origin:'unknown_origin', verified:true, causalLink:'proven'} 这种自相矛盾的记录照样过）。
+  const invalidated = dropped || claimed === 'unknown_origin';
   const effectiveFix = dropped && claimed !== 'unknown_origin' ? '' : fix;
   return {
     kind: ORIGIN_OBJECT_KIND,
@@ -267,12 +271,12 @@ function buildOrigin(fields) {
     observation: {
       method: OBSERVATION_METHODS.includes(fields.method) ? fields.method : 'none',
       result: typeof fields.result === 'string' && fields.result !== '' ? fields.result : '没有可读的取证结果',
-      verified: dropped ? false : fields.verified === true,
+      verified: invalidated ? false : fields.verified === true,
       verified_at: new Date().toISOString(),
       run_scoped: true,
     },
     fix: effectiveFix !== '' ? effectiveFix : FIX_MISSING_ACTION,
-    causal_link: !dropped && fields.causalLink === 'proven' ? 'proven' : 'unproven',
+    causal_link: !invalidated && fields.causalLink === 'proven' ? 'proven' : 'unproven',
   };
 }
 
