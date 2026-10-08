@@ -244,7 +244,10 @@ def plan_resume(
     """决定"能不能接着跑"。
 
     - 没有 checkpoint → `FRESH`（从头开始）；
-    - 协议世代变了（`policy_version` / 决策载荷 schema）→ `REFUSE`：不沿用任何旧决定；
+    - 协议世代变了（`policy_version` / 决策载荷 schema）→ **抛 `ResumeError`**：不沿用任何旧决定
+      （`ResumeMode.REFUSE` 只是 `ResumePlan.mode` 值域里的取值：当前实现用**抛出**表达这件事，
+      见下面的 `refused` 分支。因此按 `plan.mode is ResumeMode.REFUSE` 写分支的调用方是死分支——
+      值域保留是因为它属于恢复计划协议，不能悄悄删）；
     - 规则集或索引变了 → `REVALIDATE`：清掉旧 trace / 旧验证结果，回到检索节点重评；
     - 工具 schema 变了 → `REAPPROVE`：清掉审批引用（旧审批绑的是旧 schema 的哈希）；
     - 其余 → `RESUME`：接着上次的阶段继续。
