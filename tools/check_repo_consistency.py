@@ -25,6 +25,27 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+class EnvironmentProblem(Exception):
+    """用法或环境错误：退出码 2。
+
+    与"发现漂移"（退出码 1）必须能分开——两者都退 1 时，CI 读不出"这次到底检查了没有"。
+    旧实现在两处用 `raise SystemExit("...")` 表达环境错误：字符串参数的 SystemExit 退出码是 1，
+    而读不到 pytest.ini / README.md / AGENTS.md / tools/README.md 时抛的是裸 FileNotFoundError。
+    """
+
+
+def _read_text(relative: str) -> str:
+    """读仓库内文本文件：读不出来是**环境错误**（退出 2），不是"文档漂移"。"""
+
+    try:
+        return (ROOT / relative).read_text(encoding="utf-8")
+    except OSError as error:
+        raise EnvironmentProblem(
+            "%s 读不出来（%s: %s）——这是环境错误，不是文档漂移"
+            % (relative, type(error).__name__, error)
+        ) from error
+
 DOCS_WITH_CONFIG_CLAIMS = ("README.md", "AGENTS.md")
 WORKFLOW_DIR = Path(".github/workflows")
 
@@ -137,20 +158,20 @@ def _compatible_release(pinned: str, bound: str) -> bool:
 
 def read_requirements_in() -> dict[str, str]:
     result: dict[str, str] = {}
-    for line in (ROOT / "requirements.in").read_text(encoding="utf-8").splitlines():
+    for line in _read_text("requirements.in").splitlines():
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
         match = _REQ_RE.match(line)
         if match is None:
-            raise SystemExit("requirements.in 里有无法解析的行: %r" % line)
+            raise EnvironmentProblem("requirements.in 里有无法解析的行: %r" % line)
         result[match.group(1).lower()] = (match.group(2) or "").strip()
     return result
 
 
 def read_requirements_lock() -> dict[str, str]:
     result: dict[str, str] = {}
-    for line in (ROOT / "requirements.lock").read_text(encoding="utf-8").splitlines():
+    for line in _read_text("requirements.lock").splitlines():
         line = line.split("#", 1)[0].strip()
         if not line or line.startswith("--hash"):
             continue
@@ -173,7 +194,7 @@ def read_pyproject() -> dict[str, str]:
     的对照会立刻失真——而这份对照正是"锁文件与声明不许漂移"的闸门。
     """
 
-    document = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    document = tomllib.loads(_read_text("pyproject.toml"))
     project = document.get("project", {})
     own_name = str(project.get("name", "")).lower()
     items = list(project.get("dependencies", []))
@@ -187,7 +208,7 @@ def read_pyproject() -> dict[str, str]:
             continue
         match = _REQ_RE.match(text)
         if match is None:
-            raise SystemExit("pyproject.toml 里有无法解析的依赖: %r" % item)
+            raise EnvironmentProblem("pyproject.toml 里有无法解析的依赖: %r" % item)
         result[match.group(1).lower()] = (match.group(2) or "").strip()
     return result
 
@@ -240,7 +261,7 @@ def check_docs_and_config() -> list[str]:
 
     referenced: dict[str, list[str]] = {}
     for name in DOCS_WITH_CONFIG_CLAIMS:
-        text = (ROOT / name).read_text(encoding="utf-8")
+        text = _read_text(name)
         for match in _WORKFLOW_REF_RE.finditer(text):
             referenced.setdefault(match.group(1), []).append(name)
     for workflow, sources in sorted(referenced.items()):
@@ -255,7 +276,7 @@ def check_docs_and_config() -> list[str]:
     unresolved: list[str] = []
     uv_sync_lines: list[str] = []
     for relative in sources:
-        text = (ROOT / relative).read_text(encoding="utf-8")
+        text = _read_text(relative)
         for number, line in enumerate(text.splitlines(), start=1):
             stripped = line.strip()
             if not stripped or stripped.startswith(("#", ">")):
@@ -274,13 +295,13 @@ def check_docs_and_config() -> list[str]:
     for item in unresolved:
         issues.append("安装指令引用了不存在的锁文件：%s" % item)
 
-    pytest_ini = (ROOT / "pytest.ini").read_text(encoding="utf-8")
+    pytest_ini = _read_text("pytest.ini")
     testpaths = re.search(r"^testpaths\s*=\s*(.+)$", pytest_ini, re.MULTILINE)
     if testpaths:
         for item in testpaths.group(1).split():
             if not (ROOT / item).is_dir():
                 issues.append("pytest.ini 的 testpaths 指向不存在的目录 %s" % item)
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme = _read_text("README.md")
     for match in re.finditer(r"tests/([a-z_]+)\b", readme):
         candidate = ROOT / "tests" / match.group(1)
         if candidate.suffix:
@@ -346,7 +367,7 @@ def check_tool_inventory() -> list[str]:
     """只认表格第一列的脚本名：散文里提到的别处脚本（例如 enforcement/audit.py）不是本目录的清单。"""
 
     issues: list[str] = []
-    readme = (ROOT / "tools" / "README.md").read_text(encoding="utf-8")
+    readme = _read_text("tools/README.md")
     mentioned: set[str] = set()
     for line in readme.splitlines():
         if not line.startswith("|") or line.startswith("| ---"):
@@ -371,12 +392,17 @@ def main(argv: list[str]) -> int:
     if len(argv) > 1:
         print(__doc__)
         return 2
-    sections = (
-        ("依赖锁", check_lock()),
-        ("文档与配置", check_docs_and_config()),
-        ("手册形态", check_notebook_form()),
-        ("工具清单", check_tool_inventory()),
-    )
+    # 环境错误统一在这里翻成退出码 2：与"发现漂移"（1）分开，CI 才读得出"检查跑了没有"。
+    try:
+        sections = (
+            ("依赖锁", check_lock()),
+            ("文档与配置", check_docs_and_config()),
+            ("手册形态", check_notebook_form()),
+            ("工具清单", check_tool_inventory()),
+        )
+    except EnvironmentProblem as error:
+        print("ERROR: %s" % error, file=sys.stderr)
+        return 2
     total = 0
     for label, issues in sections:
         if issues:

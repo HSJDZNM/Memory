@@ -68,3 +68,46 @@ def test_check_lock_reports_uncomparable_versions_instead_of_crashing(monkeypatc
     issues = module.check_lock()
 
     assert any("无法比较" in issue for issue in issues), issues
+
+def test_environment_errors_exit_two_not_one(tmp_path, monkeypatch):
+    """读不到配置文件 = 环境错误（退出码 2），不许与"发现漂移"（1）撞码。"""
+
+    monkeypatch.setattr(module, "ROOT", tmp_path)  # 空目录：requirements.in 不存在
+
+    with pytest.raises(module.EnvironmentProblem) as error:
+        module.read_requirements_in()
+
+    assert "requirements.in" in str(error.value)
+
+
+def test_unparsable_requirements_line_is_an_environment_error(tmp_path, monkeypatch):
+    """requirements.in 里有解析不了的行：环境错误（旧实现 raise SystemExit 字符串 = 退出码 1）。"""
+
+    (tmp_path / "requirements.in").write_text("这不是依赖声明" + chr(10), encoding="utf-8", newline="")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    with pytest.raises(module.EnvironmentProblem):
+        module.read_requirements_in()
+
+
+def test_main_returns_two_for_environment_problems(monkeypatch, capsys):
+    """main 把环境错误翻成退出码 2（旧行为：SystemExit 字符串 = 1）。"""
+
+    def boom():
+        raise module.EnvironmentProblem("requirements.in 读不出来")
+
+    monkeypatch.setattr(module, "check_lock", boom)
+
+    assert module.main(["check_repo_consistency.py"]) == 2
+    assert "ERROR" in capsys.readouterr().err
+
+
+def test_main_returns_one_for_drift(monkeypatch):
+    """阳性对照：真漂移仍然退 1（两个码不许合并）。"""
+
+    monkeypatch.setattr(module, "check_lock", lambda: ["漂移一条"])
+    monkeypatch.setattr(module, "check_docs_and_config", lambda: [])
+    monkeypatch.setattr(module, "check_notebook_form", lambda: [])
+    monkeypatch.setattr(module, "check_tool_inventory", lambda: [])
+
+    assert module.main(["check_repo_consistency.py"]) == 1
