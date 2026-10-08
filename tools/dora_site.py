@@ -82,6 +82,31 @@ def _norm(text):
     return " ".join((text or "").split())
 
 
+def banner_intro(banner):
+    """banner 区的导语：把每个 <p> 的文本切成句子、按**句子**去重后按首次出现顺序拼起来。
+
+    为什么不能只按段落去重：站点的 banner 是**嵌套 <p>**——外层 <p> 的文本是完整的 A B C，
+    内层两个 <p> 分别是 A B 与 C，find_all("p") 于是收出三段，而三段**没有一段完全重复**，
+    拼起来却正好是 "A B C A B C"（2026-10-08 实测：manifest 里 index.md 的 summary 就是这 894 字符）。
+    正文转换早就只保留最内层段落，摘要这条路径此前没有同一道守卫，镜像于是把页面导语记了两遍。
+
+    句子级去重对"导语"这种一段话的字段是安全的：合法的重复句子在摘要里本来也只该出现一次；
+    顺序按首次出现保留，因此结果与页面自上而下的阅读顺序一致。
+    """
+    intro = []
+    seen = set()
+    for p in banner.find_all("p"):
+        text = _norm(p.get_text(" ", strip=True))
+        if not text:
+            continue
+        for sentence in re.split(r'(?:(?<=[.!?])|(?<=[.!?]["”’]))\s+', text):
+            key = sentence.strip()
+            if key and key not in seen:
+                seen.add(key)
+                intro.append(key)
+    return intro
+
+
 def catalog():
     """能力目录页（/capabilities/）：导语 + 34 张能力卡片（标题、模型徽章、一句话摘要）。
 
@@ -91,12 +116,7 @@ def catalog():
     if _catalog_cache is None:
         soup = BeautifulSoup(_get(CATALOG_URL), "html.parser")
         banner = soup.select_one("section.banner article")
-        intro = []
-        if banner is not None:
-            for p in banner.find_all("p"):
-                text = _norm(p.get_text(" ", strip=True))
-                if text:
-                    intro.append(text)
+        intro = [] if banner is None else banner_intro(banner)
         grid = soup.select_one("section.capabilitiesGrid")
         rows = []
         for art in (grid.find_all("article") if grid is not None else []):
