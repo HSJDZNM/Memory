@@ -34,7 +34,14 @@ __all__ = ["ApprovalDecision", "ApprovalGate", "approval_binding_digest"]
 
 
 def approval_binding_digest(action_hash: str, action_id: str) -> str:
-    """审批绑定的就是这三件事：action_hash（含参数与 schema）、动作、工具。"""
+    """审批绑定的两段：`action_hash` 与 `action_id`。
+
+    工具**没有**第三段是刻意的：`action_hash` 由 Phase 4 算出，覆盖工具 schema 哈希、规范化参数、
+    主体与上下文摘要——换一把工具，schema 哈希就变，摘要随之变。这里再拼一个 `tool_id` 等于把
+    同一件事钉两遍，而两遍之间一旦不一致（例如 schema 未变但 tool_id 改名的迁移期）反而会制造
+    「绑定漂移」的假象。此前 docstring 写成「三件事」，与实现（`action_hash|action_id`）不符，
+    读的人会以为摘要里有工具段。
+    """
 
     return f"{action_hash}|{action_id}"
 
