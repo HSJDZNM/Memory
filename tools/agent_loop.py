@@ -203,7 +203,14 @@ def scenario_capability_degradation(registry, runtime) -> Scenario:
 
 def scenario_cross_agent_isolation(runtime) -> Scenario:
     first = runtime.handle("dsh", _dsh_event("iso-1", "c1", CLEAN), execute=lambda e: None)
-    second = runtime.handle("generic-json", _generic_event("iso-1", CLEAN), execute=lambda e: None)
+    # 第二条**逐字复用**同一个 event_id（不是"另一个 id 恰好也不一样"），而且换成 generic-json
+    # 真能服务的只读动作：写类动作会被能力上限挡下（实测 capability_unavailable），那样即使
+    # 命名空间没有隔离也照样"不是 event_replay"——旧写法因此是恒真的。
+    # 只读动作走得到幂等那一步：命名空间一旦被合并，这里必须变成 event_replay 才判红。
+    raw = _generic_event("iso-1", CLEAN, tool="read")
+    raw["event_id"] = "iso-1:c1"
+    raw["request_id"] = "iso-1:c1"
+    second = runtime.handle("generic-json", raw, execute=lambda e: None)
     keys = {
         item.get("ledger_key") for item in runtime._entries() if item.get("ledger_key")  # noqa: SLF001
     }
@@ -211,10 +218,10 @@ def scenario_cross_agent_isolation(runtime) -> Scenario:
         name="cross-agent-namespaces-are-separate",
         passed=(
             "dsh:iso-1:c1" in keys
-            and "generic-json:iso-1:call" in keys
-            and second.outcome_code != "event_replay"
+            and "generic-json:iso-1:c1" in keys
+            and second.outcome_code in ("allow", "allow_with_warnings")
         ),
-        detail="同一个 event_id 在两个 Agent 下互不影响（命名空间隔离）",
+        detail="同一个 event_id 在两个 Agent 下互不影响（命名空间隔离），B 的只读动作真的被判成放行",
         facts={
             "dsh": first.outcome_code,
             "generic-json": second.outcome_code,
