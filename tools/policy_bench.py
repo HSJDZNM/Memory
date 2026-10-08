@@ -142,6 +142,14 @@ def measure(
 ) -> dict[str, Any]:
     """测量 count 条规则对固定上下文的匹配耗时与内存峰值。"""
 
+    if repeats < 1 or context_count < 1:
+        # 先校验再测量：`evaluations = repeats * len(contexts)` 为 0 时，零除发生在**整轮测量之后**
+        # ——白跑一遍再崩，读数一个也拿不到。空序列不是"测得很快"，是根本没有测量发生。
+        raise ValueError(
+            "repeats 与 context_count 都必须 ≥ 1（现在 repeats=%d, context_count=%d）：没有可测量的评估"
+            % (repeats, context_count)
+        )
+
     rules = generate_rules(count, seed=seed)
     contexts = generate_contexts(context_count)
 
