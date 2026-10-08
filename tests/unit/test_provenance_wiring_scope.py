@@ -237,3 +237,19 @@ def test_missing_file_and_broken_yaml_are_rejected(tmp_root: Path) -> None:
         load_wiring_scope(tmp_root / "missing.yaml")
     with pytest.raises(WiringScopeError):
         load_wiring_scope(_write(tmp_root, "scope: [unclosed\n"))
+
+# —— 加载期校验（L8 low #8/#9/#10）：三条都是"注释里承诺了、模型里没查"的形态，
+#    用例必须证明它们在加载期真的失败，而不是被静默收下。
+
+def _entry_with(**overrides: str) -> str:
+    fields = {
+        "id": "case-entry",
+        "decision": "out_of_scope",
+        "kind": "agent_runtime",
+        "owner": "host",
+        "reason": "实验通道，不在治理范围。",
+        "consequence": "只报告。",
+        "expires_at": '"2026-12-31"',
+    }
+    fields.update(overrides)
+    return "  - " + "\n    ".join(f"{key}: {value}" for key, value in fields.items()) + "\n"
