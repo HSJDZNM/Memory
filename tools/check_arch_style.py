@@ -73,6 +73,13 @@ def sections(text: str):
 
 
 def first_paragraph(body) -> str:
+    """每个 H2 小节的第一段散文（跳过表格、围栏、标题、引用块与列表行）。
+
+    **段落开始之后**再遇到列表/引用行就是分界：旧实现照样 `continue`，于是把分界线两侧的行
+    用空格接成一句（概括句长度因此虚高），而 `- **术语**：…` 这种列表开头还会让紧随其后的
+    正文被当成"本节第一段"。
+    """
+
     collected, started = [], False
     for line in body:
         stripped = line.strip()
@@ -80,7 +87,11 @@ def first_paragraph(body) -> str:
             if started:
                 break
             continue
-        if stripped.startswith((">", "-", "*", "#", "---")):
+        if stripped.startswith(("#", "---")):
+            continue
+        if stripped.startswith((">", "-", "*")):
+            if started:
+                break
             continue
         started = True
         collected.append(stripped)

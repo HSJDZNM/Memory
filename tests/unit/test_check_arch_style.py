@@ -102,3 +102,26 @@ def test_plain_backtick_fence_still_works():
     text = chr(10).join(["散文一", BT3, "code_inside", BT3, "散文二"])
 
     assert [line for _number, line in module.prose_lines(text)] == ["散文一", "散文二"]
+
+def test_list_line_terminates_the_first_paragraph():
+    """段落中途的列表行是分界：不许跨过去把后面的行接成同一句。"""
+
+    body = ["第一句到此为止。", "- 列表项", "这句属于新的一段。"]
+
+    assert module.first_paragraph(body) == "第一句到此为止。"
+
+
+def test_quote_line_terminates_the_first_paragraph():
+    """引用行同样终止第一段。"""
+
+    body = ["第一句到此为止。", "> 引用", "这句属于新的一段。"]
+
+    assert module.first_paragraph(body) == "第一句到此为止。"
+
+
+def test_leading_list_line_is_still_skipped():
+    """阳性对照（既有口径）：段落开始前的列表/引用行仍然跳过。"""
+
+    body = ["- 列表项", "真正的第一段。", "", "第二段。"]
+
+    assert module.first_paragraph(body) == "真正的第一段。"
