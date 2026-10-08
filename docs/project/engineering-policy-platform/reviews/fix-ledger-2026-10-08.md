@@ -163,9 +163,10 @@ python tools/check_repo_consistency.py ; python tools/check_text_conventions.py
 - LLM 报告 775 条：critical 1 / high 89 / medium 369 / low 316；delegate 报告 164 条（§3 = 9 条 high）。
 - **high/critical 全部收口**（S1–S8b 十一个 scope）。
 - **medium 已收口 scope（逐项，均为当时读数）**：M1 43/43、M2 29/29、M3 32/32、M4 24/24、M6 29/29、M8 8/8、MA0 30/30、MA1 18/18、MA2 5/5、MA3 14/14；
-  在跑：**M9、M5**——完成面与 scope 计数见占位 <!-- PENDING: 见 .tmp/final-ledger-draft.md -->。
-- **low 收口（当时读数）**：L1 16/16、L2（38 判定，22 修）、L3 28/28、L7 18/18、L8 10/10；
-  在跑：L4+L5（task-23）、L6（task-24）、L9（task-22）、LA-techdetail（task-27）——完成面见占位 <!-- PENDING: 见 .tmp/final-ledger-draft.md -->。
+  已收口补充：**M5 34 条修 + 1 条判定不改**（见本文 §12 与 `.tmp/` 判定文件）。
+  在跑：**M9**（余量见占位 <!-- PENDING: 见 .tmp/final-ledger-draft.md -->；收官后补最终数字）。
+- **low 收口（当时读数）**：L1 16/16、L2（38 判定，22 修）、L3 28/28、L4 9/9、L5 5/5、L6 19/19、L7 18/18、L8 10/10、L9 65 条全部判定完（26 条本线提交 + 前任 32 + 2 条他人 + 5 条判定结案）、LA-techdetail 全清（对账口径 `54 = 25 + 26 + 3`；其中 8 个 LA 编号无带标记提交、**未核销**，见 §16/§17）。
+  **low 无在跑项** <!-- PENDING: 最终数字见 .tmp/final-ledger-draft.md -->。
 
 ## 10 纪律归纳（从本期实例中提炼，账里按此复核）
 
