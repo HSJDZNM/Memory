@@ -877,13 +877,15 @@ drifted = runner.binding(support.tool_request(
 namespace = Change(path=str(request.params["file_path"]),
                    content=str(request.params["content"]))
 
-print(pad("标识符", 22) + pad("值", 40) + "谁算的")
-print("-" * 124)
-print(pad("action_id（幂等键）", 22) + pad(namespace.digest().split(":")[-1][:16] + "…", 40)
+# 表宽按**最宽的值**取（action_hash 是 71 列：sha256: + 64 位十六进制）：表头与数据行共用同一个宽度，
+# 越宽的值不许把后一列顶走。
+print(pad("标识符", 22) + pad("值", 72) + "谁算的")
+print("-" * 132)
+print(pad("action_id（幂等键）", 22) + pad(namespace.digest().split(":")[-1][:16] + "…", 72)
       + "编排层节点：任务:轮次:改动摘要前 16 位")
-print(pad("action_id（平台侧）", 22) + pad(request.action_id, 40)
+print(pad("action_id（平台侧）", 22) + pad(request.action_id, 72)
       + "Phase 4 的动作 id：就是请求里的那个名字")
-print(pad("action_hash", 22) + pad(binding.action_hash, 40)
+print(pad("action_hash", 22) + pad(binding.action_hash, 72)
       + "Phase 4：schema + 参数 + 主体 + 权限 + 上下文摘要")
 print("-" * 124)
 assert binding.action_hash != binding.action_id
