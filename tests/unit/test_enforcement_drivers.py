@@ -16,7 +16,7 @@ import pytest
 from enforcement_support import enforcement_paths, make_action  # noqa: F401 - fixture 再导出
 
 from enforcement.drivers import DriverError, FileDriver
-from enforcement.models import ActionRequest, DriverKind, ExecutionStatus
+from enforcement.models import ActionRequest, DriverKind, ExecutionStatus, digest_of
 
 __all__ = ["enforcement_paths"]
 
@@ -355,6 +355,11 @@ def without_param(request: ActionRequest, name: str) -> ActionRequest:
 
     payload = json.loads(request.model_dump_json())
     payload["params"] = [item for item in payload["params"] if item["name"] != name]
+    # 摘要必须跟着参数走：模型在构造期要求 param_digest 能由 params 复算出来
+    # （"载荷在撒谎"要被拒绝）。这里按生产公式重算，仍然模拟一份自洽的缺参请求文档。
+    payload["param_digest"] = digest_of(
+        {item.name: item.canonical() for item in request.params if item.name != name}
+    )
     payload["action_hash"] = ""
     return ActionRequest.model_validate(payload)
 
