@@ -53,7 +53,12 @@ WORKFLOW_DIR = Path(".github/workflows")
 INVENTORY_EXEMPT = {"mirror_docs.py", "learn_site.py", "pep_site.py", "dora_site.py"}
 
 _REQ_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*([<>=!~][^;]*)?$")
-_PIN_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([0-9][0-9A-Za-z.\-+]*)$")
+# 锁文件里的固定行：可选 extras（pkg[extra]==1.2）与可选环境标记（pkg==1.2 ; python_version >= "3.8"）。
+# 旧正则只认"光秃秃的 pkg==1.2"：带 extras 或标记的行会被**静默丢掉**，随后报成"没有固定 X"
+# ——明明固定了，只是没解析出来。
+_PIN_RE = re.compile(
+    r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?==([0-9][0-9A-Za-z.\-+]*)(?:\s*;.*)?$"
+)
 _SPEC_RE = re.compile(r"^(>=|<=|==|!=|~=|>|<)?\s*([0-9][0-9A-Za-z.\-+]*)$")
 _WORKFLOW_REF_RE = re.compile(r"\.github/workflows/([A-Za-z0-9._-]+\.ya?ml)")
 _SCRIPT_RE = re.compile(r"([a-z0-9_]+\.py)")
@@ -169,20 +174,30 @@ def read_requirements_in() -> dict[str, str]:
     return result
 
 
-def read_requirements_lock() -> dict[str, str]:
+def read_requirements_lock() -> tuple[dict[str, str], list[str]]:
+    """(固定版本表, 解析不了的行)。
+
+    解析不了的行**不再静默丢弃**：丢了之后它要么让一个真被固定的包报成"没有固定"（误导），
+    要么连报都不报（畸形固定行永远看不见）。返回值带着它们，由 check_lock 记成漂移。
+    """
+
     result: dict[str, str] = {}
-    for line in _read_text("requirements.lock").splitlines():
-        line = line.split("#", 1)[0].strip()
+    unparsed: list[str] = []
+    for number, raw in enumerate(_read_text("requirements.lock").splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
         if not line or line.startswith("--hash"):
             continue
         # 生成的锁文件用行尾反斜杠续行（pip 的 --hash 必须与依赖在同一条逻辑行上）：
         # 解析时先去掉续行符，否则每条固定版本都会被判成"没有锁定"。
         line = line.removesuffix("\\").strip()
+        if not line:
+            continue
         match = _PIN_RE.match(line)
         if match is None:
+            unparsed.append("requirements.lock:%d: %r" % (number, line))
             continue
         result[match.group(1).lower()] = match.group(2)
-    return result
+    return result, unparsed
 
 
 def read_pyproject() -> dict[str, str]:
@@ -216,8 +231,12 @@ def read_pyproject() -> dict[str, str]:
 def check_lock() -> list[str]:
     issues: list[str] = []
     declared = read_requirements_in()
-    locked = read_requirements_lock()
+    locked, unparsed = read_requirements_lock()
     project = read_pyproject()
+
+    # 先报解析不了的行：否则它们会以"没有固定 X"这种错误理由出现（或者根本不出现）。
+    for item in unparsed:
+        issues.append("requirements.lock 里有无法解析的固定行（解析不了就不能当成没锁定）：%s" % item)
 
     for name in sorted(set(declared) - set(project)):
         issues.append("requirements.in 声明了 %s，pyproject.toml 里没有" % name)

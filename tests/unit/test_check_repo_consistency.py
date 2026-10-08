@@ -63,7 +63,7 @@ def test_check_lock_reports_uncomparable_versions_instead_of_crashing(monkeypatc
 
     monkeypatch.setattr(module, "read_requirements_in", lambda: {"demo": ">=1.0"})
     monkeypatch.setattr(module, "read_pyproject", lambda: {"demo": ">=1.0"})
-    monkeypatch.setattr(module, "read_requirements_lock", lambda: {"demo": "1.0beta"})
+    monkeypatch.setattr(module, "read_requirements_lock", lambda: ({"demo": "1.0beta"}, []))
 
     issues = module.check_lock()
 
@@ -111,3 +111,48 @@ def test_main_returns_one_for_drift(monkeypatch):
     monkeypatch.setattr(module, "check_tool_inventory", lambda: [])
 
     assert module.main(["check_repo_consistency.py"]) == 1
+
+def test_lock_pins_with_extras_and_markers_are_parsed(tmp_path, monkeypatch):
+    """`pkg[extra]==1.2` 与 `pkg==1.2 ; python_version >= "3.8"` 都是固定行，不许被丢掉。"""
+
+    lock = tmp_path / "requirements.lock"
+    lock.write_text(
+        "pkg[extra]==1.2" + chr(10)
+        + 'other==2.0 ; python_version >= "3.8"' + chr(10)
+        + "third==3.0 \\" + chr(10)
+        + "    --hash=sha256:abc" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    pins, unparsed = module.read_requirements_lock()
+
+    assert pins == {"pkg": "1.2", "other": "2.0", "third": "3.0"}
+    assert unparsed == []
+
+
+def test_unparsable_lock_lines_are_reported_not_dropped(tmp_path, monkeypatch):
+    """解析不了的固定行必须带行号入账（旧实现 `continue` 一句话都不说）。"""
+
+    (tmp_path / "requirements.lock").write_text("这是畸形固定行" + chr(10), encoding="utf-8", newline="")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    pins, unparsed = module.read_requirements_lock()
+
+    assert pins == {}
+    assert unparsed and "requirements.lock:1" in unparsed[0]
+
+
+def test_check_lock_surfaces_unparsable_lines(monkeypatch):
+    """锁文件里的畸形行要变成一条漂移，而不是"requirements.lock 没有固定 X"这种错误理由。"""
+
+    monkeypatch.setattr(module, "read_requirements_in", lambda: {})
+    monkeypatch.setattr(module, "read_pyproject", lambda: {})
+    monkeypatch.setattr(
+        module, "read_requirements_lock", lambda: ({}, ["requirements.lock:7: '畸形行'"])
+    )
+
+    issues = module.check_lock()
+
+    assert any("无法解析的固定行" in issue for issue in issues), issues
