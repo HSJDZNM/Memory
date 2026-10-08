@@ -167,7 +167,10 @@ def rewrite(md, src_path):
         tgt = url2path.get(base)
         if not tgt: return m.group(0)
         rel = os.path.relpath(tgt, src_dir).replace("\\", "/")
-        return "[" + m.group(1) + "](" + rel + (("#" + anchor) if anchor else "") + ")"
+        # group(3) 是可选标题（含前导空白，如 ' "标题"'）：LINKRE 特意把它匹配出来，
+        # 重建链接时不带上就等于把它吃掉——生成物与上游原文不一致。
+        title = m.group(3) or ""
+        return "[" + m.group(1) + "](" + rel + (("#" + anchor) if anchor else "") + title + ")"
     out, in_fence = [], False
     for line in md.split("\n"):
         if line.lstrip().startswith(FENCE):
