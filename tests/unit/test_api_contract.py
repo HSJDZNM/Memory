@@ -127,6 +127,28 @@ def test_every_error_code_has_a_status_and_api_error_derives_it() -> None:
     assert {code for code, status in STATUS_BY_CODE.items() if status < 400} == set()
 
 
+def test_the_status_map_cannot_be_rewritten_at_runtime() -> None:
+    """状态码表对外**只读**：任何 import 点都不能进程级改写 HTTP 状态。
+
+    这张表是契约（「认证失败永远 401」「跨租户与不存在共用 404」）。它此前是普通 dict，
+    一次手滑的 `STATUS_BY_CODE[ErrorCode.FORBIDDEN] = 200` 就能改掉整个进程的状态码，
+    而且没有任何测试会发现「这次响应为什么变成 200」。
+    """
+
+    import pytest
+
+    from policy_api.errors import ErrorCode, STATUS_BY_CODE
+
+    with pytest.raises(TypeError):
+        STATUS_BY_CODE[ErrorCode.FORBIDDEN] = 200  # type: ignore[index]
+
+    # 读取面不受影响：索引 / 成员判断 / 迭代 / get 都照旧
+    assert STATUS_BY_CODE[ErrorCode.FORBIDDEN] == 403
+    assert ErrorCode.RATE_LIMITED in STATUS_BY_CODE
+    assert STATUS_BY_CODE.get(ErrorCode.NOT_FOUND) == 404
+    assert {item.value for item in STATUS_BY_CODE} >= {"forbidden", "rate_limited"}
+
+
 def test_a_missing_status_mapping_degrades_readably_instead_of_raising_keyerror(monkeypatch) -> None:
     """映射表漏一行时：加载期就拒绝；万一运行期被改脏，也不许把 4xx 变成"没有理由的 500"。
 
@@ -135,13 +157,23 @@ def test_a_missing_status_mapping_degrades_readably_instead_of_raising_keyerror(
     结构化错误码一起丢掉。
     """
 
-    from policy_api.errors import ApiError, ErrorCode, STATUS_BY_CODE, error_payload, missing_status_codes
+    import policy_api.errors as errors_module
+    from policy_api.errors import ApiError, ErrorCode, error_payload, missing_status_codes
 
     # ① 现在的表是完整的（加载期守卫用的就是这个函数）
     assert missing_status_codes() == ()
 
-    # ② 变异：删掉一条映射 → 清单立刻报出来（守卫因此会在 import 期拒绝）
-    monkeypatch.delitem(STATUS_BY_CODE, ErrorCode.FORBIDDEN)
+    # ② 变异：替换成一份缺条目的表 → 清单立刻报出来（守卫因此会在 import 期拒绝）。
+    #   表对外只读，所以这里替换的是**模块属性**，不是就地改（见上一条用例）。
+    monkeypatch.setattr(
+        errors_module,
+        "STATUS_BY_CODE",
+        {
+            code: status
+            for code, status in errors_module.STATUS_BY_CODE.items()
+            if code is not ErrorCode.FORBIDDEN
+        },
+    )
     assert missing_status_codes() == (ErrorCode.FORBIDDEN,)
 
     # ③ 运行期真的漏了：按 500 失败关闭，且响应体里仍然是这次真实的错误码
