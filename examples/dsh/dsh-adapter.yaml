@@ -76,7 +76,10 @@ registry_approved: ../../registry/tool-registry.approved.json
 enforcement_ledger: ../../.tmp/artifacts/dsh-enforcement-ledger.jsonl
 # 高风险动作（pwsh / bash / run_code）需要事先签发、且与具体 action_hash 绑定的审批文件。
 # 生成方式见 README：python -m enforcement.cli approve --request <req.json> --out <approval.json>
-# approval_file: .policy/approval.json
+# 路径同样相对**本文件所在目录**（见文件头）：本文件在 <project>/.policy/ 下时，写 approval.json 即可；
+# 写成 .policy/approval.json 会解析成 <project>/.policy/.policy/approval.json —— 那个文件不存在，
+# 于是每个高风险动作都以"审批缺失"失败关闭（看起来像没审批，实际是路径写错）。
+# approval_file: approval.json
 
 # —— G3：动手前取证（可选；默认关闭 = 保持 Phase 2 契约） ——
 # 声明并启用后，pre-execute 会在**影子工作区**（副本，用完即删）上应用"提议的新内容"，
