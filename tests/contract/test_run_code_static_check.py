@@ -134,6 +134,31 @@ def test_dotted_forbidden_call_entries_actually_match():
     assert clean.passed, clean.detail
 
 
+def _attribute_declaration():
+    from enforcement.models import CodeCheckSpec
+
+    return CodeCheckSpec(
+        kind="python_forbidden_surface",
+        param="code",
+        forbidden_imports=[],
+        forbidden_calls=[],
+        forbidden_attributes=["os"],
+        known_gaps=["测试用最小声明"],
+    )
+
+
+def test_nested_attribute_hits_are_collapsed():
+    """一条属性链只算一处命中：os.path.join(...) 不该同时报 os.path.join 与内层 os.path。"""
+
+    nested = check_code(
+        "import os" + chr(10) + "os.path.join('a', 'b')" + chr(10), _attribute_declaration()
+    )
+    attributes = [item for item in nested.hits if "属性" in item]
+
+    assert len(attributes) == 1, nested.hits
+    assert "1 处" in nested.detail, nested.detail
+
+
 def test_parse_failure_is_a_refusal_not_a_skip():
     declaration = executed_code_spec(repository_registry()).code_check
     for source in ("def (:\n", "", "   "):

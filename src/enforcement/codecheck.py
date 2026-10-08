@@ -104,7 +104,21 @@ def _collect(tree: ast.AST, declaration: CodeCheckSpec) -> list[tuple[int, str, 
             candidate = dotted_name(node)
             if candidate is not None and _matches(candidate, declaration.forbidden_attributes):
                 hits.append((node.lineno, "attribute", candidate))
-    return sorted(set(hits))
+    ordered = sorted(set(hits))
+    # 同一条属性链上的嵌套节点只算一处：os.path.join(...) 会同时命中 os.path.join 与
+    # 内层的 os.path，重复条目既抬高"命中 N 处"，又吃掉 8 条的上报预算。
+    attributes = {(line, name) for line, kind, name in ordered if kind == "attribute"}
+    return [
+        (line, kind, name)
+        for line, kind, name in ordered
+        if not (
+            kind == "attribute"
+            and any(
+                other_line == line and other.startswith(name + ".")
+                for other_line, other in attributes
+            )
+        )
+    ]
 
 
 def _describe(hits: Sequence[tuple[int, str, str]]) -> tuple[str, ...]:
