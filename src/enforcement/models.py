@@ -975,6 +975,18 @@ class ActionRequest(StrictModel):
 
     @model_validator(mode="after")
     def _check_hash(self) -> "ActionRequest":
+        # param_digest 不在 action_hash 的 material 里（并进去会让在途授权与已存哈希全部
+        # 失效，是协议级变更），但它必须**与规范化参数一致**：它是审计里"这次到底传了什么"
+        # 的摘要，失配说明这份载荷被改过或字段是编的——构造期就拒绝，不让它作为"没人核的
+        # 装饰"被记进审计。同一个请求文档因此不可能带着一个描述别的参数的摘要通过校验。
+        expected_param_digest = digest_of(
+            {item.name: item.canonical() for item in self.params}
+        )
+        if self.param_digest != expected_param_digest:
+            raise ValueError(
+                "param_digest 与规范化参数不一致：摘要必须能由 params 复算出来"
+                f"（期望 {expected_param_digest}，得到 {self.param_digest!r}）"
+            )
         expected = self.compute_action_hash()
         if not self.action_hash:
             object.__setattr__(self, "action_hash", expected)

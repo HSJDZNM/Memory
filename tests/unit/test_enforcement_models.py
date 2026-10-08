@@ -102,7 +102,32 @@ def request_payload(**overrides):
         created_at=utc_now(),
     )
     payload.update(overrides)
+    if "param_digest" not in overrides:
+        # 请求文档的 param_digest 必须能由 params 复算出来（模型构造期校验）：
+        # 夹具因此不能写一个假摘要——那正是"载荷在撒谎"的形态。
+        payload["param_digest"] = digest_of(
+            {item.name: item.canonical() for item in payload.get("params", ())}
+        )
     return payload
+
+
+def test_a_tampered_param_digest_is_refused():
+    """param_digest 不在 action_hash 的 material 里，但失配必须拒绝。
+
+    它是审计里"这次到底传了什么"的摘要：如果构造期不核，一份被改过（或字段是编的）
+    的请求会带着一个描述别的参数的摘要进入审计与台账。
+    """
+
+    payload = request_payload(params=[param("content", "A")])
+    payload["param_digest"] = "sha256:not-the-params"
+
+    with pytest.raises(ValidationError) as error:
+        ActionRequest.model_validate(payload)
+
+    assert "param_digest" in str(error.value)
+
+    # 反真空：摘要与参数一致时同一个载荷照常还原。
+    assert ActionRequest.model_validate(request_payload(params=[param("content", "A")]))
 
 
 def test_duplicate_param_names_are_rejected():
@@ -115,8 +140,10 @@ def test_duplicate_param_names_are_rejected():
 
     with pytest.raises(ValidationError) as error:
         ActionRequest(
-            **request_payload(),
-            params=(param("content", "A"), param("content", "LAST")),
+            **request_payload(
+                params=(param("content", "A"), param("content", "LAST")),
+                param_digest="sha256:任意值",
+            )
         )
     assert "重复" in str(error.value)
 
@@ -124,8 +151,8 @@ def test_duplicate_param_names_are_rejected():
 def test_distinct_param_values_still_produce_distinct_hashes():
     """反真空：单值请求的参数一变，action_hash 必须跟着变。"""
 
-    first = ActionRequest(**request_payload(), params=(param("content", "A"),))
-    second = ActionRequest(**request_payload(), params=(param("content", "B"),))
+    first = ActionRequest(**request_payload(params=(param("content", "A"),)))
+    second = ActionRequest(**request_payload(params=(param("content", "B"),)))
 
     assert first.action_hash != second.action_hash
     assert first.value_of("content") == "A"

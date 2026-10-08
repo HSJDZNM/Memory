@@ -318,6 +318,11 @@ def test_tampered_request_is_rejected_by_the_hash_guard(enforcement_paths):
         {**item, "value": "from repository import OrderRepository"} if item["name"] == "new_string" else item
         for item in payload["params"]
     ]
+    # 摘要跟着改，才能走到 action_hash 那一关——本次要验证的是哈希守卫本身
+    # （摘要与参数失配是另一条判据，另有专门用例）。
+    payload["param_digest"] = digest_of(
+        {item["name"]: item["value"] for item in payload["params"]}
+    )
 
     with pytest.raises(ValidationError) as error:
         ActionRequest.model_validate(payload)
