@@ -928,7 +928,7 @@ def suites_from_reports(reports: Sequence[Path]) -> dict[str, dict[str, object]]
             'cases': entry['cases'],
             'failures': failures,
             'skipped': entry['skipped'],
-                    'artifacts': [_display_path(report) for report in reports],
+            'artifacts': [_display_path(report) for report in reports],
         }
     return payload
 
