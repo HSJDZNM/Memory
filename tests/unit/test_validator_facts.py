@@ -244,6 +244,37 @@ def test_read_source_bounds_the_read_by_the_descriptor_not_the_path_stat(
 # ------------------------------------------------------------------ AST 事实
 
 
+def test_nested_definitions_are_collected_with_their_kind() -> None:
+    """嵌套类/方法、函数里的函数、模块级 if 里的定义都要收（复核发现：旧实现只走一层）。"""
+
+    source = (
+        "class Outer:" + chr(10)
+        + "    class Inner:" + chr(10)
+        + "        def method(self):" + chr(10)
+        + "            pass" + chr(10)
+        + chr(10)
+        + "def outer():" + chr(10)
+        + "    def inner():" + chr(10)
+        + "        pass" + chr(10)
+        + "    return inner" + chr(10)
+        + chr(10)
+        + "if True:" + chr(10)
+        + "    def conditional():" + chr(10)
+        + "        pass" + chr(10)
+    )
+
+    facts = parse_module(source)
+
+    assert [(item.qualified, item.kind) for item in facts.definitions] == [
+        ("Outer", "class"),
+        ("Outer.Inner", "class"),
+        ("Outer.Inner.method", "method"),
+        ("outer", "function"),
+        ("outer.inner", "function"),  # 函数里的函数仍是 function，不是 method
+        ("conditional", "function"),
+    ]
+
+
 def test_ast_collects_imports_aliases_and_relative_imports() -> None:
     facts = parse_module(
         "import os, json.decoder" + chr(10)

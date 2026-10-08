@@ -249,13 +249,27 @@ def parse_module(text: str) -> ModuleFacts:
                 )
             )
             call_nodes.append(node)
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            definitions.append(_definition(node, parent=None))
-        if isinstance(node, ast.ClassDef):
-            for child in node.body:
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    definitions.append(_definition(child, parent=node.name))
+    def collect(body: Sequence[ast.stmt], parents: Tuple[str, ...], parent_kind: Optional[str]) -> None:
+        """递归收集定义：嵌套类、类里的方法、函数里的函数、以及模块级 if/try/with 里的定义都算。
+
+        旧实现只走 tree.body 加**一层**类体：嵌套类（及其方法）、函数里的定义、
+        `if TYPE_CHECKING:` / `try:` 里的定义全被静默丢掉——docstring 检查因此整片漏报，
+        而 DefinitionFact.kind/qualified 本来就是要表达模块/类/函数/方法这层嵌套的（复核发现）。
+        """
+
+        for child in body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                fact = _definition(
+                    child, parent=".".join(parents) or None, parent_kind=parent_kind
+                )
+                definitions.append(fact)
+                collect(child.body, (*parents, child.name), fact.kind)
+                continue
+            nested = getattr(child, "body", None)
+            if isinstance(nested, list):
+                collect(nested, parents, parent_kind)
+
+    collect(tree.body, (), None)
 
     # 动态 import 的识别放在最后：先把 import 绑定收齐，别名形式才看得见
     # （from importlib import import_module as im; im(name) 曾经整个漏判）。
@@ -320,11 +334,16 @@ def _describe_argument(target: Optional[ast.AST]) -> str:
 
 
 def _definition(
-    node: ast.AST, *, parent: Optional[str]
+    node: ast.AST, *, parent: Optional[str], parent_kind: Optional[str] = None
 ) -> DefinitionFact:
     name = str(getattr(node, "name", "<anonymous>"))
     line, column = _location(node)
-    kind = "class" if isinstance(node, ast.ClassDef) else ("method" if parent else "function")
+    # method 只看**紧邻的父定义是不是类**：函数里嵌的函数仍是 function，不是 method。
+    kind = (
+        "class"
+        if isinstance(node, ast.ClassDef)
+        else ("method" if parent_kind == "class" else "function")
+    )
     qualified = f"{parent}.{name}" if parent else name
     return DefinitionFact(
         kind=kind,
