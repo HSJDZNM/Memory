@@ -1510,6 +1510,10 @@ class AgentRuntime:
         elif "路径" in text or "上下文" in text or "缺少" in text or "主体" in text:
             code = "context_error"
         else:
+            # **兜底，不是第一判据**：结构化 `code`（见上面的 `structured`）优先，这一串文案匹配只服务
+            # 那些不带 code 的失败（第三方适配器、以及尚未标码的抛错点）。它的代价已经实测过一次：
+            # hook 线协议抛的「未支持的 dsh hook 事件 …」匹配不上任何关键词，于是 `unknown_event`
+            # 那一支永不触发、一律落到这里。新增抛错点时**优先标 `code=`**，不要往这张表里加子串。
             code = "context_error" if "context" in lowered else "internal_error"
         return self._refuse(
             agent_id=agent_id,
