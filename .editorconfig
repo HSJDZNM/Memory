@@ -18,8 +18,13 @@ indent_size = 4
 [*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,yml,yaml,html,css,scss}]
 indent_size = 2
 
-[Makefile]
+# GNU make 认三种默认文件名（GNUmakefile 优先于 makefile 优先于 Makefile），
+# *.mk 常被 include 进来当配方文件。只写 [Makefile] 会让其余几种落回 [*] 的
+# indent_style = space：编辑器一保存就把配方行的 TAB 换成空格，make 报 missing separator。
+[{Makefile,GNUmakefile,makefile,*.mk}]
 indent_style = tab
+# 不设 tab_width 时会继承 [*] 的 indent_size = 2：TAB 只有两列宽，读配方时几乎看不出来。
+tab_width = 8
 
 [*.{bat,cmd}]
 end_of_line = crlf
