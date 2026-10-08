@@ -45,7 +45,7 @@ datasets:
     title: Bandit 功能测试期望（examples 与 tests/functional）
     entry: https://github.com/PyCQA/bandit
     kind: git
-    pin: 钉 commit；运行期取 tarball 并逐文件 sha256
+    pin: 钉 commit 68ebe11ef79263be27ec223184b94a4fc394a622（与 evaluation/corpora/bandit-functional.lock.json 同值）；运行期取 tarball 并逐文件 sha256
     license: Apache-2.0
     license_verified: false
     labels: 行级（示例文件, 期望 issue 的 B 码与行号），来源是工具作者写的期望字典
@@ -59,7 +59,7 @@ datasets:
     title: pycodestyle 标注语料（testing/data/*.py）
     entry: https://github.com/PyCQA/pycodestyle
     kind: git
-    pin: 钉 commit；逐文件 sha256
+    pin: 钉 commit f39d0999392236970bec1f01cbb670a4f4e088db（与 evaluation/corpora/pycodestyle-testsuite.lock.json 同值）；逐文件 sha256
     license: MIT/Expat
     license_verified: false
     labels: '行级，形如 #: E501 的期望标记（部分带行:列）'
@@ -73,7 +73,7 @@ datasets:
     title: pylint 功能测试（tests/functional/**，行级期望消息）
     entry: https://github.com/pylint-dev/pylint
     kind: git
-    pin: 钉 commit；不入库，运行期取用
+    pin: 钉 commit（**尚未记录 revision**：没有 lock、没有摘要，tier A 的「钉死」目前不可执行——要么补 evaluation/corpora/pylint-functional.lock.json，要么降级）；不入库，运行期取用
     license: GPL-2.0
     license_verified: false
     labels: '行级 # [message-id] 标注（第二套独立标注，用于交叉验证）'
@@ -87,7 +87,7 @@ datasets:
     title: 'semgrep 规则测试语料（tests/rules/**，行级 # ruleid 标注）'
     entry: https://github.com/semgrep/semgrep
     kind: git
-    pin: 钉 commit；不入库，运行期取用
+    pin: 钉 commit（**尚未记录 revision**：没有 lock、没有摘要，tier A 的「钉死」目前不可执行——要么补 evaluation/corpora/semgrep-rule-tests.lock.json，要么降级）；不入库，运行期取用
     license: LGPL-2.1
     license_verified: false
     labels: 行级标注；规则 YAML 侧还有 metadata.cwe 可作 W2 的 CWE 口径
@@ -143,7 +143,7 @@ datasets:
     title: AgentHarm（有害 agent 任务基准）
     entry: https://huggingface.co/datasets/ai-safety-institute/AgentHarm
     kind: hf
-    pin: 钉 dataset revision
+    pin: 钉 dataset revision（**尚未记录 revision**：没有 lock 文件，钉死不可执行）
     license: other
     license_verified: false
     labels: 任务级（应被拒绝的有害行为），含工具面描述
@@ -157,7 +157,7 @@ datasets:
     title: InjecAgent（工具集成 agent 的间接提示注入）
     entry: https://github.com/uiuc-kang-lab/InjecAgent
     kind: git
-    pin: 钉 commit
+    pin: 钉 commit（**尚未记录 revision**：没有 lock 文件，钉死不可执行）
     license: MIT
     license_verified: true
     labels: 案例级（注入目标 + 期望的攻击者工具调用）
