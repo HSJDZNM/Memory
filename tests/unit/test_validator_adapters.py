@@ -31,7 +31,7 @@ from validators.adapters.base import (
 )
 from validators.adapters.mypy import run_mypy
 from validators.adapters.pytest_runner import _module_binds_name, run_pytest
-from validators.adapters.ruff import run_ruff
+from validators.adapters.ruff import map_diagnostics, run_ruff
 
 CONFIG = validators_config()
 TARGET = "src/shop/style_offences.py"
@@ -465,6 +465,37 @@ def test_ruff_treats_a_missing_tool_as_unavailable(tmp_root: Path) -> None:
             config=None,
             paths=(TARGET,),
         )
+
+
+def test_ruff_tolerates_a_malformed_location_from_the_tool(tmp_root: Path) -> None:
+    """工具输出不可信：location 不是映射时不许崩——证据照出、坐标留空（复核发现）。"""
+
+    rule = make_checker_rule(
+        "STYLE-001",
+        checker="style_lint",
+        body={"style_lint": {"tool": "ruff", "codes": ["F401"]}},
+    )
+    baseline = run_adapter("ruff", "ok", tmp_root, rules=(rule,))  # 只为拿一份合法的 tool 载荷
+    document = (
+        {"code": "F401", "message": "unused import", "filename": TARGET, "location": [1, 2]},
+        {"code": "F401", "message": "unused import", "filename": TARGET, "location": "12:5"},
+        {"code": "F401", "message": "unused import", "filename": TARGET, "location": {"row": "x"}},
+        {"code": "F401", "message": "unused import", "filename": TARGET},
+    )
+
+    evidence, unmapped = map_diagnostics(
+        document,
+        rules=(rule,),
+        workspace=VALIDATOR_PROJECT,
+        target_path=TARGET,
+        tool=baseline.tool,
+        max_message_chars=200,
+    )
+
+    assert unmapped == 0
+    assert len(evidence) == 4
+    assert [item.location.line for item in evidence] == [None, None, None, None]
+    assert all(item.location.file == TARGET for item in evidence)
 
 
 def test_absence_of_a_name_cannot_be_proven_from_the_ast_alone(tmp_path: Path) -> None:

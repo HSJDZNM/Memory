@@ -184,7 +184,11 @@ def map_diagnostics(
         if not owners:
             unmapped += 1
             continue
-        location = item.get("location") or {}
+        # 工具输出是不可信数据：location 不是映射时不能 .get()（旧实现会直接 AttributeError，
+        # 整个适配器崩掉而不是给出证据）。坐标读不出来就留空——证据照样出，判定不受影响。
+        location = item.get("location")
+        if not isinstance(location, Mapping):
+            location = {}
         try:
             line = int(location.get("row"))
             column = max(0, int(location.get("column", 1)) - 1)
