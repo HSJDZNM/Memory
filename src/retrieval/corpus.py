@@ -344,10 +344,6 @@ class ExpansionTerm(StrictModel):
     zh: Tuple[str, ...] = ()
     en: Tuple[str, ...] = ()
 
-    @property
-    def max_zh_length(self) -> int:
-        return max((len(item) for item in self.zh), default=0)
-
 
 class ExpansionLexicon(StrictModel):
     """受控术语表。它只做跨语言的词法桥接，不引入任何"答案"。"""
