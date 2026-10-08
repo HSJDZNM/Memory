@@ -1170,6 +1170,37 @@ def audit_records() -> list[dict]:
     return records
 
 
+def audit_mark() -> int:
+    """本轮开始前的审计记录数：`--keep` 会保留上一轮的 `.policy/audit.jsonl`。"""
+
+    return len(audit_records())
+
+
+def new_audit_records(mark: int) -> list[dict]:
+    """本轮**新增**的审计记录（本轮的判定只许用这一批）。
+
+    `--keep` 保留上一轮审计文件时，把**整个文件**当本轮证据会同时出三个后果：
+    (1) 本轮 Hook 没跑（或 edit 没发生）时 `last_governed` 返回上一轮的 block 记录，`block_ok`
+        于是用一个陈旧记录给出 pass —— "这一轮没验证过"被写成"已验证"；
+    (2) `if not records:` 这个门（"审计里一条记录都没有 = Hook 根本没被执行"）在 `--keep` 下
+        永远打不开，受限宿主不再产生 `environment_skipped` 与对应 reason；
+    (3) `sandbox_state(ran=bool(records), ...)` 会把上一轮的事实算成本轮读数。
+    快照取在本轮任何 dsh 运行之前（见 `main`），三个读数因此都属于"这一轮"。
+    """
+
+    return audit_records()[mark:]
+
+
+def capture_names(before: Iterable[str]) -> list[str]:
+    """本轮**新增**的采集文件：与审计同一条口径（`--keep` 不把上一轮的算作本轮读数）。"""
+
+    directory = PROJECT / ".policy" / "captures"
+    if not directory.is_dir():
+        return []
+    known = set(before)
+    return sorted(item.name for item in directory.glob("*.json") if item.name not in known)
+
+
 def last_governed(records: list[dict], tool: str) -> dict | None:
     found = None
     for record in records:
@@ -1252,11 +1283,18 @@ def main(argv: list[str] | None = None) -> int:
     build_project(keep=args.keep)
     controller = PROJECT / "src" / "shop" / "order_controller.py"
 
+    # `--keep` 保留上一轮的审计与采集：本轮只认**新增**的那一批（见 new_audit_records 的三个后果）。
+    audit_start = audit_mark()
+    captures_dir = PROJECT / ".policy" / "captures"
+    captures_start = (
+        {item.name for item in captures_dir.glob("*.json")} if captures_dir.is_dir() else set()
+    )
+
     # ---- 场景 1：bad 编辑必须被阻断，文件哈希不变 -------------------------------
     block_before = sha256(controller)
     block_exit = run_dsh(BLOCK_PROMPT, "block-run.txt", isolated_home=args.isolated_home)
     block_after = sha256(controller)
-    records = audit_records()
+    records = new_audit_records(audit_start)
     block_record = last_governed(records, "edit")
 
     block_ok = (
@@ -1272,7 +1310,7 @@ def main(argv: list[str] | None = None) -> int:
     allow_before = sha256(controller)
     allow_exit = run_dsh(ALLOW_PROMPT, "allow-run.txt", isolated_home=args.isolated_home)
     allow_after = sha256(controller)
-    records = audit_records()
+    records = new_audit_records(audit_start)
     allow_record = last_governed(records, "edit")
 
     allow_ok = (
@@ -1308,11 +1346,7 @@ def main(argv: list[str] | None = None) -> int:
             "file_sha256_after": allow_after,
             "audit": describe(allow_record),
         },
-        "captured_payloads": sorted(
-            item.name for item in (PROJECT / ".policy" / "captures").glob("*.json")
-        )
-        if (PROJECT / ".policy" / "captures").is_dir()
-        else [],
+        "captured_payloads": capture_names(captures_start),
         "logs": sorted(item.name for item in LOGS.glob("*.txt")),
         "timestamp": clock.datetime.now(clock.timezone.utc).isoformat().replace("+00:00", "Z"),
     }

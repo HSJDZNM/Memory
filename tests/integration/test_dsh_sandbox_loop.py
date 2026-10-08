@@ -210,6 +210,7 @@ def drive_main(
     isolated_home: bool = False,
     seen: list[bool] | None = None,
     dsh_available: bool = True,
+    audit_record: dict | None = None,
 ) -> tuple[int, dict]:
     """把 main() 的判定路径整条驱动一遍：假 dsh、假项目、真日志。
 
@@ -217,6 +218,8 @@ def drive_main(
     `--isolated-home` 的接线因此不必真起 dsh 也能被钉住。
 
     `dsh_available=False` 走的是另一条写盘路径（`dsh_argv()` 返回 None → 最小跳过载荷）。
+    `audit_record` 给出时，它由**本次** `run_dsh` 追加进审计（`--keep` 语义修正后，"本轮跑过"
+    只认新增记录，所以"预先摆好的审计文件"不再等于"这一轮跑过"）。
     `TREE_ROOT` 与 `PROJECT`/`LOGS`/`ARTIFACT` 一样被换成本次临时目录：reading_context 里
     "这棵树"于是指测试自己的目录，不必每个用例都为整棵仓库算一次轮次级封条。
     """
@@ -241,10 +244,15 @@ def drive_main(
     monkeypatch.setattr(loop, "build_project", lambda *, keep: None)
     monkeypatch.setattr(loop, "dsh_argv", (lambda: ["dsh"]) if dsh_available else (lambda: None))
 
+    audit: list[dict] = []
+    monkeypatch.setattr(loop, "audit_records", lambda: list(audit))
+
     def fake_run(prompt: str, log_name: str, *, isolated_home: bool = False) -> int:
         if seen is not None:
             seen.append(isolated_home)
         (logs / log_name).write_text(log_text, encoding="utf-8")
+        if audit_record is not None:
+            audit.append(dict(audit_record))
         return 1
 
     monkeypatch.setattr(loop, "run_dsh", fake_run)
@@ -1135,7 +1143,10 @@ def test_reading_context_marks_a_denied_write_as_restricted(
 def test_reading_context_marks_a_completed_run_as_unrestricted(
     tmp_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """审计里真的有记录 = 闭环真的跑过 → unrestricted；判定字段一个都不受影响。"""
+    """审计里真的有记录 = 闭环真的跑过 → unrestricted；判定字段一个都不受影响。
+
+    记录由**本轮的 run_dsh** 追加（`--keep` 语义修正后，预先摆好的审计文件不算"这一轮跑过"）。
+    """
 
     record = {
         "governed": True,
@@ -1145,8 +1156,9 @@ def test_reading_context_marks_a_completed_run_as_unrestricted(
         "executed": False,
         "matched_rules": [loop.RULE_ID],
     }
-    monkeypatch.setattr(loop, "audit_records", lambda: [record])
-    code, payload = drive_main(tmp_root, monkeypatch, log_no_permission_error(), require_dsh=False)
+    code, payload = drive_main(
+        tmp_root, monkeypatch, log_no_permission_error(), require_dsh=False, audit_record=record
+    )
 
     assert payload["result"] == "fail", "allow 场景没真的改文件，所以这次运行整体失败"
     assert payload.get("environment_skipped") is False
@@ -1211,3 +1223,35 @@ def test_reading_context_never_carries_an_absolute_path(
     assert values
     for value in values:
         assert not Path(value).is_absolute(), value
+
+
+def test_kept_audit_records_are_not_this_round_evidence(monkeypatch: pytest.MonkeyPatch):
+    """`--keep` 保留上一轮审计时，本轮判定只认新增记录（陈旧的 block 不许当本轮证据）。"""
+
+    previous = [{"tool": "edit", "governed": True, "decision": "block", "exit_code": 2}]
+    monkeypatch.setattr(loop, "audit_records", lambda: list(previous))
+    mark = loop.audit_mark()
+
+    fresh = {"tool": "edit", "governed": True, "decision": "allow", "exit_code": 0}
+    monkeypatch.setattr(loop, "audit_records", lambda: previous + [fresh])
+    assert loop.new_audit_records(mark) == [fresh]
+    assert loop.last_governed(loop.new_audit_records(mark), "edit") == fresh
+
+    # 本轮完全没跑（没有新记录）时新增为空：`if not records:` 的门因此仍能打开——
+    # 旧写法把整个文件当证据，这道门在 --keep 下永远打不开（受限宿主不再报 environment_skipped）。
+    monkeypatch.setattr(loop, "audit_records", lambda: list(previous))
+    assert loop.new_audit_records(mark) == []
+
+
+def test_capture_names_only_lists_this_round(monkeypatch: pytest.MonkeyPatch, tmp_root: Path):
+    """采集同样只算本轮新增：上一轮的 captures 不许出现在本轮读数里。"""
+
+    project = tmp_root / "demo-shop"
+    captures = project / ".policy" / "captures"
+    captures.mkdir(parents=True)
+    (captures / "old.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(loop, "PROJECT", project)
+
+    (captures / "new.json").write_text("{}", encoding="utf-8")
+    assert loop.capture_names({"old.json"}) == ["new.json"]
+    assert loop.capture_names({"old.json", "new.json"}) == []
