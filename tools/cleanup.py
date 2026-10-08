@@ -375,7 +375,16 @@ def _clean(dry_run: bool, plan: list[Path], *, include_venv: bool = False) -> in
             print("跳过（不在白名单）:", relative)
             skipped += 1
             continue
-        for target in removal_targets(path):
+        try:
+            targets = removal_targets(path)
+        except OSError as error:
+            # `.tmp/` 的展开要 iterdir()：权限错误、或扫描中条目消失，都会在这里抛 OSError。
+            # 其余删除步骤（`_remove`）都把自己的错误交回来入账，展开这一步不能例外——
+            # 否则整轮清理以栈回溯收场，连"共删了几项、失败几项"的汇总都不打印（条目 [23]）。
+            print(f"展开失败（{type(error).__name__}）: {relative}")
+            blocked += 1
+            continue
+        for target in targets:
             target_relative = target.relative_to(REPO_ROOT).as_posix()
             if dry_run:
                 print("将删除:", target_relative)

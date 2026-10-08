@@ -630,3 +630,29 @@ def test_dedup_scales_with_the_candidate_count() -> None:
 
     assert len(kept) == 1000
     assert elapsed < 1.0, "3000 条候选不该要一秒以上（旧实现实测 1.9s）"
+
+def test_tmp_expansion_failure_is_accounted_not_a_traceback(monkeypatch, capsys, tmp_root):
+    """`.tmp/` 展开时的 OSError 必须入账（失败 1 项 + 退出码 1），不许整轮栈回溯。
+
+    条目 [23]（L9/task-22）：`removal_targets()` 是**唯一**没被计入错误账的删除步骤——
+    `tmp_children()` 的 `root.iterdir()` 没有 OSError 处理，权限错误会让清理直接崩掉，
+    而模块契约是"计失败项、打汇总、退出 1"。
+    """
+
+    cleanup = _load_cleanup_with_tmp_root(monkeypatch, tmp_root)
+    _make_candidate(tmp_root, "artifacts")
+    real_iterdir = Path.iterdir
+
+    def flaky_iterdir(self):
+        if self == cleanup.tmp_dir():
+            raise PermissionError("denied by test")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", flaky_iterdir)
+
+    assert cleanup._clean(False, [cleanup.tmp_dir()]) == 1
+    out = capsys.readouterr().out
+
+    assert "展开失败（PermissionError）: .tmp" in out, out
+    assert "失败 1 项" in out, "汇总必须照常打印（旧实现根本走不到这一行）：" + out
+    assert (tmp_root / ".tmp" / "artifacts").is_dir(), "展开失败时一个子项都不该被删"
