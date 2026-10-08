@@ -42,7 +42,6 @@ from crawl4ai import AsyncWebCrawler, CacheMode, CrawlerRunConfig
 from crawl4ai.async_crawler_strategy import AsyncHTTPCrawlerStrategy
 from crawl4ai.markdown_generation_strategy import CustomHTML2Text
 
-import pep_site
 
 BT = chr(96)
 FENCE = BT * 3
