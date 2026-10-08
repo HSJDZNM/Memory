@@ -115,6 +115,17 @@ def _load_rules(root: Path) -> Any:
 
 def run_matrix(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    # 其余子命令（approve / check / inspect / events / host-version）都按 --approved 走，
+    # 只有 matrix 走 load_registry_from_repo——它固定读 DEFAULT_APPROVED_PATH。静默忽略
+    # 用户显式给的清单正是本模块反对的形态（"我明明指定了"变成空操作），所以这里显式拒绝。
+    if Path(args.approved).resolve() != Path(DEFAULT_APPROVED_PATH).resolve():
+        print(
+            "[adapters] matrix 不支持 --approved：本子命令固定读 "
+            f"{DEFAULT_APPROVED_PATH}；approve / check / inspect / events / host-version "
+            "才按 --approved 走",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
     try:
         registry = load_registry_from_repo(root, require_approval=False)
     except RegistryError as error:
