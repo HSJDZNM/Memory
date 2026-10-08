@@ -11,7 +11,7 @@
 - 恢复先比协议世代与版本凭据：规则集 / 索引变了重新评估，工具 schema 变了重新审批，
   世代变了直接拒绝——不兼容时沿用旧 allow 就是绕过治理。
 
-标记用 `pytest.mark.contract`：pytest.ini 与 pyproject.toml 只登记了
+标记用 `pytest.mark.contract`：pytest.ini（配置的唯一来源）只登记了
 contract / integration / security 三个标记（`--strict-markers` 下用未登记的 `unit` 会直接报错），
 `tests/unit/test_precheck.py` 也是同样的选择。
 """

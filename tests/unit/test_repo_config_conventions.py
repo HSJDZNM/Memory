@@ -7,7 +7,9 @@ git check-ignore（不自己实现一套匹配），.editorconfig 按节解析�
 
 from __future__ import annotations
 
+import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -95,3 +97,19 @@ def test_gitignore_keeps_env_templates_visible_and_secrets_ignored() -> None:
         assert _is_ignored(name), f"{name} 是真实配置：必须继续忽略"
     for name in (".env.example", ".env.production.example", ".env.local.example"):
         assert not _is_ignored(name), f"{name} 是模板：必须能在 git status 里看见"
+
+
+def test_pytest_options_have_one_source_of_truth() -> None:
+    """pytest.ini 赢了 pyproject：两边都写时，pyproject 那份**整体**失效（含 minversion）。
+
+    为什么必须这样：两份配置只能靠人工同步，改一处忘一处就会在 `--strict-markers` /
+    `--strict-config` 下突然炸（旧 pytest 也不再被 minversion 拦住——它此前恰恰只写在失效的那份里）。
+    这条用例断言"只有一处"，并让这唯一一处带上 minversion。
+    """
+
+    ini = (REPO_ROOT / "pytest.ini").read_text(encoding="utf-8")
+    assert re.search(r"^minversion\s*=\s*8", ini, re.MULTILINE), "pytest.ini 没有 minversion"
+    document = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "ini_options" not in document.get("tool", {}), (
+        "pyproject.toml 又写了一份 [tool.pytest.ini_options]：pytest.ini 存在时它整体失效"
+    )
