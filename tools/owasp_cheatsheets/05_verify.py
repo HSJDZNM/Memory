@@ -14,11 +14,38 @@ import sys
 OUT = "docs/mirrors/owasp-cheatsheets"
 BT = chr(96)
 LINK = re.compile(r"\[([^\]]*)\]\(\s*([^)\s]+?)(\s+\"[^\"]*\")?\s*\)")
-FENCE = re.compile("(?ms)^" + BT * 3 + r".*?^" + BT * 3)
+FENCE_LINE = re.compile(r"^ {0,3}(" + BT + r"{3,}|~{3,})(.*)$")
 INLINE = re.compile(BT + r"[^" + BT + r"]*" + BT)
 TEXT_EXT = (".md", ".json", ".txt", ".py")
 
 problems = []
+
+
+def strip_fenced(text):
+    """去掉围栏代码块，只留正文。
+
+    旧实现是一条正则 `^```.*?^````：(1) 只认**顶格**的围栏——缩进 0–3 空格的围栏（列表/引用里
+    很常见）根本不剥，块内链接被当正文查（假 BROKEN）；(2) 把块内出现的任何 ``` 当成结束，
+    四反引号围栏或块内含 ``` 时配对错位，真链接反而被吃掉。
+
+    这里按行扫描：围栏可有 0–3 空格缩进，关闭必须是**同字符、不短于开启标记、且后面没有信息串**
+    （CommonMark 口径）。
+    """
+
+    kept, fence = [], None
+    for line in text.split(chr(10)):
+        match = FENCE_LINE.match(line)
+        if match:
+            marker, info = match.group(1), match.group(2)
+            if fence is None:
+                fence = marker
+                continue
+            if marker[0] == fence[0] and len(marker) >= len(fence) and not info.strip():
+                fence = None
+                continue
+        if fence is None:
+            kept.append(line)
+    return chr(10).join(kept)
 
 # ---- 1. 链接完整性 ----
 md_count = rel_total = 0
@@ -36,7 +63,7 @@ for root, dirs, files in os.walk(OUT):
             # 非 UTF-8 / 读不出来的文件正是第 2 节要报的「编码异常」：这里跳过它，
             # 让第 2 节把它报出来，而不是让整个校验带 UnicodeDecodeError 崩在第 1 节。
             continue
-        txt = INLINE.sub("", FENCE.sub("", text))
+        txt = INLINE.sub("", strip_fenced(text))
         for m in LINK.finditer(txt):
             t = m.group(2)
             if t.startswith(("http", "#", "mailto:")):
