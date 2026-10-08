@@ -300,7 +300,7 @@ datasets:
 
   - id: pydocstyle-testcases
     tier: A
-    role: [W1, GV-01, GV-02, GV-04]
+    role: [W1, GV-04]
     title: pydocstyle 用例期望（src/tests/test_cases/*.py 的 @expect 装饰器）
     entry: https://github.com/PyCQA/pydocstyle
     kind: git
@@ -318,7 +318,7 @@ datasets:
 
   - id: pyflakes-messages
     tier: A
-    role: [W1, GV-01, GV-02]
+    role: [W1]
     title: pyflakes 用例期望（pyflakes/test/*.py 的 self.flakes(...)）
     entry: https://github.com/PyCQA/pyflakes
     kind: git
@@ -375,7 +375,7 @@ datasets:
 
   - id: tryceratops-samples
     tier: A
-    role: [W1, GV-01, GV-02, GV-03]
+    role: [W1, GV-03]
     title: tryceratops 样例与期望（src/tests/samples/violations/*.py + src/tests/*_test.py）
     entry: https://github.com/guilatrova/tryceratops
     kind: git
