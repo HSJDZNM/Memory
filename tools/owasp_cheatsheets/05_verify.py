@@ -42,7 +42,14 @@ for root, dirs, files in os.walk(OUT):
             if t.startswith(("http", "#", "mailto:")):
                 continue
             rel_total += 1
-            tgt = os.path.normpath(os.path.join(root, t.split("#")[0]))
+            target = t.split("#")[0]
+            if target.startswith("/"):
+                # 根相对链接指的是**镜像根**，不是文件系统根：os.path.join(root, "/x") 会
+                # 直接丢掉 root，于是它被拿去和文件系统根拼，永远判成断链（或更糟：命中了
+                # 宿主机上恰好存在的同名路径）。
+                tgt = os.path.normpath(os.path.join(OUT, target.lstrip("/")))
+            else:
+                tgt = os.path.normpath(os.path.join(root, target))
             if not os.path.exists(tgt):
                 broken.append((os.path.relpath(p, OUT), t))
 if broken:

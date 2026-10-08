@@ -95,3 +95,21 @@ def test_clean_mirror_still_passes(tmp_root: Path) -> None:
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "PASS" in completed.stdout
+
+def test_root_relative_link_resolves_against_the_mirror_root(tmp_root: Path) -> None:
+    """`[x](/target.md)` 指的是镜像根，不是文件系统根：不许被判成断链。"""
+
+    root = _mirror(tmp_root)
+    (root / "bad.md").unlink()
+    _write(root / "target.md", "# 目标" + chr(10))
+    (root / "good.md").write_text(
+        "# 好文件" + chr(10) + chr(10) + "[根相对](/target.md)" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    completed = _run(tmp_root)
+
+    assert "断链" not in completed.stdout, completed.stdout
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "PASS" in completed.stdout
