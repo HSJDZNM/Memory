@@ -168,7 +168,9 @@ def build_assembly(
         author=author,
         approvals=ApprovalGate(config.approvals_dir, clock=wall_clock),
         workspace=config.workspace,
-        clock=clock or node_context_default_clock(),
+        # `or` 会把"给了个假值"与"没给"混为一谈：可调用对象只要定义了 __bool__/__len__ 就可能为假，
+        # 于是注进去的时钟被**静默换掉**。判"是不是 None"，不判真假。
+        clock=node_context_default_clock() if clock is None else clock,
     )
     executor_kwargs: dict[str, Any] = {
         "node_context": node_context,
