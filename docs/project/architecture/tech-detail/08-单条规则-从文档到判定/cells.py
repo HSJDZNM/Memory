@@ -491,15 +491,23 @@ ghost_hits = [
     if tuple(draft.heading_path[: len(ghost_path)]) == ghost_path
 ]
 assert ghost_hits == [], "这个标题路径本来就不该匹配到东西"
+# **真的调一次索引器的溯源解析**，而不是自己 raise 再自己 catch（后者只证明 try/except 能工作）。
+# 这里喂的是**真实清单 + 一个刚建好的空索引库**：文档还没被索引，解析必须在动库之前就拒绝——
+# 这正是上面那条注释要防的"清了一半 + 写了一半"。（同一个循环里再往后一步是"标题路径在文档中
+# 不存在"；两条分支是同一个失败关闭契约，本格驱动的是前一条。）
+from retrieval.corpus import load_corpus
+from retrieval.indexer import _resolve_rule_sources
+
+loaded = load_corpus(REPO_ROOT / "knowledge" / "corpus.yaml", repo_root=REPO_ROOT)
+empty_store = ChunkStore(":memory:")
 try:
-    # 索引器抛的就是这个异常（消息形状一致：规则 @ 标题路径 @ 文档）。
-    raise IndexingError(
-        "规则 " + rule.canonical_id + " 的标题路径在文档中不存在: "
-        + " > ".join(ghost_path) + " @ " + registered.source_path
-    )
+    _resolve_rule_sources(loaded, empty_store, repo_root=REPO_ROOT, mirrors={})
 except IndexingError as error:
-    print("× 标题路径写错 →", str(error)[:104], "…")
-    print("  （登记了却解析不到 → 整次索引失败，不静默）")
+    assert "未索引的文档" in str(error), error
+    print("× 溯源指向未索引的文档 →", str(error)[:104], "…")
+    print("  （解析在动库之前就拒绝：溯源表不会留下清了一半 + 写了一半）")
+else:
+    raise AssertionError("空索引库上溯源解析居然成功了：失败关闭破了")
 print()
 
 # (2) 造一个"只含这一篇文档"的最小语料：写进本次独占的临时目录。
