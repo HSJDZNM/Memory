@@ -543,7 +543,9 @@ class ControlledExecutor:
         record: ExecutionRecord,
         post: Optional[PostDecision],
     ) -> FinalDecision:
-        if pre.decision.value == "block":
+        # 用枚举成员比较，不比较序列化后的字面量：字面量取决于枚举的拼写，
+        # 而 _refusal_reason 那边用的是 `pre.decision is Decision.BLOCK`——两处必须同一口径。
+        if pre.decision is Decision.BLOCK:
             outcome = FinalOutcome.BLOCKED
             reason = pre.reason_code
             detail = "pre-check 阻断：动作没有执行"
