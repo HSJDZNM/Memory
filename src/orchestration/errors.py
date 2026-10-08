@@ -28,6 +28,10 @@ __all__ = [
     "ResumeError",
     "StateError",
     "TraceError",
+    # `status_for` 是本模块唯一的公开函数：把失败码解析成终态（`engines.py` 直接从它导入）。
+    # 它此前不在 `__all__` 里——`from .errors import *` 的消费方与按 `__all__` 读公开面的工具
+    # 都看不见它，而「哪些名字算公开」正是这个列表要回答的问题。
+    "status_for",
 ]
 
 
