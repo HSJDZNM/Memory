@@ -213,8 +213,8 @@ def read_pyproject() -> dict[str, str]:
     """pyproject 的依赖口径：**必装依赖 + 全部 extras**（自引用除外）。
 
     为什么不是"dependencies + dev"：核心层只需要 pydantic 与 PyYAML，HTTP 栈与编排框架住在
-    \`api\` / \`orchestration\` 两个 extra 里（\`dev\` 通过自引用把它们一起装上）。
-    只读 dev 的话，这两个 extra 里的声明对检查器就等于不存在，\`requirements.in\` 与 pyproject
+    `api` / `orchestration` 两个 extra 里（`dev` 通过自引用把它们一起装上）。
+    只读 dev 的话，这两个 extra 里的声明对检查器就等于不存在，`requirements.in` 与 pyproject
     的对照会立刻失真——而这份对照正是"锁文件与声明不许漂移"的闸门。
     """
 
@@ -227,7 +227,7 @@ def read_pyproject() -> dict[str, str]:
     result: dict[str, str] = {}
     for item in items:
         text = str(item).strip()
-        # 自引用（\`本包[api,orchestration]\`）不是"另一个依赖"，跳过：它只是"把这两组装上"。
+        # 自引用（`本包[api,orchestration]`）不是"另一个依赖"，跳过：它只是"把这两组装上"。
         if text.lower().startswith(own_name):
             continue
         match = _REQ_RE.match(text)
