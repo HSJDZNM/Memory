@@ -28,7 +28,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Callable, Dict, Optional, Sequence
 
 from . import worktree
 from .wiring_scope import WiringScopeError, load_wiring_scope
@@ -296,14 +296,15 @@ def _run_wiring_scope(args: argparse.Namespace) -> int:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command_name == "digest":
-        return _run_digest(args)
-    if args.command_name == "seal":
-        return _run_seal(args)
-    if args.command_name == "wiring-scope":
-        return _run_wiring_scope(args)
-    print(f"用法错误：未知子命令 {args.command_name!r}", file=sys.stderr)
-    return EXIT_USAGE
+    # 子解析器是 required=True：缺子命令 / 未知子命令由 argparse 自己退出 2，因此上面这行
+    # 之后 command_name 必然命中下表之一。旧实现在这里留了一条永不执行的"未知子命令"兜底，
+    # 读起来像活的守卫，实际是死代码。
+    handlers: Dict[str, Callable[[argparse.Namespace], int]] = {
+        "digest": _run_digest,
+        "seal": _run_seal,
+        "wiring-scope": _run_wiring_scope,
+    }
+    return handlers[args.command_name](args)
 
 
 if __name__ == "__main__":
