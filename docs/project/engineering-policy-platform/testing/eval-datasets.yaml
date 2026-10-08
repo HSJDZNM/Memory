@@ -74,7 +74,7 @@ datasets:
 
   - id: pylint-functional
     tier: A
-    role: [差分对照（人工映射，不计入 GV-01）]
+    role: [差分对照]
     title: pylint 功能测试（tests/functional/**，行级期望消息）
     entry: https://github.com/pylint-dev/pylint
     kind: git
