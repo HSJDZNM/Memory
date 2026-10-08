@@ -318,6 +318,10 @@ def tree_lines():
             walk(kids, pad)
 
     walk(_fetch_toc().get("items", []), "")
+    if not rows:
+        # 目录接口给了空清单（`items` 缺失或为空）时，`max()` 空序列会以 ValueError 打挂整个
+        # `findings()`。空清单不是"层级树是空的"：如实写一行说明，让产物里看得见这件事。
+        return ["（" + TOC_URL + " 没有给出任何目录条目：层级树读不出来）"]
     width = max(len(a) for a, _ in rows) + 2
     return [a.ljust(width) + "# " + b for a, b in rows]
 
