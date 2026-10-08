@@ -1,5 +1,12 @@
 # Phase 5 语言专项规则包：PEP 8「Programming Recommendations」——not ... in / not ... is。
-# E713 是 `not x in y`，E714 是 `not x is y`，同一句原文的两半，合并在一条规则里。
+# E713 是 `not x in y`，E714 是 `not x is y`，Ruff 把它们同列为「可读性偏好」的一组码，合并在一条规则里。
+#
+# 覆盖边界（2026-10-08 逐字复核镜像）：**只有 E714 有对应原句**——L855 的
+#   "Use `is not` operator rather than `not ... is`. While both expressions are
+#    functionally identical, the former is more readable and preferred:"
+# 讲的是身份判断那一半。镜像全文**没有**关于 `not ... in` 的表述（唯一提到 `not in` 的地方是
+# L462 的运算符空格列表），所以 E713 的出处不能记成同一句原文：它来自 Ruff 把两者并列的口径
+# 与同节的可读性要求。生成文档 / 追溯来源时不要把它写成 L855 的另一半。
 #
 # 出处：docs/mirrors/python-pep-code-style/pep-8-python-code/index.md（L855）§"Programming Recommendations"：
 #   "Use `is not` operator rather than `not ... is`. While both expressions are
@@ -23,4 +30,4 @@ message: 成员判断写 not in、身份判断写 is not，不要写 not ... in 
 source:
   kind: standard
   path: docs/mirrors/python-pep-code-style/pep-8-python-code/index.md
-  note: PEP 8 明说两种写法功能等价，只是可读性与推荐次序不同，所以按 warning 处理。
+  note: PEP 8 只对 `is not` / `not ... is` 明说「两种写法功能等价、前者更可读」（L855，对应 E714）；`not ... in`（E713）没有对应原句，本规则按 Ruff 的并列口径一并纳入，两条都按 warning 处理。
