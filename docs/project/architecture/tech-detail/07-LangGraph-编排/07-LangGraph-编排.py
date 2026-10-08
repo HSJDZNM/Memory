@@ -115,6 +115,7 @@ from orchestration.models import (  # noqa: E402
     ArtifactKind,
     ArtifactRef,
     FailureCode,
+    FailureRef,
     GraphState,
     NodeId,
     PlatformSnapshot,
@@ -486,11 +487,24 @@ print("小结：状态只有引用与计数；checkpoint 是单文件原子替�
 # 4. 恢复：四种结论 + "拿不到凭据按变了处理"
 fresh = empty_state("phase8-task", limits=RunLimits(max_repair_rounds=2),
                     trace_id="trace-8", requirements=("target 满足规则集",))
-fresh = fresh.replace(stage=NodeId.TESTING, status=RunStatus.BLOCKED, failure=None,
-                      notes=("上一轮停在这里",))
+# **夹具里要带一个失败码**：这一节要说的是"恢复会清掉上一轮的失败码"，而 fixture 原来写的是
+# `failure=None`——`assert same.state.failure is None` 于是恒真（没有可清的东西）。带上一个与
+# `RunStatus.BLOCKED` 同档的真实码（`EVIDENCE_UNAVAILABLE` → blocked，见下面 STATUS_BY_CODE 那格）。
+fresh = fresh.replace(
+    stage=NodeId.TESTING,
+    status=RunStatus.BLOCKED,
+    failure=FailureRef(code=FailureCode.EVIDENCE_UNAVAILABLE, detail="上一轮证据不可用，停在验证前"),
+    notes=("上一轮停在这里",),
+)
 current = PlatformSnapshot(rule_set_hash=support.RULE_SET_HASH,
                            index_version=support.INDEX_VERSION, tool_schema_hash=None)
 base = build_record(fresh, engine="reference", sequence=9, compatibility=current)
+# 自证夹具**真的有失败码**：没有它，下面那条 `same.state.failure is None` 就是恒真断言
+# （"恢复了所以清掉了"与"本来就没有"读数相同）。
+# `build_record` 会把状态**序列化**进记录（`base.state` 是 dict），所以这里断言模型那份
+# （`fresh`）：夹具真的带上了失败码，"恢复了所以清掉了"与"本来就没有"才区分得开。
+assert fresh.failure is not None, fresh.failure
+assert base.state["failure"] is not None, base.state["failure"]
 
 rows = []
 
@@ -535,7 +549,7 @@ def judge(name, record, snapshot, *, expect_error=None):
 
 
 same = judge("凭据没变", base, current)
-assert same.mode.value == "resume" and same.state.failure is None
+assert same.mode.value == "resume" and same.state.failure is None, same.state.failure
 assert same.state.status is RunStatus.RUNNING and same.state.stage is NodeId.TESTING
 
 changed_rules = current.model_copy(update={"rule_set_hash": support.CHANGED_RULE_SET_HASH})
