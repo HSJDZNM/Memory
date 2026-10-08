@@ -273,13 +273,12 @@ print("（type_check 就是这种：验证器与规则体都写好了，但装�
 # ----------------------------------------------------------------------------
 
 # 判据三：6 个已知维度 + 每维取值从哪里来。
-from policy.models import KNOWN_SCOPE_DIMENSIONS, Operation, ScopeExtraPolicy
+from policy.models import KNOWN_SCOPE_DIMENSIONS, ScopeExtraPolicy
 
 from validators.registry import load_project
 
 PROJECT = load_project(root=REPO_ROOT)  # validation/project.yaml：语言识别与"路径 → 组件（层）"映射
 language_values = tuple(spec.language for spec in PROJECT.languages)
-layer_values = tuple(component.name for component in PROJECT.components)
 declared_values = {}
 for item in RULES:
     for dimension, value in item.scope.declared_dimensions.items():
@@ -290,13 +289,13 @@ print(pad("维度", 12) + pad("取值从哪里来", 26) + "规则实际用到")
 print("-" * 84)
 for dimension in KNOWN_SCOPE_DIMENSIONS:
     if dimension == "language":
-        origin, known = "validation/project.yaml", language_values
+        origin = "validation/project.yaml"
     elif dimension == "layer":
-        origin, known = "validation/project.yaml", layer_values
+        origin = "validation/project.yaml"
     elif dimension == "operation":
-        origin, known = "policy.models.Operation 枚举", tuple(x.value for x in Operation)
+        origin = "policy.models.Operation 枚举"
     else:
-        origin, known = "上下文显式字段", ()
+        origin = "上下文显式字段"
     used = sorted(declared_values.get(dimension, ()))
     print(pad(dimension, 12) + pad(origin, 30) + (", ".join(used) if used else "（没有规则声明）"))
 print()
