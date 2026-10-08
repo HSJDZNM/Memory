@@ -67,6 +67,22 @@ def _read_json(path: Path) -> Dict[str, Any]:
         return {}
 
 
+def _fresh_receipt(name: str) -> Path:
+    """本轮的回执路径：**先删掉旧的**，再看 CLI 新写出来的是什么。
+
+    旧写法只有 `scenario_pass_sealed_check` 删旧回执，另外三个场景直接 `_read_json(receipt_path)`
+    ——CLI 万一没写出回执（崩溃 / 参数出错 / 被沙箱拒绝），读到的就是**上一轮**的文件：
+    "这一轮观测到什么"于是变成"上一次留下了什么"，而且它看起来完全正常（state / exit 都对得上）。
+    回执是这几个场景唯一的观测对象，必须保证它属于本轮。
+    """
+
+    path = SCRATCH / "receipts" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+    return path
+
+
 def _run_cli(argv: Sequence[str]) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "provenance.cli", *argv],
@@ -136,9 +152,7 @@ def scenario_pass_sealed_check() -> Dict[str, Any]:
         "tests/unit/test_provenance_worktree.py\n",
     )
     _write(platform, "src/provenance/*.py\ntools/provenance_loop.py\n")
-    receipt_path = SCRATCH / "receipts" / "pass.json"
-    if receipt_path.exists():
-        receipt_path.unlink()
+    receipt_path = _fresh_receipt("pass.json")
     completed = _run_cli(
         [
             "seal",
@@ -173,7 +187,7 @@ def scenario_external_write() -> Dict[str, Any]:
     tree = _make_tree("external-write")
     declaration = SCRATCH / "declarations" / "external-write.txt"
     _write(declaration, "declared/*.txt\n")
-    receipt_path = SCRATCH / "receipts" / "external-write.json"
+    receipt_path = _fresh_receipt("external-write.json")
     completed = _run_cli(
         [
             "seal",
@@ -198,7 +212,7 @@ def scenario_unprovable() -> Dict[str, Any]:
     tree = _make_tree("unprovable")
     declaration = SCRATCH / "declarations" / "unprovable.txt"
     _write(declaration, "declared/*.txt\nmissing/**/*.py\n")
-    receipt_path = SCRATCH / "receipts" / "unprovable.json"
+    receipt_path = _fresh_receipt("unprovable.json")
     completed = _run_cli(
         [
             "seal",
@@ -223,7 +237,7 @@ def scenario_no_declaration() -> Dict[str, Any]:
     tree = _make_tree("no-declaration")
     declaration = SCRATCH / "declarations" / "empty.txt"
     _write(declaration, "# 只有注释：这份声明给不出 referenced_inputs_digest\n")
-    receipt_path = SCRATCH / "receipts" / "no-declaration.json"
+    receipt_path = _fresh_receipt("no-declaration.json")
     completed = _run_cli(
         [
             "seal",
