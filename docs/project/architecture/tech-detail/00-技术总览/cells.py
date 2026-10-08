@@ -382,6 +382,30 @@ print("自证：别名写法被认出、同前缀包名不被误认 →", probe_
 assert web and all(path.startswith("src/policy_api/") for path in web), web
 assert not [path for path in web if path.startswith("src/policy/")], web
 assert workflow == ["src/orchestration/langgraph_engine.py"], workflow
+
+# 第 3 条不变量的**另一半**：不只是"只有一个导入点"，还得是"**构造引擎时**才导入"。
+# 模块级 import langgraph 同样满足上面那条等式，却把契约从"没装 → 一次显式的
+# EngineUnavailableError"变成"没装 → 进程 import 就炸"（连参考引擎的回退都轮不到）。
+# 判据：那个文件里指向 langgraph 的 import / import_module 调用**都不在模块导入期会执行的位置**。
+engine_tree = ast.parse((REPO_ROOT / workflow[0]).read_text(encoding="utf-8"))
+engine_module_level = module_level_imports(engine_tree)
+eager_framework_refs = []
+for node in ast.walk(engine_tree):
+    if isinstance(node, ast.Import):
+        names = [alias.name for alias in node.names]
+    elif isinstance(node, ast.ImportFrom):
+        names = [node.module or ""]
+    elif isinstance(node, ast.Call):
+        first = node.args[0] if node.args else None
+        names = [str(first.value)] if isinstance(first, ast.Constant) else []
+    else:
+        continue
+    if any(name.split(".")[0] == "langgraph" for name in names) and id(node) in engine_module_level:
+        eager_framework_refs.append(node.lineno)
+assert not eager_framework_refs, (
+    "langgraph 的引用出现在了模块导入期会执行的位置（行号）：" + repr(eager_framework_refs)
+)
+print("第 3 条的另一半：langgraph 只在函数体内被导入（构造引擎时），没装是显式失败而不是 import 崩溃。")
 print("三条不变量全部成立：核心业务模块零出边、入口层入度为 0、框架导入点唯一。")
 '''
         ),
