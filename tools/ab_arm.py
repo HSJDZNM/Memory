@@ -104,7 +104,10 @@ ARM_ENFORCED = "enforced"
 ARMS = (ARM_OFF, ARM_ADVISORY, ARM_ENFORCED)
 
 ENTRY_NONE = "none"
-ENTRY_DSH_PLUGIN = "dsh-plugin"
+# 只声明本工具**真的会记录**的那一种入口。曾经还有一个 ENTRY_DSH_PLUGIN = "dsh-plugin"，
+# 但 run_one 无论走成哪条路都记 ENTRY_DSH_HOOK_CLI，那个值从没被写进读数——一个"声明了却永远
+# 不会出现"的枚举值，只会让读 run.json 的人以为两种入口可区分（实际不能）。
+# 真要区分产品路径与回退路径，得改 run_one 的判定与载荷（那是另一次改动，不在这里顺手做）。
 ENTRY_DSH_HOOK_CLI = "dsh-hook-cli"
 
 ACTION_APPLIED = "applied"
@@ -287,8 +290,10 @@ TEXT_SUFFIXES = {
 }
 
 HOOK_MODULE = "adapters.dsh.hooks"
-VERDICT_PREFIX = "[policy] VERDICT "
-
+# 这里曾经把 hooks.py 的 VERDICT_PREFIX = "[policy] VERDICT " 又抄了一份（从未被引用）。
+# 真值源是 src/adapters/dsh/hooks.py；而漏检那一侧（leak_assertions）刻意用**更宽**的 "[policy]"
+# 子串判"控制臂有没有看到策略标记"——对漏检来说从宽才是保守方向（收紧会把"只打了前缀一部分"的泄露漏掉），
+# 所以那处不改用这个常量，也不留第二份拷贝。
 PATCH_TEMPLATE = """# 由 tools/ab_arm.py 生成：把进程内策略 Hook 插件挂到 profile 上。
 - insert:
     - id: policy-hook
