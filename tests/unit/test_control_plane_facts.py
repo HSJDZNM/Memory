@@ -455,3 +455,29 @@ def test_two_runs_on_the_same_tree_are_byte_identical():
         second, ensure_ascii=False, sort_keys=True
     )
     assert first["headline"]["machine_line"] == second["headline"]["machine_line"]
+
+def test_non_utf8_facts_table_is_a_declared_error(tmp_root: Path) -> None:
+    """非 UTF-8 的 facts 表：走 FactsTableError（声明式错误通道），不许裸抛 UnicodeDecodeError。"""
+
+    module = _load_tool()
+    path = tmp_root / "facts.yaml"
+    path.write_bytes(b"schema_version: 2\nfacts:\n  - key: \xff\xfe\n")
+
+    with pytest.raises(module.FactsTableError) as error:
+        module.load_facts(path)
+
+    assert "不是 UTF-8" in str(error.value)
+
+
+def test_non_utf8_registry_falls_back_to_unavailable(tmp_root: Path) -> None:
+    """非 UTF-8 的工具表：C2 落"读不出来"这一档，不是栈回溯。"""
+
+    module = _load_tool()
+    registry = tmp_root / "registry"
+    registry.mkdir(parents=True)
+    (registry / "tool-registry.yaml").write_bytes(b"tools:\n  - id: \xff\xfe\n")
+
+    result = module.cross_source_tool_tables(tmp_root)
+
+    assert result["status"] == module.STATUS_UNAVAILABLE
+    assert "UnicodeDecodeError" in result["reason"], result

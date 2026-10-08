@@ -279,8 +279,13 @@ def load_facts(path: Path, *, display: Optional[str] = None) -> FactsTable:
     label = display if display is not None else path.name
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise FactsTableError("facts 表读不到：" + label + "：" + str(error)) from error
+    except (OSError, UnicodeDecodeError) as error:
+        # UnicodeDecodeError 是 ValueError 子类，不属于 OSError：非 UTF-8 的 facts 表会**逃出**
+        # 这条声明式错误通道，变成一段栈回溯（本文件 _readers_of 早就按 (OSError,
+        # UnicodeDecodeError) 兜了，这里是同一口径的补齐）。
+        raise FactsTableError(
+            "facts 表读不到（或不是 UTF-8）：" + label + "：" + str(error)
+        ) from error
     try:
         document = yaml.safe_load(text)
     except yaml.YAMLError as error:
@@ -556,7 +561,16 @@ def cross_source_tool_tables(root: Path) -> dict:
         approved_adapters = json.loads(
             (root / "adapters" / "approved.json").read_text(encoding="utf-8")
         )
-    except (OSError, KeyError, TypeError, yaml.YAMLError, json.JSONDecodeError) as error:
+    except (
+        OSError,
+        UnicodeDecodeError,
+        KeyError,
+        TypeError,
+        yaml.YAMLError,
+        json.JSONDecodeError,
+    ) as error:
+        # 非 UTF-8 的注册表 / manifest / 已审核清单同样要落到"读不出来"这一档，
+        # 而不是以 UnicodeDecodeError 逃出去（C2 的其余读取都在这一个 try 里）。
         return {
             "status": STATUS_UNAVAILABLE,
             "reason": "工具表读不出来：" + type(error).__name__ + "：" + str(error),
