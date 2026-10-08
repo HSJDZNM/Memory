@@ -45,7 +45,7 @@ from policy.models import (
 )
 
 from .auth import AuthContext, authorize, parse_authorization
-from .config import ApiConfig, ConfigError, RateLimitConfig, load_api_config
+from .config import ApiConfig, RateLimitConfig, load_api_config
 from .errors import ApiError, ErrorCode, error_payload
 from .idempotency import IdempotencyLedger, request_digest
 from .models import (
