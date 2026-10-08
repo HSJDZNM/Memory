@@ -278,9 +278,15 @@ class EnforcementLedger:
             }
         )
         # 追加之后的复核必须**重新读**（并发方的行也要看见），但同样只读一次。
-        winner = self.active_claims(
-            action_id=action_id, tool_id=tool_id, records=self.records()
-        )[0]
+        live = self.active_claims(action_id=action_id, tool_id=tool_id, records=self.records())
+        if not live:
+            # 台账里已经有一条同 claim_id 的 claim_released 行时，刚写入的认领会立刻被
+            # 释放集合吞掉。这里必须报 LedgerError——旧实现直接 [0] 抛裸 IndexError，
+            # 而调用方（precheck）只捕 LedgerError，失败关闭处理会被绕过。
+            raise LedgerError(
+                f"认领写入后读不回来（claim_id={claim_id}）：台账状态不可信，拒绝继续执行"
+            )
+        winner = live[0]
         if winner.get("claim_id") != claim_id:
             return LedgerClaim(
                 claimed=False, claim_id=str(winner.get("claim_id", "")), reason="action_replay"

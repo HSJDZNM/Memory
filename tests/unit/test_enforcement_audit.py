@@ -587,6 +587,23 @@ def _grant(grant_id: str = "grant-1") -> AuthorizationGrant:
     )
 
 
+def test_a_claim_swallowed_by_a_stale_release_raises_ledger_error(tmp_root):
+    """认领写入后读不回来必须报 LedgerError：旧实现直接 [0]，抛的是裸 IndexError。
+
+    台账里若已经有一条同 claim_id 的 claim_released 行，新写入的认领会被释放集合立刻
+    吞掉，active_claims 返回空——而调用方（precheck）只捕 LedgerError，IndexError 会
+    直接穿透失败关闭处理。
+    """
+
+    ledger = EnforcementLedger(tmp_root / "ledger.jsonl")
+    ledger.append({"kind": "claim_released", "claim_id": "c-1", "action_key": "fs.edit:a-1"})
+
+    with pytest.raises(LedgerError):
+        ledger.claim(
+            action_id="a-1", tool_id="fs.edit", action_hash="sha256:h", claim_id="c-1"
+        )
+
+
 def test_grant_claim_identity_is_not_derived_from_the_clock(tmp_root, monkeypatch):
     """两个并发方拿到同一个 now 时，不能因为 claim_id 相同而双双得手。
 
