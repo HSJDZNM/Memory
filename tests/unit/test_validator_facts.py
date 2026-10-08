@@ -463,17 +463,27 @@ def test_relative_imports_resolve_inside_the_package() -> None:
     assert result.unresolved == ()
 
 
-def test_relative_from_import_of_an_attribute_is_not_a_spurious_unresolved() -> None:
-    """`from . import SomeAttribute`（包的属性、不是子模块）不许变成假阻断（复核发现）。"""
+def test_relative_from_import_of_a_possible_attribute_stays_fail_closed() -> None:
+    """`from . import name` 展开后一律照记：证明不了"它一定存在"，就必须站在能证明的那一侧。
+
+    复核条目 depgraph.py:353 建议"常规包（有 __init__.py）里的 from . import 属性不该阻断"——
+    那条建议**不成立**。跨路径契约用例 EXPECTED_ARCH_BLOCK 对 "相对导入：from . import
+    repository" 要求 block=True，且预执行路径与 AST 路径必须逐字同结论；按建议放行后
+    AST 路径不再阻断（实测读数：预执行=True / AST=False，夹具 src/shop 里并没有 repository.py，
+    所以"它是属性"这件事本来就证明不了），契约当场变红。
+    属性是否存在静态证明不了（变量、函数、__all__ 再导出、__getattr__ 动态给都算），
+    而 AGENTS 第 20 条要求"解析失败"不能当成"没有依赖"——依赖类判据只能失败关闭。
+    """
 
     result = dependencies_for("from . import OrderService" + chr(10))
 
-    assert result.unresolved == ()
-    assert result.dependencies == ()
+    assert [item.module for item in result.unresolved] == ["shop.OrderService"]
+    assert result.dependencies[0].resolution.value == "unresolved"
 
-    # 显式子模块缺失仍然必须留痕（不是"没查"）。
-    missing = dependencies_for("from .missing_module import thing" + chr(10))
-    assert [item.module for item in missing.unresolved] == ["shop.missing_module"]
+    # 证明得了的子模块照旧解析成项目内依赖（不误报）。
+    resolved = dependencies_for("from . import order_service" + chr(10))
+    assert [fact.module for fact in resolved.dependencies] == ["shop.order_service"]
+    assert resolved.unresolved == ()
 
 
 def test_relative_import_beyond_the_top_level_package_is_unresolved() -> None:

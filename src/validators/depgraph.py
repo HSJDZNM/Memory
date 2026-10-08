@@ -247,14 +247,11 @@ def _module_name(target_path: str, package: Sequence[str]) -> Optional[str]:
 
 def _relative_modules(
     fact_module: str, level: int, names: Sequence[str], package: Sequence[str]
-) -> Tuple[Tuple[str, ...], Optional[str], str]:
-    """把相对导入展开成绝对模块名；无法展开时返回原因。
-
-    第三个返回值是展开后的**父包名**（调用方用它判断"这个包有没有 __init__.py"）。
-    """
+) -> Tuple[Tuple[str, ...], Optional[str]]:
+    """把相对导入展开成绝对模块名；无法展开时返回原因。"""
 
     if level < 1:
-        return (), "相对导入的 level 必须是正数", ""
+        return (), "相对导入的 level 必须是正数"
     drop = level - 1
     # **恰好一级也算越界**：drop == len(package)（包深度 1 的模块里写 `from .. import x`，
     # 或没有包的顶层模块里写 `from . import x`）在 Python 里分别是 "attempted relative
@@ -265,15 +262,13 @@ def _relative_modules(
         return (
             (),
             "相对导入超出顶层包（level=" + str(level) + "，当前包深度 " + str(len(package)) + "）",
-            "",
         )
     prefix = list(package[: len(package) - drop]) if drop else list(package)
-    package_name = ".".join(prefix)
     if fact_module:
-        return (".".join([*prefix, fact_module]),), None, package_name
+        return (".".join([*prefix, fact_module]),), None
     if not names:
-        return (), "相对导入没有指明模块名", package_name
-    return tuple(".".join([*prefix, name]) for name in names), None, package_name
+        return (), "相对导入没有指明模块名"
+    return tuple(".".join([*prefix, name]) for name in names), None
 
 
 def build_dependencies(
@@ -367,7 +362,7 @@ def build_dependencies(
             continue
 
         if fact.level > 0:
-            modules, failure, package_name = _relative_modules(
+            modules, failure = _relative_modules(
                 fact.module, fact.level, fact.names, absolute_package
             )
             if failure is not None or package is None:
@@ -381,23 +376,14 @@ def build_dependencies(
                     )
                 )
                 continue
-            # `from . import name` 的 name 可能是包里的**属性**（不是子模块）。只有在包确实
-            # 有 __init__.py（常规包，属性合法存在）时才不能把"索引里没有这个子模块"当成缺席；
-            # 命名空间包（没有 __init__.py）里名字必然指向子模块，缺席仍然要留痕。
-            regular_package = (index.modules.get(package_name) or "").endswith("__init__.py")
+            # `from . import name` 的展开结果一律照记（解析不了就是 unresolved）：name 可能
+            # 只是包里的属性，但也可能是缺失的子模块，静态证明不了"它一定存在"——**依赖类判据
+            # 只能站在能证明的那一侧**。这条口径由跨路径契约用例钉住：
+            # tests/integration/test_dependency_path_consistency.py 的 EXPECTED_ARCH_BLOCK 对
+            # "相对导入：from . import repository" 要求 block=True，且预执行路径与 AST 路径必须
+            # 给出逐字相同的结论（曾经为了消除"属性假阻断"在这里放行，那条契约当场变红）。
             for module in modules:
-                if fact.module or not regular_package:
-                    # `from .sub import x`：显式子模块解析不了就是真问题，照旧留痕。
-                    add(module, kind=DependencyKind.FROM_IMPORT, line=fact.line, column=fact.column)
-                    continue
-                # 常规包里的属性无法静态证明存在，所以只记能证明的项目内子模块——与绝对
-                # from-import 分支（只记模块本身）同一条口径（复核发现：旧行为把合法导入
-                # `from . import SomeAttribute` 变成一条虚假的 unresolved 阻断）。
-                resolution, path, _reason = _resolve_module(
-                    module, index=index, stdlib=stdlib_names
-                )
-                if resolution is DependencyResolution.INTERNAL and path is not None:
-                    add(module, kind=DependencyKind.FROM_IMPORT, line=fact.line, column=fact.column)
+                add(module, kind=DependencyKind.FROM_IMPORT, line=fact.line, column=fact.column)
             continue
 
         kind = DependencyKind.IMPORT if fact.kind == "import" else DependencyKind.FROM_IMPORT
