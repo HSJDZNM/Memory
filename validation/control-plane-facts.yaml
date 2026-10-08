@@ -124,7 +124,9 @@ facts:
 
   - key: "tool_tables.approved.registry"
     authority: canonical
-    canonical_ref: "registry/tool-registry.approved.json"
+    # 锚点补上（本表头部要求 "<仓库相对路径>#<锚点>"）：这份 JSON 是"整份文档"级别的权威，
+    # 取它的 identity 字段 registry_version 作锚——它正是"这份已审核清单是哪一版"的那句话（复核发现）。
+    canonical_ref: "registry/tool-registry.approved.json#registry_version"
     consumers: ["enforcement.registry.load_approved_document"]
     predicate: "enforcement.registry.load_approved_document"
     severity: advisory
