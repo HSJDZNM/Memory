@@ -29,7 +29,7 @@ rule:
   style_lint:
     tool: ruff
     codes: [S312, S321]
-message: 禁止明文协议：不要用 telnetlib / ftplib，改用 SSH / SFTP / HTTPS。
+message: '禁止明文协议：不要用 telnetlib / ftplib，加密通信改用 SSH / SFTP / HTTPS。注意 S321 对加密的 ftplib.FTP_TLS 也会报（检查器误报，见本文件头部覆盖边界）——它按文件粒度豁免，因此同一文件里的豁免会一起放行 S321；需要时走 validation/ruff.toml 的 per-file-ignores 或 # noqa: S321 - <理由>，不要为了过 lint 退回明文 FTP。'
 source:
   kind: standard
   path: docs/mirrors/owasp-cheatsheets/01_安全需求、架构与治理/Secure_Product_Design_Cheat_Sheet.md
