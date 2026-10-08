@@ -259,12 +259,23 @@ def _finish_seal(args: argparse.Namespace, receipt: Dict[str, Any], code: int) -
         # 给了 --out 就把回执写文件、stdout 留给判据命令自己：两者混在一个流里，
         # 读的人要靠猜哪几行是回执（子进程的输出也在这个 stdout 上）。
         target = Path(args.out)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-            newline="",
-        )
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+                newline="",
+            )
+        except OSError as error:
+            # 回执写不出去时不能用判据的结论退出码：1 的含义是"判据跑完且是红的"，
+            # 而这里的问题在写文件这一侧（目录、权限、只读盘）。结论行照样打出来，
+            # 读的人仍然能拿到判据的结果，只是回执没有落地。
+            print(
+                f"用法错误：回执写不出去（{target}：{type(error).__name__}: {error}）",
+                file=sys.stderr,
+            )
+            print(f"seal state: {receipt.get('state')} (exit {EXIT_USAGE})", file=sys.stderr)
+            return EXIT_USAGE
         print(f"receipt: {_display(target, Path(args.root))}", file=sys.stderr)
     else:
         print(json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True))
