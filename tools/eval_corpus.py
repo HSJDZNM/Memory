@@ -669,33 +669,43 @@ def _archive_members(spec: SourceSpec, payload: bytes) -> dict[str, bytes]:
     """把归档读成 {相对 archive_root 的 POSIX 路径: 内容}，并对形状做显式校验。"""
 
     members: dict[str, bytes] = {}
+    # 解析失败必须翻成 CorpusError：BadZipFile / tarfile 的错误都是普通 Exception 子类，
+    # 逃出去就是 --fetch 上的一段栈回溯（200 响应但内容是畸形/截断/恰好以 PK 开头的非 zip 体都会走到这里）。
     if payload[:2] == b"PK":
-        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-            names = archive.namelist()
-            tops = {name.split("/", 1)[0] for name in names if "/" in name}
-            _require_single_root(spec, tops)
-            for info in archive.infolist():
-                if info.is_dir():
-                    continue
-                relative = _strip_archive_root(spec, info.filename)
-                if relative is None:
-                    continue
-                members[relative] = archive.read(info)
+        try:
+            with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+                names = archive.namelist()
+                tops = {name.split("/", 1)[0] for name in names if "/" in name}
+                _require_single_root(spec, tops)
+                for info in archive.infolist():
+                    if info.is_dir():
+                        continue
+                    relative = _strip_archive_root(spec, info.filename)
+                    if relative is None:
+                        continue
+                    members[relative] = archive.read(info)
+        except zipfile.BadZipFile as error:
+            raise CorpusError(f"{spec.id}: 归档不是合法 zip（{error}）：{spec.url}") from error
     else:
-        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
-            entries = archive.getmembers()
-            tops = {entry.name.split("/", 1)[0] for entry in entries if "/" in entry.name}
-            _require_single_root(spec, tops)
-            for entry in entries:
-                if not entry.isfile():
-                    continue
-                relative = _strip_archive_root(spec, entry.name)
-                if relative is None:
-                    continue
-                handle = archive.extractfile(entry)
-                if handle is None:
-                    raise CorpusError(f"{spec.id}: 归档成员读不出来：{entry.name}")
-                members[relative] = handle.read()
+        try:
+            with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
+                entries = archive.getmembers()
+                tops = {entry.name.split("/", 1)[0] for entry in entries if "/" in entry.name}
+                _require_single_root(spec, tops)
+                for entry in entries:
+                    if not entry.isfile():
+                        continue
+                    relative = _strip_archive_root(spec, entry.name)
+                    if relative is None:
+                        continue
+                    handle = archive.extractfile(entry)
+                    if handle is None:
+                        raise CorpusError(f"{spec.id}: 归档成员读不出来：{entry.name}")
+                    members[relative] = handle.read()
+        except tarfile.TarError as error:
+            raise CorpusError(
+                f"{spec.id}: 归档不是合法 tar（{type(error).__name__}: {error}）：{spec.url}"
+            ) from error
     return members
 
 
