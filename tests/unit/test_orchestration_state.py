@@ -829,6 +829,31 @@ def test_the_change_set_for_evidence_comes_from_executed_changes() -> None:
     )
 
 
+def test_a_checkpoint_from_another_state_protocol_is_refused_at_load(tmp_root) -> None:
+    """协议世代对不上时不是"列为不兼容维度"，而是**读都读不进来**——更严格，也更难绕过。
+
+    `PlatformSnapshot.incompatible_with` 刻意不比 `state_schema_version`：真正的闸门在 load
+    （`SUPPORTED_STATE_SCHEMA_VERSIONS` 里没有那个版本就直接拒绝）。这条用例把那条闸门钉住，
+    免得后人看到"快照里没比这一项"就把判定挪到更弱的地方。
+    """
+
+    store = JsonCheckpointStore(tmp_root / "checkpoints")
+    record = build_record(empty_state("task-1"), engine="reference", sequence=1)
+    payload = dict(record.state)
+    payload["state_schema_version"] = "0.9"  # 另一个世代的记录
+    swapped = record.model_copy(update={"state": payload})
+    swapped = swapped.model_copy(update={"state_digest": canonical_digest(payload)})
+    swapped = swapped.model_copy(update={"record_digest": swapped.computed_digest()})
+    store.path_for("task-1").write_text(
+        swapped.model_dump_json(indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
+
+    with pytest.raises(CheckpointError) as error:
+        store.load("task-1")
+
+    assert "状态版本不可读" in str(error.value)
+
+
 def test_distinct_task_ids_never_share_a_checkpoint_file(tmp_root) -> None:
     """task_id 的清洗是有损的：'a:b' 与 'ab' 曾经落到同一个文件（互相覆盖、互相读回来）。
 

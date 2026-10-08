@@ -507,7 +507,15 @@ class PlatformSnapshot(StrictModel):
     tool_schema_hash: Optional[str] = Field(default=None, max_length=80)
 
     def incompatible_with(self, other: "PlatformSnapshot") -> Tuple[str, ...]:
-        """返回不兼容的维度名（有序、去重），供恢复时报告与重新评估。"""
+        """返回不兼容的维度名（有序、去重），供恢复时报告与重新评估。
+
+        **`state_schema_version` 刻意不在这张表里**（审查报告问过一次，这里把判定写下来）：
+        协议世代对不上时，"继续恢复"根本不是选项——`checkpoint.load` 会**硬拒绝**整份记录
+        （`SUPPORTED_STATE_SCHEMA_VERSIONS` 里没有这个版本就抛 CheckpointError），
+        比"列成不兼容维度、由 plan_resume 报一个模式"更严格。而 plan_resume 的输入永远是
+        `store.load` 的返回值，所以这里再加一条只会是一段**不可达**的分支，
+        还会让人以为"不列出来就等于没查"。字段本身保留（快照里要留下当时写的是哪一版）。
+        """
 
         changed: list[str] = []
         for name in (
