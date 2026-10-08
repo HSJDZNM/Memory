@@ -161,6 +161,13 @@ class RetryStore:
     def save(self, record):
         import time
 
+        # `range(self.attempts)` 在 `attempts <= 0` 时是**空的**：函数会掉出末尾返回 None——
+        # 调用方（引擎的写前记账：副作用之前先把意图刷盘）以为意图已经落盘，实际一个字节都没写。
+        # 这种构造要在入口就被拒绝，而不是留一句"静默成功"。
+        if self.attempts <= 0:
+            raise ValueError(
+                f"attempts 必须 >= 1（收到 {self.attempts}）：否则 save 不会写任何东西"
+            )
         for attempt in range(self.attempts):
             try:
                 return self.inner.save(record)
