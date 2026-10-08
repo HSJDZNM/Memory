@@ -11,6 +11,7 @@ import yaml
 from conftest import REPO_ROOT, VALIDATION_DIR, fake_tool_spec, write_validation_config
 from policy.evidence import ValidatorKind
 from policy.models import RuleValidationError
+from provenance.reading_context import declaration_digest
 from validators.models import Registry, ToolSpec, ValidatorSpec
 from validators.registry import (
     RegistryError,
@@ -267,6 +268,28 @@ def test_builtin_validator_must_not_declare_a_tool() -> None:
         )
 
     assert "不能声明 tool" in str(error.value)
+
+
+def test_config_digest_returns_none_when_the_file_cannot_be_read(monkeypatch, tmp_path) -> None:
+    """is_file() 之后仍可能读不了（权限 / I/O / 竞态）：与 declaration_digest 同口径返回 None（复核发现）。"""
+
+    target = tmp_path / "ruff.toml"
+    target.write_text("x" + chr(10), encoding="utf-8", newline="")
+    assert (config_digest(target) or "").startswith("sha256:")
+
+    real = Path.read_bytes
+
+    def failing(self, *args, **kwargs):
+        if self.name == "ruff.toml":
+            raise PermissionError(13, "Permission denied")
+        return real(self, *args, **kwargs)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(Path, "read_bytes", failing)
+        assert config_digest(target) is None
+        assert declaration_digest(target) is None
+
+    assert config_digest(None) is None
 
 
 def test_tool_command_rejects_empty_elements_in_any_position() -> None:
