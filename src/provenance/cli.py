@@ -169,10 +169,21 @@ def _run_seal(args: argparse.Namespace) -> int:
     peer_evidence: Optional[Dict[str, Any]] = None
     if args.peer_evidence:
         try:
-            peer_evidence = json.loads(Path(args.peer_evidence).read_text(encoding="utf-8"))
+            parsed = json.loads(Path(args.peer_evidence).read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
             print(f"用法错误：peer-evidence 读不了（{error}）", file=sys.stderr)
             return EXIT_USAGE
+        # json.loads 可以返回任何 JSON 类型：非对象会在下游按映射取键时抛 AttributeError
+        # （裸 traceback + 解释器默认退出码 1），而 1 的含义是"判据跑完且是红的"——
+        # 这里连判据都还没跑。信任边界上先证明它是对象。
+        if not isinstance(parsed, dict):
+            print(
+                "用法错误：peer-evidence 必须是 JSON 对象，得到 "
+                f"{type(parsed).__name__}",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        peer_evidence = parsed
     try:
         landing = worktree.resolve_landing_state(args.landing, peer_evidence=peer_evidence)
     except worktree.LandingStateError as error:
