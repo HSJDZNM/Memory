@@ -224,7 +224,9 @@ def run() -> list[Scenario]:
     )
 
     # 5) trace 可重放
-    report = load_trace(AUDIT, trace_id="phase-4-demo", require_final=False)
+    # `require_final=True`：场景名字与 docstring 都写着链条要走到 final_decision，
+    # 而 `require_final=False` 恰好关掉"该 trace 有没有终态"这条检查——声称与判据对不上。
+    report = load_trace(AUDIT, trace_id="phase-4-demo", require_final=True)
     stages = [entry.stage.value for entry in report.entries]
     scenarios.append(
         Scenario(
