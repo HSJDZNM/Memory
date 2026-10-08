@@ -9,6 +9,11 @@
 #      不说明这些诊断值得报（方案 §9 的反面清单）；
 #   R3 预注册：门槛先写、跑完只记不改；行为有意变化时用 tools/governance_eval.py --record 显式重记基线。
 #
+# predictions.*.codes 是**标签，不是判定范围**（2026-10-08 记录）：P1 的语料精确率按 rule_id 算，
+# SEC-004 声明的 S105/S106/S107 全部计入被评判的那个数（tools/governance_eval.py 只把 codes
+# 原样抄进报告行）；而 P1 预注册时只写了 S105、S106。按 R3 不改预注册值，这里把口径写下来：
+# 拿 codes 去对报告里的 TP/FP 会以为预测只覆盖两个码，实际覆盖的是这条规则的全部码。
+#
 # 谁读这张表：tools/governance_eval.py（严格模型，未知字段一律报错——表里多一个没人读的键，
 # 就会让"门槛是什么"重新变成靠猜）。
 schema_id: governance-eval-thresholds/1
