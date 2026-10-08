@@ -118,6 +118,7 @@ def main(argv: list[str]) -> int:
         targets = [Path(item) for item in sorted(listed)]
     problems: list[str] = []
     unreadable: list[str] = []
+    vanished: list[str] = []
     checked = 0
     skipped = 0
     binary = 0
@@ -138,6 +139,11 @@ def main(argv: list[str]) -> int:
             # rm 掉，旧实现会打印「检查 0 个文本文件、问题 0 处」并放行推送）。
             if explicit or path.as_posix() in known:
                 problems.append(f"{path}: 工作树里不存在，无法检查文本约定")
+            else:
+                # 未跟踪、且此刻在工作树里找不到（"先列出、后消失"的窗口，或悬空链接）：
+                # 旧实现这里什么都不记——文件**无痕消失**，与模块 docstring 的"绝不静默"相反。
+                # 与"未跟踪且读取失败"同类（都是"没查成"），但原因要写清是"不存在"而非"读失败"。
+                vanished.append(path.as_posix())
             continue
         # 只检查文本文件：含 NUL 视为二进制
         try:
@@ -180,11 +186,15 @@ def main(argv: list[str]) -> int:
         print(problem)
     for item in unreadable:
         print(f"跳过（未跟踪且读取失败）: {item}")
+    for item in vanished:
+        print(f"跳过（未跟踪且工作树里不存在）: {item}")
     suffix = f"，跳过第三方镜像 {skipped} 个" if skipped else ""
     if binary:
         suffix += f"，跳过二进制 {binary} 个"
     if unreadable:
         suffix += f"，跳过未跟踪且读取失败 {len(unreadable)} 个"
+    if vanished:
+        suffix += f"，跳过未跟踪且工作树里不存在 {len(vanished)} 个"
     print(f"检查 {checked} 个文本文件，问题 {len(problems)} 处{suffix}")
     return 1 if problems else 0
 

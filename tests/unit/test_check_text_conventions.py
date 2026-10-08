@@ -176,3 +176,21 @@ def test_nul_sniffed_binary_is_counted_too(monkeypatch, capsys, tmp_root):
     out = capsys.readouterr().out
 
     assert "跳过二进制 1 个" in out, out
+
+def test_vanished_untracked_target_is_an_explicit_skip(monkeypatch, capsys, tmp_root):
+    """条目 [19]：未跟踪路径在工作树里消失（"先列出、后消失"的窗口 / 悬空链接）必须留痕。
+
+    旧实现这条分支什么都不记——不报问题、不打印跳过、不计数，文件无痕消失，
+    与模块 docstring 的"绝不静默"相反。
+    """
+
+    module = _load()
+    ghost = tmp_root / "tmp-ghost-m9check"
+    monkeypatch.setattr(module, "tracked_files", lambda: {ghost.as_posix()})
+
+    assert module.main(["check_text_conventions.py"]) == 0
+    out = capsys.readouterr().out
+
+    assert "跳过（未跟踪且工作树里不存在）" in out, out
+    assert "tmp-ghost-m9check" in out, out
+    assert "跳过未跟踪且工作树里不存在 1 个" in out, out
