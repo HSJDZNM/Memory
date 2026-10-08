@@ -77,7 +77,7 @@ suites:
         layer: from_filename
         operation: null
         layer_source: filename_guess
-      repo_scan_note: 与 docs/project/architecture/规则转化覆盖报告.md §10.4 的 CLI 实跑**部分**同口径——层值今天一致，机制不同：本表用 policy.check.infer_layer（按文件名主干猜），而 python -m policy.check 不传 --layer 时**先**按validation/test-layout.yaml 的 test_patterns 判测试路径（layer=test、layer_source=platform_test_layout）。两者今天给出同一个层，靠的是 infer_layer 的 _LAYER_GUESS_ORDER 把 test 排在最前（每条 test_patterns 的见证路径主干里都有 test 词元，实测 tests/contract/test_dsh_adapter.py 两边都是 test）。平台声明一旦放宽（例如 tests/**/*.py）或新增结构化层，本表不会跟着变，两份读数就会分叉；要真正同口径，应让本表的 from_filename 改走 resolve_layer（属 tools/governance_eval.py 的改动，尚未做）。
+      repo_scan_note: 与 docs/project/architecture/规则转化覆盖报告.md §10.4 的 CLI 实跑**部分**同口径——层值今天一致，机制不同：本表用 policy.check.infer_layer（按文件名主干猜），而 python -m policy.check 不传 --layer 时**先**按validation/test-layout.yaml 的 test_patterns 判测试路径（layer=test、layer_source=platform_test_layout）。两者今天给出同一个层，靠的是 infer_layer 的 _LAYER_GUESS_ORDER 把 test 排在最前（每条 test_patterns 的见证路径主干里都有 test 词元，实测 tests/contract/test_dsh_adapter.py 两边都是 test）。平台声明一旦放宽（例如 tests/**/*.py）或新增结构化层，本表不会跟着变，两份读数就会分叉；要真正同口径，应让本表的 from_filename 改走 resolve_layer（属 tools/governance_eval.py 的改动，尚未做）。另注：本仓库扫描**不带 operation**（context.repo_scan.operation 为 null），操作类规则（TESTING-001/002 这类）因此进 skipped_rules——P2/P3 的分母与 block 数都按这个口径算；本节有两处同名 repo_scan（上面的 context.repo_scan 与本节的扫描配置），schema 与作用都不同，改一处前先看清是哪一处。
     # ---- P2/P3 的本仓库对照扫描（方案 §6.5 的预注册预测）----
     repo_scan:
       enabled: true
