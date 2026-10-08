@@ -49,12 +49,17 @@ def resolve_target(path: str, *, workspace: Path | str) -> tuple[str, Path]:
         if token in path:
             raise SourceError(f"目标路径里出现不允许的字符 {token!r}")
 
-    anchor = Path(workspace).resolve()
+    # resolve() 不只会抛 OSError：符号链接成环在 3.13+ 抛 RuntimeError（requires-python >= 3.11，
+    # 跨解释器都要接住）。这条路径必须失败关闭成 SourceError，裸 RuntimeError 会逃出验证器层。
+    try:
+        anchor = Path(workspace).resolve()
+    except (OSError, RuntimeError) as error:
+        raise SourceError(f"工作区路径无法解析：{workspace!r}（{error}）") from error
     raw = Path(path.strip())
     candidate = raw if raw.is_absolute() else anchor / raw
     try:
         resolved = candidate.resolve()
-    except OSError as error:
+    except (OSError, RuntimeError) as error:
         raise SourceError(f"目标路径无法解析：{path!r}（{error}）") from error
 
     if not resolved.is_relative_to(anchor):
