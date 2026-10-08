@@ -34,14 +34,11 @@ import httpx
 from bs4 import BeautifulSoup
 
 BT = chr(96)
-FENCE = BT * 3
 NL = chr(10)
 
 SITE = "https://dora.dev"
 CATALOG_URL = SITE + "/capabilities/"
 GUIDES_INDEX = SITE + "/guides/"
-CORE_MODEL = SITE + "/research/#core-model"
-AI_MODEL = SITE + "/ai/#explore-the-model"
 
 # 被能力正文实际引用（共 11 处）的两篇指南；其余 3 篇指南未被能力正文引用，不收录。
 GUIDE_URLS = (SITE + "/guides/dora-metrics/", SITE + "/guides/how-to-transform/")
@@ -49,7 +46,6 @@ GUIDE_URLS = (SITE + "/guides/dora-metrics/", SITE + "/guides/how-to-transform/"
 MODEL_DIR = {"core": "core", "ai": "ai", "": "unlabeled"}
 MODEL_NAME = {"core": "core", "ai": "AI", "": "站点未标注模型"}
 MODEL_ZH = {"core": "DORA Core 模型", "ai": "DORA AI 能力模型", "": "站点未标注模型归属"}
-LICENSE = "CC BY 4.0（Google LLC，站点页脚声明）"
 
 _catalog_cache = None
 _guides_cache = None
