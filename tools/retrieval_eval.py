@@ -588,10 +588,15 @@ def _comparison(reports: Sequence[MethodReport]) -> dict[str, Any]:
     vector = next((item for item in reports if item.method == "vector"), None)
     if baseline is None or vector is None:
         return {"available": False, "reason": "只跑了单一方法，未做对照"}
+    # "全面不劣"必须覆盖对比块里报告的**每一个**指标：漏掉 recall 与来源完整度时，
+    # 一个 recall 明显更差、来源更不全的向量跑法照样会被标成 vector_not_worse 并采纳
+    # （2026-10-08 的 low 条目 [62]）。
     not_worse = (
         vector.hit_rate >= baseline.hit_rate
         and vector.support_rate >= baseline.support_rate
         and vector.mean_precision_at_k >= baseline.mean_precision_at_k
+        and vector.mean_recall_at_k >= baseline.mean_recall_at_k
+        and vector.source_completeness >= baseline.source_completeness
     )
     adopted = bool(vector.passed and not_worse)
     if adopted:
