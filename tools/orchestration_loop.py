@@ -278,18 +278,33 @@ def read_text(path: Path) -> str:
 
 
 def read_jsonl(path: Path) -> tuple[dict[str, Any], ...]:
+    """读一行一条的 JSONL：**坏行不静默丢**。
+
+    这份文件是 `execution_count(...)` / "零执行" 与台账事实的**证据源**：丢一条就会少算一次执行，
+    而报告照样打印结论。本 harness 会中途 Ctrl-C 杀掉运行，append-only 文件因此可能留一条被截断的
+    尾巴——那一条同样要报出来（行号 + 原因）：读不懂证据源时不许给结论，也不许把"少了一条"
+    静默成"就是没有"。
+    """
+
     if not path.is_file():
         return ()
     records: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
         try:
             decoded = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(decoded, dict):
-            records.append(decoded)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                "%s 第 %d 行不是合法 JSON（%s）：它是执行次数与台账事实的证据源，"
+                "坏行会让结论少算——修好或删掉这一行再重跑" % (path, number, error.msg)
+            ) from error
+        if not isinstance(decoded, dict):
+            raise RuntimeError(
+                "%s 第 %d 行是 %s，不是对象：JSONL 记录必须是映射"
+                % (path, number, type(decoded).__name__)
+            )
+        records.append(decoded)
     return tuple(records)
 
 
