@@ -39,7 +39,6 @@ from .indexer import DEFAULT_CORPUS_PATH, IndexReport, ingest, needs_reindex, qu
 from .models import (
     AccessScope,
     CorpusManifest,
-    EngineeringContext,
     Operation,
     PolicyFact,
     RetrievalError,
@@ -288,10 +287,6 @@ def render_result(result: RetrievalResult) -> str:
         )
         lines.append("     " + hit.text.strip().split(chr(10))[0][:120])
     return chr(10).join(lines)
-
-
-def render_context_text(context: EngineeringContext) -> str:
-    return render_context(context)
 
 
 def _decision_facts(path: str) -> tuple[PolicyFact, ...]:
