@@ -185,12 +185,24 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
     )
     app.state.runtime = runtime
 
-    async def handle_route(route: str, request: Request) -> JSONResponse:
-        limit = runtime.config.limits.max_request_bytes
+    async def handle_route(
+        route: str, request: Request, *, body_expected: bool = True
+    ) -> JSONResponse:
         # 请求体由依赖读过一次（顺序见 _body_guard）：这里只消费结果，不再碰数据流。
+        # 上限**只在那里**判一次：在这里再比一遍 `limits.max_request_bytes` 是同一份值的第二次
+        # 拷贝，不会多查出任何东西（依赖是流式的，一超限就停），只会让"谁在管这件事"变模糊。
         raw = getattr(request.state, "raw_body", None)
-        if raw is None:  # 理论上不会发生；真发生了就是"没读到请求体"，按协议错误拒绝
-            raw = b""
+        if raw is None and body_expected:
+            # 依赖没生效（最典型的形态见下面 add_api_route 的注释：`_guard` 的注解被写成
+            # None，FastAPI 会静默丢掉整条依赖）。这时**不能**按空载荷继续：那会把
+            # "服务端没读到请求体"翻译成一个看不懂的 400（缺 request_id）——AGENTS 第 52 条
+            # 要求的正是"拦住之外还要给出对的原因"。
+            raise ApiError(
+                ErrorCode.INTERNAL_ERROR,
+                "服务端没有读到请求体（请求体依赖未生效）；拒绝按空载荷继续",
+            )
+        if raw is None:
+            raw = b""  # 运维路由（GET /v1/ops/metrics）按协议没有请求体
         content_type = (request.headers.get("content-type") or "").split(";")[0].strip()
         if content_type and content_type != "application/json":
             raise ApiError(
@@ -283,7 +295,8 @@ def create_app(runtime: ApiRuntime) -> FastAPI:
         )
 
     async def ops_metrics(request: Request) -> JSONResponse:
-        return await handle_route("metrics", request)
+        # 这条路由按协议没有请求体（GET），所以不声明 _body_guard：raw_body 缺席是正常的。
+        return await handle_route("metrics", request, body_expected=False)
 
     ops_metrics.__name__ = "handle_metrics"
     app.add_api_route(

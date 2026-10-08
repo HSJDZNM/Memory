@@ -58,6 +58,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -273,17 +274,38 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# 文件名推断的**优先级**：结构化层名优先。
+#
+# KNOWN_LAYERS 的顺序来自分层口径，但"猜"这件事有自己的风险排序：`test` 是有独立平台声明的
+# 结构化层（validation/test-layout.yaml 的 test_patterns），猜错它的代价最大——测试文件被当成
+# 生产层，ARCH 类规则会按错的范围参与判定；其余按 KNOWN_LAYERS 的顺序。
+_LAYER_GUESS_ORDER = ("test", *(layer for layer in KNOWN_LAYERS if layer != "test"))
+
+
+def _filename_tokens(stem: str) -> tuple[str, ...]:
+    """把文件名主干切成词元：裸子串不是层归属的证据。"""
+
+    return tuple(item for item in re.split(r"[^a-z0-9]+", stem) if item)
+
+
 def infer_layer(file: str | None) -> str:
     """按文件名推断架构层；推断不出来就是 unknown，不猜测、不默认。
 
     这是 CLI 的便利功能，不属于核心规范化器：Adapter 必须显式提供 layer。
+
+    判据是**词元边界**而不是裸子串：`review.py` 里的 "view"、`contest.py` 里的 "test" 都不是
+    "这个文件属于哪一层"的证据；而 `test_util.py` 既不能因为 "util" 在 KNOWN_LAYERS 里排在
+    "test" 前面就被判成 util（顺序依赖），也不能漏掉它其实是测试。词元相等或**以层名开头**
+    （覆盖 `models.py` 这种复数形态）才算命中，命中多个时按 _LAYER_GUESS_ORDER 取。
     """
 
     if not file:
         return UNKNOWN_LAYER
-    stem = Path(file).stem.lower()
-    for layer in KNOWN_LAYERS:
-        if layer in stem:
+    tokens = _filename_tokens(Path(file).stem.lower())
+    if not tokens:
+        return UNKNOWN_LAYER
+    for layer in _LAYER_GUESS_ORDER:
+        if any(token == layer or token.startswith(layer) for token in tokens):
             return layer
     return UNKNOWN_LAYER
 

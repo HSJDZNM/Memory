@@ -429,6 +429,14 @@ def test_repository_example_dependencies_are_declared() -> None:
         ("src/order/models.py", "model"),
         ("src/order/registry.py", "unknown"),
         (None, "unknown"),
+        # 裸子串不是层归属的证据：这两个名字里的 "view" / "test" 都只是别的词的一部分
+        ("src/order/review.py", "unknown"),
+        ("src/order/contest.py", "unknown"),
+        # 顺序依赖：'util' 在 KNOWN_LAYERS 里排在 'test' 前，旧实现把测试文件判成 util
+        ("tests/unit/test_util.py", "test"),
+        ("tests/unit/util_test.py", "test"),
+        # 复数形态仍要命中（'model' 是 'models' 的词元前缀）
+        ("src/order/model_schema.py", "model"),
     ],
 )
 def test_infer_layer(name: str | None, expected: str) -> None:

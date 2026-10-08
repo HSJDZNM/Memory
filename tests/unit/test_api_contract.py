@@ -13,9 +13,11 @@ from __future__ import annotations
 import datetime
 import hashlib
 import http.client
+import importlib
 import io
 import json
 import os
+import sys
 import time
 import urllib.error
 from pathlib import Path
@@ -47,7 +49,7 @@ from policy_api.serve import endpoint, serve
 from policy_api.services import signature_of
 from policy_api.timeout import Budget, BudgetExceeded, run_with_budget
 
-from api_support import TOKEN_SHA, isolated_api
+from api_support import TOKEN, TOKEN_SHA, isolated_api
 
 # --------------------------------------------------------------------------- 工具
 
@@ -152,6 +154,22 @@ def test_error_payload_shape_is_fixed_and_hides_debug() -> None:
     assert "Traceback" not in json.dumps(minimal, ensure_ascii=False)
 
 
+def test_redact_detail_strips_control_characters() -> None:
+    """控制字符不许穿过：它们不是"空白"，却能在终端上改写输出、污染下游解析。
+
+    历史缺陷（medium 台账 M1，errors.py:115）：docstring 承诺"无控制字符"，实现只用
+    `" ".join(str(text).split())`——`split()` 只折叠空白，ESC（\x1b）/ NUL / DEL / BEL
+    全部原样进 HTTP 响应与日志。
+    """
+
+    cleaned = redact_detail("a\x1b[31mred\x00b\x7fc\x07 d")
+
+    assert "\x1b" not in cleaned and "\x00" not in cleaned
+    assert "\x7f" not in cleaned and "\x07" not in cleaned
+    assert all(character >= " " for character in cleaned)
+    assert "red" in cleaned and "d" in cleaned  # 内容保留，只中和控制字符
+
+
 def test_redact_detail_collapses_lines_and_caps_length() -> None:
     """错误细节是**服务端生成的一行文本**：换行会被压平、超长会被截断。
 
@@ -176,6 +194,61 @@ def test_load_api_config_rejects_unknown_schema_version(tmp_root: Path) -> None:
     with pytest.raises(ConfigError) as info:
         load_api_config(path, root=REPO_ROOT)
     assert "未知部署配置版本" in str(info.value) and "9.9" in str(info.value)
+
+
+def _config_with_expiry(expires_at: str) -> str:
+    """一份最小合法配置 + 一个客户端，`expires_at` 用调用方给的值（YAML 里显式加引号）。"""
+
+    return (
+        'schema_version: "1.0"' + chr(10)
+        + "tenants:" + chr(10)
+        + "  - tenant_id: alpha" + chr(10)
+        + "    project_root: project" + chr(10)
+        + "    rules: [rules]" + chr(10)
+        + "clients:" + chr(10)
+        + "  - client_id: alpha-client" + chr(10)
+        + '    token_sha256: "' + "0" * 64 + '"' + chr(10)
+        + "    tenants: [alpha]" + chr(10)
+        + "    expires_at: " + expires_at + chr(10)
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["2026-12-31T00:00:00Z", "2026-12-31T00:00:00+08:00", "2026-12-31T00:00:00.500000Z"],
+)
+def test_client_expires_at_accepts_the_documented_iso_forms(tmp_root: Path, value: str) -> None:
+    """三种形态都要能加载：把校验提到加载期，不能顺手收窄可接受的写法。"""
+
+    config = load_api_config(
+        write_config(tmp_root, _config_with_expiry('"' + value + '"')), root=REPO_ROOT
+    )
+    assert config.clients[0].expires_at == value
+
+
+def test_client_expires_at_is_rejected_at_load_time(tmp_root: Path) -> None:
+    """坏 `expires_at` 是**加载期**的配置错误，不是请求期的 401。
+
+    历史缺陷（medium 台账 M1，auth.py:85）：格式从不校验，坏值只在请求时被
+    `auth.parse_expiry` 解析，于是表现成"这个客户端的每次调用都 401 unauthenticated"，
+    还把配置原文回显进错误 detail——部署错误被伪装成凭据错误（AGENTS 第 52 条）。
+    """
+
+    with pytest.raises(ConfigError) as error:
+        load_api_config(write_config(tmp_root, _config_with_expiry('"昨天"')), root=REPO_ROOT),
+    assert "expires_at" in str(error.value)
+    assert "alpha-client" in str(error.value)
+
+
+def test_parse_expiry_failure_does_not_echo_the_configured_value() -> None:
+    """运行期的翻译层不再复述配置原文：detail 会进 HTTP 响应。"""
+
+    from policy_api.auth import parse_expiry
+
+    with pytest.raises(ApiError) as info:
+        parse_expiry("昨天")
+    assert info.value.code is ErrorCode.UNAUTHENTICATED
+    assert "昨天" not in info.value.detail
 
 
 def test_load_api_config_rejects_plaintext_token(tmp_root: Path) -> None:
@@ -263,6 +336,95 @@ def test_load_api_config_reports_missing_and_unreadable_files(tmp_root: Path) ->
     with pytest.raises(ConfigError) as empty:
         load_api_config(write_config(tmp_root, ""), root=REPO_ROOT)
     assert "顶层必须是映射" in str(empty.value)
+
+
+def test_client_projects_are_canonicalized_at_load_time(tmp_root: Path) -> None:
+    """配置里的项目名与请求侧**同一个口径**，否则合法配置永远匹配不上。
+
+    历史缺陷（medium 台账 M1，auth.py:121）：`tenant_project`（authorize:184）与请求侧
+    project（runtime._authenticate）都过 `canonical_identifier`，只有 `client.projects`
+    不过，于是配置里写 "Alpha-Project" 的客户端在请求侧 "alpha-project" 上被静默 403
+    （project_not_allowed），调用方与运维都看不出问题出在大小写。
+    """
+
+    from policy_api.auth import allows_project
+
+    text = (
+        'schema_version: "1.0"' + chr(10)
+        + "tenants:" + chr(10)
+        + "  - tenant_id: alpha" + chr(10)
+        + "    project_root: project" + chr(10)
+        + "    project: alpha-project" + chr(10)
+        + "    rules: [rules]" + chr(10)
+        + "clients:" + chr(10)
+        + "  - client_id: alpha-client" + chr(10)
+        + '    token_sha256: "' + "0" * 64 + '"' + chr(10)
+        + "    tenants: [alpha]" + chr(10)
+        + "    projects: [Alpha-Sub]" + chr(10)
+    )
+    config = load_api_config(write_config(tmp_root, text), root=REPO_ROOT)
+    client = config.clients[0]
+
+    assert client.projects == ("alpha-sub",)
+    # 请求侧被 runtime 规范化后的形态必须能匹配上；别的项目仍然拒绝（不扩权）
+    assert allows_project(client, "alpha-sub") is True
+    assert allows_project(client, "alpha-other") is False
+
+    # 规范化后为空的项目名是配置错误，不是"一个匹配不上的名字"
+    with pytest.raises(ConfigError):
+        load_api_config(
+            write_config(
+                tmp_root,
+                text.replace("projects: [Alpha-Sub]", 'projects: ["   "]'),
+                name="blank-project.yaml",
+            ),
+            root=REPO_ROOT,
+        )
+
+
+def test_load_api_config_requires_an_explicit_root(tmp_root: Path) -> None:
+    """锚点必须显式：**不从配置文件位置推断**（config.py 的规则 3）。
+
+    历史缺陷（medium 台账 M1，config.py:257）：`root` 省略时退回 `target.parent.parent`，
+    于是同一份配置换个目录放置，租户的规则 / 索引 / 验证器的解析基准就跟着变——安全边界
+    随文件摆放漂移，而调用方以为自己拿到的还是同一套边界。
+    """
+
+    path = write_config(tmp_root, BASE_CONFIG)
+    with pytest.raises(ConfigError) as error:
+        load_api_config(path)
+    assert "root" in str(error.value)
+
+    # 显式给出 root 时照常工作，且锚点就是给的那个
+    config = load_api_config(path, root=REPO_ROOT)
+    assert config.service_root == str(REPO_ROOT)
+
+
+def test_duplicate_client_id_is_rejected(tmp_root: Path) -> None:
+    """两个客户端共用一个 `client_id` 必须在加载期拒绝。
+
+    历史缺陷（medium 台账 M1，config.py:213）：交叉引用校验只查了 tenant_id 唯一与
+    client→tenant 链接，重复的 client_id 静默通过——而幂等台账键、指标标签与请求日志全部
+    按 client_id 记账，审计读到的是两个主体混在一起（谁先谁后还取决于配置里的书写顺序）。
+    """
+
+    text = (
+        'schema_version: "1.0"' + chr(10)
+        + "tenants:" + chr(10)
+        + "  - tenant_id: alpha" + chr(10)
+        + "    project_root: project" + chr(10)
+        + "    rules: [rules]" + chr(10)
+        + "clients:" + chr(10)
+        + "  - client_id: alpha-client" + chr(10)
+        + '    token_sha256: "' + "0" * 64 + '"' + chr(10)
+        + "    tenants: [alpha]" + chr(10)
+        + "  - client_id: alpha-client" + chr(10)
+        + '    token_sha256: "' + "1" * 64 + '"' + chr(10)
+        + "    tenants: [alpha]" + chr(10)
+    )
+    with pytest.raises(ConfigError) as error:
+        load_api_config(write_config(tmp_root, text), root=REPO_ROOT)
+    assert "client_id" in str(error.value)
 
 
 def test_hash_token_is_a_stable_sha256_hex_digest() -> None:
@@ -494,6 +656,80 @@ def test_idempotency_record_refuses_to_replace_a_fresh_entry_with_another_digest
     assert replaced is not None and replaced.body == {"who": "second"}
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"status": "200", "body": {}},  # 类型不对（int() 能读，但台账协议里没有这种写法）
+        {"body": {}},  # status 缺失 → 以前被默认成 200
+        {"status": 999, "body": {}},  # 越界状态码 → 以前原样重放给客户端
+        {"status": 200, "body": ["not", "an", "object"]},  # → 以前被换成 {}，重放一个空响应
+    ],
+)
+def test_idempotency_ledger_rejects_malformed_entries(tmp_root: Path, entry: dict) -> None:
+    """条目的字段形状也是协议：坏条目必须失败关闭，不能被洗成一份"原结论"。
+
+    历史缺陷（medium 台账 M1，idempotency.py:221）：`_read_unlocked` 只校验协议版本与
+    `entry_key`，`lookup` 直接 `int(item.get("status", 200))` / `dict(body) if isinstance(...)`
+    ——status 缺失或写错类型被默认成 200、body 不是对象被换成 {}（客户端收到 200 + 空响应）、
+    status=999 原样重放。都不是"重放上次的结论"，而是凭空造一个。
+    """
+
+    path = tmp_root / "ledger.jsonl"
+    row = {
+        "ledger_schema_version": "1.0",
+        "entry_key": "alpha-client|1.0|evaluate|k1",
+        "request_digest": "d1",
+        "expires_at": "2099-01-01T00:00:00.000000Z",
+        **entry,
+    }
+    path.write_text(
+        json.dumps(row, ensure_ascii=False, sort_keys=True) + chr(10),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    ledger = IdempotencyLedger(path)
+    with pytest.raises(ApiError) as info:
+        ledger.lookup(
+            client_id="alpha-client", api_version="1.0", route="evaluate", key="k1", digest="d1"
+        )
+    assert info.value.code is ErrorCode.IDEMPOTENCY_UNAVAILABLE
+    assert info.value.status == 503
+
+
+@pytest.mark.skipif(os.name != "nt", reason="这一支是 Windows 的 msvcrt 代码路径")
+def test_lock_timeout_reports_the_timeout_not_a_permission_error(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """取锁超时必须报"锁超时"，不能被 finally 里的解锁异常覆盖成 Windows 权限错误。
+
+    历史缺陷（medium 台账 M1，idempotency.py:119）：解锁无条件执行，而取锁超时的路径上
+    根本没拿到锁——`msvcrt.locking(..., LK_UNLCK, 1)` 自己抛 PermissionError，异常从
+    finally 抛出会替换在途的 ApiError：调用方看到一句权限错误，真正的原因（锁超时）消失。
+    实测（.tmp/m1-idem119-repro.py）：LK_UNLCK 对未持有的区间报 [Errno 13] Permission denied。
+    """
+
+    import msvcrt
+
+    from policy_api import idempotency
+
+    def always_denied(fd: int, mode: int, length: int) -> None:
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(msvcrt, "locking", always_denied)
+    # 让 5 秒的截止时间立刻到期：第一次取锁失败后 monotonic 已经越过 deadline
+    ticks = iter([0.0, 100.0, 100.0, 100.0])
+    monkeypatch.setattr(idempotency.time, "monotonic", lambda: next(ticks, 100.0))
+
+    ledger = IdempotencyLedger(tmp_root / "ledger.jsonl")
+    with pytest.raises(ApiError) as info:
+        ledger.lookup(
+            client_id="alpha-client", api_version="1.0", route="evaluate", key="k1", digest="d1"
+        )
+    assert info.value.code is ErrorCode.IDEMPOTENCY_UNAVAILABLE
+    assert "锁超时" in info.value.detail
+
+
 def test_idempotency_expiry_always_carries_microseconds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -644,6 +880,237 @@ def test_probe_unavailable_payload_reads_a_non_mapping_body_without_raising() ->
     assert payload["violations"][0]["evidence"]["value"] == "policy_unavailable"
 
 
+def test_a_missing_raw_body_on_a_body_route_is_rejected_not_substituted() -> None:
+    """请求体依赖没生效时，POST 路由必须显式失败关闭，而不是把空载荷当成请求体。
+
+    历史缺陷（medium 台账 M1，app.py:188）：注释写的是"按协议错误拒绝"，代码却
+    `raw = b""`——"服务端没读到请求体"被翻译成一个看不懂的 400（缺 request_id），
+    而 AGENTS 第 52 条要求的正是"拦住之外还要给出对的原因"。运维路由（metrics）按协议
+    没有请求体，那条路仍按空载荷继续（否则等于把指标端点改成不可用）。
+    """
+
+    import asyncio
+
+    from starlette.requests import Request
+
+    from policy_api.testing import make_client
+
+    runtime = ApiRuntime(repo_config(), root=REPO_ROOT)
+    app = make_client(runtime).app
+    evaluate = next(route for route in app.routes if getattr(route, "name", None) == "evaluate")
+    # 直接调用端点：不经过 FastAPI 的依赖解析，于是 raw_body 缺席——这正是"依赖被静默
+    # 丢掉"时的形态（真机形态见 app.py 里 _guard 注解的注释）。
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/policy/evaluate",
+            "headers": [],
+            "query_string": b"",
+        }
+    )
+    with pytest.raises(ApiError) as info:
+        asyncio.run(evaluate.endpoint(request))
+    assert info.value.code is ErrorCode.INTERNAL_ERROR
+    assert "请求体" in info.value.detail
+
+
+def test_core_framework_check_can_fail_and_is_not_vacuous(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """这个自检必须能证伪：把核心层指到一棵"导入了 fastapi"的假树上，结论必须是 False。
+
+    历史缺陷（medium 台账 M1，contract.py:207）：树的位置按 `__file__.parents[2]` 算，只在
+    源码检出里成立；装成 site-packages 时那是条不存在的路径（实测 `<prefix>/lib/src/policy`），
+    函数直接返回 True——它证明的只是"我没找到要检查的东西"。
+    """
+
+    import policy
+
+    from policy_api import contract
+
+    assert contract._core_is_framework_free() is True  # 本仓库的核心层确实干净
+
+    fake = tmp_path / "policy"
+    fake.mkdir()
+    (fake / "bad.py").write_text("import fastapi" + chr(10), encoding="utf-8", newline="")
+    monkeypatch.setattr(policy, "__path__", [str(fake)])
+    assert contract._core_is_framework_free() is False, "检查放过了导入 Web 框架的核心层"
+
+    # 对照组：同一棵树上换成干净文件 → True（不是"永远返回 False"）
+    (fake / "bad.py").unlink()
+    (fake / "good.py").write_text("import json" + chr(10), encoding="utf-8", newline="")
+    assert contract._core_is_framework_free() is True
+
+
+def test_credentials_repr_does_not_leak_the_token() -> None:
+    """`repr(model)` / `"%s" % model` 不许带出令牌：docstring 写了"绝不写进日志"。
+
+    历史缺陷（medium 台账 M1，models.py:73）：字段没有 `repr=False`、也不是 SecretStr，
+    唯一的保护在模型之外（落盘前删掉 credentials）——一行 `logger.info("%s", request)`、
+    一个捕获局部变量的错误上报，或一段 traceback 就会把明文令牌写出去。
+    """
+
+    from policy_api.models import Credentials, EvaluateRequest
+
+    token = "alpha-secret-token"
+    credentials = Credentials(token=token)
+    assert token not in repr(credentials)
+    assert token not in str(credentials)
+    assert token not in f"{credentials}"
+
+    request = EvaluateRequest(
+        api_version="1.0",
+        request_id="r-1",
+        principal={"subject": "alice"},
+        context={"file": "src/a.py", "layer": "service"},
+        credentials={"token": token},
+    )
+    assert token not in repr(request), "嵌套 repr 里带出了令牌"
+    # 认证路径照常能拿到明文（repr=False 不影响取值）
+    assert request.credentials is not None
+    assert request.credentials.token == token
+
+
+@pytest.mark.parametrize("subject", [" ", "   ", chr(9)])
+def test_blank_subject_is_rejected(subject: str) -> None:
+    """空白不是主体：`" "` 满足 min_length=1，落到日志与证据里却对不上任何真实调用者。
+
+    历史缺陷（medium 台账 M1，models.py:79）：本模块的字段没有 strip 校验，
+    `subject=" "` 被当成合法主体。
+    """
+
+    from pydantic import ValidationError
+
+    from policy_api.models import PrincipalDTO
+
+    with pytest.raises(ValidationError):
+        PrincipalDTO(subject=subject)
+
+
+def test_blank_task_is_rejected_but_padded_task_is_normalized() -> None:
+    """空白 task 不是"有查询"：它会让检索返回 empty，被读成"查过了、没有规范"。
+
+    历史缺陷（medium 台账 M1，models.py:79）：`RetrieveRequest._query_or_task` 用真值判断，
+    而 `ContextDTO.task` 没有任何 trim 校验，`task="   "` 因此既满足了"至少有一个查询来源"，
+    又把一片空白交给了检索层。
+    """
+
+    from pydantic import ValidationError
+
+    from policy_api.models import ContextDTO
+
+    with pytest.raises(ValidationError):
+        ContextDTO(file="src/a.py", layer="service", task="   ")
+    # 去空白而不是"拒绝一切带空白的值"
+    assert ContextDTO(file="src/a.py", layer="service", task=" 代码评审 ").task == "代码评审"
+
+
+@pytest.mark.parametrize("field", ["tenant", "trace_id", "idempotency_key"])
+def test_blank_optional_envelope_fields_are_rejected(field: str) -> None:
+    """信封上的可选文本字段（含 tenant）：空白与 null 不是一个意思。"""
+
+    from pydantic import ValidationError
+
+    from policy_api.models import EvaluateRequest
+
+    payload = {
+        "api_version": "1.0",
+        "request_id": "r-1",
+        "principal": {"subject": "alice"},
+        "context": {"file": "src/a.py", "layer": "service"},
+        field: "   ",
+    }
+    with pytest.raises(ValidationError):
+        EvaluateRequest.model_validate(payload)
+
+
+# --------------------------------------------------------------------------- 公开面
+
+# 逐条登记的公开面检查：新增一个 policy_api 模块就把名字加进来。
+_PUBLIC_SURFACES = ("policy_api.config", "policy_api.services")
+
+
+@pytest.mark.parametrize("module_name", _PUBLIC_SURFACES)
+def test_every_name_in_the_declared_public_surface_resolves(module_name: str) -> None:
+    """`__all__` 是模块的公开承诺：写一个不存在的名字，`import *` 直接 AttributeError。
+
+    历史缺陷（medium 台账 M1，config.py:36）：`__all__` 里写着 `Limits`，而本模块的预算
+    模型叫 `LoadConfig`——名字不存在，`from policy_api.config import *` 会炸。
+    """
+
+    module = importlib.import_module(module_name)
+    missing = [name for name in module.__all__ if not hasattr(module, name)]
+    assert missing == [], f"{module_name}.__all__ 里解析不到的名字：{missing}"
+
+
+# --------------------------------------------------------------------------- CLI 用法
+
+
+@pytest.mark.parametrize("content", ["{not json", "[1, 2]", ""])
+def test_seal_verify_rejects_an_unreadable_or_malformed_anchor(
+    tmp_root: Path, content: str
+) -> None:
+    """锚是外部输入：损坏 / 非对象时必须给退出码 2 与说明，而不是裸 traceback。
+
+    历史缺陷（medium 台账 M1，cli.py:229）：`read_text()` + `json.loads()` 没有任何保护，
+    截断的 JSON 抛 JSONDecodeError、非对象顶层让 `verify_seal` 抛 AttributeError，
+    两者都逃出 `main()` 的 `except ApiError`（调用方看到 traceback，退出码也不是 2）。
+    """
+
+    from policy_api import cli
+
+    anchor = tmp_root / "anchor.json"
+    anchor.write_text(content, encoding="utf-8", newline="\n")
+
+    assert cli.run(["seal", "--verify", str(anchor)]) == cli.EXIT_ERROR
+
+
+def test_clients_hash_runs_without_a_usable_config(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`clients --hash` 只读 stdin：不该要求部署配置存在或合法。
+
+    历史缺陷（medium 台账 M1，cli.py:100）：`run()` 在分派任何子命令之前无条件 `_load`，
+    于是"给令牌算 sha256"这个与部署无关的小工具在配置缺失 / 不可读 / **配置里写了明文
+    令牌**时都以退出码 2 失败——而 config.py 拒绝明文令牌时给出的补救指引恰恰就是这条
+    命令，唯一的补救路径被自己堵死。
+    """
+
+    from policy_api import cli
+    from policy_api.config import hash_token
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO("alpha-secret-token" + chr(10)))
+    missing = tmp_root / "definitely-absent.yaml"
+
+    assert cli.run(["--config", str(missing), "clients", "--hash"]) == cli.EXIT_OK
+    assert capsys.readouterr().out.strip() == hash_token("alpha-secret-token")
+
+    # 对照：同一份缺失配置下，**需要配置**的子命令仍然是退出码 2（这条路径没有被放宽）
+    assert cli.run(["--config", str(missing), "clients"]) == cli.EXIT_ERROR
+
+
+def test_openapi_write_and_check_together_are_refused_without_touching_the_snapshot() -> None:
+    """`--write` 与 `--check` 语义相反：矛盾用法必须拒绝，不能静默写快照。
+
+    历史缺陷（medium 台账 M1，cli.py:65）：`--check` 被解析后全文件从未被引用，
+    `openapi --write --check` 于是静默执行写操作——CI 门禁里一旦混用这两个开关，漂移会被
+    直接固化进 api/openapi.json，而调用方以为自己只要了一个比较结果。
+    """
+
+    from policy_api import cli
+
+    snapshot = REPO_ROOT / "api" / "openapi.json"
+    before = snapshot.read_bytes()
+
+    assert cli.run(["openapi", "--write", "--check"]) == cli.EXIT_ERROR
+    assert snapshot.read_bytes() == before, "矛盾用法竟然改了快照"
+
+    # 单独用仍然是各自原来的语义：--check 只比较、不写
+    assert cli.run(["openapi", "--check"]) == cli.EXIT_OK
+    assert snapshot.read_bytes() == before
+
+
 # --------------------------------------------------------------------------- 监听地址
 
 
@@ -678,6 +1145,31 @@ def test_endpoint_parses_the_documented_forms() -> None:
     assert endpoint(SimpleNamespace(base_url="http://[::1]")) == ("::1", 8088)
 
 
+def test_serve_binds_the_address_of_the_runtime_it_was_given(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """注入 runtime 时，监听地址必须来自**它自己的** config，而不是重新读进来的那份文件。
+
+    历史缺陷（medium 台账 M1，serve.py:61）：`endpoint(config)` 用的是刚加载的 `config`，
+    而真正在服务的是注入的 `runtime`——两份配置可以不同，"听在哪个地址"与"按哪份配置判定"
+    因此分家（例如运维换了一份配置重启，但仍注入旧 runtime）。
+    """
+
+    import uvicorn
+
+    config_path, anchor = isolated_api(tmp_root)
+    runtime = ApiRuntime(load_api_config(config_path, root=anchor), root=anchor)
+    # 注入的 runtime 带一份"端口写错"的配置：它就该被拒绝启动，而不是去用文件里的好端口
+    broken = runtime.config.model_copy(update={"base_url": "http://127.0.0.1:8088x"})
+    injected = ApiRuntime(broken, root=anchor, store=runtime.store)
+
+    calls: list[dict] = []
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: calls.append(kwargs))
+
+    assert serve(config_path, root=anchor, runtime=injected) == 2
+    assert calls == [], "按文件里的地址起了服务：注入的 config 被忽略了"
+
+
 def test_serve_refuses_to_start_with_an_unparsable_base_url(tmp_root: Path) -> None:
     """整条路径：配置文件里的端口写错 → serve() 返回 2，而不是抛 ValueError。
 
@@ -693,6 +1185,39 @@ def test_serve_refuses_to_start_with_an_unparsable_base_url(tmp_root: Path) -> N
     config_path.write_text(text, encoding="utf-8", newline="\n")
 
     assert serve(config_path, root=anchor) == 2
+
+
+def test_probe_forwards_base_dir_to_the_inner_json_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_build_event` 必须把 base_dir 传给进程内构造的 JsonAdapter。
+
+    历史缺陷（medium 台账 M1，probe.py:106）：不传 base_dir 时 JsonAdapter 用 `Path.cwd()`
+    当锚点，同一份事件换个启动目录就得到不同的路径事实——"经 API 判定"与"本地判定"从事件
+    解析这一步就开始分叉，而这正是这个 Adapter 声称要证明的等价性。
+    """
+
+    from policy_api.probe import HttpApiAdapter
+
+    captured: dict = {}
+
+    class CapturingJsonAdapter:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def _build_event(self, raw_event: object) -> str:
+            return "parsed"
+
+    monkeypatch.setattr("adapters.json_adapter.JsonAdapter", CapturingJsonAdapter)
+    adapter = object.__new__(HttpApiAdapter)
+    adapter.manifest = "manifest"  # type: ignore[assignment]
+    adapter.config = "config"  # type: ignore[assignment]
+    adapter.config_path = "config-path"
+    adapter._base_dir = tmp_path
+
+    assert adapter._build_event({}) == "parsed"
+    assert captured["base_dir"] == tmp_path
+    assert captured["config_path"] == "config-path"
 
 
 def test_probe_unavailable_payload_is_a_consumable_decision_payload() -> None:
@@ -720,6 +1245,121 @@ def test_probe_unavailable_payload_is_a_consumable_decision_payload() -> None:
 
 
 # --------------------------------------------------------------------------- 冒烟
+
+
+def test_tenant_store_load_resets_previous_state(tmp_root: Path) -> None:
+    """第二次 `load()` 不能留下上一轮的租户与错误：读数必须对应当前配置。
+
+    历史缺陷（medium 台账 M1，services.py:217）：`load()` 只往里加、不重置——配置里已经被
+    禁用的租户仍然可服务（`has()`/`ids` 都还认它），而上一轮装配失败的条目会一直挂在
+    `_errors` 里把 readiness 钉在 not_ready。
+    """
+
+    from policy_api.services import TenantStore
+
+    config_path, anchor = isolated_api(tmp_root)
+    config = load_api_config(config_path, root=anchor)
+    store = TenantStore(config, root=anchor)
+    store.load()
+    assert store.ids == ("alpha", "beta")
+
+    disabled = config.model_copy(
+        update={
+            "tenants": tuple(
+                item.model_copy(update={"enabled": False}) for item in config.tenants
+            )
+        }
+    )
+    store.config = disabled
+    store.load()
+
+    assert store.ids == (), "被禁用的租户还留在 store 里"
+    assert store.errors == {}
+
+
+def test_readiness_without_any_assembled_tenant_says_that_explicitly(tmp_root: Path) -> None:
+    """没有装配出任何租户时，detail 必须是一句完整的话，而不是悬空的半句。
+
+    历史缺陷（medium 台账 M1，ops.py:153）：`"没有可服务的租户：" + ... or "未装配任何租户"`
+    里 or 左侧永远为真（拼上字面量就非空），兜底是死代码；租户全部 disabled 时 detail
+    就是一句悬空的"没有可服务的租户："。
+    """
+
+    from policy_api.ops import readiness_report
+
+    text = (
+        'schema_version: "1.0"' + chr(10)
+        + "tenants:" + chr(10)
+        + "  - tenant_id: alpha" + chr(10)
+        + "    enabled: false" + chr(10)
+        + "    project_root: project" + chr(10)
+        + "    rules: [rules]" + chr(10)
+    )
+    config = load_api_config(write_config(tmp_root, text), root=REPO_ROOT)
+    report = readiness_report(ApiRuntime(config, root=REPO_ROOT))
+
+    assert report["state"] == "not_ready"
+    assert report["ready"] is False
+    assert report["detail"] == "未装配任何租户"
+
+
+def test_audit_log_probe_uses_a_unique_filename(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """audit_log 探针的文件名必须唯一，且用完必删。
+
+    历史缺陷（medium 台账 M1，ops.py:122）：固定 `<log>.probe` 在两个探针重叠时（常驻服务 +
+    CLI self-check，或多 worker）会互相删对方的文件——先完成的 unlink 掉，后一个的 unlink 抛
+    FileNotFoundError，被 `except OSError` 记成"观测日志不可写"，健康进程翻成 503。
+    """
+
+    from policy_api.ops import readiness_report
+
+    config_path, anchor = isolated_api(tmp_root)
+    runtime = ApiRuntime(load_api_config(config_path, root=anchor), root=anchor)
+
+    seen: list[str] = []
+    real_write_text = Path.write_text
+
+    def recording_write_text(self: Path, *args: object, **kwargs: object) -> int:
+        seen.append(self.name)
+        return real_write_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", recording_write_text)
+    first = readiness_report(runtime)
+    second = readiness_report(runtime)
+
+    assert first["state"] == "ready" and second["state"] == "ready"
+    probes = [name for name in seen if ".probe" in name]
+    # 每个租户一次探针 × 两次 readiness：名字必须两两不同（固定名字时它们全部相同）
+    assert len(probes) >= 2, seen
+    assert len(set(probes)) == len(probes), "两次探针用了同一个文件名：" + repr(probes)
+    # 用完必删：目录里不该留下探针残骸
+    leftovers = sorted(item.name for item in (tmp_root / "audit").glob("*.probe*"))
+    assert leftovers == []
+
+
+def test_smoke_reports_the_live_endpoints_actual_payload(tmp_root: Path) -> None:
+    """冒烟的 `live` 那一腿必须来自**端点本身**，不是一个字面量。
+
+    历史缺陷（medium 台账 M1，contract.py:269）：docstring 承诺 live → ready → evaluate →
+    retrieve，但 live 是写死的 `{"status": "live"}`——端点从没被调用过，读数却能"报平安"
+    （路由没注册、处理器炸了、载荷形状变了，它都照样说 live）。
+    """
+
+    from policy_api.contract import smoke
+    from policy_api.models import API_SCHEMA_VERSION
+
+    config_path, anchor = isolated_api(tmp_root)
+    runtime = ApiRuntime(load_api_config(config_path, root=anchor), root=anchor)
+
+    report = smoke(runtime, token=TOKEN)
+
+    assert report["live"]["status"] == "live"
+    # 这三个字段只有真读回端点的载荷才会有（字面量那份只有一个 status）
+    assert report["live"]["service"] == runtime.config.service_name
+    assert report["live"]["deployment"] == runtime.config.deployment
+    assert report["live"]["api_version"] == API_SCHEMA_VERSION
 
 
 def test_smoke_with_an_unconfigured_token_is_a_structured_401_not_a_name_error(
@@ -885,6 +1525,77 @@ def test_request_log_disabled_fails_closed(tmp_root: Path) -> None:
     memory_only.append(make_entry(request_id="req-memory"))
     assert memory_only.entries()[0]["request_id"] == "req-memory"
     assert memory_only.read_back() == ()
+
+
+@pytest.mark.parametrize("records", [None, "abc", []])
+def test_verify_seal_reports_a_malformed_records_field_instead_of_crashing(
+    tmp_root: Path, records: object
+) -> None:
+    """锚是外部输入：`records` 类型不对时要返回问题，而不是抛异常。
+
+    历史缺陷（medium 台账 M1，observability.py:394）：`int(seal.get("records", -1))` 对 JSON
+    `null` 抛 TypeError、对非数字字符串抛 ValueError——"返回问题列表（空 = 一致）"的契约
+    被一个坏锚变成未处理异常。
+    """
+
+    log = RequestLog(tmp_root / "audit" / "service.jsonl")
+    issues = verify_seal(
+        log, {"seal_schema_version": "1.0", "records": records, "chain_digest": None}
+    )
+    assert any("记录数" in item for item in issues)
+
+
+def test_summary_derives_every_reading_from_one_snapshot(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """记录数与链末值必须来自**同一份** rows。
+
+    历史缺陷（medium 台账 M1，observability.py:240）：`summary()` 读了两次文件（自己的
+    `read_back()` + `chain_digest()` 内部的又一次），中间任何一次 append 都能让"记录数"与
+    "链末值"来自两个快照——锚自相矛盾，而且没有任何地方会报出来。
+    """
+
+    log = RequestLog(tmp_root / "audit" / "service.jsonl")
+    rows = (dict(make_entry(request_id="req-1").to_payload()),)
+    calls = {"n": 0}
+
+    def counting_read_back():
+        calls["n"] += 1
+        return rows if calls["n"] == 1 else rows * 3  # 第二次给一份"中间被 append 过"的读数
+
+    monkeypatch.setattr(log, "read_back", counting_read_back)
+    report = log.summary()
+
+    assert calls["n"] == 1, "summary 又读了不止一次文件"
+    assert report["records"] == 1
+    assert report["chain_digest"] == RequestLog._chain_digest(rows)
+    assert report["first_request_id"] == "req-1"
+
+
+def test_read_back_fails_closed_on_a_torn_line(tmp_root: Path) -> None:
+    """半截写入的行必须报错，不能被跳过（跳过 = 用剩下的部分冒充整份日志）。
+
+    历史缺陷（medium 台账 M1，observability.py:208）：`json.loads(line)` 没有守卫，截断的
+    尾部让 chain_digest / summary / seal_audit / verify_seal 一起抛原始 JSONDecodeError——
+    运维拿到 traceback，而不是"这份日志读不了 / 被动过"。非对象行则被静默跳过。
+    """
+
+    path = tmp_root / "audit" / "service.jsonl"
+    log = RequestLog(path)
+    log.append(make_entry(request_id="req-good"))
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        handle.write('{"log_schema_version": "1.0", "request_id": "req-torn"')  # 半截写入
+
+    with pytest.raises(ApiError) as info:
+        log.read_back()
+    assert info.value.code is ErrorCode.AUDIT_UNAVAILABLE
+    assert "第 2 行" in info.value.detail
+
+    # 合法的 JSON、但不是记录对象：同样不许静默跳过
+    path.write_text("[]" + chr(10), encoding="utf-8", newline="")
+    with pytest.raises(ApiError) as info:
+        log.read_back()
+    assert info.value.code is ErrorCode.AUDIT_UNAVAILABLE
 
 
 def test_request_log_buffers_only_the_path_that_never_hits_the_disk(tmp_root: Path) -> None:

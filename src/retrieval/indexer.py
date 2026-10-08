@@ -25,6 +25,7 @@ from .chunker import CHUNKER_VERSION, chunk_document, effective_chunker_version
 from .corpus import EntryIssue, LoadedCorpus
 from .models import (
     CorpusError,
+    CorpusRuleSource,
     DocumentRecord,
     IndexRunStatus,
     IndexingError,
@@ -286,6 +287,14 @@ def ingest(
             removed = store.prune_dataset(dataset.name, keep=keep)
             counters["documents_removed"] += len(removed)
 
+        # 删除失效的另一半：清单里**整个数据集**被移除 / 改名时，它名下的文档不能继续留着
+        # （只按仍声明的数据集 prune，会让它们继续可检索——与不变式 3 相反）。
+        declared_datasets = {dataset.name for dataset in loaded.manifest.datasets}
+        for name, _count in store.stats().datasets:
+            if name in declared_datasets:
+                continue
+            counters["documents_removed"] += len(store.prune_dataset(name, keep=()))
+
         quarantined, released = _apply_quarantine(loaded, store, stamp=stamp)
         counters["quarantined_chunks"] = len(quarantined)
         rule_sources = _resolve_rule_sources(loaded, store, repo_root=root, mirrors=mirrors)
@@ -301,20 +310,37 @@ def ingest(
             note=None,
             **counters,
         )
-    except BaseException as error:
+    except Exception as error:
         failed_at = _stamp(_now(now))
         # 失败的 run 也可能已经提交过部分文档：generation 必须递增，
         # 否则常驻进程里"键里带 index_version"的结果缓存会继续返回旧内容。
-        store.bump_generation()
-        store.finish_run(
-            identifier,
-            status=IndexRunStatus.FAILED,
-            completed_at=failed_at,
-            note=f"{type(error).__name__}: {error}"[:500],
-        )
+        # 记账本身失败（例如原故障就是库句柄坏了）不许掩盖原始异常：原文挂成 note，
+        # 类型与因果链都不改。
+        try:
+            store.bump_generation()
+            store.finish_run(
+                identifier,
+                status=IndexRunStatus.FAILED,
+                completed_at=failed_at,
+                note=f"{type(error).__name__}: {error}"[:500],
+            )
+        except Exception as record_error:  # noqa: BLE001 - 原始异常优先，记账失败只记 note
+            error.add_note(
+                f"另外：run {identifier} 的失败记账也没成功："
+                f"{type(record_error).__name__}: {record_error}"
+            )
         if isinstance(error, (IndexingError, CorpusError)):
             raise
         raise IndexingError(f"索引中断（run {identifier} 已标记为 failed）: {error}") from error
+    except BaseException:
+        # 中断（KeyboardInterrupt / SystemExit）不是"失败"：run 留在 running，由下一次
+        # ingest 的 start_run 标成 interrupted（不变式 4）。只做一件尽力而为的事——递增
+        # generation，免得已提交的部分文档继续被旧缓存命中；它失败也照样抛原始中断。
+        try:
+            store.bump_generation()
+        except Exception:  # noqa: BLE001 - 原始中断优先
+            pass
+        raise
 
     duration = int((_now(now) - started).total_seconds() * 1000)
     return IndexReport(
@@ -402,11 +428,11 @@ def _resolve_rule_sources(
 
     declared = sorted({(item.rule_id, item.rule_version) for item in loaded.manifest.rule_sources})
     declared_set = set(declared)
-    stale = [key for key in store.rule_source_keys() if key not in declared_set]
-    for rule_id, rule_version in declared + stale:
-        store.clear_rule_source(rule_id=rule_id, rule_version=rule_version)
 
-    registered: list[Tuple[str, int, str]] = []
+    # 先**全部解析**、再动库：任何一条规则解析不出来（文档没索引、标题路径不存在）时，
+    # 溯源表必须原样不动。旧实现先按声明清空再逐条登记，中途失败会留下"清了一半 + 写了一半"
+    # 的溯源——`rules --rule X` 静默返回空，直到下一次完全成功的 run 才回来。
+    resolved: list[Tuple[CorpusRuleSource, str]] = []
     for item in loaded.manifest.rule_sources:
         document_id = document_id_for(item.dataset, item.source_path)
         chunks = store.chunks(document_id)
@@ -427,10 +453,20 @@ def _resolve_rule_sources(
                 f"{' > '.join(wanted) or '<root>'} @ {item.source_path}"
             )
         for chunk in matches:
+            resolved.append((item, chunk.chunk_id))
+
+    # 换血是一个事务：清旧行与写新行要么全成、要么全不动（transaction 可重入，
+    # 调用方即使已经开事务也不会各自提交）。
+    registered: list[Tuple[str, int, str]] = []
+    stale = [key for key in store.rule_source_keys() if key not in declared_set]
+    with store.transaction():
+        for rule_id, rule_version in declared + stale:
+            store.clear_rule_source(rule_id=rule_id, rule_version=rule_version)
+        for item, chunk_id in resolved:
             store.register_rule_source(
-                rule_id=item.rule_id, rule_version=item.rule_version, chunk_id=chunk.chunk_id
+                rule_id=item.rule_id, rule_version=item.rule_version, chunk_id=chunk_id
             )
-            registered.append((item.rule_id, item.rule_version, chunk.chunk_id))
+            registered.append((item.rule_id, item.rule_version, chunk_id))
     return tuple(sorted(registered))
 
 

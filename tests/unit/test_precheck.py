@@ -400,9 +400,8 @@ def test_approval_quota_race_releases_the_action_claim(enforcement_paths):
 def test_final_ledger_failure_returns_the_claim_and_the_quota(enforcement_paths):
     """授权登记写不进去 → 阻断；认领与已占用的审批额度都要还回去。
 
-    这里只钉住"归还"这件事：同一条路径上重试仍可能被审计链里那条 decision=allow 的
-    旧记录挡成 ACTION_REPLAY（delegate 轮 precheck.py:976-982 的结论，不在本次 11 条内），
-    那是另一条要修的账，不在这里假装已经解除。
+    重试本身能不能过由另一条用例钉住（test_ledger_failure_writes_a_correction_and_unblocks_the_retry：
+    链上那条 allow 会被纠正记录撤回）；这里只钉"归还"。
     """
 
     registry = enforcement_paths.registry_object()
@@ -431,6 +430,93 @@ def test_final_ledger_failure_returns_the_claim_and_the_quota(enforcement_paths)
     assert ledger.of_kind("approval_use_released"), "已占用的审批额度必须还回去"
     assert ledger.approval_uses(approval.approval_id) == ()
     assert ledger.active_claims(action_id=request.action_id, tool_id=request.tool_id) == ()
+
+
+def test_ledger_failure_writes_a_correction_and_unblocks_the_retry(enforcement_paths):
+    """台账登记失败时链上不能只留 allow：补纠正记录，并让重试不被自己挡住。
+
+    旧行为两处自相矛盾：(1) 审计先落盘为 allow + grant_id，台账失败只把局部 decision
+    改成 block，链上没有任何"撤回"；(2) 修好台账后同一个 action_id 重试读到那条 allow，
+    被判 action_replay —— 失败关闭变成不可恢复的死锁。
+    """
+
+    registry = enforcement_paths.registry_object()
+    request = make_action(
+        registry,
+        enforcement_paths,
+        "exec.process",
+        process_params(),
+        roles=("owner",),
+        action_id="ledger-correct-1",
+    )
+    approval = approval_for(request)
+    sink = FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace)
+
+    blocked = pre_execute(
+        request,
+        registry=registry,
+        ledger=FailingGrantLedger(enforcement_paths.ledger),
+        sink=sink,
+        approval=approval,
+    )
+
+    assert blocked.decision.decision is Decision.BLOCK
+    assert reason_of(blocked) is ReasonCode.LEDGER_UNAVAILABLE
+    records = [
+        json.loads(line)
+        for line in enforcement_paths.audit.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    decisions = [
+        item["payload"]["decision"] for item in records if item.get("stage") == "pre_decision"
+    ]
+    assert decisions == ["allow", "block"], decisions  # 第二条是纠正记录
+    correction = [item for item in records if item.get("stage") == "pre_decision"][-1]["payload"]
+    assert correction["reason_code"] == "ledger_unavailable"
+    assert correction["grant_id"] is None
+    assert "pre_decision_correction" in [check["check"] for check in correction["checks"]]
+
+    # 链上最后一句话是 block、台账也已释放：换一张审批后同一个 action_id 可以重试。
+    retried = pre_execute(
+        request,
+        registry=registry,
+        ledger=EnforcementLedger(enforcement_paths.ledger),
+        sink=sink,
+        approval=approval_for(request, approval_id="approval-fresh"),
+    )
+    assert retried.decision.decision is not Decision.BLOCK, retried.decision.reason_code
+
+
+def test_a_blocked_replay_attempt_does_not_cancel_the_earlier_allow(enforcement_paths):
+    """普通的重放拦截不撤回 allow：否则删掉台账后"先撞一次重放"就能洗白 action_id。
+
+    这是纠正记录的边界：链上出现 block 记录 ≠ "那条 allow 被撤回"。
+    """
+
+    registry = enforcement_paths.registry_object()
+    request = make_action(
+        registry, enforcement_paths, "fs.edit", edit_params(), action_id="keep-1"
+    )
+    sink = FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace)
+
+    first = pre_execute(
+        request, registry=registry, ledger=EnforcementLedger(enforcement_paths.ledger), sink=sink
+    )
+    assert first.decision.decision is not Decision.BLOCK, first.decision.reason_code
+
+    replay = pre_execute(
+        request, registry=registry, ledger=EnforcementLedger(enforcement_paths.ledger), sink=sink
+    )
+    assert reason_of(replay) is ReasonCode.ACTION_REPLAY
+
+    # 删掉台账：审计链是独立证据，那条 allow 仍然占用 action_id（链上后出现的 block
+    # 是"重放被拦"，不是"allow 被撤回"）。
+    enforcement_paths.ledger.unlink()
+    without_ledger = pre_execute(
+        request, registry=registry, ledger=EnforcementLedger(enforcement_paths.ledger), sink=sink
+    )
+    assert without_ledger.decision.decision is Decision.BLOCK
+    assert reason_of(without_ledger) is ReasonCode.ACTION_REPLAY
 
 
 def test_high_risk_without_approval_requires_approval(enforcement_paths):

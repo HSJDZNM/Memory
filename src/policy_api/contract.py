@@ -33,6 +33,7 @@ from .runtime import ROUTES, ApiRuntime
 __all__ = [
     "BUDGET_ROUTES",
     "SNAPSHOT_SCHEMA_VERSION",
+    "live_payload",
     "openapi_document",
     "self_check",
     "smoke",
@@ -202,17 +203,32 @@ def _contract_checks(runtime: ApiRuntime) -> list[dict[str, Any]]:
 
 
 def _core_is_framework_free() -> bool:
-    """核心层不得导入 Web 框架（契约测试也会查一遍，这里给部署者一个直接可见的结论）。"""
+    """核心层不得导入 Web 框架（契约测试也会查一遍，这里给部署者一个直接可见的结论）。
 
-    root = Path(__file__).resolve().parents[2] / "src" / "policy"
-    if not root.is_dir():
-        return True
+    树的定位走**已导入的核心包**（`policy.__path__`），不是 `__file__.parents[2]`：后者只在
+    源码检出里成立，装成 site-packages 时算出的是 `<prefix>/lib/src/policy` 这种不存在的路径，
+    函数于是返回 True——它证明的其实只是"我没找到要检查的东西"。定位不到 = 证明不了 =
+    失败关闭（返回 False），不把"没查"记成"查过没问题"。
+    """
+
+    try:
+        import policy
+
+        # 用 `__path__` 而不是 `__file__`：`src/policy` 是**命名空间包**（没有 __init__.py），
+        # 它的 `__file__` 是 None。命名空间包的路径还可能有多段，逐段都查。
+        roots = [Path(item) for item in getattr(policy, "__path__", ())]
+    except Exception:  # noqa: BLE001 - 定位不到核心包就证明不了
+        return False
+    roots = [item for item in roots if item.is_dir()]
+    if not roots:
+        return False
     forbidden = ("fastapi", "starlette", "uvicorn", "flask", "requests", "httpx")
-    for path in sorted(root.glob("*.py")):
-        text = path.read_text(encoding="utf-8")
-        for name in forbidden:
-            if f"import {name}" in text or f"from {name}" in text:
-                return False
+    for root in roots:
+        for path in sorted(root.glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for name in forbidden:
+                if f"import {name}" in text or f"from {name}" in text:
+                    return False
     return True
 
 
@@ -261,12 +277,40 @@ def _tenant_for_token(config: ApiConfig, token: str) -> str:
     raise ApiError(ErrorCode.UNAUTHENTICATED, "冒烟用的令牌不在配置里")
 
 
+def live_payload(runtime: ApiRuntime) -> Mapping[str, Any]:
+    """真正**调用一次** `/v1/health/live` 的处理器，把它的载荷读回来。
+
+    为什么不是字面量 `{"status": "live"}`：smoke 的结论会被当成"这条链路跑过一遍"的证据，
+    而字面量只能证明"我知道它应该长什么样"。这里走的是注册表里那个端点本身
+    （FastAPI 的 `APIRoute.endpoint`），因此"路由没注册 / 处理器抛异常 / 载荷形状变了"
+    都会在这里变成失败，而不是一个恒真的读数。刻意不用 `testing.make_client`：它是测试
+    助手（依赖 httpx），生产环境的 smoke 不该为一次进程内探针引入那个依赖。
+    """
+
+    import asyncio
+    import json as _json
+
+    from .app import create_app
+
+    app = create_app(runtime)
+    route = next(
+        (item for item in app.routes if getattr(item, "name", None) == "live"), None
+    )
+    if route is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "存活探针没有注册：smoke 证明不了服务可用")
+    response = asyncio.run(route.endpoint())  # type: ignore[attr-defined]
+    payload = _json.loads(bytes(response.body).decode("utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ApiError(ErrorCode.INTERNAL_ERROR, "存活探针返回的不是对象")
+    return payload
+
+
 def smoke(runtime: ApiRuntime, *, token: str) -> Mapping[str, Any]:
     """最小链路：live → ready → evaluate → retrieve（全部进程内，不开端口）。"""
 
     from .testing import call
 
-    live = {"status": "live"}
+    live = live_payload(runtime)
     ready = runtime.readiness(force=True)
     tenant = _tenant_for_token(runtime.config, token)
     evaluate_payload = {

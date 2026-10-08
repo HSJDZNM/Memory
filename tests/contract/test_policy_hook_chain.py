@@ -1699,3 +1699,169 @@ def test_an_origin_value_outside_the_closed_set_falls_back_to_unknown_origin(tmp
     _assert_origin_shape(origin)
     assert origin["origin"] == "unknown_origin", origin
     assert "who_knows" not in json.dumps(origin, ensure_ascii=False), origin
+
+
+# ------------------------------------------------------------------- 跨语言：空值 / null
+#
+# `payload_is_well_formed` 后来收紧成与 `Origin.__post_init__` 同口径（owner / object.value /
+# object.source / observation.result / observation.verified_at 必须是非空字符串）。JS 侧
+# `buildOrigin` 是插件里唯一的 origin 产出点，但它**没有导出**：下面在真源码的临时副本上
+# 补一行导出，再在真 node 里喂它空串 / null / undefined / 非字符串——测的仍是仓库里那份实现。
+HARNESS_BUILD_ORIGIN = '''/**
+ * 跨语言核实：直接喂 buildOrigin 空值 / null / undefined / 非字符串，看它产出什么。
+ *
+ * buildOrigin 不在导出面上（插件只导出 name / inject / createRunHook / apply）：
+ * 副本上补的那一行 export 是唯一改动，函数体一个字不动。
+ * argv: <plugin.mjs>
+ */
+import { pathToFileURL } from 'node:url';
+
+const { buildOrigin } = await import(pathToFileURL(process.argv[2]).href);
+
+const CASES = [
+  {
+    label: 'empty_strings',
+    fields: {
+      origin: 'project.workdir_missing',
+      owner: '',
+      objectKind: 'workdir',
+      objectValue: '',
+      objectSource: '',
+      method: 'stat',
+      result: '',
+      verified: true,
+      fix: '创建这个目录，然后重跑这次调用',
+      causalLink: 'proven',
+    },
+  },
+  {
+    label: 'nulls',
+    fields: {
+      origin: 'project.workdir_missing',
+      owner: null,
+      objectKind: 'workdir',
+      objectValue: null,
+      objectSource: null,
+      method: 'stat',
+      result: null,
+      verified: true,
+      fix: null,
+      causalLink: 'proven',
+    },
+  },
+  {
+    label: 'missing_fields',
+    fields: { origin: 'project.workdir_missing', fix: '创建这个目录，然后重跑这次调用' },
+  },
+  {
+    label: 'non_strings',
+    fields: {
+      origin: 'project.workdir_missing',
+      owner: 7,
+      objectKind: 'workdir',
+      objectValue: ['a'],
+      objectSource: { nested: true },
+      method: 'stat',
+      result: 0,
+      verified: true,
+      fix: '创建这个目录，然后重跑这次调用',
+      causalLink: 'proven',
+    },
+  },
+  {
+    label: 'invalid_everything',
+    fields: {
+      origin: 'not.in.the.set',
+      owner: '',
+      objectKind: 'bogus',
+      objectValue: null,
+      objectSource: '',
+      method: 'bogus',
+      result: '',
+      verified: false,
+      fix: '',
+      causalLink: 'bogus',
+    },
+  },
+  {
+    label: 'valid_control',
+    fields: {
+      origin: 'project.workdir_missing',
+      owner: 'platform.attribution',
+      objectKind: 'workdir',
+      objectValue: 'missing-workdir',
+      objectSource: 'config.projectDir',
+      method: 'stat',
+      result: 'ENOENT',
+      verified: true,
+      fix: '创建这个目录，然后重跑这次调用',
+      causalLink: 'proven',
+    },
+  },
+];
+
+const observed = {};
+for (const item of CASES) {
+  observed[item.label] = buildOrigin(item.fields);
+}
+process.stdout.write(JSON.stringify(observed));
+'''
+
+
+def run_build_origin_harness(tmp_root: Path) -> dict:
+    """在真 node 里调用真插件的 buildOrigin：临时副本只多一行导出。"""
+
+    tampered = _tampered_plugin(
+        tmp_root,
+        "policy-hook.plugin.build-origin.mjs",
+        "export function createRunHook(ctx, config) {",
+        "export { buildOrigin };\n\nexport function createRunHook(ctx, config) {",
+    )
+    script = tmp_root / "plugin_build_origin.mjs"
+    script.write_text(HARNESS_BUILD_ORIGIN, encoding="utf-8", newline=chr(10))
+    completed = subprocess.run(
+        [_require_node(), str(script), str(tampered)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
+def test_the_js_builder_and_the_python_validator_agree_on_empty_and_null(tmp_root):
+    """跨语言：JS 侧的空值 / null 兜底必须让载荷仍然通过**更严**的 Python 校验器。
+
+    收紧后的 `payload_is_well_formed` 要求 owner / object.value / object.source /
+    observation.result / observation.verified_at 是非空字符串。若插件把这些空值原样吐出来，
+    同一份契约的另一侧今天就会拒绝它——这条用例逐条喂 hostile 输入（空串 / null /
+    undefined / 非字符串 / 闭集外取值），断言产出的每一份载荷都仍然通过。
+    """
+
+    from provenance.origin import payload_is_well_formed
+
+    observed = run_build_origin_harness(tmp_root)
+    assert set(observed) == {
+        "empty_strings",
+        "nulls",
+        "missing_fields",
+        "non_strings",
+        "invalid_everything",
+        "valid_control",
+    }
+
+    for label, payload in observed.items():
+        assert payload_is_well_formed(payload), (label, payload)
+
+    # 反真空：兜底真的发生过（不是"输入本来就合法"）
+    assert observed["empty_strings"]["owner"] == "platform.attribution"
+    assert observed["empty_strings"]["object"]["value"] == "unknown"
+    assert observed["empty_strings"]["object"]["source"] == "unknown"
+    assert observed["empty_strings"]["observation"]["result"] == "没有可读的取证结果"
+    assert observed["nulls"]["observation"]["result"] != ""
+    assert observed["missing_fields"]["object"]["value"] == "unknown"
+    assert observed["non_strings"]["object"]["source"] == "unknown"
+    assert observed["invalid_everything"]["origin"] == "unknown_origin"
+    assert observed["invalid_everything"]["causal_link"] == "unproven"

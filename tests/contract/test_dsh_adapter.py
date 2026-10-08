@@ -420,6 +420,18 @@ ARCH_BYPASS_TEXTS: dict[str, tuple[str, str]] = {
         "repository",
     ),
     "__import__ 字面量": ('__import__("pkg.repository")\n', "pkg.repository"),
+    # 下面四种是同一个语义的不同**排版**：名单换行 / 括号紧贴 / 反斜杠续行 / 分号连接。
+    # 它们曾经全部漏登记（物理行号与字面量假设），也就是全部结构性放行。
+    "from 括号名单（black/ruff 多行写法）": (
+        "from shop import (\n    order_repository,\n)\n",
+        "shop.order_repository",
+    ),
+    "from 括号紧贴（import(）": ("from shop import(order_repository)\n", "shop.order_repository"),
+    "反斜杠续行的 import": ("import shop, \\\n    order_repository\n", "order_repository"),
+    "分号连接（from 后还有别的语句）": (
+        "from shop import order_repository; x = 1\n",
+        "shop.order_repository",
+    ),
 }
 
 ARCH_GOOD_TEXT = "from shop.order_service import OrderService\n"
@@ -877,6 +889,47 @@ def test_glob_without_a_path_falls_back_to_the_session_cwd(dsh_config_path, dsh_
 
     assert decision.governed is False
     assert "范围 ." in decision.reason
+
+
+def test_a_relative_path_without_a_session_cwd_is_refused(dsh_config_path, dsh_project):
+    """相对路径的基准是**会话 cwd**：没有 cwd 就证明不了目标文件，不得按仓库根解释。
+
+    dsh 的契约是「相对路径相对会话工作目录」。此前没有 cwd 时相对路径会被原样交给
+    `repo_relative_path`，等于**默认它已经是仓库相对路径**：会话 cwd 是 <root>/packages/api
+    而路径写 src/x.py 时，被判定的文件与 Agent 真正写的文件不是同一个，layer / language /
+    规则范围全跟着错。写类与只读共用同一条规矩。
+    """
+
+    config = load_config(dsh_config_path)
+
+    cases = (
+        (
+            "pre-tool-use-edit-block.json",
+            {"file_path": "src/shop/order_controller.py", "old_string": "a", "new_string": "b"},
+        ),
+        ("pre-tool-use-read-not-governed.json", {"file_path": "src/shop/order_controller.py"}),
+    )
+    for fixture, tool_input in cases:
+        payload = event_for(fixture, dsh_project, tool_input=tool_input)
+        payload.pop("cwd")
+        with pytest.raises(DshEventError) as error:
+            to_policy_event(payload, config=config)
+        assert "cwd" in str(error.value), fixture
+
+
+def test_a_relative_path_is_resolved_against_the_session_cwd(dsh_config_path, dsh_project):
+    """反例对照：给了 cwd 时相对路径按 cwd 解析——子目录会话落到子目录里。"""
+
+    config = load_config(dsh_config_path)
+    sub = dsh_project / "packages" / "api"
+    sub.mkdir(parents=True, exist_ok=True)
+
+    decision = map_event(
+        event_for("pre-tool-use-edit-block.json", dsh_project, cwd=str(sub)), config
+    )
+
+    assert decision.event is not None
+    assert decision.event.file == "packages/api/src/shop/order_controller.py"
 
 
 def test_read_without_a_path_or_cwd_is_refused(dsh_config_path, dsh_project):

@@ -1,0 +1,388 @@
+"""ab_tasks 的三个守卫：完整 stdout、逐节点实测结果、基线树的阳性标记。
+
+为什么需要：这三个洞都是"仪器自己不会失败"——套件输出超过 4000 字符时 node id 与
+PASSED/FAILED 摘要在截断里静默消失；既非红也非绿的节点不触发任何拒收；非空的 baseline/
+目录被当成"已解压"，来源记录缺失时 verify_oracle 直接 KeyError/FileNotFoundError。
+
+用例用**合成任务**驱动真路径（真的起子进程跑 pytest），任务树自带一份空 pytest.ini：
+否则 pytest 会向上找到本仓库的 pytest.ini（rootdir=仓库、-p no:cacheprovider 与它的
+cache_dir + --strict-config 冲突，实测退出码 4），那是宿主配置泄漏，不是被测行为。
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import ab_tasks
+
+pytestmark = pytest.mark.integration
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+INSTANCE = "demo__demo-1"
+REVISION = ab_tasks.SOURCES["swe-bench-verified"].revision
+
+
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def _task_root(
+    tmp_root: Path,
+    *,
+    tests: int = 200,
+    test_source: str | None = None,
+    fail_to_pass: tuple[str, ...] = ("tests/test_demo.py::test_000",),
+    pass_to_pass: tuple[str, ...] = ("tests/test_demo.py::test_001",),
+    source_record: bool = False,
+    pytest_ini: bool = True,
+) -> tuple[Path, Path]:
+    """合成一个任务：rows.jsonl + baseline 树，返回 (root, baseline)。
+
+    pytest_ini=False 模拟"树里没有任何 pytest 根标记"的 checkout。
+    """
+
+    root = tmp_root / "ab-tasks"
+    dataset = root / ("swe-bench-verified@" + REVISION)
+    dataset.mkdir(parents=True, exist_ok=True)
+    row = {
+        "instance_id": INSTANCE,
+        "repo": "demo/demo",
+        "base_commit": "0" * 40,
+        "environment_setup_commit": "0" * 40,
+        "version": "1.0",
+        "difficulty": "easy",
+        "FAIL_TO_PASS": json.dumps(list(fail_to_pass)),
+        "PASS_TO_PASS": json.dumps(list(pass_to_pass)),
+        "test_patch": "--- a/tests/test_demo.py\n+++ b/tests/test_demo.py\n",
+        "patch": "",
+        "problem_statement": "演示任务",
+    }
+    _write(dataset / "rows.jsonl", json.dumps(row, ensure_ascii=False) + "\n")
+    baseline = root / INSTANCE / "baseline"
+    if pytest_ini:
+        _write(baseline / "pytest.ini", "[pytest]\n")
+    if test_source is None:
+        test_source = "\n".join(
+            "def test_%03d():\n    assert True" % index for index in range(tests)
+        ) + "\n"
+    _write(baseline / "tests" / "test_demo.py", test_source)
+    if source_record:
+        _write(
+            root / INSTANCE / "source.json",
+            json.dumps(
+                {
+                    "url": ab_tasks.tarball_url("demo/demo", "0" * 40),
+                    "sha256": "0" * 64,
+                    "bytes": 1,
+                    "seconds": 0.1,
+                    "baseline_source": "fresh_extract",
+                }
+            )
+            + "\n",
+        )
+    return root, baseline
+
+
+def _tail_node_ids(stdout_tail: str) -> list[str]:
+    return [
+        line.strip()
+        for line in stdout_tail.splitlines()
+        if "::" in line and not line.startswith(" ")
+    ]
+
+
+def test_collect_sees_every_node_id_when_stdout_exceeds_the_tail(tmp_root: Path) -> None:
+    """200 条用例的收集输出超过 4000 字符时，node id 一条都不许丢。"""
+
+    root, baseline = _task_root(tmp_root, tests=200)
+    probe = ab_tasks._run(
+        [sys.executable, "-m", "pytest", "--no-header", "-rA", "-p", "no:cacheprovider",
+         "--collect-only", "-q", "tests/test_demo.py"],
+        cwd=baseline,
+        # 显式 basetemp：嵌套 pytest 若共用本会话的 temp 根，会按自己的保留策略清理
+        # pytest-of-*/pytest-* 目录，把外层运行正在用的捕获文件一起端掉（实测外层会话崩在
+        # sessionfinish：ValueError: I/O operation on closed file）。
+        env={"PYTEST_ADDOPTS": "--basetemp=" + str(tmp_root / "probe-tmp")},
+    )
+    assert probe["exit_code"] == 0, probe["stderr_tail"]
+    assert len(probe["stdout"]) > 4000, "这条用例的前提就是输出超过截断长度"
+    # 4000 字符的尾巴只装得下一部分 node id：旧实现解析它，于是 collected 远小于 200
+    tail_ids = _tail_node_ids(probe["stdout_tail"])
+    assert 0 < len(tail_ids) < 200
+
+    collected = ab_tasks._collect(INSTANCE, root=root, python=sys.executable)
+
+    assert collected["exit_code"] == 0, collected["stderr_tail"]
+    assert collected["collected"] == 200
+    assert len(collected["node_ids"]) == 200
+    # 读数里仍然只带截断尾：完整串只用在解析上，不让载荷跟着膨胀
+    assert len(collected["stdout_tail"]) <= 2500
+
+SKIPPED_SOURCE = "\n".join(
+    [
+        "import pytest",
+        "",
+        "",
+        "def test_f2p():",
+        "    pytest.skip(\"本机跑不了\")",
+        "",
+        "",
+        "def test_p2p():",
+        "    pytest.skip(\"本机跑不了\")",
+        "",
+    ]
+)
+
+DECIDED_SOURCE = "\n".join(
+    [
+        "def test_f2p():",
+        "    assert False",
+        "",
+        "",
+        "def test_p2p():",
+        "    assert True",
+        "",
+    ]
+)
+
+
+def _verify(tmp_root: Path, **options: Any) -> dict:
+    root, _baseline = _task_root(tmp_root, source_record=True, **options)
+    return ab_tasks.verify_oracle(INSTANCE, root=root, python=sys.executable)
+
+
+def test_skipped_nodes_are_not_counted_as_measured(tmp_root: Path) -> None:
+    """F2P / P2P 全被跳过时：拒收，且两个"全红 / 全绿"读数都必须为 False。"""
+
+    payload = _verify(
+        tmp_root,
+        test_source=SKIPPED_SOURCE,
+        fail_to_pass=("tests/test_demo.py::test_f2p",),
+        pass_to_pass=("tests/test_demo.py::test_p2p",),
+    )
+
+    measured = payload["measured"]
+    assert payload["reject"]["rejected"] is True
+    assert payload["reject"]["reason"] == "unrunnable_local"
+    assert measured["fail_to_pass_all_red"] is False
+    assert measured["pass_to_pass_all_green"] is False
+    assert any("没有决定性结果" in item for item in measured["problems"])
+
+
+def test_fully_measured_task_is_still_accepted(tmp_root: Path) -> None:
+    """F2P 全红 + P2P 全绿的任务不受这次收紧影响：不拒收、两个读数都为 True。"""
+
+    payload = _verify(
+        tmp_root,
+        test_source=DECIDED_SOURCE,
+        fail_to_pass=("tests/test_demo.py::test_f2p",),
+        pass_to_pass=("tests/test_demo.py::test_p2p",),
+    )
+
+    measured = payload["measured"]
+    assert payload["reject"] == {"rejected": False, "reason": ""}
+    assert measured["fail_to_pass_all_red"] is True
+    assert measured["pass_to_pass_all_green"] is True
+    assert measured["problems"] == []
+
+def _no_download(monkeypatch: pytest.MonkeyPatch) -> list:
+    """把下载换成会失败的替身：一旦被调用就说明"复用"判据没生效。"""
+
+    calls: list = []
+
+    def sentinel(url: str, timeout: int = 600) -> bytes:
+        calls.append(url)
+        raise ab_tasks.AbTaskError("测试替身：不该下载")
+
+    monkeypatch.setattr(ab_tasks, "_get", sentinel)
+    return calls
+
+
+def test_partial_baseline_directory_is_not_reused(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """非空但没有 source.json 的 baseline/（中断的提取）必须重新解压，不许直接复用。"""
+
+    root, baseline = _task_root(tmp_root, tests=1)
+    assert any(baseline.iterdir()), "这条用例的前提是目录非空"
+    assert not (root / INSTANCE / "source.json").exists()
+    calls = _no_download(monkeypatch)
+
+    with pytest.raises(ab_tasks.AbTaskError):
+        ab_tasks.baseline(INSTANCE, root=root)
+
+    assert calls, "没有正向标记的目录必须走重新下载那一支"
+
+
+def test_stale_source_record_for_another_commit_is_not_reused(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """source.json 记的是别的 commit 的 tarball：这棵树同样是脏的，必须重新解压。"""
+
+    root, _baseline = _task_root(tmp_root, tests=1, source_record=True)
+    record = root / INSTANCE / "source.json"
+    record.write_text(
+        json.dumps(
+            {
+                "url": ab_tasks.tarball_url("demo/demo", "f" * 40),
+                "sha256": "0" * 64,
+                "bytes": 1,
+                "baseline_source": "fresh_extract",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    calls = _no_download(monkeypatch)
+
+    with pytest.raises(ab_tasks.AbTaskError):
+        ab_tasks.baseline(INSTANCE, root=root)
+
+    assert calls
+
+
+def test_valid_extraction_is_reused_without_download(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """正向标记齐全时照旧复用：这次修复不许把正常路径变成"每次重下"。"""
+
+    root, _baseline = _task_root(tmp_root, tests=1, source_record=True)
+    calls = _no_download(monkeypatch)
+
+    result = ab_tasks.baseline(INSTANCE, root=root)
+
+    assert calls == []
+    assert result["reused"] is True
+    assert result["baseline_source"] == "reused"
+    assert result["recorded_source"] == "fresh_extract"
+    assert result["download"]["url"] == ab_tasks.tarball_url("demo/demo", "0" * 40)
+
+
+def _unresolvable(tmp_root: Path, *, source_record: bool = False) -> Path:
+    """f2p/p2p 都指向不存在的 node id：收集跑一次就结束，把读数停在来源记录那一步。"""
+
+    root, _baseline = _task_root(
+        tmp_root,
+        tests=1,
+        fail_to_pass=("tests/test_demo.py::test_missing_f2p",),
+        pass_to_pass=("tests/test_demo.py::test_missing_p2p",),
+        source_record=source_record,
+    )
+    return root
+
+
+def test_verify_oracle_without_source_record_raises_clear_error(tmp_root: Path) -> None:
+    """缺 source.json：抛 AbTaskError（不是 FileNotFoundError），理由里写清怎么修。"""
+
+    root = _unresolvable(tmp_root)
+
+    with pytest.raises(ab_tasks.AbTaskError) as error:
+        ab_tasks.verify_oracle(INSTANCE, root=root, python=sys.executable)
+
+    assert "缺来源记录" in str(error.value)
+    assert "--baseline" in str(error.value)
+
+
+def test_verify_oracle_incomplete_source_record_raises_clear_error(tmp_root: Path) -> None:
+    """source.json 存在但字段不全：同样显式报错，不再只剩一句 ab_tasks: 'url'。"""
+
+    root = _unresolvable(tmp_root)
+    (root / INSTANCE / "source.json").write_text("{}\n", encoding="utf-8", newline="\n")
+
+    with pytest.raises(ab_tasks.AbTaskError) as error:
+        ab_tasks.verify_oracle(INSTANCE, root=root, python=sys.executable)
+
+    assert "缺字段" in str(error.value)
+    assert "url" in str(error.value)
+
+
+def test_missing_source_record_is_a_clean_cli_error(tmp_root: Path) -> None:
+    """CLI 层：退出码 2 + 一行 ab_tasks: 理由，不是一段栈回溯。"""
+
+    root = _unresolvable(tmp_root)
+    completed = subprocess.run(
+        [sys.executable, "tools/ab_tasks.py", "--verify-oracle", INSTANCE, "--root", str(root)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+    assert completed.returncode == 2, completed.stdout + completed.stderr
+    assert "Traceback" not in completed.stderr, completed.stderr
+    assert "ab_tasks: 缺来源记录" in completed.stderr, completed.stderr
+
+def test_oracle_gets_an_isolated_config_when_the_tree_declares_none(tmp_root: Path) -> None:
+    """树里没有 pytest 根标记时：oracle 必须拿到隔离配置，不许读到宿主仓库的 pytest.ini。"""
+
+    root, _baseline = _task_root(tmp_root, tests=1, pytest_ini=False)
+
+    collected = ab_tasks._collect(INSTANCE, root=root, python=sys.executable)
+
+    assert collected["exit_code"] == 0, collected["stderr_tail"]
+    assert collected["collected"] == 1
+    assert "-c" in collected["argv"]
+    assert "--rootdir" in collected["argv"]
+
+
+def test_task_with_its_own_config_is_left_alone(tmp_root: Path) -> None:
+    """树自带 pytest.ini：不许再插一份隔离配置（任务自己的 addopts / markers 要照用）。"""
+
+    root, _baseline = _task_root(tmp_root, tests=1, pytest_ini=True)
+
+    collected = ab_tasks._collect(INSTANCE, root=root, python=sys.executable)
+
+    assert collected["exit_code"] == 0, collected["stderr_tail"]
+    assert "-c" not in collected["argv"]
+
+
+def test_probe_says_runnable_for_a_tree_without_config(tmp_root: Path) -> None:
+    """没有配置的树不该被判成 environment_unavailable：那不是任务的问题。"""
+
+    root, _baseline = _task_root(tmp_root, tests=1, pytest_ini=False)
+
+    reading = ab_tasks.probe(INSTANCE, root=root, python=sys.executable)
+
+    assert reading["measured_status"] == "runnable", reading["status_reason"]
+
+
+def test_verify_oracle_accepts_a_task_without_config(tmp_root: Path) -> None:
+    """F2P 全红 + P2P 全绿、树里没有配置：修好泄漏后这类任务应当被接受。"""
+
+    payload = _verify(
+        tmp_root,
+        test_source=DECIDED_SOURCE,
+        fail_to_pass=("tests/test_demo.py::test_f2p",),
+        pass_to_pass=("tests/test_demo.py::test_p2p",),
+        pytest_ini=False,
+    )
+
+    assert payload["reject"] == {"rejected": False, "reason": ""}
+    assert payload["measured"]["fail_to_pass_all_red"] is True
+    assert payload["measured"]["pass_to_pass_all_green"] is True
+
+def test_run_oracle_counts_match_the_per_test_summary(tmp_root: Path) -> None:
+    """真实跑一次：计数必须来自逐用例摘要（旧写法 count(" PASSED") 恒为 0）。"""
+
+    root, _baseline = _task_root(
+        tmp_root,
+        test_source=DECIDED_SOURCE,
+        fail_to_pass=("tests/test_demo.py::test_f2p",),
+        pass_to_pass=("tests/test_demo.py::test_p2p",),
+    )
+
+    reading = ab_tasks.run_oracle(INSTANCE, root=root, phase="baseline", python=sys.executable)
+
+    assert reading["exit_code"] == 1, reading["stdout_tail"]
+    assert reading["passed"] == 1
+    assert reading["failed"] == 1
+    assert reading["errors"] == 0

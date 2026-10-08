@@ -28,6 +28,24 @@ def plan(text: str | None, **overrides):
     return build_plan(query, scope=SCOPE, policy=CorpusPolicy(), lexicon=LEXICON)
 
 
+def test_over_long_token_is_reported_as_truncated() -> None:
+    """超长词项被丢弃必须记 truncated（复核发现：整条查询可能因此一个词都不剩）。"""
+
+    from retrieval.query import MAX_TOKEN_CHARS
+
+    cjk = "查" * (MAX_TOKEN_CHARS + 5)
+    plan_only_cjk = plan(cjk)
+    assert plan_only_cjk.terms == ()
+    assert plan_only_cjk.truncated is True, "丢掉了整条查询却报 truncated=False"
+
+    mixed = plan("review " + cjk + " checklist")
+    assert "review" in mixed.terms and "checklist" in mixed.terms
+    assert mixed.truncated is True
+
+    # 没有丢东西时不许误报。
+    assert plan("review checklist").truncated is False
+
+
 def test_normalize_applies_nfkc_and_collapses_whitespace() -> None:
     text, truncated = normalize_query_text("  ＡＢＣ   code \t review \n\n ", max_chars=100)
     assert text == "ABC code review"

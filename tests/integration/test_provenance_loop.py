@@ -44,6 +44,8 @@ def test_provenance_loop_reads_r_e(tmp_root: Path) -> None:
     assert scenarios["no-declaration"]["observed_state"] == "unprovable"
     assert scenarios["no-declaration"]["digest_absent"] is True
 
-    # 仪器自证：把比对换成恒 pass 的替身，同一个场景就不再报红。
+    # 仪器自证：同一个场景跑两遍——真比对器给 external_write，恒 pass 的替身给 pass；
+    # 并且红必须归因到种下的那次写入（不是"比对器恒红"）。
     assert scenarios["self-check-comparator"]["comparator_state"] == "external_write"
     assert scenarios["self-check-comparator"]["stub_state"] == "pass"
+    assert scenarios["self-check-comparator"]["differences"]["modified"] == ["declared/a.txt"]

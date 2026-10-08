@@ -207,6 +207,35 @@ def test_index_check_reports_up_to_date(tmp_root: Path, cli_project: Path) -> No
     assert json.loads(after.stdout)["needs_reindex"] is False
 
 
+def test_index_check_is_read_only_and_answers_without_an_index(
+    tmp_root: Path, cli_project: Path
+) -> None:
+    """--check 不许建库；没有索引库时如实回答 needs_reindex=True（复核发现）。"""
+
+    database = tmp_root / "cli-index.sqlite3"
+    args = base_args(tmp_root, cli_project)
+    assert not database.exists()
+
+    completed = run_cli(*args, "index", "--check", "--json")
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["needs_reindex"] is True
+    assert payload["indexed_input_hash"] is None
+    assert payload["index_version"] == ""
+    assert not database.exists(), "--check 不许把索引库建出来"
+
+    text = run_cli(*args, "index", "--check")
+    assert text.returncode == 0, text.stderr
+    assert "rebuild needed" in text.stdout
+    assert not database.exists()
+
+    # 建库之后这条命令照常给出"不需要重建"。
+    assert run_cli(*args, "index").returncode == 0
+    after = run_cli(*args, "index", "--check", "--json")
+    assert json.loads(after.stdout)["needs_reindex"] is False
+    assert json.loads(after.stdout)["index_version"].startswith("sha256:")
+
+
 def test_real_corpus_end_to_end_via_cli(tmp_root: Path) -> None:
     """真实仓库语料：index -> verify -> query -> context 全链路（不依赖夹具）。"""
 
@@ -342,6 +371,28 @@ def test_index_budget_too_small_exits_2(tmp_root: Path) -> None:
     assert "config error" in completed.stderr
     assert "预算" in completed.stderr
     assert "Traceback" not in completed.stderr
+
+
+def test_out_of_range_limit_is_a_usage_error_not_a_traceback(
+    tmp_root: Path, cli_project: Path
+) -> None:
+    """--limit 越界必须是退出码 2 的用法错误（复核发现：pydantic ValidationError 逃逸成 traceback）。"""
+
+    args = base_args(tmp_root, cli_project)
+    run_cli(*args, "index")
+    for value in ("0", "51", "-3"):
+        completed = run_cli(*args, "query", "review checklist", "--limit", value)
+        assert completed.returncode == 2, (value, completed.stderr)
+        assert "Traceback" not in completed.stderr, value
+        assert "limit" in completed.stderr, value
+
+    # 边界内的取值照常工作（1 与 50 都合法）。
+    for value in ("1", "50"):
+        completed = run_cli(*args, "query", "review checklist", "--limit", value, "--json")
+        assert completed.returncode == 0, (value, completed.stderr)
+        payload = json.loads(completed.stdout)
+        assert len(payload["results"]) <= int(value)
+    assert run_cli(*args, "query", "review checklist", "--limit", "abc").returncode == 2
 
 
 def test_fixture_corpus_loads_without_expansion(tmp_root: Path, cli_project: Path) -> None:

@@ -435,6 +435,61 @@ def test_phase_6_registers_the_unproven_markers(workspace: Path, phase6_dsh_adap
     assert broken_context.dependencies == (UNPROVEN_CHANGED_TEXT,)
 
 
+def test_a_missing_change_text_field_is_refused_on_the_phase_6_path(
+    phase6_dsh_adapter, legacy_adapter, workspace: Path
+) -> None:
+    """L06 的 Phase 6 镜像：变更文本字段缺失 ≠「没有引入依赖」。
+
+    Phase 2 的 dsh 路径早已这样拒绝（src/adapters/dsh/adapter.py 的 proposed_fields 判据）；
+    Phase 6 的两个映射点此前只是**不设 payload.text**：公共层读到空依赖集，依赖类 checker
+    于是结构性放行——同一条缺陷在两个 Phase 上各留了一份。
+    """
+
+    from adapters.models import AdapterEventError
+
+    target = "src/shop/order_controller.py"
+
+    # ① dsh（Phase 6）：write 声明了 content，载荷里没有
+    missing_write = edit_payload(workspace, "", target=target)
+    missing_write["tool_name"] = "write"
+    missing_write["tool_input"] = {"file_path": target}
+    with pytest.raises(AdapterEventError) as error:
+        phase6_dsh_adapter.to_policy_event(missing_write, workspace=workspace)
+    assert "content" in str(error.value)
+
+    # ② dsh（Phase 6）：edit 声明了 new_string，载荷里只有 old_string
+    missing_edit = edit_payload(workspace, "", target=target)
+    missing_edit["tool_input"] = {"file_path": target, "old_string": "a"}
+    with pytest.raises(AdapterEventError) as error:
+        phase6_dsh_adapter.to_policy_event(missing_edit, workspace=workspace)
+    assert "new_string" in str(error.value)
+
+    # ③ legacy（event_adapter）：save_file 声明了 text，载荷里没有
+    missing_text = {
+        "hook_event_name": "PostToolUse",
+        "session_id": "sess-l06",
+        "tool_name": "save_file",
+        "tool_use_id": "call-l06",
+        "cwd": str(workspace),
+        "tool_input": {"file_path": target},
+        "tool_response": "saved",
+    }
+    with pytest.raises(AdapterEventError) as error:
+        legacy_adapter.to_policy_event(missing_text, workspace=workspace)
+    assert "text" in str(error.value)
+
+    # 反例：字段在、值是空串（合法的清空）照常映射；给了真文本就抽出依赖
+    empty = edit_payload(workspace, "", target=target)
+    event = phase6_dsh_adapter.to_policy_event(empty, workspace=workspace)
+    assert event.payload.get("text") is None
+    assert phase6_dsh_adapter.to_policy_context(event, workspace=workspace).dependencies == ()
+
+    real = edit_payload(workspace, PARITY_TEXTS[RELATIVE_LABEL], target=target)
+    real_event = phase6_dsh_adapter.to_policy_event(real, workspace=workspace)
+    real_context = phase6_dsh_adapter.to_policy_context(real_event, workspace=workspace)
+    assert ".repository" in real_context.dependencies
+
+
 @pytest.mark.parametrize("label", [RELATIVE_LABEL, UNPROVEN_DYNAMIC_LABEL])
 def test_event_adapter_path_registers_the_same_dependencies(
     workspace: Path, adapter_config, legacy_adapter, label: str

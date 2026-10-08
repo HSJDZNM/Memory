@@ -619,6 +619,20 @@ def run_config(spec):
     return CrawlerRunConfig(**kw)
 
 
+# sitemap 索引里的 <loc> 必须容忍标签与 URL 之间的空白与换行：正则里的空白类写成字面量 s
+# （r"<loc>s*"）时，「<loc> https://…</loc>」这类条目一条都匹配不上；而只要**别的**条目命中，
+# 下面的平铺回退就不会启用——整份子 sitemap 会静默从镜像里消失。
+SITEMAP_ENTRY_RE = re.compile(r"<sitemap>.*?<loc>\s*([^<\s]+)\s*</loc>", re.S)
+SITEMAP_LOC_RE = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>")
+
+
+def sitemap_index_entries(body):
+    """从 sitemap 索引 / 平铺 urlset 里取 <loc> 清单（索引形态优先，取不到再按平铺读）。"""
+
+    entries = SITEMAP_ENTRY_RE.findall(body)
+    return entries if entries else SITEMAP_LOC_RE.findall(body)
+
+
 async def sitemap_scope_urls(spec):
     """按站点 sitemap 求范围内的精确页面清单。
 
@@ -631,9 +645,7 @@ async def sitemap_scope_urls(spec):
         async with session.get(spec["sitemap_index"],
                                timeout=aiohttp.ClientTimeout(total=180)) as resp:
             body = await resp.text()
-        subs = re.findall(r"<sitemap>.*?<loc>s*([^<\s]+)\s*</loc>", body, re.S)
-        if not subs:
-            subs = re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", body)
+        subs = sitemap_index_entries(body)
         urls = []
         for sub in subs:
             if "/ja-jp/" in sub:  # 只取英文版，日文镜像不重复收录

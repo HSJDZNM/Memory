@@ -58,6 +58,13 @@ tools:
         type: path
         required: true
         path_scope: workspace
+        # 控制面保护：这个工具是 `approval: none` 的自动放行写工具，而 policies/ registry/
+        # adapters/ api/ validation/ 里的数据**定义治理本身**（规则、工具授权、适配器声明、
+        # 已审核哈希）。少了这一行，它们就能被自动放行的写工具改写，篡改要到运行期哈希
+        # 对不上时才被发现；编排层同形的 orc.fs.edit / orc.fs.write 一直是挡着的，
+        # 两侧不对称留下的是一条无门禁的路径。需要改这些文件时走人工审批的工具
+        # （exec.pwsh 等 approval: required 的动作）。
+        blocked_prefixes: [policies, registry, adapters, api, validation]
         description: 目标文件（仓库相对路径；逃出工作区一律拒绝）
       - name: old_string
         type: string
@@ -89,6 +96,9 @@ tools:
         type: path
         required: true
         path_scope: workspace
+        # 与 fs.edit 同一组受保护前缀（理由见那里）：create-or-overwrite 能覆盖任何路径，
+        # 控制面因此同样不能由自动放行的写工具触达。
+        blocked_prefixes: [policies, registry, adapters, api, validation]
       - name: content
         type: string
         required: true
@@ -157,8 +167,16 @@ tools:
         type: string
         required: true
         max_chars: 400
+      # —— 下面三个是 dsh 侧真实存在的调用参数，**授权面**上是必需的：参数白名单要放行它们，
+      #    审批模式（binding=pattern）也必须逐参数覆盖它们（只覆盖 command 等于放行它们的任意
+      #    取值：改 workdir 就是改这次调用干什么，见 tests/contract/test_approval_binding_modes.py）。
+      #    **驱动层今天不消费它们**：exec.pwsh / exec.bash 的 shell_command 驱动只读 command 与
+      #    注册表级 timeout_ms，命令始终在受控工作区根下、按 timeout_ms 执行。所以它们是
+      #    「被接受、被授权、被审计，但不改变执行」——要真正生效必须先改 src/enforcement/drivers.py
+      #    并重新审核；在那之前审计记录里的取值**不代表**执行时用过它。
       - name: timeoutMs
         type: integer
+        description: 调用方声明的超时（毫秒）：**驱动层不消费**，实际预算始终是注册表 timeout_ms
       # path_kind 是**数据**，不是代码里的特判：workdir 指向目录，
       # 因此"工作目录 = 项目根"归一化为 "." 并通过校验（G5）；
       # 而写文件类参数保留默认 path_kind=file，传 "." 仍被拒（它不是文件）。
@@ -166,8 +184,10 @@ tools:
         type: path
         path_scope: workspace
         path_kind: directory
+        description: 调用方声明的工作目录（受控工作区内，越界拒绝）：**驱动层不消费**，命令仍在工作区根下执行
       - name: run_in_background
         type: boolean
+        description: 调用方声明的后台执行：**驱动层不消费**（执行是同步的），前台执行
       - name: sandbox_permissions
         type: string
         enum: [workspace-write, danger-full-access]

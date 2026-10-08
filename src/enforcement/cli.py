@@ -9,9 +9,12 @@
         --granted-by alice --roles reviewer --ttl 300
     # 模式化审批（binding=pattern）：按"工具 + 参数模式 + 主体 + 窗口 + 次数上限"签发，
     # 调用编号（action_id / tool_use_id）由运行期现生成，因此模式化审批不绑它。
+    # 模式必须覆盖本次请求的**全部**参数：有意放行的那一格也要显式写成通配模式，
+    # 否则未声明的参数会跟着条子一起放行（审批协议 1.1 起拒绝）。
     python -m enforcement.cli approve  --request <req.json> --out <approval.json> \
         --granted-by alice --roles reviewer --binding pattern --max-uses 5 \
-        --param-pattern "command=^python -m pytest( .*)?$"
+        --param-pattern "command=^python -m pytest( .*)?$" \
+        --param-pattern "description=.*"
     python -m enforcement.cli trace    --audit .tmp/artifacts/enforcement-audit.jsonl \
         --action-id sess-1:call-1
     python -m enforcement.cli verify
@@ -314,7 +317,11 @@ def _render_decision(payload: Mapping[str, Any]) -> str:
 
 
 def _registry(args: argparse.Namespace) -> int:
-    loaded = load_registry(args.registry, approved_path=args.approved)
+    # --approve 只读当前注册表：旧产物可能是别的版本、也可能已经漂移，
+    # 读它会把"改注册表 → 重新审核"这条恢复路径自己堵死（加载期会拒绝旧版本 / 漂移）。
+    loaded = load_registry(
+        args.registry, approved_path=None if args.approve else args.approved
+    )
     registry = loaded.registry
 
     if args.approve:

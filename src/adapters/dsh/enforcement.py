@@ -442,7 +442,12 @@ class EnforcementBridge:
                     }
                     for item in evidence.files
                 ],
-                "untrusted_result_digest": evidence.untrusted_result_digest,
+                # 与 post_without_pre 那条记录**同一口径**：这个键回答的是"这次判定面对的是哪一份
+                # 不可信答复"，因此写**完整转发答复**的摘要（record.structured_digest，与台账里
+                # ExecutionRecord.structured_digest 同值）。此前这里写的是 evidence 里那个
+                # **400 字符截断**后的摘要，于是同一份审计里出现两种口径、两条记录对不上，
+                # 而且前缀相同的两份长输出会得到同一个摘要。
+                "untrusted_result_digest": record.structured_digest,
                 # 进程证据与文件证据一样要落盘：exit_code_zero 的结论完全建立在这上面，
                 # 只在内存里的退出码等于没有证据（N16 的复现就是靠"审计里看不到退出码"）。
                 "process": (

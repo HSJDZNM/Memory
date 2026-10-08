@@ -15,15 +15,16 @@
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import re
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple
 
 import yaml
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 
-from policy.models import RuleValidationError, StrictModel
+from policy.models import RuleValidationError, StrictModel, canonical_identifier
 
 __all__ = [
     "API_CONFIG_SCHEMA_VERSION",
@@ -33,13 +34,13 @@ __all__ = [
     "Budgets",
     "ClientSpec",
     "ConfigError",
-    "Limits",
     "LoadConfig",
     "RetrievalConfig",
     "TenantSpec",
     "TokenInvalid",
     "hash_token",
     "load_api_config",
+    "parse_expires_at",
     "protected_hashes",
 ]
 
@@ -50,6 +51,30 @@ SUPPORTED_API_CONFIG_VERSIONS = frozenset({API_CONFIG_SCHEMA_VERSION})
 _PLAINTEXT_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]{16,}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _TENANT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+# 客户端 `expires_at` 接受的形态：秒级可带 Z、可带 UTC 偏移、可带微秒。
+_EXPIRY_FORMATS = ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def parse_expires_at(value: str) -> datetime.datetime:
+    """把配置里的 `expires_at` 解析成带时区的 UTC 时间；看不懂就抛 ValueError。
+
+    放在 config 一侧，是因为它校验的是**配置数据**（加载期就要拒绝）；运行期的
+    `auth.parse_expiry` 只是把同一个实现翻译成 ApiError，两处不会各自维护一份格式表。
+    """
+
+    text = str(value).strip()
+    for pattern in _EXPIRY_FORMATS:
+        try:
+            parsed = datetime.datetime.strptime(text, pattern)
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+        return parsed.astimezone(datetime.timezone.utc)
+    raise ValueError(
+        "不是可识别的 ISO-8601 时间（接受 " + " / ".join(_EXPIRY_FORMATS) + "）"
+    )
 
 
 class ConfigError(Exception):
@@ -125,6 +150,40 @@ class ClientSpec(StrictModel):
         raise ValueError(
             f"client {self.client_id!r} 的 token_sha256 不是 64 位十六进制摘要"
         )
+
+    @model_validator(mode="after")
+    def _expiry_is_readable(self) -> "ClientSpec":
+        """`expires_at` 是**部署配置**的一部分：格式非法必须在加载期报错。
+
+        以前它只在请求期被 `auth.parse_expiry` 解析，于是配置写错的表现是"这个客户端的
+        每次调用都 401 unauthenticated"，还把配置原文回显进错误 detail——部署错误被伪装成
+        凭据错误，运维看到的理由也是错的（AGENTS 第 52 条）。
+        """
+
+        if self.expires_at is not None:
+            try:
+                parse_expires_at(self.expires_at)
+            except ValueError as error:
+                raise ValueError(
+                    f"client {self.client_id!r} 的 expires_at 不合法：{error}"
+                ) from error
+        return self
+
+    @model_validator(mode="after")
+    def _projects_are_canonical(self) -> "ClientSpec":
+        """项目名按与请求侧**同一个口径**存下来。
+
+        `authorize` 里的 `tenant_project` 与 `runtime._authenticate` 里的请求侧 project 都过
+        `canonical_identifier`（去首尾空白 + 小写），配置这一侧不过的话，配置里写
+        "Alpha-Project" 的客户端永远匹配不上规范化后的 "alpha-project"：合法配置被静默拒绝
+        （403 project_not_allowed），而调用方与运维都看不出问题出在大小写。
+        """
+
+        normalized = tuple(canonical_identifier(item) for item in self.projects)
+        if any(not item for item in normalized):
+            raise ValueError(f"client {self.client_id!r} 声明了空的项目名")
+        object.__setattr__(self, "projects", normalized)
+        return self
 
     @model_validator(mode="after")
     def _check_tenant_ids(self) -> "ClientSpec":
@@ -210,6 +269,13 @@ class ApiConfig(StrictModel):
         known = {item.tenant_id for item in self.tenants}
         if len(known) != len(self.tenants):
             raise ValueError("tenant_id 必须唯一")
+        client_ids = [client.client_id for client in self.clients]
+        duplicates = sorted({name for name in client_ids if client_ids.count(name) > 1})
+        if duplicates:
+            # 两个客户端共用一个 client_id 会让"这对凭据是谁"不可判定：幂等台账键、指标标签
+            # 与请求日志全部按 client_id 记账，审计读到的是两个主体混在一起（而且谁先谁后还
+            # 取决于配置里的书写顺序）。
+            raise ValueError(f"client_id 必须唯一，重复：{duplicates}")
         for client in self.clients:
             unknown = sorted(set(client.tenants) - known)
             if unknown:
@@ -254,7 +320,15 @@ def load_api_config(
     except ValidationError as error:
         failure = RuleValidationError.from_pydantic(error, model_name=f"API 配置 {target.name}")
         raise ConfigError(str(failure)) from error
-    anchor = Path(root) if root is not None else target.parent.parent
+    if root is None:
+        # 规则 3：锚点由加载方显式给出，**不从配置文件位置推断**。以前这里退回
+        # `target.parent.parent`：同一份配置换个目录放置，租户的规则 / 索引 / 验证器的
+        # 解析基准就跟着变（安全边界随文件摆放漂移），而调用方以为自己拿到的还是同一套边界。
+        raise ConfigError(
+            "加载 API 配置必须显式给出 root（相对路径的解析锚点）；"
+            "不接受从配置文件位置推断：请传部署根或仓库根"
+        )
+    anchor = Path(root)
     return config.model_copy(
         update={
             "service_root": str(Path(anchor).resolve()),

@@ -178,6 +178,9 @@ DECLARATIONS = (
 OUTSIDE_WORKSPACE = "<outside-workspace>"
 UNSET = "<unset>"
 
+# host_block 自己产出的三个键：extra 不许覆盖它们（覆盖 = 绕过枚举校验与真实读数）。
+_HOST_BLOCK_KEYS = frozenset({"platform", "python", "sandbox"})
+
 _REVISION = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 
@@ -212,6 +215,27 @@ def display_path(path: object, *, root: Path | str) -> str:
     except (OSError, ValueError):
         return OUTSIDE_WORKSPACE
     return relative.as_posix() or "."
+
+
+# 底层异常原文里的绝对路径：边界规则与 adapters 侧的脱敏同一口径——没有边界的 "/"
+# 会把普通相对路径（src/shop/x.py）也当成绝对路径。全角标点同样算边界（中英混排的诊断
+# 原文），但**不吞**标点之后的正文：`（读不到就不算数）` 要留在 reason 里。
+_ABS_PATH_RE = re.compile(
+    r"(?:(?<=[\s'\"(\[=:,（）、，。；：])|^)"
+    r"(?:[A-Za-z]:[\\/]|\\\\|/)"
+    r"[^\s'\"()（）【】、，。；：,;:]*"
+)
+
+
+def _fold_absolute_paths(text: str, *, root: Path | str) -> str:
+    """把一段原文里的绝对路径折叠成 display_path 口径（工作区之内 -> 仓库相对路径）。
+
+    读数**不放绝对路径**（纪律 1），而底层异常原文里带的树根 / os.walk 的
+    error.filename / str(OSError) 都可能带绝对路径。折叠不出来的一律不猜：
+    display_path 认不出的写 <outside-workspace>。
+    """
+
+    return _ABS_PATH_RE.sub(lambda match: display_path(match.group(0), root=root), text)
 
 
 def declaration_digest(path: Path | str | None) -> Optional[str]:
@@ -308,13 +332,17 @@ def tree_block(
             return {
                 "status": STATUS_UNAVAILABLE,
                 "scope": scope,
-                "reason": "树摘要读不到：" + type(error).__name__ + ": " + str(error),
+                # 底层原文可能带绝对路径（树根、error.filename、str(OSError)）：折叠后再拼。
+                "reason": "树摘要读不到："
+                + type(error).__name__
+                + ": "
+                + _fold_absolute_paths(str(error), root=root),
             }
     if not str(value).startswith("sha256:"):
         return {
             "status": STATUS_UNAVAILABLE,
             "scope": scope,
-            "reason": "树摘要不可用：" + str(value),
+            "reason": "树摘要不可用：" + _fold_absolute_paths(str(value), root=root),
         }
     block["digest"] = str(value)
 
@@ -348,6 +376,12 @@ def host_block(*, sandbox: str = SANDBOX_UNKNOWN, extra: Mapping[str, Any] | Non
     端到端读数按"本次是否发生过工作区之外的操作被拒"判；其余读数不探测沙箱（探测要有副作用），
     一律 unknown。extra 放该读数专有的宿主事实（例如端到端的
     isolated_home / dsh_home / temp_roots）。
+
+    **extra 不许改 host_block 自己的三个字段**（platform / python / sandbox）：它们是真实
+    读数与受校验的枚举，合并在校验之后做就等于把 SANDBOX_VALUES 与平台读数一起绕过去。
+    同名字段只要**取值不同**就报错——与 build 对"include_run=False 却给了 run"的处置同一
+    口径：自相矛盾的调用不静默丢值，也不静默覆盖。（同一个取值重复一遍是无害的：现有调用
+    点里就有这种写法，它不改变任何读数；真正危险的是"改值"。）
     """
 
     if sandbox not in SANDBOX_VALUES:
@@ -360,6 +394,16 @@ def host_block(*, sandbox: str = SANDBOX_UNKNOWN, extra: Mapping[str, Any] | Non
         "sandbox": sandbox,
     }
     if extra:
+        conflicts = sorted(
+            key for key in _HOST_BLOCK_KEYS if key in extra and extra[key] != block[key]
+        )
+        if conflicts:
+            raise ValueError(
+                "extra 不许覆盖 host_block 自己的字段 "
+                + " / ".join(conflicts)
+                + "（platform / python / sandbox 是校验过的真实读数）；"
+                "要在读数里改它们就改调用点，别从旁注覆盖"
+            )
         block.update(dict(extra))
     return block
 

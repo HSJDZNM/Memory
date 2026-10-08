@@ -382,8 +382,19 @@ def run_inspect(args: argparse.Namespace) -> int:
         print(f"[adapters] {error}", file=sys.stderr)
         return EXIT_USAGE
 
-    raw = json.loads(Path(args.event).read_text(encoding="utf-8"))
-    rules = _load_rules(root)
+    # 与 run_check 同一口径：读事件、解析 JSON、加载规则集都是**输入**，读不到时给
+    # 「[adapters] 消息 + 退出码 2」，不许把 FileNotFoundError / JSONDecodeError /
+    # LoaderError 打成原始 traceback。
+    try:
+        raw = json.loads(Path(args.event).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        print(f"[adapters] 事件文件不可读：{error}", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        rules = _load_rules(root)
+    except LoaderError as error:
+        print(f"[adapters] 规则集不可用：{error}", file=sys.stderr)
+        return EXIT_USAGE
     runtime = AgentRuntime(
         adapters={adapter.agent_id: adapter}, rules=rules, workspace=adapter.workspace
     )

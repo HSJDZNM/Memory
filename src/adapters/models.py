@@ -722,8 +722,12 @@ def normalize_event_path(value: str, *, workspace: Path, path_base: Optional[Pat
             )
         return _relative_to(candidate, anchor)
 
-    if raw.replace(chr(92), "/").strip("./") == "":
-        # "." 与 "./" 表示工作区根：只读工具常以项目根为范围。
+    root_segments = raw.replace(chr(92), "/").split("/")
+    if all(segment in ("", ".") for segment in root_segments):
+        # "."、"./"、"././" 这类**纯点斜线**写法表示工作区根：只读工具常以项目根为范围。
+        # 判据必须逐段看：`strip("./")` 会把 ".."、"../.."、"./.." 一起剥成空串，于是它们
+        # 全被当成工作区根返回 "."，下面那条 `..` 拒绝根本走不到——一次逃逸被静默改写成
+        # 「范围正好是项目根」。
         return "."
     if ".." in raw.replace(chr(92), "/").split("/"):
         # 相对路径里的 ".." 一律拒绝，**不**依赖调用方先做 normpath。
@@ -741,8 +745,16 @@ def normalize_event_path(value: str, *, workspace: Path, path_base: Optional[Pat
 
 
 def _within(candidate: Path, anchor: Path) -> bool:
-    head = [item.lower() for item in candidate.parts[: len(anchor.parts)]]
-    return head == [item.lower() for item in anchor.parts]
+    """包含性判定：大小写口径**跟着路径实现走**，不自己 lower()。
+
+    WindowsPath 的比较不区分大小写（`PROJ` 与 `proj` 是同一个目录），PurePosixPath 区分。
+    两边都 lower() 等于把「不区分大小写」强加到所有平台：在区分大小写的文件系统上，
+    绝对目标 `/work/PROJ/secret` 会被判成 `/work/proj` 以内，再经 `_relative_to` 报成
+    「工作区相对路径 secret」——一个范围外的绝对路径按范围内的文件被评估。
+    大小写是文件系统的事实，不是这里能替它决定的。
+    """
+
+    return candidate == anchor or anchor in candidate.parents
 
 
 def _relative_to(candidate: Path, anchor: Path) -> str:

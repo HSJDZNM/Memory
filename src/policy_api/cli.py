@@ -97,6 +97,12 @@ def _load(args: argparse.Namespace) -> tuple[Path, Path, ApiConfig]:
 def run(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "clients" and args.hash:
+        # 这条路径只读 stdin 算 sha256（见 _clients_hash 的 docstring），与部署配置无关。
+        # 以前它在 _load 之后才被分派：配置缺失、不可读或**配置里写了明文令牌**时都以
+        # 退出码 2 失败——而 config.py 拒绝明文令牌时给出的补救指引恰恰就是这条命令，
+        # 等于把唯一的补救路径堵死（用户被指向一个同样跑不起来的入口）。
+        return _clients_hash(args)
     try:
         root, path, config = _load(args)
     except ConfigError as error:
@@ -123,18 +129,22 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     return _self_check(args, config, root)
 
 
+def _clients_hash(args: argparse.Namespace) -> int:
+    """从 stdin 读一个令牌并输出 sha256（**不碰部署配置**：见 run() 里的说明）。"""
+
+    token = sys.stdin.readline().strip()
+    if not token:
+        print("policy-api: 需要从 stdin 读到一个非空令牌", file=sys.stderr)
+        return EXIT_ERROR
+    digest = hash_token(token)
+    if args.json:
+        print(json.dumps({"token_sha256": digest}, ensure_ascii=False))
+    else:
+        print(digest)
+    return EXIT_OK
+
+
 def _clients(args: argparse.Namespace, config: ApiConfig) -> int:
-    if args.hash:
-        token = sys.stdin.readline().strip()
-        if not token:
-            print("policy-api: 需要从 stdin 读到一个非空令牌", file=sys.stderr)
-            return EXIT_ERROR
-        digest = hash_token(token)
-        if args.json:
-            print(json.dumps({"token_sha256": digest}, ensure_ascii=False))
-        else:
-            print(digest)
-        return EXIT_OK
     rows = [
         {
             "client_id": client.client_id,
@@ -162,6 +172,17 @@ def _clients(args: argparse.Namespace, config: ApiConfig) -> int:
 def _openapi(args: argparse.Namespace, config: ApiConfig, root: Path) -> int:
     from .contract import openapi_document, snapshot_diff, write_snapshot
 
+    if args.write and args.check:
+        # 两个开关语义相反（"显式更新快照" vs "只比较、不写"）。以前 `--check` 被解析后
+        # 从未被引用，`openapi --write --check` 会静默执行写操作——CI 门禁里一旦混用，
+        # 漂移就被直接固化进 api/openapi.json，而调用方以为自己只要了一个比较结果。
+        # 矛盾用法一律拒绝：不替调用方在两个相反意图里选一个。
+        print(
+            "policy-api: --write 与 --check 不能同时用（一个要写、一个只比较）；"
+            "请只保留一个",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
     runtime = ApiRuntime(config, root=root)
     document = openapi_document(runtime)
     target = root / SNAPSHOT
@@ -226,7 +247,24 @@ def _seal(args: argparse.Namespace, config: ApiConfig, root: Path) -> int:
         if not target.is_file():
             print(f"policy-api: 锚定文件不存在：{target.name}", file=sys.stderr)
             return EXIT_ERROR
-        seal = json.loads(target.read_text(encoding="utf-8"))
+        # 锚是**外部输入**（可能在工单/对象存储里被截断、被换编码、被改成数组）：
+        # 读不出来必须是这个命令自己的退出码语义，而不是一串 traceback；非对象顶层
+        # 也不能进 verify_seal（它按 Mapping 读，.get 会炸成 AttributeError）。
+        try:
+            seal = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            print(
+                f"policy-api: 锚定文件不可读或不是合法 JSON：{target.name}"
+                f"（{type(error).__name__}）",
+                file=sys.stderr,
+            )
+            return EXIT_ERROR
+        if not isinstance(seal, Mapping):
+            print(
+                f"policy-api: 锚定文件顶层必须是对象：{target.name}",
+                file=sys.stderr,
+            )
+            return EXIT_ERROR
         issues = verify_seal(log, seal)
         if args.json:
             print(json.dumps({"ok": not issues, "issues": list(issues), "seal": seal}, ensure_ascii=False, indent=2))

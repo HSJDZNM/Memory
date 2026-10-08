@@ -12,7 +12,12 @@ from pathlib import Path
 import pytest
 
 from conftest import VALIDATOR_PROJECT, validators_config
-from validators.depgraph import build_dependencies, build_module_index, package_of
+from validators.depgraph import (
+    DependencyResolution,
+    build_dependencies,
+    build_module_index,
+    package_of,
+)
 from validators.python_ast import imported_names, parse_module
 from validators.source import SourceError, read_source, resolve_target
 
@@ -210,6 +215,37 @@ def test_ast_collects_imports_aliases_and_relative_imports() -> None:
     assert "repo" in imported_names(facts)
 
 
+def test_bound_name_is_the_name_the_import_actually_binds() -> None:
+    """绑定名以 `bindings` 为准：`from os import path` 绑定的是 path，不是 os。
+
+    历史缺陷（OCR 全量审查 L13）：bound_name 从 alias / module 的段里推断，四种形态都错
+    ——`from os import path` 给出从未绑定的 "os"、`from . import x` 给出 None、
+    多名字 from-import 只能给一个、动态 import 什么都没绑定却给出一段模块名。
+    消费方（depgraph 的调用边、imported_names）因此把调用链挂在不存在的根上。
+    """
+
+    facts = parse_module(
+        "from os import path" + chr(10)
+        + "from . import order_service" + chr(10)
+        + "from shop.order_service import OrderService" + chr(10)
+        + "import os.path" + chr(10)
+        + "import importlib" + chr(10)
+        + "m = importlib.import_module('os.path')" + chr(10)
+    )
+    bound = [(item.kind, item.module, item.bound_name) for item in facts.imports]
+    assert ("from_import", "os", "path") in bound
+    assert ("from_import", "", "order_service") in bound
+    assert ("from_import", "shop.order_service", "OrderService") in bound
+    assert ("import", "os.path", "os") in bound
+    # 动态 import 什么都没绑定：bound_name 必须是 None，不是模块名的最后一段
+    dynamic = [(item.module, item.bound_name) for item in facts.imports if item.kind == "dynamic"]
+    assert dynamic == [("os.path", None)]
+
+    # imported_names 展开**全部** bindings：多名字 from-import 不再只给一个
+    multi = parse_module("from shop import order_service, order_repository" + chr(10))
+    assert imported_names(multi) == ("order_repository", "order_service")
+
+
 def test_ast_marks_dynamic_imports_by_constantness() -> None:
     constant = parse_module("import importlib" + chr(10) + "m = importlib.import_module('os.path')")
     variable = parse_module("import importlib" + chr(10) + "m = importlib.import_module(name)")
@@ -278,10 +314,32 @@ def test_module_index_maps_packages_and_modules() -> None:
     assert index.truncated is False
 
 
+def test_relative_import_inside_a_package_initializer_stays_in_that_package() -> None:
+    """`__init__.py` 里的相对导入必须展开到**它所在的包**，不是上一层、也不是顶层。
+
+    历史缺陷（OCR 全量审查 L12）：`package_of` 先把 "__init__" 去掉、再 `parts[:-1]`，
+    于是 src/shop/__init__.py 的包算成 ()、src/shop/sub/__init__.py 算成 ("shop",)。
+    后果是一条凭空造出的依赖边：`from . import order_service` 被解析成**外部包**
+    order_service，而真正的项目内模块 shop.order_service 反而没人指向。
+    """
+
+    result = dependencies_for(
+        "from . import order_service" + chr(10), target="src/shop/__init__.py"
+    )
+
+    internal = [
+        item for item in result.dependencies if item.resolution is DependencyResolution.INTERNAL
+    ]
+    assert [item.module for item in internal] == ["shop.order_service"]
+    assert result.unresolved == ()
+
+
 def test_package_of_prefers_the_most_specific_python_root() -> None:
     # src 布局：src/shop/a.py 的包是 shop（不是 src.shop），相对导入才按项目自己的路径展开
     assert package_of("src/shop/order_service.py", CONFIG.project) == ("shop",)
-    assert package_of("src/shop/__init__.py", CONFIG.project) == ()
+    # `__init__.py` 的包就是它所在的目录（历史缺陷：这里曾写着 ()，比正确值高一级）
+    assert package_of("src/shop/__init__.py", CONFIG.project) == ("shop",)
+    assert package_of("src/shop/sub/__init__.py", CONFIG.project) == ("shop", "sub")
     assert package_of("examples/good_service.py", CONFIG.project) == ("examples",)
     assert package_of("docs/readme.txt", CONFIG.project) is None
 
@@ -344,10 +402,29 @@ def test_relative_imports_resolve_inside_the_package() -> None:
 
 
 def test_relative_import_beyond_the_top_level_package_is_unresolved() -> None:
-    result = dependencies_for("from .... import something" + chr(10))
+    """越界判定把"恰好一级"也算进去：`drop == len(package)` 时 Python 自己就报错。
 
+    历史缺陷（OCR 全量审查 L12）：`drop > len(package)` 只在"多出一级"时判越界，
+    `drop == len(package)` 会取到空前缀、把导入解析成**凭空造出的顶层模块**
+    （包深度 1 里的 `from .. import x` → 外部包 x）。
+    """
+
+    # 明显越界：包深度 1（src/shop/order_controller_bad.py 的包是 ("shop",)）里的 level=5
+    result = dependencies_for("from .... import something" + chr(10))
     assert [item.kind for item in result.unresolved] == ["from_import"]
     assert "顶层包" in result.unresolved[0].reason
+
+    # 恰好一级：from .. import x 在包深度 1 的模块里 = 越界，不是"外部包 x"
+    exactly = dependencies_for("from .. import order_service" + chr(10))
+    assert exactly.dependencies == ()
+    assert [item.kind for item in exactly.unresolved] == ["from_import"]
+    assert "顶层包" in exactly.unresolved[0].reason
+
+    # 没有包（顶层模块）时 level=1 同样不合法：no known parent package
+    toplevel = dependencies_for("from . import helper" + chr(10), target="src/loose_tool.py")
+    assert toplevel.dependencies == ()
+    assert [item.kind for item in toplevel.unresolved] == ["from_import"]
+    assert "顶层包" in toplevel.unresolved[0].reason
 
 
 def test_relative_import_of_a_missing_sibling_is_unresolved(tmp_root: Path) -> None:
@@ -393,6 +470,13 @@ def test_graph_edges_cover_calls_bound_to_imports() -> None:
     assert "import" in kinds
     assert "call" in kinds
     assert any(edge.target == "call:service.create" for edge in result.edges)
+
+    # from-import 的名字同样要能绑回调用链。历史缺陷：bound_name 给的是模块名的最后一段
+    # （order_service），于是 OrderService.create(...) 这条边整条消失。
+    direct = dependencies_for(
+        "from shop.order_service import OrderService" + chr(10) + "OrderService.create({})" + chr(10)
+    )
+    assert any(edge.target == "call:OrderService.create" for edge in direct.edges)
 
 
 def test_module_index_skips_ignored_directories(tmp_root: Path) -> None:

@@ -22,6 +22,7 @@ Phase 6 的统一接口（计划 §统一接口）：
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import re
 from dataclasses import dataclass
@@ -466,11 +467,18 @@ class Adapter:
         # 子类可以选择接收 workspace：钩子类 Agent 的原始路径需要在构造事件时
         # 就按"本次判定的工作区"解析（否则一条路径会先按配置默认值被规范化，
         # 逃逸就变成了静默的"相对路径"）。不支持该参数的子类保持原签名。
-        try:
-            event = self._build_event(raw_event, workspace=workspace)  # type: ignore[call-arg]
-        except TypeError as error:
-            if "workspace" not in str(error):
-                raise
+        #
+        # 支持与否看**签名**，不看异常文案：旧写法 catch TypeError 之后判 "workspace" in str(error)，
+        # 于是一个恰好提到 workspace 的真 TypeError 会被当成"子类不支持该参数"——事件被**丢掉
+        # 工作区重建一次**（路径改按配置默认值归一化，正是上面警告的那种降级），而且 _build_event
+        # 被跑第二遍（副作用重复）。`**kwargs` 的签名同样算支持。
+        parameters = inspect.signature(self._build_event).parameters
+        accepts_workspace = "workspace" in parameters or any(
+            item.kind is inspect.Parameter.VAR_KEYWORD for item in parameters.values()
+        )
+        if accepts_workspace:
+            event = self._build_event(raw_event, workspace=workspace)
+        else:
             event = self._build_event(raw_event)
         if not isinstance(event, AgentEvent):
             raise AdapterEventError(
@@ -856,11 +864,17 @@ class AdapterRegistry:
     # ------------------------------------------------------------------ 支持矩阵
     def descriptors(self) -> Tuple[AdapterDescriptor, ...]:
         rows: list[AdapterDescriptor] = []
+        # 审核清单的形状不可信（可以直接构造 AdapterRegistry(approved=...)）：形状不对的条目
+        # 一律按「未审核」读——`check_approved()` 会把它变成一条点名的 RegistryError，
+        # 而 AttributeError 逃出去只会变成未处理崩溃。加载路径上这种清单在 _load_approved 就拒了。
+        entries = self.approved.get("adapters")
+        approved_entries = entries if isinstance(entries, Mapping) else {}
         for agent_id in sorted(self.manifests):
             manifest = self.manifests[agent_id]
             ceiling = ceiling_from_capabilities(manifest)
             digest = manifest_digest(manifest)
-            approved = self.approved.get("adapters", {}).get(agent_id) or {}
+            entry = approved_entries.get(agent_id)
+            approved = entry if isinstance(entry, Mapping) else {}
             is_approved = approved.get("manifest_digest") == digest
             level = ceiling.level
             reasons = list(ceiling.reasons)
@@ -1001,4 +1015,21 @@ def _load_approved(path: Path) -> Mapping[str, Any]:
     adapters = document.get("adapters")
     if not isinstance(adapters, Mapping) or not adapters:
         raise RegistryError(f"{path}: adapters 必须是非空映射")
+    # 逐条目校验：只看顶层不够——`"dsh": "sha256:..."` 这种形状会在 descriptors() 里以
+    # AttributeError('str' object has no attribute 'get') 逃出 RegistryError 契约，
+    # 调用方（装配处）按 RegistryError 兜底，于是它变成未处理崩溃，而且不说是哪一条坏了。
+    for agent_id, entry in adapters.items():
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise RegistryError(f"{path}: adapters 的键必须是 agent_id，得到 {agent_id!r}")
+        if not isinstance(entry, Mapping):
+            raise RegistryError(
+                f"{path}: adapters[{agent_id!r}] 必须是映射（含 manifest_digest），"
+                f"得到 {type(entry).__name__}；形状不对的审核清单不得当成「未审核」继续"
+            )
+        digest = entry.get("manifest_digest")
+        if digest is not None and (not isinstance(digest, str) or not digest.strip()):
+            raise RegistryError(
+                f"{path}: adapters[{agent_id!r}].manifest_digest 必须是非空字符串，"
+                f"得到 {digest!r}"
+            )
     return document

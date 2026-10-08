@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import os
 import re
@@ -110,6 +111,10 @@ class Digest:
         return {"name": self.name, "sha256": self.sha256, "files": self.files, "bytes": self.bytes}
 
 
+# glob→正则的构造是纯函数、返回值不可变：按 pattern 缓存。`re` 只缓存 compile 之后的
+# pattern，**不缓存这一步的逐字符字符串构造**，而它是遍历与命中判据的主路径（每个目录、
+# 每个文件、每条声明都要走一遍，同一批 pattern 反复重建）。
+@functools.lru_cache(maxsize=None)
 def _compile(pattern: str) -> "re.Pattern[str]":
     """glob → 正则：`**/` 匹配零个或多个目录，`**` 跨目录，`*` 只在单段内，`?` 单字符。"""
 
@@ -157,11 +162,17 @@ def _excluded(relative: str, excludes: Sequence[str]) -> bool:
 
 
 def _relative(path: Path, root: Path) -> str:
-    """仓库相对路径（POSIX 分隔符）；等于根目录时返回空串。"""
+    """仓库相对路径（POSIX 分隔符）；等于根目录时返回 "."。
+
+    这里**不做 resolve()**：解析会跟随符号链接——指向工作区之外的链接让 relative_to
+    失败，然后退回一个随调用方式变化的（可能绝对的）路径，同一棵树换个挂载点就得到另一个
+    指纹（确定性要求 2）；留在根内的链接也会被记成目标的相对路径，制造重复键。
+    词法相对路径记录的是"链接本身"，正是遍历看到的那一项。
+    """
 
     try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
-    except (OSError, ValueError):  # pragma: no cover - os.walk 只会给出 root 之下的路径
+        return Path(os.path.relpath(path, root)).as_posix()
+    except ValueError:  # pragma: no cover - 不同盘符（Windows）没有相对形式
         return path.as_posix()
 
 
@@ -281,7 +292,15 @@ def _declared_digest(
             "声明是空的：给不出 " + name + "。判据里不许把「给不出」当成 pass（方案 §5.3）"
         )
     relative_root = Path(root)
-    available = list(_walk(relative_root, strict=True, excludes=excludes))
+    # 排除项要在**候选集**里就过滤掉：_walk 只剪掉被排除的目录，被排除的**文件**
+    # （`**/*.pyc` 这类）照样会被列出来。声明若只命中这些文件，它们会在 _fingerprint
+    # 里被静默丢掉，得到的是一份覆盖 0 个文件的指纹（空串的 sha256）——那正是本模块
+    # 承诺要防的"静默少算"：这样的声明会变得可以被封条、也可以被复核。
+    available = [
+        (relative, path)
+        for relative, path in _walk(relative_root, strict=True, excludes=excludes)
+        if not _excluded(relative, excludes)
+    ]
     resolved: Dict[str, Path] = {}
     unmatched: list[str] = []
     for pattern in entries:
@@ -446,9 +465,15 @@ def resolve_landing_state(
     if requested == "landed_peer_verified":
         if peer_evidence is None:
             raise LandingStateError("landed_peer_verified 必须交出 peer_evidence，缺了就是证明不了")
-        verifier = str(peer_evidence.get("verifier", "")).strip()
-        artifact = str(peer_evidence.get("artifact", "")).strip()
-        digest = str(peer_evidence.get("sha256", "")).strip()
+        # 只接受**真的给了字符串**：str(None) 会变成真值 "None"，于是
+        # {"verifier": null, "artifact": null} 这样一份伪造的 peer 验收会被放进来；
+        # 数字同样不行（一个 64 位十进制整数能骗过 sha256 的正则）。
+        raw_verifier = peer_evidence.get("verifier")
+        raw_artifact = peer_evidence.get("artifact")
+        raw_digest = peer_evidence.get("sha256")
+        verifier = raw_verifier.strip() if isinstance(raw_verifier, str) else ""
+        artifact = raw_artifact.strip() if isinstance(raw_artifact, str) else ""
+        digest = raw_digest.strip() if isinstance(raw_digest, str) else ""
         if not verifier or not artifact:
             raise LandingStateError("peer_evidence 缺 verifier 或 artifact（谁验的、验的是哪份）")
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
@@ -462,8 +487,17 @@ def load_declaration(path: Path | str) -> Tuple[str, ...]:
     target = Path(path)
     if not target.is_file():
         raise UnprovableError(f"声明文件不存在：{target}")
+    try:
+        text = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        # is_file() 与 read 之间文件可能被删 / 改权限，也可能不是 UTF-8：这些都必须落
+        # UnprovableError——调用方按文档只认它（"证明不了"，退出码 3），裸 OSError /
+        # UnicodeDecodeError 会被当成别的东西，而这条路径正是"读不到声明"的那一条。
+        raise UnprovableError(
+            f"声明文件读不出来：{target}（{type(error).__name__}: {error}）"
+        ) from error
     entries: list[str] = []
-    for raw in target.read_text(encoding="utf-8").splitlines():
+    for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue

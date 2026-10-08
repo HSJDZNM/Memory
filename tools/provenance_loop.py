@@ -9,9 +9,11 @@ R-e 的原文是：**任何被判 pass 的检查必须交出 referenced_inputs_d
 3. unprovable-decl    　声明里有一条 glob 命中不到任何文件 → 状态 unprovable、退出 3；
 4. no-declaration       声明只有注释（= 给不出 referenced_inputs_digest）→ 状态 unprovable、
                         退出 3，而且回执里**不许**出现 referenced_inputs_digest（反退化）；
-5. self-check-comparator **仪器自证**：把比对换成一个恒返回 pass 的替身，同一个
-                        external_write 场景就不再报红——证明上面那条红真的来自"比对"，
-                        而不是来自别的什么（AGENTS 第 45 条：自己的仪器也要能失败）。
+5. self-check-comparator **仪器自证**：同一个场景（建树 → 种一次未声明写者 → 两次封条）
+                        跑两遍——真比对器给 external_write、恒 pass 的替身给 pass——
+                        证明上面那条红真的来自"比对"这一步；并额外要求红可归因到那笔写入
+                        （differences.modified == declared/a.txt）。读数全部来自真的调用
+                        （AGENTS 第 45 条：自己的仪器也要能失败）。
 
 产物：.tmp/artifacts/provenance-loop-result.json（读数）；退出码 0 = 五个场景全部符合期望。
 """
@@ -236,24 +238,47 @@ def scenario_no_declaration() -> Dict[str, Any]:
     return record
 
 
-def scenario_self_check() -> Dict[str, Any]:
-    tree = _make_tree("self-check")
-    declaration = ["declared/*.txt"]
+def _self_check_comparison(compare, tree_name: str, declaration: List[str]):
+    """同一个场景（建树 → 种一次未声明写者 → 两次封条）在**给定比对器**下的读数。
+
+    仪器自证要的是"结论跟着比对器变"，所以比对器必须从参数进来：断言一个字符串常量
+    （旧写法 `stub = "pass"`）恒真，证明不了任何事。
+    """
+
+    tree = _make_tree(tree_name)
     pre = worktree.seal(tree, declaration, declaration)
     _write(tree / "declared" / "a.txt", "changed\n")
     post = worktree.seal(tree, declaration, declaration)
-    real = worktree.compare_seals(pre, post)
-    stub = "pass"  # 关掉比对：假装两次封条相等
-    ok = real.state == "external_write" and stub == "pass"
+    return compare(pre, post)
+
+
+def _always_pass(_pre, _post):
+    """恒 pass 的比对替身：红如果还在，就说明红不是比对这一步给出的。"""
+
+    return worktree.SealComparison(state="pass", added=(), modified=(), removed=(),
+                                   before={}, after={})
+
+
+def scenario_self_check() -> Dict[str, Any]:
+    declaration = ["declared/*.txt"]
+    # 同一条路径跑两遍：真比对器 vs 恒 pass 替身。两边的读数都来自真的调用。
+    real = _self_check_comparison(worktree.compare_seals, "self-check-real", declaration)
+    stub = _self_check_comparison(_always_pass, "self-check-stub", declaration)
+    ok = (
+        real.state == "external_write"
+        and real.differences["modified"] == ["declared/a.txt"]
+        and stub.state == "pass"
+    )
     return {
         "id": "self-check-comparator",
-        "what": "把比对换成恒 pass 的替身，同一个场景不再报红——证明那条红来自比对本身",
+        "what": "把比对换成恒 pass 的替身，同一个场景不再报红——证明那条红来自比对本身；"
+                "同时要求红可归因到种下的那次写入（declared/a.txt 被改）",
         "expected_state": "external_write",
         "expected_exit": None,
         "observed_state": real.state,
         "observed_exit": None,
         "comparator_state": real.state,
-        "stub_state": stub,
+        "stub_state": stub.state,
         "differences": real.differences,
         "ok": ok,
     }

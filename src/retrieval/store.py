@@ -638,6 +638,14 @@ class ChunkStore:
         self._execute("DELETE FROM chunks WHERE chunk_id = ?", (chunk_id,))
 
     def _index_chunk_fts(self, chunk_id: str, text: str, heading_path: Sequence[str]) -> None:
+        """写入一个 chunk 的 FTS 行：**先删后插**，保证"有且只有一条"。
+
+        FTS5 表在 chunk_id 上没有唯一约束，无条件 INSERT 会留下重复行：search() 会把
+        同一个 chunk 返回两次，而只数"缺失 / 孤儿"的结构校验发现不了（fts_rows 多出来
+        正好是它不看的那个方向）。
+        """
+
+        self._execute("DELETE FROM chunks_fts WHERE chunk_id = ?", (chunk_id,))
         self._execute(
             "INSERT INTO chunks_fts(chunk_id, text, heading_path) VALUES (?,?,?)",
             (chunk_id, search_text(text), search_text(" > ".join(heading_path))),
@@ -984,13 +992,24 @@ class ChunkStore:
         }
 
     def assert_integrity(self) -> None:
-        """结构损坏（例如 FTS 表被删掉重建为空表）必须报错，不能退化成"没有结果"。"""
+        """结构损坏（例如 FTS 表被删掉重建为空表）必须报错，不能退化成"没有结果"。
+
+        契约是"每个未隔离的 chunk **有且只有一条** FTS 行"：缺失与孤儿只证明"少"，
+        所以总数必须与未隔离 chunk 数逐一对齐——只数缺失/孤儿时，重复行会让同一个
+        chunk 在 search() 里出现两次而无人发现。
+        """
 
         data = self.integrity()
-        if data["missing_fts_rows"] or data["orphan_fts_rows"]:
+        expected = data["chunks"] - data["quarantined"]
+        if (
+            data["missing_fts_rows"]
+            or data["orphan_fts_rows"]
+            or data["fts_rows"] != expected
+        ):
             raise StoreError(
                 "索引结构不一致："
-                f"缺少 FTS 行的 chunk={data['missing_fts_rows']}，孤儿 FTS 行={data['orphan_fts_rows']}；"
+                f"缺少 FTS 行的 chunk={data['missing_fts_rows']}，孤儿 FTS 行={data['orphan_fts_rows']}，"
+                f"FTS 行总数={data['fts_rows']}（未隔离 chunk 应有 {expected} 条）；"
                 "拒绝在损坏的索引上检索，请重建索引（python -m retrieval.cli index）"
             )
 

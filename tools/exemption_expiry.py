@@ -79,8 +79,8 @@ def state_for(expires_at: str, *, today: _datetime.date, lead_days: int) -> dict
     return {"expires_at": expires_at, "days": days, "state": state}
 
 
-def _unprovable(source: str, detail: str) -> dict:
-    return {"source": source, "id": "<未读到>", "detail": detail, "state": STATE_UNPROVABLE}
+def _unprovable(source: str, detail: str, *, entry_id: str = "<未读到>") -> dict:
+    return {"source": source, "id": entry_id, "detail": detail, "state": STATE_UNPROVABLE}
 
 
 def scope_entries(path: Path, *, today: _datetime.date, lead_days: int) -> list[dict]:
@@ -121,15 +121,27 @@ def ci_local_entries(*, today: _datetime.date, lead_days: int) -> list[dict]:
         steps = tuple(module.REPORT_ONLY_STEPS)
     except Exception as error:  # noqa: BLE001 - 只报告：读不到就写 unprovable，绝不阻断
         return [_unprovable(_display(target), type(error).__name__ + ": " + str(error))]
-    return [
-        {
-            "source": _display(target),
-            "id": step.name,
-            "decision": "report_only",
-            **state_for(step.expires_at, today=today, lead_days=lead_days),
-        }
-        for step in steps
-    ]
+    entries: list[dict] = []
+    for step in steps:
+        # 每个步骤各自兜底：一个 expires_at 写坏（"2026/12/31"、漏写、写成 None）不能把
+        # 整份读数打成 traceback —— 本步的契约是"读不到就写 unprovable、退出码恒为 0"，
+        # 而默认输出里那条 HITS: 机器行正是 ci_local 读数的来源。
+        try:
+            name = step.name
+            state = state_for(step.expires_at, today=today, lead_days=lead_days)
+        except (AttributeError, TypeError, ValueError) as error:
+            entries.append(
+                _unprovable(
+                    _display(target),
+                    type(error).__name__ + ": " + str(error),
+                    entry_id=str(getattr(step, "name", "<未知步骤>")),
+                )
+            )
+            continue
+        entries.append(
+            {"source": _display(target), "id": name, "decision": "report_only", **state}
+        )
+    return entries
 
 
 def build_reading_context(*, scope: Path) -> dict:

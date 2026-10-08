@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -62,6 +63,11 @@ class TaskSource:
     gated: bool
     expected_rows: int
     note: str
+    # hf-rows 专用：datasets-server 的三段坐标。dataset 名从 url 里取（见 _hf_dataset_id），
+    # 这里只声明 config / split——曾经它们在请求里写死成 SWE-bench 的值，而目录、锁记录、
+    # rows_path 都按 dataset_id 键控：再加一个 hf-rows 源就会静默取错数据集。
+    hf_config: str = "default"
+    hf_split: str = "test"
 
 
 SOURCES: dict[str, TaskSource] = {
@@ -79,6 +85,8 @@ SOURCES: dict[str, TaskSource] = {
         gated=False,
         expected_rows=500,
         note="500 条人核验子集；12 个仓库；字段含 base_commit / patch / test_patch / FAIL_TO_PASS / PASS_TO_PASS",
+        hf_config="default",
+        hf_split="test",
     ),
     "bugs-in-py": TaskSource(
         id="bugs-in-py",
@@ -99,9 +107,35 @@ class AbTaskError(RuntimeError):
 
 
 def _get(url: str, timeout: int = 120) -> bytes:
+    """取一个 URL。**网络失败一律翻成 AbTaskError**：
+
+    main 只认 (AbTaskError, KeyError)，URLError / HTTPError / socket.timeout / IncompleteRead
+    逃出去就是一段栈回溯，而"网不通 / 上游 5xx / 传到一半断了"恰恰是本模块最常见的失败形态，
+    它们必须和"本地没有语料"一样，逐条带 reason 写出来。
+    """
+
     request = urllib.request.Request(url, headers={"User-Agent": "ab-tasks/1"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read()
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as error:
+        raise AbTaskError("取 %s 失败：%s: %s" % (url, type(error).__name__, error)) from error
+
+
+def _hf_dataset_id(source: TaskSource) -> str:
+    """HF datasets-server 的 dataset 名：**从登记的源 URL 里取**，不在请求里另写一份。
+
+    目录、rows_path、锁记录都按 dataset_id 键控；请求里写死一个数据集名，会让第二个
+    hf-rows 源把数据取到自己的目录名下——错得静默。
+    """
+
+    marker = "/datasets/"
+    if marker not in source.url:
+        raise AbTaskError("源 %s 的 URL 里没有 %s，取不出 HF dataset 名：%s" % (source.id, marker, source.url))
+    dataset = source.url.split(marker, 1)[1].strip("/")
+    if not dataset or "/" not in dataset:
+        raise AbTaskError("源 %s 的 URL 取出的 dataset 名不合法：%r" % (source.id, dataset))
+    return dataset
 
 
 def dataset_dir(dataset_id: str, root: Path) -> Path:
@@ -138,11 +172,12 @@ def fetch(dataset_id: str, *, root: Path, offline: bool = False) -> dict:
     if offline:
         raise AbTaskError("offline=True 但本地没有 %s" % target)
     started = time.time()
+    hf_dataset = _hf_dataset_id(source)
     rows: list[dict] = []
     offset = 0
     while True:
         query = urllib.parse.urlencode(
-            {"dataset": "princeton-nlp/SWE-bench_Verified", "config": "default", "split": "test",
+            {"dataset": hf_dataset, "config": source.hf_config, "split": source.hf_split,
              "offset": offset, "length": PAGE_SIZE}
         )
         page = json.loads(_get("%s?%s" % (ROWS_ENDPOINT, query)).decode("utf-8"))
@@ -221,6 +256,44 @@ def _source_record(instance_id: str, *, root: Path) -> dict | None:
         return None
 
 
+def _required_source_record(instance_id: str, *, root: Path) -> dict:
+    """要用的来源记录：缺了 / 读不出来 / 字段不全一律显式报错。
+
+    旧写法 `json.loads(...)` 会在缺文件时抛 FileNotFoundError、在字段缺失时抛 KeyError，
+    两条都绕过了 main 的 (AbTaskError, KeyError) 分类（KeyError 只剩一句 `ab_tasks: 'url'`）。
+    """
+
+    path = Path(root) / instance_id / "source.json"
+    record = _source_record(instance_id, root=root)
+    if record is None:
+        raise AbTaskError(
+            "缺来源记录 %s：先跑 --baseline %s（partial 提取或手工建的树都没有它）"
+            % (path, instance_id)
+        )
+    missing = [key for key in ("url", "sha256", "bytes") if key not in record]
+    if missing:
+        raise AbTaskError(
+            "来源记录 %s 缺字段 %s：重跑 --baseline %s 重建（不猜、不补 0）"
+            % (path, "/".join(missing), instance_id)
+        )
+    return record
+
+
+def _baseline_marker(instance_id: str, *, root: Path, url: str) -> bool:
+    """baseline/ 目录能不能被当成「已经解压好的那棵树」。
+
+    判据是**正向标记**：目录非空 + source.json 读得出来 + url 与这次要下载的一致。
+    只看「目录非空」会把 partial / 中断的提取、上一次别的 commit 留下的树一起当成可用，
+    而且不会写 source.json——下游 verify_oracle 随后就在缺字段上崩。
+    """
+
+    directory = _baseline_dir(instance_id, root)
+    if not (directory.is_dir() and any(directory.iterdir())):
+        return False
+    record = _source_record(instance_id, root=root)
+    return record is not None and record.get("url") == url
+
+
 def tarball_url(repo: str, commit: str) -> str:
     return "https://codeload.github.com/%s/tar.gz/%s" % (repo, commit)
 
@@ -276,8 +349,8 @@ def baseline(instance_id: str, *, root: Path, apply_test_patch: bool = False) ->
     (task_dir / "test.patch.diff").write_text(row["test_patch"], encoding="utf-8", newline="\n")
     source_record = task_dir / "source.json"
     reused = False
-    if not (directory.is_dir() and any(directory.iterdir())):
-        url = tarball_url(repo, commit)
+    url = tarball_url(repo, commit)
+    if not _baseline_marker(instance_id, root=root, url=url):
         started = time.time()
         data = _get(url, timeout=600)
         elapsed = round(time.time() - started, 2)
@@ -301,7 +374,7 @@ def baseline(instance_id: str, *, root: Path, apply_test_patch: bool = False) ->
         )
     else:
         reused = True
-    record = json.loads(source_record.read_text(encoding="utf-8")) if source_record.is_file() else {}
+    record = _required_source_record(instance_id, root=root)
     applied: dict = {"applied": False}
     if apply_test_patch:
         applied = apply_patch(instance_id, root=root, patch_name="test.patch.diff")
@@ -312,7 +385,42 @@ def baseline(instance_id: str, *, root: Path, apply_test_patch: bool = False) ->
             "reused": reused, "download": record, "test_patch_applied": applied, "files": files}
 
 
+#: pytest 的 rootdir 锚点：任务树里有任意一个，pytest 就会把 rootdir 定在树里，
+#: 不会再向上读到**宿主仓库**的配置。
+PYTEST_ROOT_ANCHORS = ("pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg", "setup.py")
+
+
+def _pytest_isolation(argv: list[str], *, cwd: Path, task_dir: Path) -> list[str]:
+    """任务树自己没有任何 pytest 根标记时，给 oracle 一份**隔离的空配置**。
+
+    oracle 跑在 <root>/<id>/baseline 下，而它常常落在平台仓库之内（.tmp/）：pytest 从参数的
+    共同祖先向上找 rootdir 锚点，一路找到**本仓库的 pytest.ini**，于是 -p no:cacheprovider
+    与仓库的 cache_dir + --strict-config 冲突（实测 ERROR: Unknown config option: cache_dir、
+    退出码 4）。那是宿主配置泄漏，不是这个任务跑不起来——把环境问题说成任务问题正是要避免的
+    归因错误。隔离配置写在任务目录（<root>/<id>/）里，不碰 baseline 树本身。
+
+    树里**有**锚点时原样返回：任务自己的配置（addopts / markers / testpaths）必须照用，
+    pytest 也不会再向上走。
+    """
+
+    if any((cwd / name).is_file() for name in PYTEST_ROOT_ANCHORS):
+        return argv
+    ini = task_dir / "pytest-isolation.ini"
+    if not ini.is_file():
+        task_dir.mkdir(parents=True, exist_ok=True)
+        ini.write_text("[pytest]" + chr(10), encoding="utf-8", newline=chr(10))
+    return [*argv, "-c", str(ini), "--rootdir", str(cwd)]
+
+
 def _run(argv: list[str], *, cwd: Path, timeout: int = 900, env: dict | None = None) -> dict:
+    """跑一条命令。**完整输出**（stdout / stderr）与截断尾（*_tail，只给读数看）都要给：
+
+    旧版只留最后 4000 字符，而 _collect 的 node id、verify_oracle 的 PASSED/FAILED 摘要都从
+    `stdout_tail` 里解析——超过 4000 字符的套件（SWE-bench 仓库的常态）于是**静默丢节点与结果**，
+    node 落进 unresolved / 既非红也非绿。subprocess.run 本来就把整份输出读进内存，
+    保留完整串不增加内存量级；截断只用于载荷里的展示字段。
+    """
+
     started = time.time()
     merged = dict(os.environ)
     merged.update(env or {})
@@ -320,13 +428,16 @@ def _run(argv: list[str], *, cwd: Path, timeout: int = 900, env: dict | None = N
         completed = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True,
                                    encoding="utf-8", errors="replace", timeout=timeout, env=merged)
         return {"exit_code": completed.returncode, "seconds": round(time.time() - started, 2),
+                "stdout": completed.stdout, "stderr": completed.stderr,
                 "stdout_tail": completed.stdout[-4000:], "stderr_tail": completed.stderr[-2000:],
                 "timed_out": False}
     except subprocess.TimeoutExpired as exc:
-        return {"exit_code": None, "seconds": round(time.time() - started, 2), "stdout_tail": "",
+        return {"exit_code": None, "seconds": round(time.time() - started, 2),
+                "stdout": "", "stderr": "", "stdout_tail": "",
                 "stderr_tail": "timeout after %ss" % timeout, "timed_out": True}
     except OSError as exc:
-        return {"exit_code": None, "seconds": round(time.time() - started, 2), "stdout_tail": "",
+        return {"exit_code": None, "seconds": round(time.time() - started, 2),
+                "stdout": "", "stderr": "", "stdout_tail": "",
                 "stderr_tail": "%s: %s" % (type(exc).__name__, exc), "timed_out": False}
 
 
@@ -366,8 +477,9 @@ def probe(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON) -> dict
                 "status_reason": "基线树还没有：先跑 --baseline %s --apply-test-patch" % instance_id}
     payload = oracle(instance_id, root=root, python=python)
     argv = [python] + payload["test_command"]["argv"] + ["--collect-only", "-q"] + payload["test_files"]
+    argv = _pytest_isolation(argv, cwd=directory, task_dir=Path(root) / instance_id)
     result = _run(argv, cwd=directory, timeout=600, env=payload["test_command"]["env"])
-    tail = (result["stdout_tail"] + result["stderr_tail"]).lower()
+    tail = (result["stdout"] + result["stderr"]).lower()
     if result["timed_out"]:
         status, reason = "environment_unavailable", "collect-only 超时"
     elif "modulenotfounderror" in tail or "importerror" in tail:
@@ -396,12 +508,20 @@ def run_oracle(instance_id: str, *, root: Path, phase: str, python: str = DEFAUL
         argv += payload["test_files"] + ["-k", " or ".join(names)]
     else:
         argv += payload["test_files"]
+    argv = _pytest_isolation(argv, cwd=directory, task_dir=Path(root) / instance_id)
     result = _run(argv, cwd=directory, timeout=payload["test_command"]["timeout_s"],
                   env=payload["test_command"]["env"])
-    tail = result["stdout_tail"] + result["stderr_tail"]
+    # 逐用例结果从 -rA 摘要解析（_outcomes）：pytest 的摘要行是**行首**的
+    # "PASSED/FAILED/ERROR <node id>"，旧写法 count(" PASSED")（带前导空格）几乎恒为 0，
+    # 于是 run_oracle 的三个计数在真实运行里永远是 0，读的人会以为一条都没跑。
+    outcomes = _outcomes(result["stdout"])
+    decided = {"PASSED": 0, "FAILED": 0, "ERROR": 0}
+    for verdict in outcomes.values():
+        if verdict in decided:
+            decided[verdict] += 1
     return {"instance_id": instance_id, "phase": phase, "argv": argv, "exit_code": result["exit_code"],
             "seconds": result["seconds"], "timed_out": result["timed_out"],
-            "passed": tail.count(" PASSED"), "failed": tail.count(" FAILED"), "errors": tail.count(" ERROR"),
+            "passed": decided["PASSED"], "failed": decided["FAILED"], "errors": decided["ERROR"],
             "stdout_tail": result["stdout_tail"][-3000:], "stderr_tail": result["stderr_tail"][-1000:]}
 
 
@@ -427,9 +547,10 @@ def _collect(instance_id: str, *, root: Path, python: str) -> dict:
     payload = oracle(instance_id, root=root, python=python)
     directory = Path(payload["test_command"]["cwd"])
     argv = [python] + payload["test_command"]["argv"] + ["--collect-only", "-q"] + payload["test_files"]
+    argv = _pytest_isolation(argv, cwd=directory, task_dir=Path(root) / instance_id)
     result = _run(argv, cwd=directory, timeout=900, env=payload["test_command"]["env"])
-    text = result["stdout_tail"] + result["stderr_tail"]
-    ids = [line.strip() for line in result["stdout_tail"].splitlines() if "::" in line and not line.startswith(" ")]
+    text = result["stdout"] + result["stderr"]
+    ids = [line.strip() for line in result["stdout"].splitlines() if "::" in line and not line.startswith(" ")]
     errors = len([line for line in text.splitlines() if line.startswith("ERROR ") or " error" in line.lower() and "errors" in line.lower()])
     needs: list[str] = []
     for line in text.splitlines():
@@ -484,10 +605,11 @@ def verify_oracle(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON)
         if not ids:
             return {"argv": [], "exit_code": None, "seconds": 0.0, "outcomes": {}, "stdout_tail": "", "stderr_tail": ""}
         argv = [python] + payload["test_command"]["argv"] + ids
+        argv = _pytest_isolation(argv, cwd=directory, task_dir=Path(root) / instance_id)
         result = _run(argv, cwd=directory, timeout=payload["test_command"]["timeout_s"],
                       env=payload["test_command"]["env"])
         return {"argv": argv, "exit_code": result["exit_code"], "seconds": result["seconds"],
-                "outcomes": _outcomes(result["stdout_tail"]), "stdout_tail": result["stdout_tail"][-2500:],
+                "outcomes": _outcomes(result["stdout"]), "stdout_tail": result["stdout_tail"][-2500:],
                 "stderr_tail": result["stderr_tail"][-1200:]}
 
     f2p_run = run(f2p)
@@ -496,6 +618,13 @@ def verify_oracle(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON)
     f2p_red = [node for node in f2p if f2p_run["outcomes"].get(node) in ("FAILED", "ERROR")]
     p2p_green = [node for node in p2p if p2p_run["outcomes"].get(node) == "PASSED"]
     p2p_red = [node for node in p2p if p2p_run["outcomes"].get(node) in ("FAILED", "ERROR")]
+    # 每条解析出来的 node 都要有**决定性结果**：SKIPPED / XFAIL 与"根本没出现在摘要里"同样
+    # 只是"没测到"，既不算红也不算绿。旧口径只看 f2p_green / p2p_red，于是"全部被跳过"这类
+    # 任务 rejected=False 而 measured.fail_to_pass_all_red=False——同一份载荷自相矛盾，
+    # 且一个从未被验证过的任务被静默放行。
+    decisive = ("PASSED", "FAILED", "ERROR")
+    f2p_undecided = [node for node in f2p if f2p_run["outcomes"].get(node) not in decisive]
+    p2p_undecided = [node for node in p2p if p2p_run["outcomes"].get(node) not in decisive]
     problems: list[str] = []
     if collected["needs_deps"]:
         problems.append("needs_deps=%s" % collected["needs_deps"])
@@ -507,8 +636,12 @@ def verify_oracle(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON)
         problems.append("fail_to_pass 解析后为空")
     if f2p_green:
         problems.append("基线树上 fail_to_pass 有 %d 条已经绿（任务无效）" % len(f2p_green))
+    if f2p_undecided:
+        problems.append("fail_to_pass 有 %d 条没有决定性结果（被跳过 / 没跑到 / 不在摘要里）" % len(f2p_undecided))
     if p2p_red:
         problems.append("基线树上 pass_to_pass 有 %d 条红" % len(p2p_red))
+    if p2p_undecided:
+        problems.append("pass_to_pass 有 %d 条没有决定性结果（被跳过 / 没跑到 / 不在摘要里）" % len(p2p_undecided))
     rejected = bool(problems)
     if collected["needs_deps"]:
         reason = "unrunnable_local"
@@ -516,11 +649,11 @@ def verify_oracle(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON)
         reason = "no_oracle"
     elif f2p_green:
         reason = "other"
-    elif p2p_red or collected["exit_code"] != 0:
+    elif p2p_red or f2p_undecided or p2p_undecided or collected["exit_code"] != 0:
         reason = "unrunnable_local"
     else:
         reason = ""
-    source = json.loads((Path(root) / instance_id / "source.json").read_text(encoding="utf-8"))
+    source = _required_source_record(instance_id, root=root)
     return {
         "task_id": instance_id,
         "source": {"dataset": "swe-bench-verified", "revision": SOURCES["swe-bench-verified"].revision,
@@ -539,7 +672,7 @@ def verify_oracle(instance_id: str, *, root: Path, python: str = DEFAULT_PYTHON)
         "reject": {"rejected": rejected, "reason": reason},
         "measured": {
             "fail_to_pass_all_red": bool(f2p) and not f2p_green and len(f2p_red) == len(f2p),
-            "pass_to_pass_all_green": bool(p2p) and not p2p_red,
+            "pass_to_pass_all_green": bool(p2p) and not p2p_red and len(p2p_green) == len(p2p),
             "fail_to_pass_total": len(f2p), "fail_to_pass_red": len(f2p_red), "fail_to_pass_green": len(f2p_green),
             "pass_to_pass_total": len(p2p), "pass_to_pass_green": len(p2p_green), "pass_to_pass_red": len(p2p_red),
             "collected_on_base": collected["collected"], "collection_exit_code": collected["exit_code"],

@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from retrieval.models import (
+    AccessScope,
     ChunkDraft,
     DocumentRecord,
     QuarantineOrigin,
@@ -196,3 +199,59 @@ def test_prune_dataset_is_atomic(monkeypatch) -> None:
         store.assert_integrity()
     finally:
         store.close()
+
+
+def test_release_quarantine_keeps_exactly_one_fts_row() -> None:
+    """解除隔离走"先删后插"：重复行会让同一个 chunk 在 search() 里出现两次（复核发现）。"""
+
+    store = seeded_store()
+    try:
+        chunk = store.chunk("chunk_a")
+        assert chunk is not None
+        store.quarantine(
+            "chunk_a",
+            reason="测试隔离",
+            text_hash=chunk.text_hash,
+            quarantined_at="2026-01-01T00:00:00Z",
+            document_id="doc_a",
+            origin=QuarantineOrigin.RUNTIME,
+        )
+        # 模拟"隔离期间正文变了"：重切会按新哈希把它重新写回 FTS（旧隔离记录随之失效）。
+        store.replace_chunks(
+            "doc_a",
+            (
+                make_draft("chunk_a", "alpha body (revised)", ordinal=0),
+                make_draft("chunk_b", "beta body", ordinal=1),
+            ),
+        )
+        assert store.fts_row_count() == 2
+
+        assert store.release_quarantine("chunk_a") is True
+        scope = AccessScope(subject="unit-user", datasets=frozenset({"guides"}))
+        hits = [hit.chunk_id for hit in store.search(expression="revised", scope=scope, limit=10)]
+        assert hits == ["chunk_a"]
+        assert store.fts_row_count() == 2
+        store.assert_integrity()
+    finally:
+        store.close()
+
+
+def test_duplicate_fts_row_is_reported_as_corruption(tmp_root) -> None:
+    """FTS 行多出来同样是结构损坏：必须在打开时就拒绝，而不是 search() 返回两次。"""
+
+    path = tmp_root / "duplicate.sqlite3"
+    store = ChunkStore(path)
+    store.upsert_document(make_document())
+    store.replace_chunks("doc_a", (make_draft("chunk_a", "alpha body"),))
+    store.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "INSERT INTO chunks_fts(chunk_id, text, heading_path) VALUES (?,?,?)",
+        ("chunk_a", "alpha body", "Fixture"),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(StoreError, match="FTS 行总数"):
+        ChunkStore(path, create=False)

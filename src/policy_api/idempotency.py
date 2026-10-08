@@ -88,6 +88,7 @@ def _file_lock(path: Path) -> Iterator[None]:
             retryable=True,
         ) from error
 
+    held = False
     try:
         if os.name == "nt":
             import msvcrt
@@ -105,22 +106,29 @@ def _file_lock(path: Path) -> Iterator[None]:
                             retryable=True,
                         ) from error
                     time.sleep(0.01)
+            held = True
         else:
             import fcntl
 
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            held = True
         yield
     finally:
         try:
-            handle.seek(0)
-            if os.name == "nt":
-                import msvcrt
+            if held:
+                # **只解自己真的拿到的锁**：取锁超时（或 flock 失败）时执行 LK_UNLCK 会从
+                # finally 里抛 PermissionError——异常从 finally 抛出会替换在途异常，
+                # "幂等台账锁超时"这个真正的原因就此消失，调用方只看到一句 Windows 权限错误
+                # （实测：LK_UNLCK 对未持有的区间报 [Errno 13] Permission denied）。
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
 
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
 
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         finally:
             handle.close()
 
@@ -190,6 +198,23 @@ class IdempotencyLedger:
                 raise ApiError(
                     ErrorCode.IDEMPOTENCY_UNAVAILABLE,
                     "幂等台账协议版本未知；拒绝按不确定的语义去重",
+                    retryable=True,
+                )
+            # **条目的字段形状也是台账协议的一部分**。以前只查协议版本与 entry_key，
+            # 于是 `lookup` 的类型信任会把坏条目洗成一份"原结论"：status 缺失/写错类型被
+            # 默认成 200、body 不是对象被换成 {}（客户端收到 200 + 空响应）、status=999
+            # 原样重放。这些都不是"重放上次的结论"，而是**凭空造一个**。
+            status = item.get("status")
+            body = item.get("body")
+            if (
+                not isinstance(status, int)
+                or isinstance(status, bool)
+                or not 100 <= status <= 599
+                or not isinstance(body, Mapping)
+            ):
+                raise ApiError(
+                    ErrorCode.IDEMPOTENCY_UNAVAILABLE,
+                    f"幂等台账第 {number} 行的 status/body 形状非法；拒绝按不确定的语义去重",
                     retryable=True,
                 )
             key = str(item.get("entry_key") or "")

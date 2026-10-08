@@ -1392,6 +1392,33 @@ def apply_edit(*, tree: Path, path: str, old: Optional[str], new: Optional[str],
     return {"applied": True, "detail": "edit"}
 
 
+def _dotted_node_id(node_id: str) -> str:
+    """node id（或 junit 键）→ junit 的 dotted 形式，用来做**精确**比较。
+
+    `tests/test_a.py::TestFoo::test_bar` 与 junit 的 classname+name（`tests.test_a.TestFoo.test_bar`）
+    在这套归一化下相等；`tests/test_a.py::test_foo` 与 `tests/test_ab.py::test_foo` 不等。
+    """
+
+    text = str(node_id).strip().replace("\\", "/")
+    text = text.replace(".py::", "::")
+    if text.endswith(".py"):
+        text = text[:-3]
+    return text.replace("::", ".").replace("/", ".")
+
+
+def declared_outcomes(node_ids: Sequence[str], outcomes: Mapping[str, str]) -> dict:
+    """把 junit 的逐用例结果对齐到声明的 node id：**精确匹配**，不做子串模糊。
+
+    旧实现用「文件主干是不是 name 的子串 + 末段后缀相等」两跳近似：`test_shop.py` 会吃到
+    `test_shop_extra.py` 的结果（把别的用例的结论记到声明的那条上）；类作用域的 node id
+    （`tests/test_x.py::TestFoo::test_bar`）又永远匹配不上 junit 键，真跑过的用例被记成
+    `missing`——两个方向都是读数错误。
+    """
+
+    lookup = {_dotted_node_id(name): verdict for name, verdict in outcomes.items()}
+    return {node: lookup.get(_dotted_node_id(node), "missing") for node in node_ids}
+
+
 def run_oracle(*, tree: Path, arm_dir: Path, python: str, node_ids: Sequence[str], timeout_s: int) -> Mapping[str, Any]:
     """可用性 oracle：仓库自带测试在**这次运行之后的树**上还绿不绿。
 
@@ -1447,15 +1474,7 @@ def run_oracle(*, tree: Path, arm_dir: Path, python: str, node_ids: Sequence[str
             parse_error = "junit 解析失败：" + str(error)
     else:
         parse_error = "junit 报告不存在（收集期就失败或解释器不可用）"
-    declared = {}
-    for node in node_ids:
-        normalized = node.replace("::", ".py::", 1) if ".py" in node and "::" in node else node
-        found = None
-        for name, verdict in outcomes.items():
-            if name.endswith(node.split("::", 1)[-1]) and node.split("::", 1)[0].split("/")[-1].replace(".py", "") in name:
-                found = verdict
-                break
-        declared[node] = found if found is not None else "missing"
+    declared = declared_outcomes(node_ids, outcomes)
     status = "unavailable" if parse_error else "ran"
     reason = parse_error
     if status == "ran" and not outcomes:

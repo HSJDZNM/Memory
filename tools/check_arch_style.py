@@ -78,7 +78,16 @@ def first_paragraph(body) -> str:
 
 def check_docs() -> list:
     problems = []
-    for path in sorted(ARCH.glob("*.md")):
+    paths = sorted(ARCH.glob("*.md"))
+    if not paths:
+        # 空输入集不是"通过"：目录被改名 / 移动 / 路径写错时 glob 返回空，旧实现会打印
+        # "平衡"并退出 0 —— 一次什么都没检查的绿。缺输入本身就是一条问题。
+        try:  # 守卫自己不能崩：目录不在仓库内（测试夹具）时如实显示原路径
+            shown = ARCH.relative_to(ROOT).as_posix()
+        except ValueError:
+            shown = ARCH.as_posix()
+        problems.append("未找到任何架构文档：" + shown + "（目录被改名 / 移动，或路径写错？）")
+    for path in paths:
         text = path.read_text(encoding="utf-8")
         for title, body in sections(text):
             paragraph = first_paragraph(body)

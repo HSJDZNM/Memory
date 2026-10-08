@@ -47,6 +47,7 @@ __all__ = [
     "compact_text",
     "effective_chunker_version",
     "find_sections",
+    "fence_match",
     "front_matter_bounds",
     "heading_anchor",
     "iter_blocks",
@@ -56,7 +57,22 @@ __all__ = [
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 # 围栏用 \x60（反引号）的十六进制写法，避免源码里出现难以阅读的连续反引号。
-FENCE_RE = re.compile(r"^\s{0,3}(\x60{3,}|~{3,})\s*([^\s\x60]*)\s*$")
+#
+# info string 按 CommonMark：反引号围栏的 info string **不许**含反引号（含了这行就不是
+# 围栏，只是正文），波浪线围栏允许；两种都允许 info string 里有空格——```python
+# title="x.py" / ```jsx live / ```bash copy 都是常见写法，旧实现（[^\s\x60]*）把整行
+# 当正文，块里的 # 注释于是被 find_sections 当成标题，正是本模块要防的那件事。
+FENCE_RE = re.compile(r"^\s{0,3}(\x60{3,}|~{3,})[ \t]*([^\x60]*?)[ \t]*$")
+_TILDE_FENCE_RE = re.compile(r"^\s{0,3}(~{3,})[ \t]*(.*?)[ \t]*$")
+
+
+def fence_match(line: str) -> Optional["re.Match[str]"]:
+    """解析一行围栏；不是围栏返回 None（info string 的 CommonMark 规则见上面的注释）。"""
+
+    match = FENCE_RE.match(line)
+    if match is not None:
+        return match
+    return _TILDE_FENCE_RE.match(line)
 SLUG_RE = re.compile(r"[^0-9a-z\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff]+")
 # 中日韩文字区间：这些语言没有空格分词，FTS5 的 unicode61 会把整段当成一个词，
 # 因此索引与查询两侧都按"逐字切分"生成检索文本（同一套切分，避免两侧不一致）。
@@ -337,10 +353,11 @@ def iter_blocks(body: str, *, line_start: int = 1) -> Tuple[Block, ...]:
                 fence_info = ""
             continue
 
-        match = FENCE_RE.match(line)
+        match = fence_match(line)
         if match:
             flush_prose()
-            fence = match.group(1)[0] * 3
+            # 保留**完整**起始标记：关闭标记不短于它（四反引号块不被内部三反引号关掉）。
+            fence = match.group(1)
             fence_info = match.group(2)
             fence_start = number
             fence_lines = [line]
@@ -370,13 +387,20 @@ def iter_blocks(body: str, *, line_start: int = 1) -> Tuple[Block, ...]:
 
 
 def _closes_fence(line: str, fence: str) -> bool:
+    """闭合围栏：必须与起始标记**同一种字符**，且不短于起始标记（CommonMark）。
+
+    旧实现把起始标记折叠成 3 个字符、又只比"≥3 且全同一种字符"，于是任何 ``` 行都能
+    关掉 ~~~ 块、四反引号块会被内部的普通三反引号提前关掉（文档里嵌示例的标准写法），
+    其后的内容被重新当正文解析、代码里的 # 注释被提升成标题。
+    """
+
     stripped = line.strip()
-    if not stripped:
+    if not stripped or len(stripped) < len(fence):
         return False
-    marker = stripped[0]
+    marker = fence[0]
     if marker not in (chr(96), "~"):
         return False
-    return len(stripped) >= 3 and set(stripped) == {marker}
+    return stripped[0] == marker and set(stripped) == {marker}
 
 
 def find_sections(body: str, *, line_start: int = 1) -> Tuple[Section, ...]:
@@ -387,7 +411,11 @@ def find_sections(body: str, *, line_start: int = 1) -> Tuple[Section, ...]:
     occurrences: dict[str, int] = {}
     stack: list[Tuple[int, str]] = []
     current_path: Tuple[str, ...] = ()
+    # current_start 是**章节**的起始行（标题那一行，供 Section.line_start 用）；
+    # buffer_start 是缓冲区里第一行正文的真实行号——标题行本身 `continue` 掉了、不进 buffer，
+    # 两者因此在标题之后差一行（旧实现共用一个变量，让每个标题章节的 Block.line_start 都早一行）。
     current_start = line_start
+    buffer_start = line_start
     buffer: list[str] = []
     fence: Optional[str] = None
     newline = chr(10)
@@ -396,7 +424,7 @@ def find_sections(body: str, *, line_start: int = 1) -> Tuple[Section, ...]:
         nonlocal buffer
         text = newline.join(buffer)
         buffer = []
-        blocks = iter_blocks(text, line_start=current_start)
+        blocks = iter_blocks(text, line_start=buffer_start)
         if not blocks and not current_path:
             # 正文之前没有任何内容：不需要为空白占一个"章节"。
             return
@@ -420,9 +448,9 @@ def find_sections(body: str, *, line_start: int = 1) -> Tuple[Section, ...]:
             if _closes_fence(line, fence):
                 fence = None
             continue
-        fence_match = FENCE_RE.match(line)
-        if fence_match:
-            fence = fence_match.group(1)[0] * 3
+        opening = fence_match(line)
+        if opening:
+            fence = opening.group(1)
             buffer.append(line)
             continue
         heading = HEADING_RE.match(line)
@@ -435,6 +463,7 @@ def find_sections(body: str, *, line_start: int = 1) -> Tuple[Section, ...]:
             stack.append((level, title))
             current_path = tuple(item[1] for item in stack)
             current_start = number
+            buffer_start = number + 1
             continue
         buffer.append(line)
 

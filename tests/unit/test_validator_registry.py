@@ -109,6 +109,30 @@ def test_requires_must_run_in_an_earlier_stage(tmp_root: Path) -> None:
     assert "必须先于" in str(error.value)
 
 
+def test_undeclared_stage_of_a_later_dependency_is_a_registry_error(tmp_root: Path) -> None:
+    """依赖顺序检查读的是**被依赖者**的阶段：它没声明阶段时也必须是 RegistryError。
+
+    历史缺陷（OCR 全量审查 L13）：阶段合法性只在"轮到自己"时检查，而 `requires` 可以指向
+    列表里**后面**的那一条——那一条的阶段还没查过，`stage_index[target.stage]` 于是抛裸
+    KeyError：加载期的配置错误变成未处理异常，退出码与错误分类都丢了（本模块的承诺是
+    "任何一条不满足都拒绝加载"）。
+    """
+
+    document = registry_document()
+    document["validators"][0]["requires"] = ["ghost.validator"]
+    late = copy.deepcopy(document["validators"][0])
+    late["id"] = "ghost.validator"
+    late["requires"] = []
+    late["stage"] = "py.ghost"  # 形态合法（py.*），但不在 registry.stages 里
+    document["validators"].append(late)
+
+    with pytest.raises(RegistryError) as error:
+        _load(document, tmp_root)
+
+    assert "未定义的阶段" in str(error.value)
+    assert "py.ghost" in str(error.value)
+
+
 def test_rule_pack_must_reference_declared_validators(tmp_root: Path) -> None:
     document = registry_document()
     document["rule_packs"][0]["validators"] = ["py.ghost"]

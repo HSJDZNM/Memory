@@ -50,11 +50,19 @@ class DependencyTextError(ValueError):
 #
 # from 形态允许前导点（相对导入）：from . import repository 的目标是**子模块**，
 # 只取顶层名字会让它落在 "from ." 上（没有名字），规则永远看不见它。
+#
+# 名单的两种真实写法都要接住（漏登记等于结构性放行）：
+# - 括号名单可以跨行，`from x import(\n a,\n b,\n)` 是 black/ruff 的标准输出；
+# - 分号是语句边界：`from x import y; z = 1` 里的 y 仍然必须被登记。
 _FROM_IMPORT_RE = re.compile(
-    r"^[ \t]*from[ \t]+(\.*[A-Za-z_][\w.]*|\.+)[ \t]+import[ \t]+([^\n]*)",
+    r"^[ \t]*from[ \t]+(\.*[A-Za-z_][\w.]*|\.+)[ \t]+import[ \t]*(\([^)]*\)|[^\n;]*)",
     re.MULTILINE,
 )
-_PLAIN_IMPORT_RE = re.compile(r"^[ \t]*import[ \t]+([^\n]+)$", re.MULTILINE)
+_PLAIN_IMPORT_RE = re.compile(r"^[ \t]*import[ \t]+([^\n;]+)", re.MULTILINE)
+# 反斜杠续行：`import a, \\\n    b` 是一条语句，物理行号不能把 b 切掉。
+# 只有"行尾反斜杠 + 换行"才拼：续行的内容在合法 Python 里不可能是一条新语句的开头，
+# 所以这一步不会把别的语句吞进来。
+_BACKSLASH_CONTINUATION_RE = re.compile(r"\\\r?\n[ \t]*")
 # 点分模块路径：允许相对导入的前导点（".repository" / "..pkg.mod"）。
 _MODULE_PATH_RE = re.compile(r"^\.*[A-Za-z_][\w.]*$")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")
@@ -126,6 +134,18 @@ def _module_names(raw: str) -> Tuple[str, ...]:
     return tuple(names)
 
 
+def _name_tokens(raw_names: str) -> Tuple[str, ...]:
+    """把 import 名单拆成 token：逐行去行内注释，去掉括号与逗号两侧空白。
+
+    括号名单可以跨行（black/ruff 的标准写法），因此行内注释必须**逐行**处理：
+    整段 `split("#")[0]` 会把注释之后的所有名字一起吃掉（那正是漏登记）。
+    """
+
+    without_comments = chr(10).join(line.split("#")[0] for line in raw_names.split(chr(10)))
+    cleaned = without_comments.replace("(", " ").replace(")", " ")
+    return tuple(chunk.strip() for chunk in cleaned.split(",") if chunk.strip())
+
+
 def _from_targets(raw_module: str, raw_names: str) -> Tuple[str, ...]:
     """解析 from X import a, b 的目标。
 
@@ -144,9 +164,8 @@ def _from_targets(raw_module: str, raw_names: str) -> Tuple[str, ...]:
     if module.strip("."):
         targets.append(module)
     prefix = "" if module == "." else module
-    for chunk in raw_names.split("#")[0].split(","):
-        token = chunk.strip()
-        if not token or token == _WILDCARD:
+    for token in _name_tokens(raw_names):
+        if token == _WILDCARD:
             continue
         name = token.split()[0]  # 去掉 as 别名
         if not _IDENTIFIER_RE.match(name):
@@ -212,7 +231,8 @@ def propose_dependencies(text: str) -> DependencyProposal:
     if not isinstance(text, str):
         raise DependencyTextError(f"变更文本必须是字符串，得到 {type(text).__name__}")
 
-    code = _code_lines(text)
+    # 反斜杠续行先拼回一条逻辑行：否则 `import a, \` + 换行 + `b` 里的 b 会被物理行号切掉。
+    code = _BACKSLASH_CONTINUATION_RE.sub(" ", _code_lines(text))
     found: set[str] = set()
     for match in _FROM_IMPORT_RE.finditer(code):
         found.update(_from_targets(match.group(1), match.group(2)))

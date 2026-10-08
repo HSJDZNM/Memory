@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from retrieval.chunker import chunk_document
 from retrieval.corpus import load_corpus, verify_corpus
@@ -380,6 +382,75 @@ def test_expired_runtime_quarantine_is_released_when_the_text_changes(tmp_root) 
         store.close()
 
 
+def test_verify_corpus_is_idempotent_and_recomputes_file_issues(tmp_root) -> None:
+    """verify_corpus 不许把加载期已经算过的问题再写一遍（复核发现：CLI 里每条都两遍）。"""
+
+    loaded = load_fixture_corpus(tmp_root, drift=("guides/index.md",))
+    assert [issue.kind for issue in loaded.verification.issues] == ["hash_mismatch"]
+
+    once = verify_corpus(loaded, repo_root=tmp_root)
+    assert [issue.kind for issue in once.issues] == ["hash_mismatch"]
+    again = verify_corpus(loaded, repo_root=tmp_root)
+    assert [issue.kind for issue in again.issues] == ["hash_mismatch"]
+
+    # 文件侧的问题重算：文件不见了就报 missing_file（不是靠快照）。
+    clean = load_fixture_corpus(tmp_root)
+    (tmp_root / GUIDE_MIRROR / "index.md").unlink()
+    assert [issue.kind for issue in verify_corpus(clean, repo_root=tmp_root).issues] == [
+        "missing_file"
+    ]
+
+    # 镜像侧的问题（not_saved）无法重算：必须从加载期快照里保留下来，而且只有一份。
+    manifest_path = tmp_root / GUIDE_MIRROR / "manifest.json"
+    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    document["pages"][0]["saved"] = False
+    manifest_path.write_text(
+        json.dumps(document, ensure_ascii=False, indent=2) + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+    mirrored = load_corpus(clean.corpus_path, repo_root=tmp_root)
+    kinds = [issue.kind for issue in verify_corpus(mirrored, repo_root=tmp_root).issues]
+    assert kinds.count("not_saved") == 1, kinds
+
+
+def test_a_dataset_removed_from_the_manifest_is_pruned(tmp_root) -> None:
+    """清单里整个数据集被移除时，它名下的文档必须一起删除（复核发现）。"""
+
+    corpus_path = write_fixture_corpus(tmp_root)
+    loaded = load_corpus(corpus_path, repo_root=tmp_root)
+    store = open_store(tmp_root)
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        adversarial_id = loaded.entry("adversarial", "poisoned.md").document_id
+        assert store.document(adversarial_id) is not None
+
+        # 从清单里整段去掉 adversarial 数据集（镜像文件仍在，条目不再声明）。
+        document = yaml.safe_load(corpus_path.read_text(encoding="utf-8"))
+        document["datasets"] = [
+            item for item in document["datasets"] if item["name"] != "adversarial"
+        ]
+        corpus_path.write_text(
+            yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+            newline="",
+        )
+        smaller = load_corpus(corpus_path, repo_root=tmp_root)
+        report = ingest(smaller, store, repo_root=tmp_root)
+
+        assert report.documents_removed >= 1
+        assert store.document(adversarial_id) is None
+        assert store.chunks(adversarial_id) == ()
+        retriever = FtsRetriever(store, policy=smaller.policy)
+        hits = retriever.retrieve(
+            RetrievalQuery(text="IGNORE ALL PREVIOUS INSTRUCTIONS shell tool", limit=5),
+            scope_of(smaller),
+        )
+        assert all(item.document_id != adversarial_id for item in hits.results)
+    finally:
+        store.close()
+
+
 def test_rule_source_registration_and_cascade_delete(tmp_root) -> None:
     loaded = load_fixture_corpus(
         tmp_root,
@@ -413,6 +484,57 @@ def test_rule_source_registration_and_cascade_delete(tmp_root) -> None:
         )
         ingest(reloaded, store, repo_root=tmp_root)
         assert store.rule_sources(rule_id="REVIEW-900") == ()
+    finally:
+        store.close()
+
+
+def test_rule_source_swap_is_atomic_when_a_rule_fails(tmp_root) -> None:
+    """溯源换血先全部解析、再一个事务里换：中途失败不许留下清了一半的表（复核发现）。"""
+
+    loaded = load_fixture_corpus(
+        tmp_root,
+        rule_sources=[
+            {
+                "rule_id": "REVIEW-903",
+                "rule_version": 1,
+                "dataset": "guides",
+                "source_path": "topics.md",
+                "heading_path": ["Review Topics", "Tests"],
+            }
+        ],
+    )
+    store = open_store(tmp_root)
+    try:
+        ingest(loaded, store, repo_root=tmp_root)
+        before = store.rule_sources(rule_id="REVIEW-903")
+        assert before
+
+        broken = load_fixture_corpus(
+            tmp_root,
+            rule_sources=[
+                {
+                    "rule_id": "REVIEW-903",
+                    "rule_version": 1,
+                    "dataset": "guides",
+                    "source_path": "topics.md",
+                    "heading_path": ["Review Topics", "Documentation"],
+                },
+                {
+                    "rule_id": "REVIEW-904",
+                    "rule_version": 1,
+                    "dataset": "guides",
+                    "source_path": "topics.md",
+                    "heading_path": ["Review Topics", "No Such Heading"],
+                },
+            ],
+        )
+        with pytest.raises(IndexingError):
+            ingest(broken, store, repo_root=tmp_root)
+
+        # 失败的一趟不许动表：REVIEW-903 仍指着旧 chunk，且关系可反查。
+        after = store.rule_sources(rule_id="REVIEW-903")
+        assert [row.chunk_id for row in after] == [row.chunk_id for row in before]
+        assert store.rules_for_chunk(after[0].chunk_id) == (("REVIEW-903", 1),)
     finally:
         store.close()
 
@@ -648,6 +770,31 @@ def test_missing_file_fails_closed_and_needs_manifest_removal(tmp_root) -> None:
         report = ingest(removed, store, repo_root=tmp_root)
         assert report.documents_removed == 1
         assert store.document(document_id) is None
+    finally:
+        store.close()
+
+
+def test_keyboard_interrupt_leaves_the_run_running(tmp_root) -> None:
+    """Ctrl-C 不是失败：run 留在 running，由下一次 ingest 标成 interrupted（复核发现）。"""
+
+    loaded = load_fixture_corpus(tmp_root)
+    store = open_store(tmp_root)
+    try:
+        def interrupt(entry) -> None:
+            if entry.source_path == "topics.md":
+                raise KeyboardInterrupt("用户中断")
+
+        with pytest.raises(KeyboardInterrupt):
+            ingest(
+                loaded, store, repo_root=tmp_root, after_document=interrupt, run_id="run_interrupt"
+            )
+        run = store.run("run_interrupt")
+        assert run is not None
+        assert run.status is IndexRunStatus.RUNNING, "中断不许冒充 failed"
+
+        # 不变式 4：下一次 run 开始时把遗留的 running 标成 interrupted。
+        ingest(loaded, store, repo_root=tmp_root, run_id="run_next")
+        assert store.run("run_interrupt").status is IndexRunStatus.INTERRUPTED
     finally:
         store.close()
 

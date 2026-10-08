@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -108,11 +109,17 @@ STATUS_BY_CODE: dict[ErrorCode, int] = {
 
 _MAX_DETAIL_CHARS = 240
 
+# 控制字符（除 \t\n\r 这些"空白"外）：ESC / NUL / DEL / BEL …
+# `str.split()` 按定义只折叠**空白**，所以它们会原样穿过——ANSI 转义序列能在终端上
+# 改写前一行，NUL/DEL 会让下游解析器看到非文本字节。
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
 
 def redact_detail(text: str) -> str:
     """错误细节只保留单行、限量、无控制字符的文本（不透传异常原文）。"""
 
-    cleaned = " ".join(str(text).split())
+    cleaned = _CONTROL_RE.sub(" ", str(text))
+    cleaned = " ".join(cleaned.split())
     if len(cleaned) > _MAX_DETAIL_CHARS:
         cleaned = cleaned[: _MAX_DETAIL_CHARS - 1] + "…"
     return cleaned

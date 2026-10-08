@@ -51,7 +51,6 @@ import hashlib
 import json
 import math
 import os
-import platform as _platform
 import re
 import shutil
 import subprocess
@@ -1073,6 +1072,93 @@ def _count_outcomes(tests: Mapping[str, Any]) -> dict:
     return counts
 
 
+def _oracle_argv(spec: Mapping[str, Any], python: str, tree: Path) -> list[str]:
+    """把 oracle 的 argv 收敛成一条**完整命令行**。
+
+    冻结契约（docs/project/engineering-policy-platform/testing/ab/task-sets.md §2/§9）：
+    `test_command.argv` 是**解释器之后**的参数，解释器由 `python` 字段单独给出——
+    tools/ab_tasks.py 正是这么写的（["-m", "pytest", ...]）。但 tools/ab_arm.py 的
+    measurement_input.json 把完整命令行（argv 里已含 python）写进同一个字段。
+    判据是 argv[0] 能不能**直接执行**：路径形态看文件在不在（不在就原样交给 run_command
+    如实报 unavailable），裸名字看 PATH 能不能解析，都不是就按契约前置 python。
+
+    旧实现把 argv 当完整命令行直接交给 subprocess：argv[0]="-m" 不是可执行文件，
+    FileNotFoundError → oracle 恒 unavailable，本次读数的 U1 永远是"起不来"。
+    """
+
+    argv = [str(item) for item in (spec.get("argv") or [])]
+    if not argv:
+        target = "tests" if (tree / "tests").is_dir() else "."
+        return [python, "-m", "pytest", "-q", "--tb=no", target]
+    head = argv[0]
+    if os.path.isabs(head) or os.sep in head or (bool(os.altsep) and os.altsep in head):
+        return argv
+    if shutil.which(head):
+        return argv
+    return [python, *argv]
+
+
+def _oracle_declared_tree(oracle: Mapping[str, Any]) -> Optional[Path]:
+    """oracle 载荷**自己声明的树**（这份 oracle 属于哪棵树）。
+
+    ab_arm 的 measurement_input.json 给 arm_tree.path（display() 出来的仓库根相对路径），
+    ab_tasks 的 --oracle 载荷给 baseline_dir（默认 --root 也是仓库根相对）。相对路径按仓库根
+    解析；没有声明就返回 None——调用方这时只能按"被测树"处理，不能凭空推。
+    """
+
+    candidates: list[Any] = []
+    arm_tree = oracle.get("arm_tree")
+    if isinstance(arm_tree, Mapping):
+        candidates.append(arm_tree.get("path"))
+    candidates.append(oracle.get("baseline_dir"))
+    for item in candidates:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        path = Path(item.strip())
+        return path if path.is_absolute() else (REPO / path)
+    return None
+
+
+def _resolve_oracle_cwd(
+    tree: Path, spec: Mapping[str, Any], declared: Optional[Path]
+) -> Optional[Path]:
+    """把 oracle 的 cwd 解析成**被测树内**的一个真实目录。
+
+    `test_command.cwd` 是 oracle **所属那棵树**的路径，两个生产方都不以"被测树"为基准：
+    ab_arm 给 display(tree)（仓库根相对），ab_tasks 给 <root>/<id>/baseline（进程 CWD 相对，
+    默认也是仓库根）。因此：
+
+      1. 相对路径按仓库根解析、绝对路径原样，得到 resolved；
+      2. resolved 落在**声明的那棵树**里 → 按同一相对子路径映射进本次被测的 tree
+         （反事实路径因此强制落在 target_root 内，不会跑去跑原始基线树）；
+      3. resolved 本来就落在被测 tree 里 → 原样使用；
+      4. 都不是 → 退回"相对被测树"的老读法（手工写的 cwd: tests 这类）；
+      5. 四条都不成立 → 返回 None，由调用方写 unavailable + reason（不猜、不回落）。
+    """
+
+    tree = tree.resolve()
+    raw = str(spec.get("cwd") or "").strip()
+    if raw in ("", "."):
+        return tree if tree.is_dir() else None
+    candidate = Path(raw)
+    resolved = (candidate if candidate.is_absolute() else (REPO / candidate)).resolve()
+    bases = [declared.resolve() if declared else None, tree]
+    for base in bases:
+        if base is None:
+            continue
+        try:
+            relative = resolved.relative_to(base)
+        except ValueError:
+            continue
+        mapped = (tree / relative).resolve()
+        if mapped.is_dir():
+            return mapped
+    legacy = (tree / candidate).resolve()
+    if not candidate.is_absolute() and legacy.is_dir():
+        return legacy
+    return None
+
+
 def run_pytest_oracle(
     *,
     tree: Path,
@@ -1084,16 +1170,17 @@ def run_pytest_oracle(
     """跑仓库自带测试：外部 oracle（U1，完全独立于策略层与 linter）。"""
 
     spec = oracle.get("test_command") or {}
-    argv = [str(item) for item in (spec.get("argv") or [])]
     python = str(oracle.get("python") or sys.executable)
-    if not argv:
-        target = "tests" if (tree / "tests").is_dir() else "."
-        argv = [python, "-m", "pytest", "-q", "--tb=no", target]
-    cwd = tree / str(spec.get("cwd") or ".")
-    if not cwd.is_dir():
+    argv = _oracle_argv(spec, python, tree)
+    declared = _oracle_declared_tree(oracle)
+    cwd = _resolve_oracle_cwd(tree, spec, declared)
+    if cwd is None:
         return {
             "status": STATUS_UNAVAILABLE,
-            "reason": "oracle 的 cwd 不存在：" + str(spec.get("cwd")),
+            "reason": sanitize(
+                "oracle 的 cwd 解析不到被测树里的目录：cwd=" + str(spec.get("cwd")) + "；声明的树=" + str(declared) + "；被测树=" + str(tree),
+                root=tree,
+            ),
         }
     limit = float(spec.get("timeout_s") or timeout_s)
     plugin_dir = write_pytest_plugin(workdir)
@@ -2392,7 +2479,9 @@ def build_reading_context(
         declarations=declarations,
         host=reading.host_block(
             sandbox=sandbox,
-            extra={"tool": TOOL_ID, "tool_version": TOOL_VERSION, "python": _platform.python_version()},
+            # 只放本读数专有的宿主事实：python 由 host_block 自己产出（同值重复一遍是
+            # 两个来源表达同一件事，将来不一致时会变成静默覆盖的入口）。
+            extra={"tool": TOOL_ID, "tool_version": TOOL_VERSION},
         ),
         include_run=include_run,
     )
@@ -3038,7 +3127,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="scan,security,usable,blocked,efficiency,automation 或 all")
     parser.add_argument("--baseline-tree", help="基线树：算 new-side 的 + 行集合（不需要 git）")
     parser.add_argument("--diff", help="unified diff 文件：与 --baseline-tree 二选一")
-    parser.add_argument("--oracle", help="oracle JSON（python / test_command / pass_to_pass ...）")
+    parser.add_argument("--oracle", help="oracle JSON（python / test_command / pass_to_pass ...）；"
+                        "test_command.argv 两种形态都接受：解释器之后的参数，或完整命令行")
     parser.add_argument("--test-selection", action="append", default=[],
                         help="label=path：要跑哪些 node id（可重复；JSON 数组或一行一个）")
     parser.add_argument("--test-timeout", type=float, default=900.0, help="pytest 超时（秒）")

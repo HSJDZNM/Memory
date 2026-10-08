@@ -389,10 +389,19 @@ class CorpusQuarantine(StrictModel):
     @field_validator("text_hash")
     @classmethod
     def _check_hash(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized.startswith("sha256:") or len(normalized) != len("sha256:") + 64:
+        """与 ResolvedEntry._check_manifest_hash 同一口径：64 位**十六进制**，大小写归一。
+
+        旧实现只查前缀与总长度，于是 "sha256:" + 64 个 g 也能登记——它永远不可能等于任何
+        真实 chunk 的 sha256_text（小写十六进制），这条隔离于是静默失效；大写十六进制
+        同样对不上小写输出，必须归一。
+        """
+
+        normalized = value.strip().lower()
+        if normalized.startswith("sha256:"):
+            normalized = normalized[len("sha256:") :]
+        if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
             raise ValueError(f"text_hash 必须是 sha256:<64 hex>，得到 {value!r}")
-        return normalized
+        return "sha256:" + normalized
 
 
 class CorpusRuleSource(StrictModel):
@@ -902,6 +911,20 @@ class EngineeringContext(StrictModel):
     @property
     def is_available(self) -> bool:
         return self.status is ContextStatus.OK
+
+    @model_validator(mode="after")
+    def _status_matches_sources(self) -> "EngineeringContext":
+        """与 RetrievalResult._status_matches_results 同口径：状态与内容必须自洽。
+
+        只查预算的话，status=ok 却一条片段/策略事实都没有（"available 但空空如也"）与
+        knowledge_unavailable 却给不出原因（调用方无法据此失败关闭）都能构造出来。
+        """
+
+        if self.status is ContextStatus.OK and not self.snippets:
+            raise ValueError("status=ok 必须带至少一条片段：没有可追溯来源时只能是 knowledge_unavailable")
+        if self.status is ContextStatus.KNOWLEDGE_UNAVAILABLE and self.reason is None:
+            raise ValueError("status=knowledge_unavailable 必须说明 reason（受控原因）")
+        return self
 
     @model_validator(mode="after")
     def _budget_is_respected(self) -> "EngineeringContext":

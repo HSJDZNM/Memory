@@ -22,7 +22,7 @@ from typing import Optional, Sequence, Tuple
 
 from policy.models import canonical_identifier
 
-from .config import ApiConfig, ClientSpec, hash_token
+from .config import ApiConfig, ClientSpec, hash_token, parse_expires_at
 from .errors import ApiError, ErrorCode
 
 __all__ = [
@@ -35,7 +35,6 @@ __all__ = [
 ]
 
 _BEARER_RE = re.compile(r"^Bearer[ \t]+(\S+)$")
-_EXPIRY_FORMATS = ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 @dataclass(frozen=True)
@@ -69,23 +68,23 @@ def parse_authorization(header: Optional[str]) -> str:
 
 
 def parse_expiry(value: Optional[str]) -> Optional[datetime.datetime]:
-    """解析 `expires_at`；格式非法直接拒绝（不把"看不懂的过期时间"当成永不过期）。"""
+    """解析 `expires_at`；格式非法直接拒绝（不把"看不懂的过期时间"当成永不过期）。
+
+    配置里的值在**加载期**已经被 `config.ClientSpec` 校验过一次（部署错误在那里报，
+    带 client_id 与可接受的形态）；这里保留翻译层，是为了让"绕过配置直接构造 ClientSpec"
+    的路径同样失败关闭。**不复述配置原文**：detail 会进 HTTP 响应，部署配置的取值不该
+    回显给调用方。
+    """
 
     if value is None:
         return None
-    text = value.strip()
-    for pattern in _EXPIRY_FORMATS:
-        try:
-            parsed = datetime.datetime.strptime(text, pattern)
-        except ValueError:
-            continue
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=datetime.timezone.utc)
-        return parsed.astimezone(datetime.timezone.utc)
-    raise ApiError(
-        ErrorCode.UNAUTHENTICATED,
-        f"client 的 expires_at 不是可识别的 ISO-8601 时间：{text!r}",
-    )
+    try:
+        return parse_expires_at(value)
+    except ValueError as error:
+        raise ApiError(
+            ErrorCode.UNAUTHENTICATED,
+            "client 的 expires_at 不是可识别的 ISO-8601 时间",
+        ) from error
 
 
 def client_by_token(config: ApiConfig, token: str) -> ClientSpec:

@@ -82,7 +82,10 @@ def serve(
                     print(f"  - {tenant.get('tenant')} / {item.get('check')}: {item.get('detail')}")
         return 3
     try:
-        host, port = endpoint(config)
+        # 用 **instance 自己的 config**：注入了 runtime 时，真正在服务的是它，
+        # 而 `config` 是刚刚从 `config_path` 重新读进来的那一份——两者可以不是同一份配置，
+        # 拿后者的地址监听等于让"服务听在哪个地址"与"服务按哪份配置判定"分家。
+        host, port = endpoint(instance.config)
     except ConfigError as error:
         # 与 load_api_config 同一条出口：配置读不懂 / 写错了都是"拒绝启动 = 2"，
         # 绝不把部署配置的错误变成一段 traceback（那既没有退出码语义，也掩盖了原因）。

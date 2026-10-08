@@ -67,13 +67,21 @@ class ImportFact:
 
     @property
     def bound_name(self) -> Optional[str]:
-        """这次 import 在模块里绑定的名字（用于把调用链绑定回 import）。"""
+        """这次 import 在模块里绑定的名字（用于把调用链绑定回 import）。
 
-        if self.alias:
-            return self.alias
-        if not self.module:
-            return None
-        return self.module.split(".")[0] if self.kind == "import" else self.module.split(".")[-1]
+        `bindings` 才是权威：它是这次 import **实际绑定**的名字（from-import 的每个名字
+        都展开、含 as 别名）。从 alias / module 的段里推断在四种形态上都是错的：
+
+        - `from os import path` → 给出从未被绑定的 "os"，真正的 path 被静默丢掉；
+        - `from . import x` → 给出 None，而 x 明明被绑定；
+        - `from x import a, b` → 只能给出一个名字；
+        - 动态 import（`kind="dynamic"`）→ 它**什么都没绑定**，却给出一段模块名。
+
+        消费方（depgraph 的调用边、`imported_names`）因此把调用链挂在不存在的根上，
+        并漏掉真实绑定（`path.join(...)`、`Service.create(...)` 这类边整条消失）。
+        """
+
+        return self.bindings[0] if self.bindings else None
 
 
 @dataclass(frozen=True)
@@ -354,8 +362,11 @@ def dynamic_import_bindings(imports: Sequence[ImportFact]) -> Tuple[str, ...]:
 
 
 def imported_names(facts: ModuleFacts) -> Tuple[str, ...]:
-    """模块里被 import 绑定过的名字（供调用链绑定使用）。"""
+    """模块里被 import 绑定过的名字（供调用链绑定使用）。
 
-    return tuple(
-        sorted({item.bound_name for item in facts.imports if item.bound_name})
-    )
+    **展开全部 bindings**：`bound_name` 只回答"这次 import 的主名字是哪个"（调用链的
+    根），这里回答"模块里因此多了哪些名字"——`from x import a, b` 给出 a 与 b 两个，
+    而不是把一次 import 压成一个名字。
+    """
+
+    return tuple(sorted({name for item in facts.imports for name in item.bindings}))

@@ -336,6 +336,54 @@ def test_normalize_event_path_allows_the_workspace_root() -> None:
     assert normalize_event_path(".", workspace=workspace) == "."
     assert normalize_event_path(str(workspace), workspace=workspace) == "."
 
+@pytest.mark.parametrize("raw", ["..", "../..", "./..", chr(92).join(["..", ".."]), "./../"])
+def test_escape_shaped_dot_paths_are_not_read_as_the_workspace_root(raw: str) -> None:
+    """只有纯点斜线写法才是工作区根：`strip("./")` 会把 `..` 一起剥成空串。
+
+    旧判据 `raw.strip("./") == ""` 对 ".."、"../.."、"./.." 全为真——它们被当成工作区根
+    返回 "."，下面那条 `..` 拒绝根本走不到：一次逃逸被静默改写成「范围正好是项目根」，
+    而这份归一化的结果要驱动 layer / language / 规则范围。
+    """
+
+    workspace = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
+    with pytest.raises(AdapterEventError):
+        normalize_event_path(raw, workspace=workspace)
+
+
+def test_dot_slash_spellings_of_the_workspace_root_still_resolve_to_the_root() -> None:
+    """根写法的等价形态一个都不收紧：".", "./", "././" 都是范围等于项目根。"""
+
+    workspace = REPO_ROOT / "tests" / "fixtures" / "agent_events" / "workspace"
+    for raw in (".", "./", "././", ".//"):
+        assert normalize_event_path(raw, workspace=workspace) == ".", raw
+    # "..." 既不是根写法也不是逃逸：它保持成自己的名字，不得被折叠成 "."
+    assert normalize_event_path("...", workspace=workspace) == "..."
+
+def test_path_containment_follows_the_path_flavour_case_semantics(tmp_root: Path) -> None:
+    """包含性判定的大小写口径必须跟路径实现走，不能自己 lower()。
+
+    WindowsPath 的比较不区分大小写（PROJ 与 proj 是同一个目录），PurePosixPath 区分。
+    旧实现两边都 lower()：在**区分大小写**的文件系统上，只差大小写的兄弟目录会被判成
+    「在工作区内」，一个范围外的绝对路径于是按范围内的文件被评估（并被报成 secret.py）。
+    """
+
+    from adapters.models import _within
+
+    anchor = tmp_root / "proj"
+    anchor.mkdir()
+    sibling = tmp_root / "PROJ" / "secret.py"
+
+    inside = anchor in sibling.parents  # 路径实现自己给出的答案
+    assert _within(sibling, anchor) == inside
+
+    if inside:
+        # Windows：同一个目录，按工作区相对路径报出来
+        assert normalize_event_path(str(sibling), workspace=anchor) == "secret.py"
+    else:
+        # POSIX：兄弟目录，越界一律拒绝
+        with pytest.raises(AdapterEventError):
+            normalize_event_path(str(sibling), workspace=anchor)
+
 
 def test_phase_six_glob_double_star_slash_matches_zero_directories() -> None:
     """`**/` 匹配零个或多个目录：层与语言的映射不得漏掉根目录文件。
@@ -539,6 +587,94 @@ def test_every_scenario_renders_for_every_adapter() -> None:
             assert isinstance(raw, dict)
             assert raw
 
+# --------------------------------------------------------------------------- 分层声明（P4/P5）
+
+
+def _witness(pattern: str) -> str:
+    """把一条 glob 变成确定的见证路径（与 test_dsh_layer_declaration.py 同一手法）。
+
+    见证路径必须**自证**：调用方随后会用 glob_match(pattern, witness) 复查，
+    生成错了就当场红，而不是悄悄拿一条不匹配的路径去测别的规则。
+    """
+
+    segments: list[str] = []
+    for segment in pattern.split("/"):
+        if segment == "**":
+            segments.append("witness")
+            continue
+        segments.append(
+            segment.replace("**", "witness").replace("*", "witness").replace("?", "x")
+        )
+    return "/".join(segments)
+
+
+def _platform_test_patterns() -> tuple[str, ...]:
+    """平台级"哪些路径算测试"的唯一声明（validation/test-layout.yaml）。"""
+
+    from validators.registry import load_test_layout
+
+    return tuple(load_test_layout(root=REPO_ROOT).test_patterns)
+
+
+def _test_layer_gaps(adapters: dict) -> dict[str, str]:
+    """平台声明的每条测试 pattern 在 Phase 6 层次表里没落到 test 层的那些。"""
+
+    from validators.globs import glob_match
+
+    gaps: dict[str, str] = {}
+    for agent_id, adapter in adapters.items():
+        for pattern in _platform_test_patterns():
+            path = _witness(pattern)
+            assert glob_match(pattern, path), f"见证路径 {path!r} 不匹配平台 pattern {pattern!r}"
+            layer = adapter.layer_for(path)
+            if layer != "test":
+                gaps[f"{agent_id}:{pattern}"] = f"{path} -> {layer!r}"
+    return gaps
+
+
+def test_every_platform_test_pattern_lands_on_the_test_layer_for_every_adapter() -> None:
+    """P4/P5：同一个测试文件不许在 Hook 路径与验证器路径上拿到两个层。
+
+    平台级声明是 validation/test-layout.yaml 的 test_patterns（policy.check 缺 --layer
+    时按它定 layer=test）。Phase 6 的 adapters/*/adapter.yaml 不把同一条映射放在
+    layers 顶部，first-match-wins 就会让 tests/unit/test_order_repository.py 命中
+    **/*_repository.py、被判成 repository——同一个文件两条路径两个层。
+    """
+
+    from adapters.loader import load_adapters
+
+    adapters = load_adapters(["dsh", "generic-json", "legacy-post-only"], root=REPO_ROOT)
+
+    assert _test_layer_gaps(adapters) == {}
+
+
+def test_the_test_layer_check_reports_an_adapter_without_the_declaration(tmp_root: Path) -> None:
+    """变异证明这条检查会红：拿掉测试层两行，同一批平台 pattern 立刻被点名。
+
+    走的是真实装配路径（load_adapter + 真实层次表匹配），只把配置复制到 tmp 并把
+    project_root 写成绝对路径——不在这里重写一份层匹配实现。
+    """
+
+    from adapters.loader import load_adapter
+
+    source = ADAPTERS_ROOT / "dsh" / "adapter.yaml"
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    document["layers"] = [row for row in document["layers"] if row.get("layer") != "test"]
+    document["project_root"] = str(REPO_ROOT)
+    mutated = tmp_root / "dsh-adapter-without-test-layer.yaml"
+    mutated.write_text(
+        yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+        newline="",
+    )
+
+    adapter = load_adapter("dsh", root=REPO_ROOT, config_path=mutated)
+    gaps = _test_layer_gaps({"dsh": adapter})
+
+    assert set(gaps) == {f"dsh:{pattern}" for pattern in _platform_test_patterns()}
+    # 值里必须带"解析成了哪个层"，读的人不用再跑一次才知道差在哪
+    assert all(reason.endswith(("'repository'", "'module'", "'controller'", "'None'")) for reason in gaps.values()), gaps
+
 
 # --------------------------------------------------------------------------- 决策翻译
 
@@ -605,3 +741,124 @@ def test_generic_json_response_still_rejects_unknown_decision_field() -> None:
     with pytest.raises(AdapterEventError) as error:
         agent_response_from_decision(payload)
     assert "未知字段" in str(error.value)
+
+# --------------------------------------------------------------------------- 边界声明（§3.5）
+
+
+WIRING_SCOPE = ADAPTERS_ROOT / "wiring-scope.yaml"
+
+
+def test_the_wiring_scope_tree_ref_is_a_pointer_not_a_glob() -> None:
+    """schema "2" 的 `tree_ref` 只能是「仓库相对路径」或 `<outside-workspace>`。
+
+    加载器今天不给 tree_ref 加格式校验（`src/provenance/wiring_scope.py` 只声明字段），
+    于是 `.tmp/governance-capability-*` 这种 **glob** 能静默加载：它既是 glob 不是路径、
+    又落在工作区内，和同一条声明的 `governs_tree: other` 互相矛盾——读者按它找不到任何
+    一棵树（实测本机带 `-*` 的那条通配符一个目录都匹配不到）。
+    """
+
+    document = yaml.safe_load(WIRING_SCOPE.read_text(encoding="utf-8"))
+    entries = document["scope"]
+    refs = {item["id"]: item.get("tree_ref") for item in entries}
+    assert refs.get("governed-session-hook") == "<outside-workspace>", refs
+
+    for entry in entries:
+        ref = entry.get("tree_ref")
+        if ref is None:
+            continue
+        assert isinstance(ref, str) and ref.strip(), entry["id"]
+        if ref != "<outside-workspace>":
+            # 指针：仓库相对路径，不许是 glob、不许绝对、不许 .. 逃逸
+            assert not any(char in ref for char in "*?["), (entry["id"], ref)
+            assert not ref.startswith("/") and ".." not in ref.split("/"), (entry["id"], ref)
+        # governs_tree=self 时不写指针（合约：只放指针）
+        assert entry.get("governs_tree") == "other", (entry["id"], ref)
+
+
+# --------------------------------------------------------------------------- 公共装配
+
+
+def test_a_genuine_typeerror_is_not_read_as_a_missing_workspace_parameter() -> None:
+    """`_build_event` 是否支持 workspace 按**签名**判断，不按异常文案。
+
+    旧写法 catch TypeError 之后判 `"workspace" in str(error)`：一个恰好提到 workspace 的
+    真 TypeError 会被当成「子类不支持该参数」，事件被**丢掉工作区重建一次**（路径改按配置
+    默认值归一化——正是那段注释警告的降级），而且 `_build_event` 会被跑第二遍。
+    """
+
+    from adapters.loader import load_adapter
+
+    base_adapter = load_adapter("generic-json", root=REPO_ROOT)
+    calls: list[int] = []
+
+    class Boom(type(base_adapter)):
+        def _build_event(self, raw_event):  # 不接收 workspace：签名是唯一判据
+            calls.append(len(calls) + 1)
+            raise TypeError("workspace 解析失败：这条文案不该被当成能力判据")
+
+    boom = Boom(
+        manifest=base_adapter.manifest,
+        config=base_adapter.config,
+        config_path="<memory>",
+        base_dir=REPO_ROOT,
+    )
+
+    with pytest.raises(TypeError) as error:
+        boom.to_policy_event({"schema_version": "1.0"}, workspace=REPO_ROOT)
+
+    assert "workspace 解析失败" in str(error.value)
+    assert calls == [1], "同一个异常不许触发第二次 _build_event（副作用会重复）"
+
+
+def test_a_malformed_approved_entry_is_a_named_registry_error(tmp_root: Path) -> None:
+    """形状不对的已审核条目必须是一条**点名的** RegistryError，不是 AttributeError。
+
+    旧实现只校验 `adapters` 是非空映射：`"dsh": "sha256:…"` 会在 descriptors() 里以
+    `AttributeError: 'str' object has no attribute 'get'` 逃出 RegistryError 契约——
+    调用方按 RegistryError 兜底，于是它变成未处理崩溃，而且不说是哪一条坏了。
+    """
+
+    from adapters.base import AdapterRegistry, RegistryError
+
+    approved = json.loads(APPROVED_PATH.read_text(encoding="utf-8"))
+    approved["adapters"]["dsh"] = "sha256:" + "0" * 64
+    malformed = tmp_root / "approved-malformed.json"
+    malformed.write_text(
+        json.dumps(approved, ensure_ascii=False, indent=2) + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    with pytest.raises(RegistryError) as error:
+        AdapterRegistry.load(ADAPTERS_ROOT, approved_path=malformed)
+    assert "dsh" in str(error.value)
+
+
+def test_a_directly_built_registry_reads_a_malformed_entry_as_unapproved() -> None:
+    """直接构造（approved=…）也不许抛 AttributeError：形状不对读成「未审核」，失败关闭。
+
+    这条路径绕过 `_load_approved`（测试与工具会这样构造），所以形状保护必须在读取侧也有
+    一份：未审核的后果由 `check_approved()` 承担——一条点名的 RegistryError。
+    """
+
+    from adapters.base import AdapterRegistry, RegistryError
+
+    verified = AdapterRegistry.load(ADAPTERS_ROOT, approved_path=APPROVED_PATH)
+    manifest = verified.manifest("dsh")
+
+    # ① 顶层 adapters 是字符串；② 单条条目是列表
+    broken = AdapterRegistry(
+        [manifest], approved={"adapters": "nope"}, approved_path=None
+    )
+    assert broken.as_list().get("dsh").approved is False
+    with pytest.raises(RegistryError):
+        broken.check_approved()
+
+    mixed = AdapterRegistry(
+        [manifest],
+        approved={"adapters": {"dsh": ["not", "a", "mapping"]}},
+        approved_path=APPROVED_PATH,
+    )
+    assert mixed.as_list().get("dsh").approved is False
+    with pytest.raises(RegistryError):
+        mixed.check_approved()

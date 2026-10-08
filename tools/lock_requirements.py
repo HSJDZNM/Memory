@@ -36,6 +36,13 @@ def lock_entries(report: dict) -> list[tuple[str, list[str]]]:
         hashes = item.get("download_info", {}).get("archive_info", {}).get("hashes", {})
         for algorithm in sorted(hashes):
             lines.append("    " + "--hash" + "=" + algorithm + ":" + hashes[algorithm])
+        if hashes:
+            # pip 只把同一条**逻辑行**上的 --hash 绑定到依赖：续行必须用行尾反斜杠。
+            # 否则每条 --hash 都是一行"没有依赖的选项行"，pip 只给一句 warning 就丢掉
+            # ——锁文件看起来带哈希，装起来一个都不校验（--require-hashes 还会直接报
+            # "hashes are missing"）。
+            lines = [line + " \\" for line in lines]
+            lines[-1] = lines[-1].removesuffix(" \\")
         entries.append((str(metadata["name"]).lower(), lines))
     entries.sort(key=lambda entry: entry[0])
     return entries

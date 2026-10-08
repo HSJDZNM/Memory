@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from retrieval import chunker
 from retrieval.chunker import (
     ANCHOR_PREAMBLE,
     blocks_are_preserved,
     chunk_document,
     compact_text,
+    fence_match,
     find_sections,
     iter_blocks,
     search_text,
@@ -130,6 +132,51 @@ def test_yaml_values_json_cannot_serialize_do_not_break_chunking() -> None:
     assert [(item.heading_anchor, item.text) for item in chunks] == [("h", "body")]
 
 
+def test_fence_info_string_may_contain_spaces() -> None:
+    """带参数的围栏（```python title="x.py" 这类）必须被认成围栏（复核发现）。
+
+    旧正则的 info 组不许出现空白，于是 ```jsx live / ```bash copy 整行被
+    当成正文，块里的 # 注释被 find_sections 当成标题——代码被切碎，正是本模块要防的事。
+    """
+
+    cases = (
+        ('```python title="x.py"', FENCE, 'python title="x.py"'),
+        ("```jsx live", FENCE, "jsx live"),
+        ("```bash copy", FENCE, "bash copy"),
+        ("~~~text with spaces", "~~~", "text with spaces"),
+    )
+    for opening, closing, expected_info in cases:
+        text = (
+            "# Title" + chr(10) + chr(10)
+            + opening + chr(10) + "# NOT-A-HEADING" + chr(10) + "print(1)" + chr(10)
+            + closing + chr(10) + chr(10) + "## After" + chr(10) + chr(10) + "tail" + chr(10)
+        )
+        sections = find_sections(text)
+        assert [section.anchor for section in sections] == ["title", "title/after"], opening
+        code = [
+            block
+            for section in sections
+            for block in section.blocks
+            if block.kind is ChunkKind.CODE
+        ]
+        assert len(code) == 1, opening
+        assert "# NOT-A-HEADING" in code[0].text, opening
+        assert code[0].info == expected_info, opening
+
+
+def test_backtick_fence_info_string_may_not_contain_a_backtick() -> None:
+    """CommonMark：反引号围栏的 info string 含反引号 -> 这行不是围栏；波浪线围栏允许。"""
+
+    assert fence_match(FENCE + "py" + chr(96) + "thon") is None
+    tilde = fence_match("~~~info " + chr(96) + " backtick")
+    assert tilde is not None
+    assert tilde.group(1) == "~~~"
+    # 普通围栏与带空格的 info string 都要认得出来。
+    assert fence_match(FENCE + "python").group(2) == "python"
+    assert fence_match("   " + FENCE + "   ").group(2) == ""
+    assert fence_match("not a fence") is None
+
+
 def test_heading_inside_code_fence_is_not_a_heading() -> None:
     text = (
         "# Title\n\n"
@@ -196,6 +243,32 @@ def test_duplicate_headings_get_distinct_stable_anchors() -> None:
     assert "DUP-MARKER" in notes[1].text
 
 
+def test_block_line_numbers_point_at_the_real_first_line() -> None:
+    """标题章节里的 Block.line_start 必须指向真正的第一行（复核发现：整体早一行）。"""
+
+    text = (
+        "# Title" + chr(10)          # 1
+        + chr(10)                     # 2
+        + "intro line" + chr(10)      # 3
+        + "## Sub" + chr(10)          # 4
+        + chr(10)                     # 5
+        + "sub body" + chr(10)        # 6
+        + chr(10)                     # 7
+        + FENCE + "python" + chr(10)  # 8
+        + "code line" + chr(10)       # 9
+        + FENCE + chr(10)             # 10
+    )
+    sections = {section.anchor: section for section in find_sections(text)}
+    assert sections["title"].line_start == 1
+    assert sections["title/sub"].line_start == 4
+    assert sections["title"].blocks[0].line_start == 3
+    assert sections["title"].blocks[0].text == "intro line"
+    sub_blocks = sections["title/sub"].blocks
+    assert sub_blocks[0].line_start == 6
+    assert sub_blocks[-1].kind is ChunkKind.CODE
+    assert sub_blocks[-1].line_start == 8
+
+
 def test_empty_section_is_skipped_but_visible_in_sections() -> None:
     text = "# Title\n\nbody\n\n## Appendix\n\n## After Appendix\n\ntail\n"
     sections = find_sections(text)
@@ -227,6 +300,45 @@ def test_chunk_ids_and_hashes_are_stable_and_content_bound() -> None:
             assert item.text_hash != other.text_hash
         else:
             assert item.text_hash == other.text_hash
+
+
+def test_fence_is_closed_only_by_the_same_marker_and_not_shorter() -> None:
+    """闭合围栏必须同种字符、且不短于起始标记（复核发现）。
+
+    旧实现把起始标记折叠成 3 个字符，又只判"≥3 且全同"：任何 ``` 行都能关掉 ~~~ 块，
+    四反引号块会被内部的普通三反引号提前关掉（文档里嵌示例的标准写法）。
+    """
+
+    four = FENCE * 2
+    text = (
+        "# Title" + chr(10) + chr(10)
+        + four + "markdown" + chr(10)
+        + FENCE + "python" + chr(10)
+        + "# NOT-A-HEADING" + chr(10)
+        + FENCE + chr(10)
+        + four + chr(10) + chr(10)
+        + "## After" + chr(10) + chr(10) + "tail" + chr(10)
+    )
+    sections = find_sections(text)
+    assert [section.anchor for section in sections] == ["title", "title/after"]
+    code = [block for section in sections for block in section.blocks if block.kind is ChunkKind.CODE]
+    assert len(code) == 1
+    assert "# NOT-A-HEADING" in code[0].text
+
+    tilde = (
+        "# Title" + chr(10) + chr(10)
+        + "~~~text" + chr(10) + FENCE + chr(10) + "# STILL-CODE" + chr(10) + "~~~" + chr(10)
+        + chr(10) + "## After" + chr(10) + chr(10) + "tail" + chr(10)
+    )
+    tilde_sections = find_sections(tilde)
+    assert [section.anchor for section in tilde_sections] == ["title", "title/after"]
+    tilde_code = [
+        block
+        for section in tilde_sections
+        for block in section.blocks
+        if block.kind is ChunkKind.CODE
+    ]
+    assert len(tilde_code) == 1 and "# STILL-CODE" in tilde_code[0].text
 
 
 def test_unterminated_fence_is_stable_and_preserves_text() -> None:

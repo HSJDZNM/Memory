@@ -31,6 +31,22 @@ def _fail_reading(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     monkeypatch.setattr(worktree, "_read_bytes", reader)
 
 
+def test_glob_compilation_is_cached() -> None:
+    """glob→正则的构造必须缓存：它是遍历与命中判据的主路径（复核发现）。"""
+
+    worktree._compile.cache_clear()
+    worktree._compile("**/*.py")
+    assert worktree._compile.cache_info().misses == 1
+    worktree._compile("**/*.py")
+    info = worktree._compile.cache_info()
+    assert (info.misses, info.hits) == (1, 1)
+
+    # 行为不变：同一套 glob 语义照常生效。
+    assert worktree._matches("**/*.py", "pkg/one.py")
+    assert worktree._matches("**/*.py", "one.py")
+    assert not worktree._matches("pkg/*.py", "top.py")
+
+
 def test_tree_digest_is_stable_and_content_sensitive(tmp_root: Path) -> None:
     tree = _tree(tmp_root)
     first = worktree.tree_digest(tree)
@@ -95,6 +111,88 @@ def test_referenced_inputs_digest_refuses_empty_and_unmatched(tmp_root: Path) ->
         worktree.referenced_inputs_digest(tree, [])
     with pytest.raises(worktree.UnprovableError):
         worktree.referenced_inputs_digest(tree, ["missing/**/*.py"])
+
+
+def test_load_declaration_wraps_read_failures(tmp_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """is_file() 之后的读失败必须落 UnprovableError，而不是裸 OSError/UnicodeDecodeError。"""
+
+    bad_encoding = tmp_root / "not-utf8.txt"
+    bad_encoding.write_bytes(b"\xff\xfe\x00 not utf-8")
+    with pytest.raises(worktree.UnprovableError):
+        worktree.load_declaration(bad_encoding)
+
+    unreadable = tmp_root / "declaration.txt"
+    unreadable.write_text("pkg/*.py" + chr(10), encoding="utf-8")
+    real_read = Path.read_text
+
+    def denied(self, *args, **kwargs):
+        if self.name == "declaration.txt":
+            raise PermissionError(13, "Permission denied")
+        return real_read(self, *args, **kwargs)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(Path, "read_text", denied)
+        with pytest.raises(worktree.UnprovableError):
+            worktree.load_declaration(unreadable)
+
+    # 对照：正常文件照常解析。
+    assert worktree.load_declaration(unreadable) == ("pkg/*.py",)
+
+
+def test_a_declaration_matching_only_excluded_files_is_unprovable(tmp_root: Path) -> None:
+    """声明只命中被排除的文件时必须 unprovable，而不是"覆盖 0 个文件"的封条（复核发现）。
+
+    排除项是声明的，不是看不见的默认值；但它必须同时约束"命中判据"——否则一份
+    只声明 pkg/one.pyc 的声明会拿到空串的 sha256，看起来像一次可复核的封条。
+    """
+
+    tree = _tree(tmp_root)
+    (tree / "pkg" / "one.pyc").write_text("bytecode", encoding="utf-8")
+
+    # 对照：同一声明里的 .py 照常命中，被排除的 .pyc 不参与指纹。
+    assert worktree.referenced_inputs_digest(tree, ["pkg/*"]).files == 1
+
+    for declaration in (["pkg/one.pyc"], ["**/*.pyc"]):
+        with pytest.raises(worktree.UnprovableError):
+            worktree.referenced_inputs_digest(tree, declaration)
+    with pytest.raises(worktree.UnprovableError):
+        worktree.platform_revision(tree, ["**/*.pyc"])
+
+
+def test_relative_paths_are_lexical_not_resolved(tmp_root: Path) -> None:
+    """_relative 必须词法计算（复核发现）。
+
+    resolve() 在链接指向根外时让 relative_to 失败，于是退回一个随调用方式变化的
+    （可能绝对的）路径；同一棵树在不同挂载点/不同 root 写法下会算出不同指纹。
+    """
+
+    tree = tmp_root / "tree"
+    tree.mkdir()
+    _tree(tree)
+    elsewhere = tmp_root / "elsewhere"  # 树**之外**的目录
+    elsewhere.mkdir()
+    (elsewhere / "x.py").write_text("x" + chr(10), encoding="utf-8")
+
+    relative = worktree._relative(elsewhere / "x.py", tree)
+    assert relative == "../elsewhere/x.py"
+    assert not Path(relative).is_absolute()
+    # 根内的取值与以前一致；根目录本身写成 "."。
+    assert worktree._relative(tree / "pkg" / "one.py", tree) == "pkg/one.py"
+    assert worktree._relative(tree, tree) == "."
+
+
+def test_symlinks_are_recorded_as_themselves(tmp_root: Path) -> None:
+    """根内的文件链接记录的是链接这一项，不是它的目标（否则制造重复键）。"""
+
+    tree = _tree(tmp_root)
+    link = tree / "pkg" / "alias.py"
+    try:
+        link.symlink_to(tree / "pkg" / "one.py")
+    except (OSError, NotImplementedError):
+        pytest.skip("本机不允许创建符号链接（Windows 需要特权）：该断言在 CI/Linux 上执行")
+
+    assert worktree._relative(link, tree) == "pkg/alias.py"
+    assert worktree.tree_digest(tree).files == 3  # top.py / pkg/one.py / pkg/alias.py
 
 
 def test_platform_revision_scope_comes_from_the_declaration(tmp_root: Path) -> None:
@@ -174,6 +272,27 @@ def test_landing_states_are_not_collapsed() -> None:
         worktree.resolve_landing_state(
             "landed_peer_verified", peer_evidence=dict(evidence, sha256="not-a-hash")
         )
+
+
+def test_peer_evidence_must_carry_real_strings() -> None:
+    """null / 数字都不是"给了一个值"：str(None) == "None" 会放行伪造的 peer 验收（复核发现）。"""
+
+    good = {"verifier": "peer-a", "artifact": "receipt.json", "sha256": "a" * 64}
+    assert (
+        worktree.resolve_landing_state("landed_peer_verified", peer_evidence=good)
+        == "landed_peer_verified"
+    )
+    for broken in (
+        {"verifier": None, "artifact": None, "sha256": "a" * 64},
+        {"verifier": "", "artifact": "receipt.json", "sha256": "a" * 64},
+        {"verifier": "peer-a", "artifact": "   ", "sha256": "a" * 64},
+        {"verifier": 7, "artifact": "receipt.json", "sha256": "a" * 64},
+        {"verifier": "peer-a", "artifact": "receipt.json", "sha256": None},
+        # 64 位十进制整数：str() 之后能骗过 sha256 的正则，但它不是摘要。
+        {"verifier": "peer-a", "artifact": "receipt.json", "sha256": 10**63},
+    ):
+        with pytest.raises(worktree.LandingStateError):
+            worktree.resolve_landing_state("landed_peer_verified", peer_evidence=broken)
 
 
 def test_load_declaration_ignores_comments_and_blank_lines(tmp_root: Path) -> None:

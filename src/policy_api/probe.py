@@ -126,6 +126,10 @@ class HttpApiAdapter(Adapter):
             manifest=manifest, config=config, config_path=config_path, base_dir=base_dir
         )
         self.client = client
+        # 记下来给 `_build_event` 里进程内构造的 JsonAdapter 用：`Adapter` 只在构造期用锚点
+        # 解析路径、不保存它，而 JsonAdapter 不传 base_dir 时会退回 `Path.cwd()`——同一个事件
+        # 在不同启动目录下会得到不同的路径事实（规范化随 cwd 漂移）。
+        self._base_dir = base_dir
 
     # ------------------------------------------------------------------ 翻译
 
@@ -139,7 +143,10 @@ class HttpApiAdapter(Adapter):
         from adapters.json_adapter import JsonAdapter
 
         parser = JsonAdapter(
-            manifest=self.manifest, config=self.config, config_path=self.config_path
+            manifest=self.manifest,
+            config=self.config,
+            config_path=self.config_path,
+            base_dir=self._base_dir,
         )
         return parser._build_event(raw_event)
 

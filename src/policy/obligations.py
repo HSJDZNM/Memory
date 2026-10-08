@@ -196,16 +196,35 @@ def _append(path: Path, record: Mapping) -> None:
 
 
 def _check_existing(path: Path) -> None:
-    """已知的第一行要能读懂：版本不认识 / 键集合不认识 → 拒绝续写（AGENTS 核心约束 3）。"""
+    """续写之前先确认已有内容能读懂（失败关闭，不往坏账本里续写，AGENTS 核心约束 3）。
+
+    检查三件事，都是"追加"这个动作真的会踩到的：
+
+    1. 第一行能读懂——协议身份（版本 / 键集合 / kind）；
+    2. 文件**以换行结尾**——上一次写入被中断时，新记录会被接在最后一个 JSON 对象后面，
+       变成一行 `{...}{...}`，从此 `load()` 永远读不了，而本模块从不重写账本，没有自愈；
+    3. 最后一行能读懂——尾部被截断的记录同样会让新记录落进一个 `load()` 会整份拒收的文件。
+
+    中间行的损坏**不在这里扫**：追加在判定热路径上，逐行扫是每次 O(n)、而账本只增不减。
+    那种损坏不是追加造成的（load 会拒绝整份账本，由人处置），这条残余缺口写在这里，
+    不假装它不存在。
+    """
 
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            first = handle.readline()
-    except OSError as error:  # pragma: no cover - 权限 / 竞态
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:  # pragma: no cover - 权限 / 竞态
         raise ObligationsError("义务账本读不到：" + str(error)) from error
-    if not first.strip():
-        raise ObligationsError("义务账本的第一行是空行：说不出它是什么协议，拒绝续写")
-    _parse_record(first, path=path, line_number=1)
+    if not text.strip():
+        raise ObligationsError("义务账本的现有内容是空白：说不出它是什么协议，拒绝续写")
+    if not text.endswith("\n"):
+        raise ObligationsError(
+            "义务账本的最后一行没有换行结尾：上一次写入可能是被中断的，续写会把新记录接在"
+            "那条 JSON 后面、从此整份账本读不出来；拒绝续写"
+        )
+    lines = text.splitlines()
+    _parse_record(lines[0], path=path, line_number=1)
+    if len(lines) > 1:
+        _parse_record(lines[-1], path=path, line_number=len(lines))
 
 
 def _parse_record(text: str, *, path: Path, line_number: int) -> Mapping:
@@ -249,6 +268,18 @@ def _parse_record(text: str, *, path: Path, line_number: int) -> Mapping:
             + "、缺 "
             + repr(missing)
             + "（键集合是协议，改它要按第 55 条递增版本号）"
+        )
+    if kind == KIND_TEST_RUN and not isinstance(record.get("python_tests_executed"), bool):
+        # 这个字段是**解除义务的唯一凭据**（J1(d)：解除只由一次真实 pytest 运行判定），
+        # 所以它必须是布尔值本身，不能靠真值性：字符串 "false"、数字 1、非空列表都是真值，
+        # 于是"跑没跑成"由**写记录的人随手打的字**决定——正是本模块要防的"跳过被读成通过"。
+        # 类型不对属于账本不可用（失败关闭），不是"这条不算数"。
+        raise ObligationsError(
+            "义务账本第 "
+            + str(line_number)
+            + " 行的 python_tests_executed="
+            + repr(record.get("python_tests_executed"))
+            + " 不是布尔值；它是解除义务的唯一凭据，不接受真值性判定"
         )
     return record
 
@@ -438,7 +469,9 @@ def load(path) -> LedgerState:
                 )
                 continue
             test_run_records += 1
-            if not record["python_tests_executed"]:
+            # 只有明确的 True 才算"跑过"（而不是真值性）：非布尔值已被 _parse_record 挡在
+            # 账本之外，这里再写死一次，是为了让"解除条件"这一行读起来就是它的定义。
+            if record["python_tests_executed"] is not True:
                 continue
             run = TestRun(
                 at=str(record["at"]),

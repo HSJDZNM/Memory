@@ -185,11 +185,17 @@ def _finalize(body):
     for line in lines:
         if line.lstrip().startswith(FENCE):
             inside = not inside
-        elif not inside:
-            m = re.match(r"^(#{1,6})(\s+.*)$", line)
-            if m:
-                lv = mapping.get(len(m.group(1)), 6)
-                line = "#" * lv + m.group(2)
+            out.append(line)
+            continue
+        if inside:
+            # 围栏内的一个字符都不动：代码里的 "# 注释"、`---` 分隔线与连续空行都是**代码内容**，
+            # 曾经它们被下面的补空行 / 丢行 / 压空行三步改掉，代码样例因此被静默改形。
+            out.append(line)
+            continue
+        m = re.match(r"^(#{1,6})(\s+.*)$", line)
+        if m:
+            lv = mapping.get(len(m.group(1)), 6)
+            line = "#" * lv + m.group(2)
         if line.lstrip().startswith("#"):
             out.append(line.rstrip())
             out.append("")
@@ -197,10 +203,34 @@ def _finalize(body):
             continue
         else:
             out.append(line)
-    body = _BLK.join(out)
-    while (_BLK * 3) in body:
-        body = body.replace(_BLK * 3, _BLK * 2)
-    return body.strip() + _BLK
+    return _collapse_blank_runs(_BLK.join(out)).strip() + _BLK
+
+
+def _collapse_blank_runs(body):
+    """把连续空行压成一行——**围栏内的不动**（代码样例里的空行是内容，不是排版）。
+
+    旧实现对整份正文做 `while (_BLK * 3) in body: replace(...)`，围栏里的空行一起被压掉。
+    """
+
+    out, inside, blanks = [], False, 0
+    for line in body.split(_BLK):
+        if line.lstrip().startswith(FENCE):
+            inside = not inside
+            blanks = 0
+            out.append(line)
+            continue
+        if inside:
+            out.append(line)
+            continue
+        if line.strip():
+            blanks = 0
+            out.append(line)
+            continue
+        blanks += 1
+        if blanks > 1:
+            continue
+        out.append(line)
+    return _BLK.join(out)
 
 
 def tidy(body):

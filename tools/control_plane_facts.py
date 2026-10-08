@@ -1187,6 +1187,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+
+def _orchestrator_relation_line(tool_tables: dict) -> str:
+    """C2 里那行人类输出：状态与括注**都**取自算出来的 resolution。
+
+    旧实现把括注写死成"查实：四个 tool_name … 下没有读取点"，于是 status=available
+    （真的读到了读取点）时，同一行自相矛盾：状态说读到了、括注说没读到。
+    """
+
+    resolution = tool_tables["orchestrator_resolution"]
+    return (
+        "  C2 orchestrator 关系: "
+        + str(resolution["status"])
+        + "（"
+        + str(resolution["reason"])
+        + "）"
+    )
+
 def run(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     payload = evaluate(
@@ -1272,11 +1289,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             + "、代码工具表 "
             + str(tool_tables["sources"]["code_tool_table"]["count"])
         )
-        print(
-            "  C2 orchestrator 关系: "
-            + str(tool_tables["orchestrator_resolution"]["status"])
-            + "（查实：四个 tool_name 在 src / registry / adapters / tools 下没有读取点）"
-        )
+        print(_orchestrator_relation_line(tool_tables))
     else:
         print("  C2 工具表: unavailable（" + str(tool_tables.get("reason", "")) + "）")
     readable_instances = [

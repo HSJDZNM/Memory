@@ -10,8 +10,9 @@
 退出码（方案 §5.3，**不与 Hook 的 exit 2 复用**）：
 
     0 = 判据 pass 且封条一致
-    1 = 判据 fail（子进程非 0、或边界声明不合法）
-    2 = 用法错误
+    1 = 判据 fail（子进程非 0；或 wiring-scope 的边界声明**内容**不合法）
+    2 = 用法错误：参数不可用——声明文件 / --platform 读不到、判据命令起不来；
+        digest 与 seal 对同一种参数不可用必须给同一个码
     3 = 封条失效：external_write（pre != post）或 unprovable（读不到声明的东西）
         —— 「本轮结论全部作废」，不许当成 pass
 
@@ -107,15 +108,21 @@ def _emit(payload: Dict[str, Any], *, as_json: bool) -> None:
 
 def _run_digest(args: argparse.Namespace) -> int:
     root = Path(args.root)
+    # 声明文件本身不可用 = 用法错误（与 seal 同一口径）：调用方按退出码分流时，
+    # 同一个失败模式不许在这里是 3、在那里是 2。
     try:
         declaration = worktree.load_declaration(args.declaration)
-        referenced = worktree.referenced_inputs_digest(root, declaration)
-        workspace = worktree.workspace_tree_digest(root)
         platform_declaration = (
             worktree.load_declaration(args.platform)
             if args.platform
             else declaration
         )
+    except worktree.UnprovableError as error:
+        print(f"用法错误：{error}", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        referenced = worktree.referenced_inputs_digest(root, declaration)
+        workspace = worktree.workspace_tree_digest(root)
         platform = worktree.platform_revision(root, platform_declaration)
     except worktree.UnprovableError as error:
         print(f"unprovable: {error}", file=sys.stderr)
@@ -148,9 +155,16 @@ def _run_seal(args: argparse.Namespace) -> int:
     except worktree.UnprovableError as error:
         print(f"用法错误：{error}", file=sys.stderr)
         return EXIT_USAGE
-    platform_declaration = (
-        worktree.load_declaration(args.platform) if args.platform else declaration
-    )
+    try:
+        # --platform 与 --declaration 是同一类输入（都是命令行给的声明文件）：它读不到
+        # 同样是用法错误。不接住的话，裸 traceback 会让进程用解释器的默认退出码 1 结束——
+        # 而 1 的含义是"判据跑完且是红的"，这里连判据都还没跑。
+        platform_declaration = (
+            worktree.load_declaration(args.platform) if args.platform else declaration
+        )
+    except worktree.UnprovableError as error:
+        print(f"用法错误：{error}", file=sys.stderr)
+        return EXIT_USAGE
 
     peer_evidence: Optional[Dict[str, Any]] = None
     if args.peer_evidence:
@@ -183,7 +197,23 @@ def _run_seal(args: argparse.Namespace) -> int:
         receipt.update({"state": "unprovable", "error": str(error)})
         return _finish_seal(args, receipt, EXIT_SEAL)
 
-    completed = subprocess.run(argv, cwd=str(root), check=False)
+    try:
+        completed = subprocess.run(argv, cwd=str(root), check=False)
+    except OSError as error:
+        # 判据命令根本没跑起来（命令拼错 / 不可执行 / 工作目录在 pre 与 spawn 之间消失）。
+        # 这不是"判据 fail"——退出码 1 的含义是"跑完了、是红的"；也不能让 Python 的默认
+        # 退出码替我们回答（§52：异常路径要归因到真正的那一侧）。
+        if not Path(root).is_dir():
+            receipt.update(
+                {"state": "unprovable", "error": f"判据命令的工作目录不见了：{root}"}
+            )
+            return _finish_seal(args, receipt, EXIT_SEAL)
+        print(
+            f"用法错误：判据命令无法启动（{type(error).__name__}: {error}）；"
+            "判据没有运行，本轮没有结论",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
     receipt["command"] = {"argv": _argv_display(argv), "exit_code": completed.returncode}
 
     try:

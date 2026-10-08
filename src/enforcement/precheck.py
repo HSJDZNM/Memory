@@ -23,7 +23,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from policy.models import Decision, RequiredAction, ValidationResult
 
@@ -587,6 +587,9 @@ def check_list(
     claims = list(ledger.active_claims(action_id=request.action_id, tool_id=request.tool_id))
     prior_hashes: list[object] = [item.get("action_hash") for item in claims]
     if sink is not None and hasattr(sink, "chain_records"):
+        occupants: list[object] = []
+        executed: set[object] = set()
+        corrected: set[object] = set()
         for item in sink.chain_records():  # type: ignore[attr-defined]
             if item.get("action_id") != request.action_id:
                 continue
@@ -604,10 +607,23 @@ def check_list(
             )
             if blocked or payload.get("dry_run"):
                 # dry-run 的 allow 不是授权，也不占用 action_id：它不能挡住真正的执行。
+                # 唯一的例外是"纠正记录"：它明确撤回**同一次尝试**的 allow（台账登记失败时
+                # 决策从 allow 翻成 block），否则修好台账之后那个 action_id 会被自己挡住。
+                if blocked and _is_corrected_pre_decision(payload):
+                    corrected.add(
+                        payload.get("action_hash") or f"<unknown:{item.get('digest')}>"
+                    )
                 continue
             # 记录里没有 action_hash 时不能拿"当前请求的哈希"顶替：那会把
             # "这个 action_id 发生过"误判成"就是这次这个动作"。
-            prior_hashes.append(payload.get("action_hash") or f"<unknown:{item.get('digest')}>")
+            marker = payload.get("action_hash") or f"<unknown:{item.get('digest')}>"
+            occupants.append(marker)
+            if item.get("stage") in ("execution", "final_decision"):
+                executed.add(marker)
+        # 纠正只对"没有执行痕迹"的尝试生效：一旦有执行 / 终态记录，那条 allow 永远占用。
+        prior_hashes.extend(
+            marker for marker in occupants if marker not in corrected or marker in executed
+        )
     prior = [item for item in prior_hashes if item is not None]
     if prior:
         same = any(item == request.action_hash for item in prior)
@@ -626,6 +642,25 @@ def check_list(
 
     return checks, spec, tuple(warnings)
 
+
+
+def _is_corrected_pre_decision(payload: Mapping[str, Any]) -> bool:
+    """这条 block 记录是不是"平台撤回了同一次尝试的 allow"的纠正记录。
+
+    只认本模块写下的显式标记（checks 里 pre_decision_correction=passed）。普通的重放
+    拦截**不**撤回先前的 allow——否则"先撞一次重放"就能把 action_id 洗白，
+    而删台账文件正是审计链要防的那一步。
+    """
+
+    checks = payload.get("checks")
+    if not isinstance(checks, (list, tuple)):
+        return False
+    return any(
+        isinstance(item, Mapping)
+        and item.get("check") == "pre_decision_correction"
+        and item.get("status") == CheckStatus.PASSED.value
+        for item in checks
+    )
 
 def pre_execute(
     request: ActionRequest,
@@ -862,6 +897,48 @@ def pre_execute(
             max_ttl_seconds=registry.max_grant_ttl_seconds,
         )
 
+    def pre_decision_payload() -> dict[str, Any]:
+        """本次判定的审计载荷：decision / reason_code / checks / grant 都取**调用时**的值。
+
+        同一个函数因此能写两种记录：第一次判定，以及台账失败之后对同一次尝试的**纠正
+        记录**（决策已被翻成 block，链上不能只留一条 allow）。
+        """
+
+        return {
+            "decision": decision.value,
+            "reason_code": reason_code.value,
+            "action_hash": request.action_hash,
+            "params": [
+                {
+                    "name": item.name,
+                    "type": item.type.value,
+                    "chars": item.chars,
+                    "digest": item.digest,
+                    "secret": item.secret,
+                }
+                for item in request.params
+            ],
+            "param_digest": request.param_digest,
+            "context_digest": request.context_digest,
+            "risk": request.risk.value,
+            "subject": request.subject,
+            "roles": list(request.roles),
+            "permissions": list(request.permissions),
+            "approval_id": None if approval is None else approval.approval_id,
+            "approval_binding": None if approval is None else approval.binding.value,
+            "approval_max_uses": None if approval is None else approval.max_uses,
+            "approval_use": None if approval_claim is None else approval_claim.uses,
+            "grant_id": None if grant is None else grant.grant_id,
+            "dry_run": dry_run,
+            "checks": [item.model_dump(mode="json") for item in checks],
+            "matched_rules": ()
+            if policy_decision is None
+            else list(policy_decision.matched_rules),
+            "violations": ()
+            if policy_decision is None
+            else [item.canonical_id for item in policy_decision.violations],
+        }
+
     # 审计：允许之前必须能留下证据。写不进去就按注册表声明的策略处置。
     audit_record = None
     if spec is not None:
@@ -870,40 +947,7 @@ def pre_execute(
                 raise AuditError("没有配置审计端口（AuditSink）：不允许在无证据的情况下执行")
             audit_record = sink.append(
                 AuditStage.PRE_DECISION,
-                payload={
-                    "decision": decision.value,
-                    "reason_code": reason_code.value,
-                    "action_hash": request.action_hash,
-                    "params": [
-                        {
-                            "name": item.name,
-                            "type": item.type.value,
-                            "chars": item.chars,
-                            "digest": item.digest,
-                            "secret": item.secret,
-                        }
-                        for item in request.params
-                    ],
-                    "param_digest": request.param_digest,
-                    "context_digest": request.context_digest,
-                    "risk": request.risk.value,
-                    "subject": request.subject,
-                    "roles": list(request.roles),
-                    "permissions": list(request.permissions),
-                    "approval_id": None if approval is None else approval.approval_id,
-                    "approval_binding": None if approval is None else approval.binding.value,
-                    "approval_max_uses": None if approval is None else approval.max_uses,
-                    "approval_use": None if approval_claim is None else approval_claim.uses,
-                    "grant_id": None if grant is None else grant.grant_id,
-                    "dry_run": dry_run,
-                    "checks": [item.model_dump(mode="json") for item in checks],
-                    "matched_rules": ()
-                    if policy_decision is None
-                    else list(policy_decision.matched_rules),
-                    "violations": ()
-                    if policy_decision is None
-                    else [item.canonical_id for item in policy_decision.violations],
-                },
+                payload=pre_decision_payload(),
                 trace_id=request.trace_id,
                 action_id=request.action_id,
                 request_id=request.request_id,
@@ -1001,6 +1045,37 @@ def pre_execute(
             grant = None
             # 授权登记失败 → 阻断，但动作还没执行：认领与已占用的额度一并还回去。
             release_after_block("台账不可写", ReasonCode.LEDGER_UNAVAILABLE.value)
+            # 上面那条审计已经落盘为 allow + grant_id：必须补一条**纠正记录**，
+            # 否则链上对这次动作的最后一句话与返回的 block 相反，读链的人会以为
+            # 它被允许并签发过授权（本模块 1 号性质与 679-681 行注释明令禁止）。
+            if audit_record is not None and sink is not None:
+                checks.append(
+                    _check(
+                        "pre_decision_correction",
+                        CheckStatus.PASSED,
+                        ReasonCode.ALLOW,
+                        f"台账不可写：追加纠正记录以撤回 #{audit_record.sequence} 那条 allow，"
+                        "使链上的结论与本次返回的 block 一致",
+                    )
+                )
+                try:
+                    sink.append(
+                        AuditStage.PRE_DECISION,
+                        payload=pre_decision_payload(),
+                        trace_id=request.trace_id,
+                        action_id=request.action_id,
+                        request_id=request.request_id,
+                        tool_id=request.tool_id,
+                        now=moment,
+                    )
+                except AuditError as correction_error:
+                    checks[-1] = _check(
+                        "pre_decision_correction",
+                        CheckStatus.FAILED,
+                        ReasonCode.AUDIT_UNAVAILABLE,
+                        f"纠正记录写不进去：{correction_error}；"
+                        "链上仍留有一条 allow 记录，读链时必须按本条失败解读",
+                    )
 
     return PrecheckOutcome(
         decision=PreDecision(

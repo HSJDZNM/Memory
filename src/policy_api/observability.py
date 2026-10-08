@@ -203,18 +203,46 @@ class RequestLog:
             return tuple(dict(item) for item in self._written)
 
     def read_back(self) -> Tuple[Mapping[str, Any], ...]:
-        """把落盘内容读回来（CI 与闭环用它证明"决定确实被记下来了"）。"""
+        """把落盘内容读回来（CI 与闭环用它证明"决定确实被记下来了"）。
+
+        **读不懂的行不跳过，只报错**：`read_back` 是 `chain_digest` / `summary` / `seal_audit` /
+        `verify_seal` 四条读数的共同底座，跳过一行就等于用"剩下的部分"冒充整份日志——
+        摘要链末值会因此与锚不符，而"为什么不符"（半截写入 / 被改过）被吞掉。
+        以前 raw `JSONDecodeError` 会冒到 CLI 变成 traceback；现在是一条带行号的
+        `audit_unavailable`，调用方拿得到退出码语义与可读的原因（AGENTS 第 52 条）。
+        """
 
         if self.path is None or not self.path.is_file():
             return ()
-        rows: list[Mapping[str, Any]] = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            item = json.loads(line)
-            if isinstance(item, Mapping):
+        with self._lock:
+            try:
+                text = self.path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as error:
+                raise ApiError(
+                    ErrorCode.AUDIT_UNAVAILABLE,
+                    f"请求日志不可读（{type(error).__name__}）",
+                    retryable=True,
+                ) from error
+            rows: list[Mapping[str, Any]] = []
+            for number, line in enumerate(text.splitlines(), start=1):
+                if not line.strip():
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise ApiError(
+                        ErrorCode.AUDIT_UNAVAILABLE,
+                        f"请求日志第 {number} 行不是合法 JSON；拒绝把残缺的日志当作完整证据",
+                        retryable=True,
+                    ) from error
+                if not isinstance(item, Mapping):
+                    raise ApiError(
+                        ErrorCode.AUDIT_UNAVAILABLE,
+                        f"请求日志第 {number} 行不是对象；拒绝把残缺的日志当作完整证据",
+                        retryable=True,
+                    )
                 rows.append(item)
-        return tuple(rows)
+            return tuple(rows)
 
     # ------------------------------------------------------------------ 外部锚定
 
@@ -229,7 +257,12 @@ class RequestLog:
         Phase 7 提供的正是"把末值发布到外部"这件事所需的那一个值。
         """
 
-        rows = self.read_back()
+        return self._chain_digest(self.read_back())
+
+    @staticmethod
+    def _chain_digest(rows: Sequence[Mapping[str, Any]]) -> Optional[str]:
+        """从**一份**记录快照算链末值：`chain_digest()` 与 `summary()` 共用这一处定义。"""
+
         if not rows:
             return None
         digest = ""
@@ -241,13 +274,21 @@ class RequestLog:
         return "sha256:" + digest
 
     def summary(self) -> Mapping[str, Any]:
-        rows = self.read_back()
-        return {
-            "records": len(rows),
-            "chain_digest": self.chain_digest(),
-            "first_request_id": str(rows[0].get("request_id") or "") if rows else "",
-            "last_request_id": str(rows[-1].get("request_id") or "") if rows else "",
-        }
+        """一次快照出全部读数：记录数、链末值、首尾 request_id 必须来自**同一份** rows。
+
+        以前它读了两次文件（自己的 `read_back()` + `chain_digest()` 内部的又一次），中间任何
+        一次 append 就能让"记录数"与"链末值"来自两个不同的快照——锚因此自相矛盾，而且这种
+        不一致没有任何地方会报出来（`verify_seal` 只会说"与锚不符"）。
+        """
+
+        with self._lock:
+            rows = self.read_back()
+            return {
+                "records": len(rows),
+                "chain_digest": self._chain_digest(rows),
+                "first_request_id": str(rows[0].get("request_id") or "") if rows else "",
+                "last_request_id": str(rows[-1].get("request_id") or "") if rows else "",
+            }
 
 
 @dataclass
@@ -395,9 +436,17 @@ def verify_seal(log: RequestLog, seal: Mapping[str, Any]) -> Tuple[str, ...]:
     if seal.get("seal_schema_version") != "1.0":
         issues.append("锚的协议版本未知；拒绝按不确定的语义校验")
     current = log.summary()
-    if int(seal.get("records", -1)) != current["records"]:
+    declared = seal.get("records")
+    if not isinstance(declared, int) or isinstance(declared, bool):
+        # 锚是**外部输入**（对象存储 / 工单 / 另一台主机上的另一个文件）：records 的类型
+        # 不可信。以前 `int(seal.get("records", -1))` 会抛 TypeError（null）/ ValueError
+        # （非数字字符串）——"返回问题列表（空 = 一致）"的契约被一个坏锚变成未处理异常。
         issues.append(
-            f"记录数不一致：锚 {seal.get('records')} / 当前 {current['records']}"
+            "锚的记录数不是整数；拒绝按不确定的语义校验（这份锚可能不是本服务写的）"
+        )
+    elif declared != current["records"]:
+        issues.append(
+            f"记录数不一致：锚 {declared} / 当前 {current['records']}"
             "（尾部被删或被追加）"
         )
     if seal.get("chain_digest") != current["chain_digest"]:

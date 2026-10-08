@@ -408,6 +408,41 @@ def test_blank_paths_stay_rejected_with_or_without_allow_root(raw: str) -> None:
             normalize_repo_path(raw, allow_root=allow_root)
 
 
+# --------- 非 ASCII 不等于安全：NFKC 会把它们变回被白名单挡住的元字符
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "src/shop/order\uFF1B.py",  # U+FF1B 全角分号 -> ;
+        "src\uFF0Fetc/x.py",  # U+FF0F 全角斜杠 -> /
+        "src/shop/\uFF04var.py",  # U+FF04 全角美元 -> $
+        "src/shop/a\uFF5Cb.py",  # U+FF5C 全角竖线 -> |
+        "src/shop/x\u037E.py",  # U+037E 希腊问号 -> ;
+    ],
+)
+def test_non_ascii_characters_that_fold_to_metacharacters_are_rejected(raw: str) -> None:
+    """非 ASCII 字符的 NFKC 形态若是元字符，必须与直接写元字符同样被拒。
+
+    实修前这些路径会被**原样接受**（例如 `'src/shop/order\uFF1B.py'` 返回自身），
+    而它们的 NFKC 形态分别是 `;` `/` `$` `|` —— 下游做一次规范化
+    或把路径映射回 ASCII，白名单挡住的元字符就回来了。
+    """
+
+    with pytest.raises(PolicyContextError):
+        normalize_repo_path(raw)
+    with pytest.raises(PolicyContextError):
+        repo_relative_path(raw)
+
+
+def test_real_non_ascii_directory_names_still_pass() -> None:
+    """中文目录名照常放行：这是"允许非 ASCII"的理由，不能被上面那条收紧误伤。"""
+
+    raw = "docs/项目/架构/术语与口径.md"
+    assert normalize_repo_path(raw) == raw
+    assert repo_relative_path(raw) == raw
+
+
 # --------- 绝对路径的前缀比较：大小写口径由**路径风格**决定，不是自己 lower()
 
 

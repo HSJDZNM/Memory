@@ -28,7 +28,6 @@ from policy.models import (
     POLICY_VERSION,
     SCHEMA_VERSION,
     Operation,
-    Principal,
     StrictModel,
     canonical_identifier,
     normalize_repo_path,
@@ -70,17 +69,42 @@ class Credentials(StrictModel):
     """认证凭据。**绝不**写进日志：观测层只记 sha256 前 12 位。"""
 
     scheme: str = "bearer"
-    token: str = Field(min_length=8, max_length=512)
+    # `repr=False`：这条承诺必须在**声明密钥的地方**成立，而不是只靠调用方自觉（落盘前剥离
+    # `credentials` 是 `runtime._payload_for` 里的模型外补丁）。没有换成 SecretStr 是因为它
+    # 要求每个使用点显式 `get_secret_value()`——改一个类型就得多改认证边界；而 repr=False
+    # 已经关掉了最现实的那条路：`logger.info("%s", request)` / `repr(model)` / 捕获局部变量的
+    # 错误上报 / traceback 里的模型表示。
+    # 注：理由写在这里而不是类 docstring 里——docstring 会作为 description 进 OpenAPI 快照，
+    # 一句注释不该造成一次"契约变化"。
+    token: str = Field(min_length=8, max_length=512, repr=False)
 
 
 class PrincipalDTO(StrictModel):
-    """主体声明：只由调用方显式提供，服务端不从路径或载荷推断。"""
+    """主体声明：只由调用方显式提供，服务端不从路径或载荷推断。
+
+    声明出来的 subject 由 `runtime._authenticate` 交给 `authorize`（认证主体），roles 则**只**
+    来自令牌（`ClientSpec.roles`）——载荷声明的 roles 不参与授权。
+
+    以前这里还有一个 `to_domain()`：全仓没有任何调用点，而它会把载荷声明的 roles 变成核心的
+    `Principal`——那正好是"客户端自带决策"的入口。删掉它，DTO 不再承诺一次从未发生的转换
+    （`ContextDTO.to_context_payload()` 不产出 principal 键；API 路径上也没有消费
+    `PolicyContext.principal` 的代码，多角色 Agent 路径的 principal 由 Adapter 的装配声明给出）。
+    """
 
     subject: str = Field(min_length=1, max_length=200)
     roles: Tuple[str, ...] = ()
 
-    def to_domain(self) -> Principal:
-        return Principal(subject=self.subject, roles=frozenset(self.roles))
+    @field_validator("subject")
+    @classmethod
+    def _subject_is_meaningful(cls, value: str) -> str:
+        """空白不是主体：`" "` 满足 min_length=1，但它不是"谁在调用"——它会进日志与证据，
+        却永远对不上任何一个真实调用者。去空白后仍为空即拒绝。
+        """
+
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("subject 不能是空白")
+        return normalized
 
     @field_validator("roles", mode="before")
     @classmethod
@@ -129,6 +153,21 @@ class ContextDTO(StrictModel):
         normalized = canonical_identifier(value)
         if not normalized:
             raise ValueError("layer 不能为空；安全关键维度不允许猜测")
+        return normalized
+
+    @field_validator("task")
+    @classmethod
+    def _check_task(cls, value: Optional[str]) -> Optional[str]:
+        """任务描述是检索的查询来源之一（RetrieveRequest 的守卫按它判"至少有一个来源"）：
+        一片空白既不是"有查询"、也不是"没查询"。它会被当成有效查询传给检索层，返回一个
+        empty 结果——那会被读成"查过了、没有规范"，正是那条守卫要挡的形态。
+        """
+
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("context.task 不能是空白；没有任务描述就写 null")
         return normalized
 
     @field_validator("dependencies", mode="before")
@@ -219,7 +258,7 @@ class ApiEnvelope(StrictModel):
             raise ValueError("request_id 不能为空")
         return normalized
 
-    @field_validator("trace_id", "idempotency_key")
+    @field_validator("tenant", "trace_id", "idempotency_key")
     @classmethod
     def _optional_text(cls, value: Optional[str]) -> Optional[str]:
         if value is None:

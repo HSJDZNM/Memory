@@ -234,6 +234,104 @@ def test_post_tool_use_validates_the_delegated_edit(dsh_config_path, dsh_project
     assert final["payload"]["outcome"] == "delivered"
 
 
+def test_the_untrusted_result_digest_covers_the_whole_response(
+    dsh_config_path, dsh_project, monkeypatch
+):
+    """审计里的 `untrusted_result_digest` 一律是**完整答复**的摘要。
+
+    此前 post_evidence 那条记录写的是 `evidence.untrusted_result_digest`——postcheck 拿到的是
+    **400 字符截断**后的摘录（Mapping 答复更是常量串 `structured tool_response`），于是同一份
+    审计里两种口径：post_without_pre 分支与 `ExecutionRecord.structured_digest` 都是完整答复
+    的摘要，两条记录对不上；更糟的是**前 400 字符相同的两份长输出会得到同一个摘要**，
+    「这次判定面对的是哪一份不可信答复」因此答不出来。
+
+    `evidence.untrusted_result_digest` 留在原地（它回答的是另一件事：验证器实际拿到的那段
+    摘录的摘要）；`PostEvent.response_digest = digest_of(完整答复)` 本来就是真摘要，
+    所以这不是"换一个截断"，是换成真摘要。键集合与键义都没变，因此不升协议版本。
+    """
+
+    from adapters.dsh import enforcement as enforcement_module
+    from enforcement.models import digest_of
+
+    captured: dict[str, Any] = {}
+    real_collect = enforcement_module.collect_evidence
+
+    def spy(*args, **kwargs):
+        # record 是第三个位置参数（生产调用就是位置传的）
+        captured["record"] = kwargs.get("record", args[2] if len(args) > 2 else None)
+        return real_collect(*args, **kwargs)
+
+    monkeypatch.setattr(enforcement_module, "collect_evidence", spy)
+
+    audit = dsh_project.parent / "audit.jsonl"
+    write_source(dsh_project, "src/shop/order_controller.py", "from service import OrderService\n")
+
+    pre = run_hook(
+        payload("pre-tool-use-edit-allow.json", dsh_project),
+        config_path=dsh_config_path,
+        audit_path=audit,
+    )
+    assert pre.exit_code == EXIT_ALLOW
+
+    # 模拟 Agent 运行时执行这次编辑（内容与请求参数一致）
+    write_source(
+        dsh_project,
+        "src/shop/order_controller.py",
+        "from service import OrderService\nfrom util import clock\n",
+    )
+
+    # 两份**前 400 字符完全相同**的长答复：截断摘要会撞在一起，完整答复摘要不会
+    head = "updated" + "x" * 500
+    response_a = head + "AAA"
+    response_b = head + "BBB"
+    assert response_a[:400] == response_b[:400]
+    assert digest_of(response_a[:400]) == digest_of(response_b[:400])  # 修前就是这个值
+
+    post = run_hook(
+        payload(
+            "post-tool-use-edit.json",
+            dsh_project,
+            tool_use_id="call-edit-allow",
+            tool_response=response_a,
+        ),
+        config_path=dsh_config_path,
+        audit_path=audit,
+    )
+    assert post.exit_code == EXIT_ALLOW, post.stderr
+
+    stage = [item for item in records(audit) if item.get("stage") == "post_evidence"][-1]
+    recorded = stage["payload"]["untrusted_result_digest"]
+    # ① 完整答复的摘要；② 与本次执行的 ExecutionRecord.structured_digest 同值
+    assert recorded == digest_of(response_a)
+    assert captured["record"].structured_digest == recorded
+    # ③ 修前那个截断摘要对两份长答复是同一个值——这正是要消灭的读数
+    assert recorded != digest_of(response_a[:400])
+
+    # ④ 另一条分支（没有 pre-check 记录）必须同口径
+    orphan = run_hook(
+        payload(
+            "post-tool-use-edit.json",
+            dsh_project,
+            tool_use_id="call-no-pre",
+            tool_response=response_b,
+        ),
+        config_path=dsh_config_path,
+        audit_path=audit,
+    )
+    assert orphan.exit_code != EXIT_ALLOW  # 证据不足按失败关闭（S3 的另一条修复）
+
+    placeholders = [
+        item
+        for item in records(audit)
+        if item.get("stage") == "post_evidence"
+        and item.get("payload", {}).get("stage_note") == "post_without_pre"
+    ]
+    assert placeholders, records(audit)
+    assert placeholders[-1]["payload"]["untrusted_result_digest"] == digest_of(response_b)
+    # 两份长答复的摘要因此不同（修前它们会是同一个）
+    assert digest_of(response_a) != digest_of(response_b)
+
+
 def test_post_tool_use_flags_an_execution_that_changed_nothing(dsh_config_path, dsh_project):
     audit = dsh_project.parent / "audit.jsonl"
     write_source(dsh_project, "src/shop/order_controller.py", "from service import OrderService\n")
@@ -444,7 +542,13 @@ def write_pattern_approval(
         granted_at=now - timedelta(seconds=1),
         expires_at=now + timedelta(seconds=300),
         max_uses=max_uses,
-        param_patterns={"command": command_pattern},
+        # 模式必须覆盖本次请求的全部参数：这条 pwsh 请求里除了 command 还有
+        # description 与 run_in_background（见 tests/fixtures/agent_events/dsh/）。
+        param_patterns={
+            "command": command_pattern,
+            "description": ".*",
+            "run_in_background": ".*",
+        },
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(record.model_dump_json() + chr(10), encoding="utf-8", newline="")

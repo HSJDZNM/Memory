@@ -573,6 +573,98 @@ def test_collected_nothing_is_not_a_passing_test_run(tmp_root: Path) -> None:
     ]
     assert [item.evidence.value for item in uncovered] == ["failing_tests"]
     assert [item.severity.value for item in uncovered] == ["critical"]
+
+
+def test_missing_tests_evidence_survives_an_exit_code_5_run(tmp_root: Path) -> None:
+    """退出码 5 只丢**执行**证据：选择阶段算出的 missing_tests 证据必须照常报出来。
+
+    历史缺陷（OCR 全量审查 L12）：这一支把 `evidence` 整份丢掉、状态写死 OK。
+    `select_tests` 完全可能同时给出 nodeids 与 missing（一次变更里有的文件有测试、
+    有的没有）——"pytest 一个用例都没收集到"于是把一条真的 missing_tests 违规
+    洗成"查过了、没问题"。
+    """
+
+    workspace = copy_validator_project(tmp_root)
+    (workspace / H4_TEST_MODULE).write_text(H4_EMPTY_TESTS, encoding="utf-8", newline="")
+    untested = "src/shop/order_repository.py"
+
+    report = run_pipeline(
+        PipelineRequest(
+            target=H4_TARGET,
+            workspace=workspace,
+            context=make_context(
+                file=H4_TARGET, language="python", layer="controller", operation="edit"
+            ),
+            rules=H4_RULES,
+            changed_files=(H4_TARGET, untested),
+        ),
+        config=CONFIG,
+    )
+
+    assert report.selection["nodeids"] == [H4_TEST_MODULE]
+    assert report.selection["missing"] == [untested]
+    record = report.record("tool.pytest")
+    assert record is not None
+    assert "退出码 5" in (record.reason or "")
+    # 执行证据仍然没有（这正是退出码 5 的语义）；但选择阶段的证据不许被一起丢掉。
+    assert record.status is ValidatorStatus.FINDINGS, record.reason
+    assert [item.value for item in report.evidence if item.checker == "missing_tests"] == [
+        untested
+    ]
+    assert "failing_tests" not in report.served_checkers
+    assert "missing_tests" in report.served_checkers
+
+
+def test_no_selected_tests_does_not_claim_failing_tests_was_served(tmp_root: Path) -> None:
+    """一个测试都没选中（pytest 根本没被调起）：served 必须收窄到 missing_tests。
+
+    历史缺陷（delegate 轮 OCR 审查 pytest_runner.py:177-183）：这一支的提前返回没有传
+    `served`，而 `AdapterResult.served` 的约定是「空 = 与注册表声明相同」——于是
+    "pytest 根本没被调起"被记成 missing_tests 与 failing_tests 都服务过，TESTING-002
+    在零执行证据下静默通过（引擎只在 `not bundle.serves(checker)` 时才以
+    uncovered_checker 阻断）。这与同文件退出码 5 那一支自相矛盾：那一支至少真的把 pytest
+    跑起来了，却显式只记 `served=(missing_tests,)`。
+    """
+
+    workspace = copy_validator_project(tmp_root)
+    for item in sorted((workspace / "tests").glob("*.py")):
+        item.unlink()
+
+    report = run_pipeline(
+        PipelineRequest(
+            target=H4_TARGET,
+            workspace=workspace,
+            context=make_context(
+                file=H4_TARGET, language="python", layer="controller", operation="edit"
+            ),
+            rules=H4_RULES,
+            changed_files=(H4_TARGET,),
+        ),
+        config=CONFIG,
+    )
+
+    assert report.selection["nodeids"] == []
+    assert report.selection["missing"] == [H4_TARGET]
+    record = report.record("tool.pytest")
+    assert record is not None
+    # missing_tests 的证据来自选择阶段：照常报出来（这一半本来就对）
+    assert record.status is ValidatorStatus.FINDINGS, record.reason
+    assert [item.value for item in report.evidence if item.checker == "missing_tests"] == [
+        H4_TARGET
+    ]
+    # pytest 没有被调起 → failing_tests 没有任何执行证据，不许记成「服务过」
+    assert "failing_tests" not in report.served_checkers
+    assert "missing_tests" in report.served_checkers
+    decision = h4_decision(report)
+    assert decision.decision.value == "block"
+    uncovered = [
+        item
+        for item in decision.violations
+        if item.rule_id == "TESTING-002" and item.evidence.detail == "uncovered_checker"
+    ]
+    assert [item.evidence.value for item in uncovered] == ["failing_tests"]
+
+
 def test_changed_set_is_required_for_the_test_validator() -> None:
     """有规则需要测试证据但没给变更集时失败关闭：证据不足不是"没有发现问题"。"""
 

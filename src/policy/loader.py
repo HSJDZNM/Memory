@@ -20,6 +20,7 @@ from typing import Iterator, Sequence
 import yaml
 from pydantic import ValidationError
 
+from .checkers import LANGUAGE_DEPENDENT_CHECKERS
 from .models import WILDCARD, Rule, RuleSet, RuleValidationError, ScopeValue
 
 __all__ = [
@@ -45,8 +46,10 @@ _SUPPORTED_SUFFIXES = frozenset({".yaml", ".yml"})
 #
 # 今天没有洞，只是因为 43 条规则里唯一用 forbidden_dependency 的 ARCH-001 恰好在 scope 里
 # 写了 language: python：那是**规则作者的纪律**，不是代码保证。本检查把它变成加载期的失败。
-# 新增依赖类 checker 时必须一起加到这里（engine 侧的分派表见 policy.checkers）。
-_LANGUAGE_DEPENDENT_CHECKERS = frozenset({"forbidden_dependency"})
+#
+# 集合只有一份，就在分派表那一侧（policy.checkers.LANGUAGE_DEPENDENT_CHECKERS）：
+# 曾经这里手抄过一份，与它逐字相同，靠的是"新增依赖类 checker 时记得两处一起改"——
+# 那种纪律正是本条要消灭的东西。
 
 
 class LoaderError(Exception):
@@ -209,7 +212,7 @@ def assert_language_declared(loaded: LoadedRule) -> None:
     """
 
     rule = loaded.rule
-    if rule.enforcement.checker not in _LANGUAGE_DEPENDENT_CHECKERS:
+    if rule.enforcement.checker not in LANGUAGE_DEPENDENT_CHECKERS:
         return
     declared = rule.scope.declared_dimensions.get("language")
     if declared is not None and not _is_unrestricted(declared):

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from provenance import origin as origin_module
 from provenance.origin import (
     CAUSAL_LINKS,
     OBJECT_KINDS,
@@ -144,6 +145,103 @@ def test_the_payload_is_exactly_the_contract_shape():
     assert payload_is_well_formed(broken_verified) is False
 
 
+def test_the_cross_language_validator_matches_the_python_hard_rules():
+    """形状对不等于值合法：payload_is_well_formed 必须与 Origin 的硬规则同口径（复核发现）。
+
+    否则一份 owner="" / object.value=null / observation.result=null 的 JS 载荷能过校验，
+    却在 Python 侧重建成 Origin 时才炸——那正是这个跨语言校验器要拦下的东西。
+    """
+
+    payload = _good().to_payload()
+    assert payload_is_well_formed(payload)
+
+    def mutations():
+        yield lambda item: item.update({"owner": ""})
+        yield lambda item: item.update({"owner": None})
+        yield lambda item: item["object"].update({"value": None})
+        yield lambda item: item["object"].update({"value": ""})
+        yield lambda item: item["object"].update({"source": None})
+        yield lambda item: item["observation"].update({"result": None})
+        yield lambda item: item["observation"].update({"result": ""})
+        yield lambda item: item["observation"].update({"verified_at": ""})
+        yield lambda item: item["observation"].update({"verified_at": None})
+        yield lambda item: item["observation"].update({"verified_at": 7})
+
+    for mutate in mutations():
+        candidate = json.loads(json.dumps(payload))
+        mutate(candidate)
+        assert payload_is_well_formed(candidate) is False, candidate
+
+    # 与构造器同口径：这些取值连 Origin 都构造不出来（同一个判据的两侧）。
+    for field, value in (("owner", ""), ("object_value", None), ("result", "")):
+        with pytest.raises(OriginError):
+            _good(**{field: value})
+
+
+def test_unknown_origin_cannot_claim_a_proven_causal_link():
+    """unknown_origin 是"归因没有建立起来"：verified / causal_link 不许自相矛盾（复核发现）。
+
+    只有 unknown_origin() 助手按这条纪律写；直接构造（或未来某个调用方）能绕过它，
+    而这样一条记录在审计里会被读成"已证明的另一侧"。
+    """
+
+    with pytest.raises(OriginError):
+        _good(origin="unknown_origin")  # causal_link 仍是 proven
+    with pytest.raises(OriginError):
+        _good(origin="unknown_origin", causal_link="unproven")  # verified 仍是 True
+    with pytest.raises(OriginError):
+        _good(origin="unknown_origin", causal_link="proven", verified=False)
+
+    consistent = _good(origin="unknown_origin", causal_link="unproven", verified=False)
+    assert consistent.origin == "unknown_origin"
+    assert payload_is_well_formed(consistent.to_payload())
+
+
+def test_the_observation_time_is_fixed_once_at_construction(monkeypatch: pytest.MonkeyPatch):
+    """观测时刻只取一次：同一份归因序列化两次必须逐字相同（复核发现）。
+
+    旧实现把 `verified_at or _now_iso()` 放在 to_payload() 里：直接构造的 Origin
+    （dataclass 默认空串）每次序列化都会换一个时刻，同一件事在审计里有了两个时间。
+    """
+
+    stamps = iter(["2026-01-01T00:00:00Z", "2026-01-01T00:00:07Z"])
+    monkeypatch.setattr(origin_module, "_now_iso", lambda: next(stamps))
+
+    record = Origin(
+        origin="project.workdir_missing",
+        owner="platform.attribution",
+        object_kind="workdir",
+        object_value="C:/probe/missing",
+        object_source="config.projectDir",
+        method="stat",
+        result="stat 观测：该路径不存在（ENOENT）",
+        verified=True,
+        fix="创建它，或把 config.projectDir 指向真实存在的目录",
+        causal_link="proven",
+    )
+    assert record.verified_at == "2026-01-01T00:00:00Z"
+    first = record.to_payload()
+    second = record.to_payload()
+    assert first["observation"]["verified_at"] == record.verified_at
+    assert first == second
+
+    # 非字符串的 verified_at 不许流进载荷（它会被 json 原样带出去）。
+    with pytest.raises(OriginError):
+        Origin(
+            origin="project.workdir_missing",
+            owner="platform.attribution",
+            object_kind="workdir",
+            object_value="C:/probe/missing",
+            object_source="config.projectDir",
+            method="stat",
+            result="stat 观测：该路径不存在（ENOENT）",
+            verified=True,
+            fix="创建它",
+            causal_link="proven",
+            verified_at=7,
+        )
+
+
 def test_unknown_origin_is_the_only_landing_place_when_verification_fails():
     origin = unknown_origin(reason="核验判据不成立：没有指名任何输入")
     assert origin.origin == "unknown_origin"
@@ -180,6 +278,41 @@ def test_verification_proves_the_claim_when_the_config_is_really_missing(tmp_roo
     assert origin.fix
 
 
+def test_the_stat_probe_reports_the_real_failure_instead_of_throwing(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """观测路径自己不许抛异常：stat 失败要如实写进 result（复核发现）。
+
+    旧实现用 Path.exists()/is_dir()：它们只吞 ENOENT/ENOTDIR/EBADF/ELOOP，EACCES 这类
+    会直接逃逸，把"记下失败原因"的那条路径变成另一次崩溃；而返回 False 时又一律被
+    说成"不存在（ENOENT）"，尽管 errno 从没被读过。
+    """
+
+    target = tmp_root / "config" / "dsh-adapter.yaml"
+    real_stat = Path.stat
+
+    def denied(self, *args, **kwargs):
+        if self.name == "dsh-adapter.yaml":
+            raise PermissionError(13, "Permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(Path, "stat", denied)
+        origin = verification_of_config(target, source="--config")
+
+    assert origin.origin == "platform.config_unreadable"
+    assert origin.method == "stat"
+    assert origin.verified is True
+    assert origin.causal_link == "proven"
+    assert "PermissionError" in origin.result
+    assert "不存在" not in origin.result
+
+    # 真的不存在时才说"不存在（ENOENT）"——那句话必须是观测来的。
+    missing = verification_of_config(tmp_root / "nope" / "dsh-adapter.yaml", source="--config")
+    assert missing.verified is True
+    assert "不存在（ENOENT）" in missing.result
+
+
 def test_verification_names_the_shape_when_the_config_is_a_directory(tmp_root: Path):
     directory = tmp_root / "adapter-config-dir"
     directory.mkdir(parents=True, exist_ok=True)
@@ -205,7 +338,9 @@ def test_verification_falsifies_itself_when_the_config_is_fine(tmp_root: Path):
     assert origin.causal_link == "unproven"
     assert origin.object_value == "dsh-adapter.yaml"
     assert "证伪" in origin.result
-    assert origin.method == "load"
+    # 只读到"它是可读的 UTF-8"：方法必须是 read，理由不许声称解析过内容。
+    assert origin.method == "read"
+    assert "没有解析" in origin.result
 
 
 def test_verification_says_which_kind_of_unreadable_it_is(tmp_root: Path):
@@ -261,17 +396,75 @@ def test_origin_from_failure_uses_the_named_config_and_falls_back_to_the_text(tm
     assert "从失败原文里取回" in recovered.object_source
 
 
-def test_evidence_unavailable_is_only_proven_when_the_input_is_named():
-    named = origin_from_failure(
-        reason_code="evidence_unavailable",
-        detail="validation/validators.yaml 读不到",
+def test_evidence_unavailable_is_proven_only_after_a_real_observation(
+    tmp_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """被点名不等于已核验：必须真的去 stat / read 那份输入（复核发现）。
+
+    旧实现只凭"理由里出现了一个路径"就写 method=stat / verified=True / proven，而且
+    调用方传进来的 config_path（adapter 配置）会被当成取证对象——两者都不是观测，
+    于是审计里出现一条与真实 stat 无法区分的"已证明"记录。
+    """
+
+    monkeypatch.chdir(tmp_root)
+    adapter_config = tmp_root / "dsh-adapter.yaml"
+    adapter_config.write_text("agent_version: '1.0'" + chr(10), encoding="utf-8")
+    (tmp_root / "present").mkdir()
+    (tmp_root / "present" / "validators.yaml").write_text(
+        "validators: []" + chr(10), encoding="utf-8"
     )
-    assert named.origin == "platform.evidence_unavailable"
-    assert named.verified is True
+
+    # (1) 原文点名的输入真的不存在：stat 过之后才有资格写 proven。
+    missing = origin_from_failure(
+        reason_code="evidence_unavailable",
+        detail="pre_evidence 的验证器数据读不到（missing/validators.yaml）",
+        config_path=adapter_config,
+        config_source="--config",
+    )
+    assert missing.origin == "platform.evidence_unavailable"
+    assert missing.method == "stat"
+    assert missing.verified is True
+    assert missing.causal_link == "proven"
+    # 对象是失败原文点名的那份输入，不是调用方给的 adapter 配置。
+    assert missing.object_value == "validators.yaml"
+    assert "dsh-adapter" not in missing.object_value
+    assert "不存在" in missing.result
+
+    # (2) 点名的那份输入读得到：这条指控被证伪，落 unknown_origin（规则 2）。
+    readable = origin_from_failure(
+        reason_code="evidence_unavailable",
+        detail="取证失败：present/validators.yaml 读不到",
+        config_path=adapter_config,
+        config_source="--config",
+    )
+    assert readable.origin == "unknown_origin"
+    assert readable.verified is False
+    assert readable.causal_link == "unproven"
+    assert "证伪" in readable.result
+    assert readable.object_value == "validators.yaml"
+    assert "dsh-adapter" not in readable.object_value + readable.result
+
+    # (3) 没有点名任何输入：没有对象就没有核验。
     unnamed = origin_from_failure(reason_code="evidence_unavailable", detail="取证失败")
     assert unnamed.origin == "platform.evidence_unavailable"
+    assert unnamed.method == "none"
     assert unnamed.verified is False
     assert unnamed.causal_link == "unproven"
+    assert unnamed.object_value == "<未指名>"
+
+    # (4) 读不出来的那份输入（不是 UTF-8）同样是"不可用"，理由要说得出是哪一种。
+    broken = tmp_root / "broken" / "validators.yaml"
+    broken.parent.mkdir()
+    broken.write_bytes(b"\xff\xfe not utf-8")
+    unreadable = origin_from_failure(
+        reason_code="evidence_unavailable",
+        detail="取证输入读不出来（broken/validators.yaml）",
+    )
+    assert unreadable.origin == "platform.evidence_unavailable"
+    assert unreadable.method == "read"
+    assert unreadable.verified is True
+    assert unreadable.causal_link == "proven"
+    assert "UnicodeDecodeError" in unreadable.result
 
 
 def test_the_origin_payload_survives_a_jsonl_round_trip():

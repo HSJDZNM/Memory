@@ -40,14 +40,52 @@ _UV_SYNC_RE = re.compile(r"^\s*uv sync\b")
 _INSTALL_RE = re.compile(r"\bpip install\s+(?:[^\n]*?)-r\s+([^\s#]+)")
 
 
-def version_tuple(text: str) -> tuple[int, ...]:
-    parts: list[int] = []
-    for chunk in text.split("."):
-        digits = re.match(r"^\d+", chunk)
-        if digits is None:
-            break
-        parts.append(int(digits.group(0)))
-    return tuple(parts)
+# PEP 440 的一个**显式子集**：release 段 + 预发布(a/b/rc) / post / dev / local。
+# 认不出的形态抛 ValueError —— 由调用方记成"无法比较"的漂移，而不是静默截断成可比的数。
+_VERSION_RE = re.compile(
+    r"^(?P<release>\d+(?:\.\d+)*)"
+    r"(?:(?P<pre>a|b|rc)(?P<pre_n>\d*))?"
+    r"(?:\.post(?P<post>\d+))?"
+    r"(?:\.dev(?P<dev>\d+))?"
+    r"(?:\+[0-9A-Za-z.]+)?$"
+)
+_PRE_LETTER_RANK = {"a": 0, "b": 1, "rc": 2}
+# 阶段秩：dev < 预发布 < 正式 < post（PEP 440 的大小顺序）
+_STAGE_DEV, _STAGE_PRE, _STAGE_FINAL, _STAGE_POST = -1, 0, 1, 2
+
+
+def _version_key(text: str) -> tuple[tuple[int, ...], int, int]:
+    """把版本号压成 (release 段, 阶段秩, 阶段号)；不认识的形态抛 ValueError。"""
+
+    match = _VERSION_RE.match(text.strip())
+    if match is None:
+        raise ValueError("无法按 PEP 440 比较的版本号: %r" % text)
+    release = tuple(int(part) for part in match.group("release").split("."))
+    if match.group("dev") is not None:
+        return release, _STAGE_DEV, int(match.group("dev"))
+    if match.group("pre") is not None:
+        number = int(match.group("pre_n") or 0)
+        return release, _STAGE_PRE, _PRE_LETTER_RANK[match.group("pre")] * 1000 + number
+    if match.group("post") is not None:
+        return release, _STAGE_POST, int(match.group("post"))
+    return release, _STAGE_FINAL, 0
+
+
+def compare_versions(left: str, right: str) -> int:
+    """PEP 440 口径的三向比较：release 段右侧补零对齐（1.4 == 1.4.0），再比阶段。"""
+
+    left_release, left_stage, left_number = _version_key(left)
+    right_release, right_stage, right_number = _version_key(right)
+    width = max(len(left_release), len(right_release))
+    padded_left = left_release + (0,) * (width - len(left_release))
+    padded_right = right_release + (0,) * (width - len(right_release))
+    if padded_left != padded_right:
+        return 1 if padded_left > padded_right else -1
+    if left_stage != right_stage:
+        return 1 if left_stage > right_stage else -1
+    if left_number != right_number:
+        return 1 if left_number > right_number else -1
+    return 0
 
 
 def satisfies(pinned: str, specifier: str) -> bool:
@@ -64,25 +102,37 @@ def _satisfies_one(pinned: str, specifier: str) -> bool:
     if match is None:
         return False
     operator = match.group(1) or "=="
-    bound = version_tuple(match.group(2))
-    current = version_tuple(pinned)
+    bound = match.group(2)
+    if operator == "~=":
+        return _compatible_release(pinned, bound)
+    order = compare_versions(pinned, bound)
     if operator == ">=":
-        return current >= bound
+        return order >= 0
     if operator == "<=":
-        return current <= bound
+        return order <= 0
     if operator == ">":
-        return current > bound
+        return order > 0
     if operator == "<":
-        return current < bound
+        return order < 0
     if operator == "==":
-        return current == bound
+        return order == 0
     if operator == "!=":
-        return current != bound
-    # ~=X.Y[.Z]：下界为 X.Y[.Z]，上界把倒数第二位加一
-    if len(bound) < 2:
+        return order != 0
+    return False
+
+
+def _compatible_release(pinned: str, bound: str) -> bool:
+    """~=X.Y[.Z]：下界 X.Y[.Z]，上界把倒数第二段加一（PEP 440 的兼容版本区间）。"""
+
+    release, stage, _number = _version_key(bound)
+    if len(release) < 2 or stage != _STAGE_FINAL:
+        raise ValueError("~= 的下界必须是至少两段的正式版本，得到 %r" % bound)
+    if compare_versions(pinned, bound) < 0:
         return False
-    upper = list(bound[:-2]) + [bound[-2] + 1]
-    return current >= bound and current < tuple(upper)
+    upper = release[:-2] + (release[-2] + 1,)
+    candidate, _stage, _number = _version_key(pinned)
+    width = max(len(candidate), len(upper))
+    return candidate + (0,) * (width - len(candidate)) < upper + (0,) * (width - len(upper))
 
 
 def read_requirements_in() -> dict[str, str]:
@@ -104,6 +154,9 @@ def read_requirements_lock() -> dict[str, str]:
         line = line.split("#", 1)[0].strip()
         if not line or line.startswith("--hash"):
             continue
+        # 生成的锁文件用行尾反斜杠续行（pip 的 --hash 必须与依赖在同一条逻辑行上）：
+        # 解析时先去掉续行符，否则每条固定版本都会被判成"没有锁定"。
+        line = line.removesuffix("\\").strip()
         match = _PIN_RE.match(line)
         if match is None:
             continue
@@ -147,7 +200,15 @@ def check_lock() -> list[str]:
         if pinned is None:
             issues.append("requirements.lock 没有固定 %s（直接依赖必须全部锁定）" % name)
             continue
-        if not satisfies(pinned, specifier):
+        try:
+            ok = satisfies(pinned, specifier)
+        except ValueError as error:
+            # 比不了 ≠ 满足：认不出的版本形态记成漂移，绝不静默当成"通过"。
+            issues.append(
+                "%s 的版本无法比较（%s）：拒绝把「比不了」当成「满足」" % (name, error)
+            )
+            continue
+        if not ok:
             issues.append(
                 "%s 锁定为 %s，不满足声明的 %r：锁文件与依赖声明已经漂移，"
                 "请在验证过的环境重新生成 requirements.lock" % (name, pinned, specifier)

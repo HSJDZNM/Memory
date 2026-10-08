@@ -728,7 +728,7 @@ def test_approval_record_from_phase4_is_the_only_accepted_shape(tmp_root) -> Non
     """审批语义来自 Phase 4：门禁读的就是 ApprovalRecord 的 JSON，本包不发明第二种格式。"""
 
     payload = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "approval_id": "approval-9",
         "action_hash": ACTION_HASH,
         "action_id": ACTION_HASH,

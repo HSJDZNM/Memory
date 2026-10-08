@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import os
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Optional
 
@@ -117,11 +119,19 @@ def _check_tenant(runtime: "ApiRuntime", tenant_id: str) -> Mapping[str, Any]:
 
     if runtime.request_log.active:
         path = Path(runtime.request_log.path)  # type: ignore[arg-type]
+        # 探针文件名必须**唯一**（pid + 随机后缀）：固定 `<log>.probe` 在两个探针重叠时
+        # （常驻服务 + CLI self-check，或多 worker）会互相删对方的文件——先完成的那个
+        # unlink 掉，后一个的 unlink 抛 FileNotFoundError，被下面的 except OSError 记成
+        # "观测日志不可写"，于是一个健康进程翻成 503（还可能触发重启）。
+        probe = path.with_name(
+            f"{path.name}.probe-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        )
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            probe = path.with_name(path.name + ".probe")
-            probe.write_text("", encoding="utf-8")
-            probe.unlink()
+            try:
+                probe.write_text("", encoding="utf-8")
+            finally:
+                probe.unlink(missing_ok=True)
             checks.append({"check": "audit_log", "ok": True, "detail": "可写"})
         except OSError:
             checks.append({"check": "audit_log", "ok": False, "detail": "观测日志不可写"})
@@ -151,7 +161,11 @@ def readiness_report(runtime: "ApiRuntime") -> Mapping[str, Any]:
         detail = "部分租户不可服务：" + ", ".join([*failed, *missing])
     else:
         state = "not_ready"
-        detail = "没有可服务的租户：" + ", ".join([*failed, *missing]) or "未装配任何租户"
+        # `"没有可服务的租户：" + ... or "未装配任何租户"` 里的 or 左侧永远为真（拼上字面量
+        # 就非空），兜底是死代码；而 failed 与 missing 都为空时（租户全部 disabled）detail
+        # 会留下一句悬空的"没有可服务的租户："。分开写，两种情形各说各的。
+        suffix = ", ".join([*failed, *missing])
+        detail = "没有可服务的租户：" + suffix if suffix else "未装配任何租户"
     return {
         "state": state,
         "ready": ready,
