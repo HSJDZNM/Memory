@@ -117,3 +117,46 @@ def test_missing_target_still_uses_the_missing_reason(tmp_root: Path) -> None:
     skip = module._drop_reason(base, _scope(module, file="nope.py"), {})
 
     assert skip is not None and skip.reason == module.SKIP_TARGET_MISSING
+
+def test_lock_files_shape_is_validated_not_dereferenced(tmp_root: Path) -> None:
+    """lock 的 files 段形状不对：逐条记问题，不抛 KeyError/TypeError。"""
+
+    module = _load_eval_corpus()
+    problems: list = []
+
+    locked = module._locked_files(
+        "fixture",
+        {"files": ["not-a-dict", {"path": "a.py"}, {"sha256": "x"}, {"path": "b.py", "sha256": "abc"}]},
+        problems,
+    )
+
+    assert locked == {"b.py": "abc"}
+    assert len(problems) == 3, problems
+    assert any("缺 path" in item for item in problems)
+    assert any("缺 sha256" in item for item in problems)
+
+
+def test_lock_files_not_a_list_is_reported(tmp_root: Path) -> None:
+    """files 不是数组（或缺失）同样只记问题。"""
+
+    module = _load_eval_corpus()
+    problems: list = []
+
+    assert module._locked_files("fixture", {"files": {"a.py": {}}}, problems) == {}
+    assert module._locked_files("fixture", {}, problems) == {}
+    assert len(problems) == 2, problems
+
+
+def test_verify_with_non_dict_lock_returns_a_problem(tmp_root: Path) -> None:
+    """lock 顶层不是 JSON 对象：verify 返回 (False, 问题)，不是 AttributeError。"""
+
+    module = _load_eval_corpus()
+    dataset_id = next(iter(module.SOURCES))
+    lock_dir = tmp_root / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    module.lock_path(dataset_id, lock_dir).write_text("[1, 2, 3]" + chr(10), encoding="utf-8", newline=chr(10))
+
+    ok, problems = module.verify(dataset_id, root=tmp_root / "corpora", lock_dir=lock_dir)
+
+    assert ok is False
+    assert any("顶层必须是 JSON 对象" in item for item in problems), problems

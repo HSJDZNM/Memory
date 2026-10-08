@@ -1130,6 +1130,31 @@ def write_lock(dataset_id: str, *, root: Path, lock_dir: Path) -> Path:
     return destination
 
 
+def _locked_files(dataset_id: str, payload: dict, problems: list[str]) -> dict[str, str]:
+    """lock 的 files 段 → {相对路径: sha256}；形状不对**逐条记问题**，不抛 KeyError/TypeError。
+
+    lock 是提交进仓库、可能被人手工改过的数据文件：entries 缺 path/sha256、files 不是数组、
+    甚至 json.loads 回来根本不是 dict，都必须走 (False, problems) 这条路，而不是让 verify
+    以一段 traceback 收场（main 只把 CorpusError 翻成退出码）。
+    """
+
+    files = payload.get("files")
+    if not isinstance(files, list):
+        problems.append(f"{dataset_id}: lock 的 files 必须是数组（得到 {type(files).__name__}）")
+        return {}
+    locked: dict[str, str] = {}
+    for index, item in enumerate(files):
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            problems.append(f"{dataset_id}: lock 的 files[{index}] 缺 path（形状不对）")
+            continue
+        digest = item.get("sha256")
+        if not isinstance(digest, str) or not digest:
+            problems.append(f"{dataset_id}: lock 的 files[{index}]（{item['path']}）缺 sha256")
+            continue
+        locked[item["path"]] = digest
+    return locked
+
+
 def verify(dataset_id: str, *, root: Path, lock_dir: Path) -> tuple[bool, list[str]]:
     """比对 lock 与本地语料，并跑结构自检。返回 (是否通过, 问题清单)。"""
 
@@ -1142,6 +1167,11 @@ def verify(dataset_id: str, *, root: Path, lock_dir: Path) -> tuple[bool, list[s
         payload = json.loads(locked_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return False, [f"{dataset_id}: lock 读不出来：{locked_path}：{error}"]
+    # 形状先校验：手工改过 / 截断的 lock 不能变成 traceback——契约是 (False, problems)。
+    if not isinstance(payload, dict):
+        return False, [
+            f"{dataset_id}: lock 顶层必须是 JSON 对象（得到 {type(payload).__name__}）：{locked_path}"
+        ]
     if payload.get("schema_version") != LOCK_SCHEMA_VERSION:
         problems.append(
             f"{dataset_id}: lock 的 schema_version={payload.get('schema_version')!r}，"
@@ -1162,7 +1192,7 @@ def verify(dataset_id: str, *, root: Path, lock_dir: Path) -> tuple[bool, list[s
         problems.append(f"{dataset_id}: 本地语料不存在：{base}（先跑 --fetch）")
         return False, problems
 
-    locked = {item["path"]: item for item in payload.get("files", [])}
+    locked = _locked_files(dataset_id, payload, problems)
     present = _list_files(base)
     for relative in sorted(set(locked) - set(present)):
         problems.append(f"{dataset_id}: lock 里列了但本地没有：{relative}")
@@ -1170,10 +1200,9 @@ def verify(dataset_id: str, *, root: Path, lock_dir: Path) -> tuple[bool, list[s
         problems.append(f"{dataset_id}: 本地有但 lock 没覆盖：{relative}（lock 不完整）")
     for relative in sorted(set(locked) & set(present)):
         actual = _file_digest(base / relative)
-        if actual != locked[relative]["sha256"]:
+        if actual != locked[relative]:
             problems.append(
-                f"{dataset_id}: sha256 漂移：{relative}：lock={locked[relative]['sha256']}，"
-                f"实际={actual}"
+                f"{dataset_id}: sha256 漂移：{relative}：lock={locked[relative]}，实际={actual}"
             )
 
     report = annotation_report(dataset_id, root=root)
