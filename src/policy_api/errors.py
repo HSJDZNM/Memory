@@ -16,7 +16,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Tuple
+from types import MappingProxyType
+from typing import Mapping, Optional, Tuple
 
 __all__ = [
     "STATUS_BY_CODE",
@@ -71,7 +72,12 @@ class ErrorCode(str, Enum):
 
 
 # 错误码 → HTTP 状态。跨租户与"不存在"共用 404：错误码本身不能成为存在的探针。
-STATUS_BY_CODE: dict[ErrorCode, int] = {
+#
+# 对外**只读**（`MappingProxyType`）：这张表是契约（"认证失败永远 401"），而它此前是普通 dict——
+# 任何 import 点、任何一次手滑的赋值（`STATUS_BY_CODE[ErrorCode.FORBIDDEN] = 200`）都能**进程级**
+# 改写 HTTP 状态，而且没有任何测试会发现"这次响应为什么变成 200"。
+# 测试要做变异时替换模块属性（`monkeypatch.setattr(errors, "STATUS_BY_CODE", …)`），不要就地改。
+_STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.SCHEMA_VERSION_MISSING: 400,
     ErrorCode.SCHEMA_VERSION_UNKNOWN: 400,
     ErrorCode.BODY_INVALID: 400,
@@ -106,6 +112,7 @@ STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.NOT_FOUND: 404,
     ErrorCode.METHOD_NOT_ALLOWED: 405,
 }
+STATUS_BY_CODE: Mapping[ErrorCode, int] = MappingProxyType(_STATUS_BY_CODE)
 
 _MAX_DETAIL_CHARS = 240
 
