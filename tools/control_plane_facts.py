@@ -549,6 +549,11 @@ def cross_source_tool_tables(root: Path) -> dict:
             (root / "registry" / "tool-registry.yaml").read_text(encoding="utf-8")
         )
         registry_tools = registry_document["tools"]
+        # 这条提取必须留在同一个 try 里：它是本函数**唯一**直接 item["id"] 的地方（下面 by_agent /
+        # orchestrator 两处都用 .get 防御）。放在 try 之外时，一条缺 id 的注册表条目会以 KeyError
+        # 逃出去 —— CLI 变成 traceback + 非 0 退出，与本模块"退出码恒 0、读不出来降级为 unavailable"
+        # 的口径相反（读数读不出来是显式状态，不是崩溃）。
+        registry_ids = [str(item["id"]) for item in registry_tools]
         manifests: dict = {}
         manifest_paths: dict = {}
         for path in sorted((root / "adapters").glob("*/manifest.yaml")):
@@ -576,7 +581,6 @@ def cross_source_tool_tables(root: Path) -> dict:
             "reason": "工具表读不出来：" + type(error).__name__ + "：" + str(error),
         }
 
-    registry_ids = [str(item["id"]) for item in registry_tools]
     by_agent: dict = {}
     for item in registry_tools:
         by_agent.setdefault(str(item.get("agent")), []).append(str(item.get("tool_name")))
