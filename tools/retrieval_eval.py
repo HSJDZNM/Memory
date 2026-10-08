@@ -335,12 +335,10 @@ def evaluate_method(
 
     failures: list[str] = []
     for item in outcomes:
+        # first_expected_rank 取自 rank <= top_k 的那一批结果，所以它不可能 > top_k：
+        # 「没进 top K」只有 None 这一种形态，别再加一条永远为假的 elif。
         if item.first_expected_rank is None:
             failures.append(f"{item.id}: 期望文档没有进入 top {thresholds.top_k}（status={item.status}）")
-        elif item.first_expected_rank > thresholds.top_k:
-            failures.append(
-                f"{item.id}: 期望文档的最佳排名 {item.first_expected_rank} > {thresholds.top_k}"
-            )
         if item.supporting_rank is None:
             failures.append(f"{item.id}: top {thresholds.top_k} 里没有能独立支持答案的片段")
         if not item.sources_complete and item.results:
