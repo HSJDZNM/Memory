@@ -628,7 +628,7 @@ def repair(state: GraphState, context: NodeContext) -> NodeOutcome:
     state = charge(state, LimitKind.REPAIR_ROUNDS, 1)  # 超限 → LimitExceeded → needs_human
     round_index = state.counters.repair_rounds
     change = context.author.propose(task=context.task, state=state, round_index=round_index)
-    return _apply_change(state, context, change, node=NodeId.REPAIR, round_index=round_index)
+    return _apply_change(state, context, change, node=NodeId.REPAIR)
 
 
 def _apply_change(
@@ -637,9 +637,13 @@ def _apply_change(
     change: Change,
     *,
     node: NodeId,
-    round_index: int = 0,
 ) -> NodeOutcome:
-    """受治理的写入：先问平台（evaluate），再交给受控执行链。"""
+    """受治理的写入：先问平台（evaluate），再交给受控执行链。
+
+    这里**没有** `round_index`：幂等键由 `_action_id(state, change)` 从状态里算（同一状态 ⇒ 同一个键），
+    传进来一个轮次只会让人以为键会随轮次变化。曾经有过这个参数，两个调用点一个传 `round_index`、
+    一个用默认值，而函数体从头到尾没读过它——"看起来能控制的旋钮"是最容易骗过审查的那种缺陷。
+    """
 
     if change.path != context.task.target and not _is_policy_path(change.path):
         raise NodeContractError(
