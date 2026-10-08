@@ -291,13 +291,10 @@ def run_pytest(
             ),
             payload={"selection": selection.to_payload()},
         )
-    if run.exit_code not in (0, 1):
-        return AdapterResult(
-            status=ValidatorStatus.CONFIG_ERROR,
-            tool=invocation,
-            reason="pytest 退出码 " + str(run.exit_code) + " 表示用法或内部错误",
-            payload={"selection": selection.to_payload()},
-        )
+    # 这里**没有**"其余退出码 -> CONFIG_ERROR"的分支，因为它不可达（复核发现）：进入本函数时已用
+    # findings_exit_codes=(0, 1, 5) 声明了哪些退出码算"跑成了"，run_tool 只对它们给 OK，其余一律是
+    # CONFIG_ERROR / CRASHED / TIMEOUT 之类，早在 `run.status is not OK` 那一支就返回了；而 5 也在上面
+    # 单独处理。留一条永远进不来的分支，只会让读者以为"用法或内部错误"另有兜底。
 
     evidence.extend(
         _failure_evidence(
