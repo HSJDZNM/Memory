@@ -179,7 +179,10 @@ facts:
 
   - key: "budget.dsh_side_limit"
     authority: canonical
-    canonical_ref: "src/adapters/dsh/hooks.py#check_wiring + src/adapters/wiring.py#timeout_budget"
+    # 单引用纪律：canonical_ref 必须是**一个**指针（"<路径>#<锚点>"）。这一行原本把两处
+    # 拼在一起，既破了形状，也让"唯一权威声明"这件事说不清（复核发现）。权威取 dsh 侧，
+    # 另一处（wiring 的 timeout_budget）本来就已经在 consumers 与 remedy 里点名。
+    canonical_ref: "src/adapters/dsh/hooks.py#check_wiring"
     consumers: ["adapters.dsh.hooks.check_wiring", "adapters.wiring._probe_channel", "tools.control_plane_facts"]
     predicate: "adapters.dsh.hooks.budget_inequality_facts + adapters.wiring._probe_channel"
     severity: advisory
