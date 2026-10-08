@@ -593,7 +593,9 @@ def run_one(
         "task_id": task_id,
         "preset": preset or None,
         "expect": spec.get("expect"),
-        "baseline": {"path": display(baseline), "digest": sha256_file(baseline)},
+        # digest 用**树摘要**（tree_digest：相对路径 + 逐文件哈希）：baseline 是目录，
+        # sha256_file 对目录恒返回 None（吞掉 IsADirectoryError），这个字段于是"可填却永远填不上"。
+        "baseline": {"path": display(baseline), "digest": tree_digest(baseline)},
         "sanitization": {"profile": "default", "removed": manifest["sanitization"], "seeded_fixture": manifest["seeded_fixture"], "kept_note": manifest["kept_note"]},
         "arm_tree": {"path": display(tree), "digest": digest_tree, "clean": cleanliness["clean"]},
         "rules_root": {"path": display(REPO_ROOT), "inside_arm_tree": cleanliness["rules_root"]["inside_arm_tree"]},
@@ -1879,7 +1881,9 @@ def self_proof(*, baseline: Path, out_root: Path) -> Mapping[str, Any]:
         "kind": "self-proof",
         "run_id": run_id,
         "run_dir": display(run_dir),
-        "baseline": {"path": display(baseline), "digest": sha256_file(baseline)},
+        # digest 用**树摘要**（tree_digest：相对路径 + 逐文件哈希）：baseline 是目录，
+        # sha256_file 对目录恒返回 None（吞掉 IsADirectoryError），这个字段于是"可填却永远填不上"。
+        "baseline": {"path": display(baseline), "digest": tree_digest(baseline)},
         "mutation": {
             "A_path": "往臂树里放回 policies/ARCH-001.yaml（路径删除层必须挡住）",
             "B_content": "往臂树里放 notes.md，正文含 ARCH-001@1（内容扫描层必须挡住）",

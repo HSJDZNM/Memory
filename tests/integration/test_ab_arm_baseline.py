@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -64,3 +65,48 @@ def test_one_platform_feature_alone_does_not_refuse(tmp_root: Path) -> None:
     assert ab_arm.platform_repo_features(tree) == [ab_arm.PLATFORM_REPO_FEATURES[0]]
     ab_arm.assert_supported_baseline(tree)  # 不抛就是通过
     assert len(ab_arm.platform_repo_features(REPO_ROOT)) == len(ab_arm.PLATFORM_REPO_FEATURES)
+
+def test_baseline_digest_is_a_real_tree_digest(tmp_root: Path) -> None:
+    """[3]：`baseline.digest` 必须是真摘要——旧实现走 `sha256_file(目录)`，恒为 null。
+
+    取证（提交正文里也写了）：全仓 grep `baseline.*digest` 只有 ab_arm 自己那两处生产代码，
+    `tools/ab_measure.py` 不读它、tests/ 无断言、evaluation/ 的 A/B 基线里也没有存过它——
+    所以"从 null 变成摘要"在仓库内**没有可比性断裂**（没有比较点），如实记下即可。
+    """
+
+    code = ab_arm.main(
+        ["--self-proof", "--baseline-fixture", "shop", "--out", str(tmp_root / "arms")]
+    )
+    assert code == 0
+
+    digests: list[object] = []
+    for path in sorted((tmp_root / "arms").rglob("*.json")):
+        document = json.loads(path.read_text(encoding="utf-8"))
+        block = document.get("baseline") if isinstance(document, dict) else None
+        if isinstance(block, dict) and "digest" in block:
+            digests.append(block["digest"])
+
+    assert digests, "自证/运行载荷里没有 baseline.digest——这条用例的前提不成立"
+    # 形状以 tree_digest 的实际约定为准（`"sha256:" + sha256_bytes(...)`，见 tools/ab_arm.py:723），
+    # 不是"我以为的 64 位裸 hex"——写不出来的约定不许拿断言钉。
+    for item in digests:
+        assert isinstance(item, str), digests
+        assert item.startswith("sha256:"), digests
+        assert len(item) == len("sha256:") + 64, digests
+        assert all(character in "0123456789abcdef" for character in item[len("sha256:") :]), digests
+
+
+def test_tree_digest_tracks_the_tree(tmp_root: Path) -> None:
+    """阳性对照：同一份内容摘要相同、改一个字节即变——"有值"不等于"随便一个有值"。"""
+
+    first = tmp_root / "first"
+    second = tmp_root / "second"
+    for tree in (first, second):
+        (tree / "sub").mkdir(parents=True)
+        (tree / "sub" / "x.py").write_text("value = 1" + chr(10), encoding="utf-8", newline=chr(10))
+
+    assert ab_arm.tree_digest(first) == ab_arm.tree_digest(second)
+
+    (second / "sub" / "x.py").write_text("value = 2" + chr(10), encoding="utf-8", newline=chr(10))
+
+    assert ab_arm.tree_digest(first) != ab_arm.tree_digest(second)
