@@ -32,7 +32,7 @@
 id: SEC-010
 version: 1
 name: no-untrusted-url-open
-description: 禁止对不可信 URL 直接发起请求（SSRF）。
+description: 禁止把不可信 URL 直接交给 urllib 家族发起请求（Ruff S310；requests / httpx / socket 不在本条证据范围内）。
 scope:
   language: python
 severity: error
