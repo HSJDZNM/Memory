@@ -43,7 +43,7 @@ rule:
   style_lint:
     tool: ruff
     codes: [S310]
-message: 禁止对不可信 URL 直接 urlopen，改为按 allowlist 校验主机后自行拼装请求（Ruff S310）。
+message: '禁止对不可信 URL 直接 urlopen（Ruff S310 只覆盖 urllib 家族、且只做 scheme 审计，requests / httpx / socket 不在内）。按 allowlist 校验主机后自行拼装请求**仍可能报 S310**——那是检查器的形态限制，不是 allowlist 写错了：需要时走显式豁免（validation/ruff.toml 的 per-file-ignores，或 # noqa: S310 - <理由>），不要为了消警告把 allowlist 拆掉。'
 source:
   kind: standard
   path: docs/mirrors/owasp-cheatsheets/02_输入验证、注入与文件处理/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.md
