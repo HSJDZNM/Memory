@@ -59,6 +59,19 @@ def prose_lines(text: str):
         yield index, line
 
 
+def prose_paragraphs(text: str):
+    """只产出**段落散文**行：在 prose_lines 之上再排除标题、引用、列表行。
+
+    为什么要再排除这三类：它们通常不以句末标点结尾，拼进长句统计会与下一行合成"人造长句"，
+    把 >90 字比例推过阈值——那是版式，不是散文质量（实测：三个长标题 + 三句短句能凑出 100%）。
+    """
+
+    for _number, line in prose_lines(text):
+        if line.strip().startswith(("#", ">", "-", "*", "|", "<")):
+            continue
+        yield line
+
+
 def sections(text: str):
     title, body = None, []
     for index, line in prose_lines(text):
@@ -120,7 +133,7 @@ def check_docs() -> list:
                 problems.append(path.name + " §" + title[:18] + " 概括句过长（" + str(len(first)) + " 字）：" + first[:34] + "…")
             if not ANCHOR.search(" ".join(body)):
                 problems.append(path.name + " §" + title[:18] + " 没有精确锚点（文件:行 / 标识符 / 路径 / 枚举）")
-        prose = " ".join(line for _n, line in prose_lines(text))
+        prose = " ".join(prose_paragraphs(text))
         sentences = [s.strip() for s in SENTENCE.findall(prose) if len(s.strip()) > 3]
         ratio = len([s for s in sentences if len(s) > 90]) / max(1, len(sentences))
         if ratio > 1 / 3:

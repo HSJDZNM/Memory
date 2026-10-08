@@ -125,3 +125,25 @@ def test_leading_list_line_is_still_skipped():
     body = ["- 列表项", "真正的第一段。", "", "第二段。"]
 
     assert module.first_paragraph(body) == "真正的第一段。"
+
+def test_prose_paragraphs_exclude_headings_quotes_and_lists():
+    """长句统计只看段落散文：标题/引用/列表行不参与。"""
+
+    text = chr(10).join(["# 一级标题", "## 二级标题", "> 引用行", "- 列表项", "正文一句。"])
+
+    assert list(module.prose_paragraphs(text)) == ["正文一句。"]
+
+
+def test_long_headings_do_not_inflate_the_long_sentence_ratio(tmp_path, monkeypatch):
+    """三个长标题 + 三句短句：旧口径会算成 100% 长句（标题并进句子里），新口径 0%。"""
+
+    heading = "## " + ("版式标题词" * 18)  # 无句末标点、远超 90 字
+    body = []
+    for _ in range(3):
+        body.extend([heading, "这一句很短。"])
+    (tmp_path / "doc.md").write_text(chr(10).join(body) + chr(10), encoding="utf-8", newline="")
+    monkeypatch.setattr(module, "ARCH", tmp_path)
+
+    problems = module.check_docs()
+
+    assert not any("长句" in item for item in problems), problems
