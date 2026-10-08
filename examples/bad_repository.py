@@ -14,4 +14,4 @@ class OrderRepository:
         return {**payload, "id": uuid4().hex}
 
 
-# 该模块的直接依赖（供 CLI --dependencies 使用）：
+# 该模块的直接依赖（供 CLI --dependencies 使用）：无（叶子模块，不依赖同层其它模块）。
