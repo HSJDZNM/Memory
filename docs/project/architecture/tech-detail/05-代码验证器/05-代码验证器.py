@@ -433,10 +433,13 @@ missing = sorted(name for name, item in tools.items() if item["status"] != "ok")
 print()
 print("本机缺失或不匹配的关键工具:", missing)
 print("原因:", tools[missing[0]]["reason"] if missing else "（无）")
-# 这是本机的**环境事实**（Ruff 装了、mypy 没装）。环境一变它就立刻报出来，不会默默变绿。
-assert missing == ["tool.mypy@1.0"], missing
-assert tools["tool.ruff@1.0"]["status"] == "ok"
-assert tools["tool.mypy@1.0"]["version"] is None
+# 判据是**形状**，不是"这台机器上恰好缺哪一个"：缺了必须给出原因（失败关闭不能是哑的），
+# 报 ok 的必须有版本。写死 `missing == ["tool.mypy@1.0"]` 等于把写这段的人的机器当成契约——
+# 换一台装了 mypy 的机器，这一格会红，而它说明的不是平台有问题。
+# （本章后面的演示要用真实 Ruff：它在 validation/validators.yaml 里声明了，缺失时流水线走
+#   失败关闭路径，读数会把原因写出来，不会默默变绿。）
+assert all(tools[name]["reason"] for name in missing), {name: tools[name] for name in missing}
+assert all(tools[name]["version"] for name in tools if tools[name]["status"] == "ok"), tools
 
 report, result = decide("src/shop/style_offences.py")
 print()
