@@ -576,6 +576,35 @@ def test_a_tenant_whose_rule_directory_is_empty_is_refused_on_cold_start(
     assert error_code(blocked) == "rule_set_unavailable"
 
 
+def test_an_unexpected_error_while_reading_rules_becomes_a_check_not_a_crash(
+    tmp_root: Path, monkeypatch
+) -> None:
+    """读规则文件时的**未预期**异常（例如 OSError）必须变成一条检查结论，而不是让探针 500。
+
+    `LoadedTenant.rules()` 只把 `LoaderError` 包成 `ApiError`；目录权限变化 / 磁盘错误这类 OSError
+    会原样逃出 `_check_tenant`：`/v1/health/ready` 于是以 500 回答，运维读不到「哪个租户、哪一步」，
+    而「探针自己崩了」还会被上游读成「服务不可用」。
+    """
+
+    from policy_api.services import LoadedTenant
+
+    runtime, client, _ = build_api(tmp_root)
+    assert client.get("/v1/health/ready").status_code == 200
+
+    def boom(self):
+        raise OSError("磁盘掉了（用例构造）")
+
+    monkeypatch.setattr(LoadedTenant, "rules", boom)
+
+    degraded = client.get("/v1/health/ready")
+    assert degraded.status_code == 503, degraded.text
+    report = degraded.json()
+    tenants = {item["tenant"]: item for item in report["tenants"]}
+    rule_checks = [item for item in tenants["alpha"]["checks"] if item["check"] == "rule_set"]
+    assert rule_checks and rule_checks[0]["ok"] is False
+    assert rule_checks[0]["detail"] == "OSError"
+
+
 def test_readiness_goes_not_ready_when_the_rule_directory_disappears(tmp_root: Path) -> None:
     """规则目录被删掉：readiness 立刻 503 not_ready，evaluate 得到 503 rule_set_unavailable。
 
