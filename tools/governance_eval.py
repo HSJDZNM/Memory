@@ -3135,7 +3135,15 @@ def run_fidelity(
                 "files_cross_check": dict(outcome.files_cross_check),
                 "unavailable": [dict(item) for item in outcome.unavailable],
                 "l1a": compute_l1a(outcome.units, [outcome]),
-                "l1b": compute_l1b(outcome.units, outcome.records, [outcome], owners, rules, suite),
+                "l1b": compute_l1b(
+                    outcome.units,
+                    outcome.records,
+                    [outcome],
+                    owners,
+                    rules,
+                    suite,
+                    blank_tokens=suite.blank_code_tokens,
+                ),
                 "negative_control": compute_negative_control(
                     outcome.blank_scopes, [outcome], owners, suite.blank_code_tokens
                 ),
