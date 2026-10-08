@@ -2329,6 +2329,22 @@ def _render(report: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _check_id_of(factory: Callable[[Env], Check]) -> str:
+    """从工厂函数名推出缺口 id（check_g07 -> "G07"）；推不出来就返回空串。
+
+    过滤必须发生在 factory(env) **之前**：13 个探针各自要起子进程、改探针项目里的文件，
+    在调用之后才 continue 等于"只报告指定缺口"而不是"只跑指定缺口"（--only 的帮助文本
+    写的是后者）。命名约定由 tests/unit/test_governance_gap_probe_only.py 静态守住
+    （AST 读每个 check_gNN 里 Check(id=...) 的字面量），推不出来时**不跳过**（宁可多跑）。
+    """
+
+    name = getattr(factory, "__name__", "")
+    prefix = "check_g"
+    if not name.startswith(prefix):
+        return ""
+    return "G" + name[len(prefix):].upper()  # check_g07 -> G07
+
+
 def _run_once(root: Path, phase: str, work: Path, *, only: Sequence[str],
               timeout: int) -> dict[str, Any]:
     """跑一遍全部（或指定）缺口：每次都用全新的工作目录，因此调用之间没有共享状态。"""
@@ -2338,6 +2354,10 @@ def _run_once(root: Path, phase: str, work: Path, *, only: Sequence[str],
     checks: list[dict[str, Any]] = []
     wanted = {item.upper() for item in only}
     for factory in CHECKS:
+        if wanted:
+            derived = _check_id_of(factory)
+            if derived and derived not in wanted:
+                continue  # 调用**之前**就跳过：--only 真的不跑没点名的缺口
         probe = Check(id="", title="", before={}, after={})
         try:
             probe = factory(env)
