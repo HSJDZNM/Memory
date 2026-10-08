@@ -742,18 +742,29 @@ async def discover(crawler, spec):
         frontier = sorted(set(nxt))
     return pages
 async def fetch_plain_file(url):
-    """取非 HTML 的单文件（如 LICENSE）。
+    """取非 HTML 的单文件（如 LICENSE）。返回**读数**：{"url", "status", "text", "reason"}。
 
     不使用 crawl4ai：其 AsyncHTTPCrawlerStrategy 在 Windows 上处理非 HTML 响应时
     会走到 os.O_NOFOLLOW（该常量 Windows 上不存在）而崩溃，故改用其自身依赖的 aiohttp。
+
+    两个纪律：请求必须有超时（同 sitemap 的 180s——旧实现没有，一次挂起就拖死整轮镜像）；
+    失败不许退化成空串——调用方曾经 `if extra.get(dest)` 直接跳过，而 README/STRUCTURE 照旧
+    宣称这份文件已保存，镜像少了一页却没有任何人看得见。
     """
     import aiohttp
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status != 200:
-                return ""
-            return (await resp.text()).strip()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=180)) as resp:
+                if resp.status != 200:
+                    return {"url": url, "status": resp.status, "text": "",
+                            "reason": "HTTP " + str(resp.status)}
+                return {"url": url, "status": resp.status, "text": (await resp.text()).strip(),
+                        "reason": ""}
+    except Exception as error:  # noqa: BLE001 - aiohttp 是可选依赖，异常类型在导入期拿不到；
+        # 但"读不到"必须变成读数而不是空串，所以这里显式收口并带上类型名。
+        return {"url": url, "status": None, "text": "",
+                "reason": type(error).__name__ + ": " + str(error)}
 
 
 # --------------------------------------------------------------------------
@@ -1082,7 +1093,7 @@ async def run(site_key):
     site_paths = mod.pathmap() if (mod is not None and hasattr(mod, "pathmap")) else {}
     urlmap = {u: site_paths.get(u) or url_to_relpath(u, spec) for u in pages}
     for path, dest in spec.get("extra_plain", []):
-        if extra.get(dest):
+        if (extra.get(dest) or {}).get("text"):
             urlmap[urljoin(spec["base"], path)] = dest
     if mod is not None and hasattr(mod, "urlmap_extra"):
         urlmap.update(mod.urlmap_extra(spec))
@@ -1166,10 +1177,16 @@ async def run(site_key):
         if item.get("saved") and item.get("parent") is None:
             item["parent"] = parent_of(item["local_path"], saved_paths)
 
-    for dest, text in extra.items():
+    for dest, reading in extra.items():
+        text = reading.get("text") or ""
         if text:
             (out / dest).write_text(text + chr(10), encoding="utf-8", newline=chr(10))
             print("  [OK] " + dest + " (" + str(len(text)) + " chars)")
+        else:
+            # README/STRUCTURE 里写着这份文件已保存——抓不到就必须有人看得见，
+            # 而不是让 `if text:` 悄悄跳过这一页。
+            print("  [FAIL] " + dest + " <- " + reading.get("url", "")
+                  + "（" + (reading.get("reason") or "内容为空") + "）")
 
     out.mkdir(parents=True, exist_ok=True)
     (out / "manifest.json").write_text(json.dumps({
