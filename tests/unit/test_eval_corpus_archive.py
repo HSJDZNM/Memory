@@ -72,3 +72,34 @@ def test_valid_archive_still_parses() -> None:
     members = module._archive_members(spec, buffer.getvalue())
 
     assert members == {"a.py": b"value = 1" + bytes([10])}
+
+def test_truncated_transfer_becomes_a_corpus_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """IncompleteRead（传输被截断）→ CorpusError，不是裸 HTTPException。"""
+
+    module = _load_eval_corpus()
+    spec = next(iter(module.SOURCES.values()))
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise module.http.client.IncompleteRead(b"partial", 100)
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", boom)
+
+    with pytest.raises(module.CorpusError) as error:
+        module._download(spec)
+
+    assert "IncompleteRead" in str(error.value)
+
+
+def test_plain_network_error_still_becomes_a_corpus_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """阳性对照：URLError 照旧翻成 CorpusError。"""
+
+    module = _load_eval_corpus()
+    spec = next(iter(module.SOURCES.values()))
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise module.urllib.error.URLError("no route to host")
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", boom)
+
+    with pytest.raises(module.CorpusError):
+        module._download(spec)

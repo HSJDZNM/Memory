@@ -103,6 +103,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import io
 import json
 import re
@@ -658,7 +659,9 @@ def _download(spec: SourceSpec) -> bytes:
             payload = response.read()
     except urllib.error.HTTPError as error:
         raise CorpusError(f"{spec.id}: 下载失败 HTTP {error.code}：{spec.url}") from error
-    except (urllib.error.URLError, OSError) as error:
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
+        # IncompleteRead 是 http.client.HTTPException：既不是 URLError 也不是 OSError，
+        # 传输被截断时会从这里逃出去（模块契约是"要么给结论，要么给 CorpusError"）。
         raise CorpusError(f"{spec.id}: 下载失败：{spec.url}：{error}") from error
     if not payload:
         raise CorpusError(f"{spec.id}: 下载到 0 字节：{spec.url}")
