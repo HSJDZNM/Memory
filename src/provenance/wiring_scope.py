@@ -234,6 +234,25 @@ class WiringScope(BaseModel):
     # 一律写 decision=undeclared，不猜。
     channel_kinds: Dict[str, str] = Field(default_factory=dict)
 
+    @field_validator("channel_kinds")
+    @classmethod
+    def _channel_kinds(cls, value: Dict[str, str]) -> Dict[str, str]:
+        """键与值都必须是非空字符串。
+
+        空值 / 拼错的值不会报错，只会让该通道落到 decision=undeclared——一个字的手误
+        就悄悄取消了治理，与本模块"未知取值一律加载期报错、不静默忽略"的口径相反。
+        """
+
+        for key, mapped in value.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError(f"channel_kinds 的键必须是非空字符串，得到 {key!r}")
+            if not isinstance(mapped, str) or not mapped.strip():
+                raise ValueError(
+                    f"channel_kinds[{key!r}] 的值必须是非空字符串，得到 {mapped!r}："
+                    "空值会让该通道静默落到 undeclared"
+                )
+        return value
+
     @field_validator("schema_version")
     @classmethod
     def _version(cls, value: str) -> str:
