@@ -6,6 +6,9 @@
     python tools/lock_requirements.py .tmp/pip-report.json requirements.lock
 
 报告来自真实解析结果，因此锁文件里的版本与哈希都可在干净环境复现。
+
+**必须在干净环境里跑那条 pip 命令**：`--dry-run --report` 只列「这次会安装」的包，
+当前环境已满足的依赖不会出现——那样生成的锁会**静默缺包**。工具因此拒绝出锁并点名缺席的包。
 """
 from __future__ import annotations
 
@@ -28,6 +31,45 @@ HEADER_LINES = (
 def requirements_digest() -> str:
     text = REQUIREMENTS_IN.read_text(encoding="utf-8")
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+def normalized(name: str) -> str:
+    """PEP 503 归一化：判「同一个包」时不分大小写与 -/_/. 的写法差异。"""
+
+    return name.strip().lower().replace("_", "-").replace(".", "-")
+
+
+def declared_names() -> list[str]:
+    """`requirements.in` 里声明的直接依赖名（归一化、去重、保序）。"""
+
+    names: list[str] = []
+    for raw in REQUIREMENTS_IN.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or line.startswith("-"):
+            continue
+        name = line.split("[", 1)[0].split(";", 1)[0]
+        for separator in ("<", ">", "=", "!", "~", " "):
+            name = name.split(separator, 1)[0]
+        if name:
+            key = normalized(name)
+            if key not in names:
+                names.append(key)
+    return names
+
+
+def missing_declared(report: dict) -> list[str]:
+    """报告里**缺席**的声明依赖（排序后的归一化名）。
+
+    `pip install --dry-run --report` 只列「这次会安装」的包：**当前环境已满足**的依赖不会出现。
+    于是从「只装了一部分」的环境生成的报告会让锁**静默缺包**——打印的包数看不出来，
+    而这份锁是给干净环境 `pip install --require-hashes` 用的。缺席即拒绝出锁。
+    """
+
+    present: set[str] = set()
+    for item in report["install"]:
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        if isinstance(metadata, dict) and isinstance(metadata.get("name"), str):
+            present.add(normalized(metadata["name"]))
+    return sorted({name for name in declared_names() if name not in present})
 
 
 class LockError(RuntimeError):
@@ -110,6 +152,17 @@ def main(argv: list[str]) -> int:
         return 2
     if not entries:
         print("报告里没有要安装的包：请确认 requirements.in 未被当前环境全部满足", file=sys.stderr)
+        return 2
+    missing = missing_declared(report)
+    if missing:
+        print(
+            "pip 报告里缺席 "
+            + str(len(missing))
+            + " 个 requirements.in 声明的直接依赖："
+            + ", ".join(missing)
+            + "。`pip install --dry-run --report` 不会列出**当前环境已满足**的依赖，所以这份报告来自「只装了一部分」的环境时，生成的锁会静默缺包（打印的包数看不出来）。请在干净环境里重跑那条 pip 命令再生成。",
+            file=sys.stderr,
+        )
         return 2
 
     body: list[str] = list(HEADER_LINES)

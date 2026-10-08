@@ -69,6 +69,11 @@ def test_generated_lock_is_readable_by_the_repo_parser(tmp_root, monkeypatch):
     output = tmp_root / "requirements.lock"
     report_path = tmp_root / "report.json"
     report_path.write_text(json.dumps(REPORT), encoding="utf-8", newline="\n")
+    # 声明一份只含这两个包的 requirements.in：本用例测的是「锁与解析器」的跨文件契约，
+    # 不测「报告是否覆盖声明」（那是下一个用例的事）。
+    declared = tmp_root / "requirements.in"
+    declared.write_text("pydantic>=2.9,<3\nPyYAML>=6.0,<7\n", encoding="utf-8", newline="\n")
+    monkeypatch.setattr(lock_requirements, "REQUIREMENTS_IN", declared)
 
     assert lock_requirements.main(["lock_requirements.py", str(report_path), str(output)]) == 0
     text = output.read_text(encoding="utf-8")
@@ -115,3 +120,30 @@ def test_the_singular_archive_info_hash_is_understood():
 
     assert [name for name, _lines in entries] == ["pyyaml"]
     assert any("--hash=sha256:" + "aa" * 32 in line for line in entries[0][1])
+
+
+def test_a_report_missing_a_declared_requirement_is_refused(tmp_root, monkeypatch, capsys):
+    """`--dry-run --report` 省略「当前环境已满足」的依赖：缺席即拒绝出锁。
+
+    对应审查结论 tools/lock_requirements.py:53——旧实现只检测「一个包都不用装」这一种形态：
+    环境里已经装了一部分时，pip 报告里那部分依赖根本不出现，锁于是**静默缺包**，
+    而 `已写入 …，共 N 个包` 那行读数看不出来（N 只反映报告里有什么）。
+    本用例同时是 A/B 的 B 侧：旧实现下这份报告退出 0 并写出 2 个包的锁。
+    """
+
+    declared = tmp_root / "requirements.in"
+    declared.write_text(
+        "pydantic>=2.9,<3\nPyYAML>=6.0,<7\nhttpx>=0.27,<1\n", encoding="utf-8", newline="\n"
+    )
+    monkeypatch.setattr(lock_requirements, "REQUIREMENTS_IN", declared)
+
+    report_path = tmp_root / "report.json"
+    # REPORT 里只有 pydantic 与 PyYAML：httpx 已满足于当前环境，pip 不会列它。
+    report_path.write_text(json.dumps(REPORT), encoding="utf-8", newline="\n")
+    output = tmp_root / "requirements.lock"
+
+    assert lock_requirements.declared_names() == ["pydantic", "pyyaml", "httpx"]
+    assert lock_requirements.missing_declared(REPORT) == ["httpx"]
+    assert lock_requirements.main(["lock_requirements.py", str(report_path), str(output)]) == 2
+    assert not output.exists(), "拒绝出锁时不许留下半份锁"
+    assert "httpx" in capsys.readouterr().err
