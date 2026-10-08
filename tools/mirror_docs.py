@@ -1183,7 +1183,12 @@ async def run(site_key):
     for dest, reading in extra.items():
         text = reading.get("text") or ""
         if text:
-            (out / dest).write_text(text + chr(10), encoding="utf-8", newline=chr(10))
+            target = out / dest
+            # 这一份不是"页"：它没有经过页面循环的 dest_path.parent.mkdir。本轮一页都没存下来时
+            # out 还不存在（旧产物已在前面 rmtree 掉），直接 write_text 会 FileNotFoundError，
+            # 而后面那句 out.mkdir 来得太晚。
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text + chr(10), encoding="utf-8", newline=chr(10))
             print("  [OK] " + dest + " (" + str(len(text)) + " chars)")
         else:
             # README/STRUCTURE 里写着这份文件已保存——抓不到就必须有人看得见，
