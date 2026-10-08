@@ -25,7 +25,9 @@ TOKEN = BT + "[^" + BT + "\n]+" + BT
 ANCHOR = re.compile(
     "(" + TOKEN
     + r"|\b[\w./-]+\.(py|md|yaml|json):\d+"
-    + r"|[\w-]+/[\w./-]+"
+    # 路径形态只认 ASCII 路径字符：`\w` 含 CJK，旧写法 `[\w-]+/[\w./-]+` 让"并且/或者"
+    # "对/错"这类普通散文也算"精确锚点"，于是这条判据几乎永不触发（信号价值为零）。
+    + r"|[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+"
     + r"|allow_with_warnings|needs_human|uncovered_checker|action_hash)"
 )
 FENCE_OPEN = "^\\s*(" + BT * 3 + "|~~~)"
