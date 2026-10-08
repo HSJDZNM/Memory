@@ -463,7 +463,14 @@ def _wiring_command(
         # 没有 --dsh-home 开关时退回环境变量（两条路都试，避免"接口没接上"被误判成缺陷）。
         extra_env = {} if (dsh_home is None or use_flag) else {"DSH_HOME": str(dsh_home)}
         run = env.run(argv, cwd=env.work, extra_env=extra_env)
-        if run.exit in (0, 1) and run.json() is not None:
+        # 判据只有一条：这条调用**真的跑起来了，并给出可解析的报告**。
+        # 旧写法额外要求 `exit in (0, 1)`——但 G13 自己的口径是"任何非 0 都算拦住/失败关闭"
+        # （check_nonzero_without_wiring / broken_config_blocks / missing_config_blocks），
+        # 于是一个用退 2 表达"配置读不到"的合规 CLI 不会被认成入口：G01/G13 报
+        # "没有可用的接线清点入口"（假阴性，还把 after 阶段整段带偏）。
+        # 基础设施失败不必在这里排除：Env.run 给超时 / spawn 失败的是 124 / 125 且 stdout 为空，
+        # run.json() 自然为 None。
+        if run.json() is not None:
             return run, run.command, shape
     return None, "", None
 
