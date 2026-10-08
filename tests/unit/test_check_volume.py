@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from conftest import make_checker_rule, make_context, make_rule
 from policy.check import (
     CHECK_VOLUME_NOTE,
@@ -22,6 +24,7 @@ from policy.check import (
     build_check_volume,
 )
 from policy.engine import evaluate
+from policy.obligations import ObligationsError
 from policy.evidence import EvidenceBundle
 from policy.models import Decision, RuleSet
 
@@ -139,3 +142,40 @@ def test_served_checkers_come_from_the_evidence_report() -> None:
     assert volume["effective_rule_count"] == 3
     assert volume["complete"] is True
     assert volume["blocking_capable_skipped"] == 0
+
+
+def test_an_incomplete_obligations_summary_is_rejected_not_guessed() -> None:
+    """义务账摘要形状不对必须当场报错：退出码 1 是「发现违规」的码，不能被内部错误占用。
+
+    为什么必须这样：build_check_volume 是 __all__ 导出项，调用方可以传任意映射；旧实现直接
+    `int(obligations["obligations_open"])`，缺键或类型不符时 KeyError / ValueError 逃出 run()，
+    进程以退出码 1 结束——门禁会把一次配置错误读成一次违规。这里同时钉住"缺键 != 0 条义务"。
+    """
+
+    rules = testing_rules()
+    context = make_context(operation="edit")
+    result = evaluate(rules, context)
+
+    with pytest.raises(ObligationsError) as missing:
+        build_check_volume(rules, context, result, obligations={"note": "只有说明"})
+    assert "obligations_open" in str(missing.value)
+
+    with pytest.raises(ObligationsError):
+        build_check_volume(rules, context, result, obligations={"obligations_open": 1})
+    for bad in ("2", 1.5, True, -1, None):
+        with pytest.raises(ObligationsError):
+            build_check_volume(
+                rules, context, result, obligations={"obligations_open": bad, "note": "x"}
+            )
+    with pytest.raises(ObligationsError):
+        build_check_volume(
+            rules, context, result, obligations={"obligations_open": 0, "note": 7}
+        )
+
+    # 反向对照：合法摘要仍然照常写进读数，且 obligations_open > 0 时 complete 必须为假。
+    volume = build_check_volume(
+        rules, context, result, obligations={"obligations_open": 2, "note": "还有两条"}
+    )
+    assert volume["obligations_open"] == 2
+    assert volume["obligations_note"] == "还有两条"
+    assert volume["complete"] is False
