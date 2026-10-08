@@ -1333,8 +1333,12 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     # 人类输出只报计数（2026-10-03 裁定第 3 条的同一条口径）：逐条明细只在 --json 里。
     for key in RED_KEYS:
         cell = payload["red_conditions"][key]
-        mark = "unavailable" if cell["status"] != STATUS_AVAILABLE else str(cell["count"])
-        print("  [" + ("红" if cell["is_red"] else "ok") + "] " + key + ": " + mark)
+        if cell["status"] != STATUS_AVAILABLE:
+            # "未评"要有自己的标签：`is_red` 在未评时恒为 False（本文件第 894 行就是这么算的），
+            # 印成 `[ok]` 会把"没有证据说它红"读成"通过"——与机器行里的 unavailable 自相矛盾。
+            print("  [未评] " + key + ": unavailable")
+            continue
+        print("  [" + ("红" if cell["is_red"] else "ok") + "] " + key + ": " + str(cell["count"]))
     print("  " + payload["headline"]["machine_line"])
     print("  " + hits_line(payload))
     print("  " + payload["headline"]["text"])

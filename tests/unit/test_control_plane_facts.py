@@ -481,3 +481,25 @@ def test_non_utf8_registry_falls_back_to_unavailable(tmp_root: Path) -> None:
 
     assert result["status"] == module.STATUS_UNAVAILABLE
     assert "UnicodeDecodeError" in result["reason"], result
+
+def test_unavailable_cells_do_not_print_as_ok(tmp_root, capsys):
+    """未评的格子人类输出里必须是 [未评]：不许印成 "[ok] <key>: unavailable"。"""
+
+    module = _load_tool()
+    missing = tmp_root / "missing-facts.yaml"
+
+    assert module.run(["--json", "--facts", str(missing)]) == 0, "只报告：退出码恒 0"
+    payload = json.loads(capsys.readouterr().out)
+    assert module.run(["--facts", str(missing)]) == 0
+    out = capsys.readouterr().out
+
+    unavailable = 0
+    for key in RED_KEYS:
+        cell = payload["red_conditions"][key]
+        if cell["status"] != "available":
+            unavailable += 1
+            assert "[未评] " + key + ": unavailable" in out, out
+            assert "[ok] " + key not in out, "未评的格子被印成了 ok：" + key
+        else:
+            assert "[未评] " + key not in out, "已评的格子不该印 [未评]：" + key
+    assert unavailable, "这条用例的前提：facts 表读不到时至少有一格未评"
