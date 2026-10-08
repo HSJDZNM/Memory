@@ -253,7 +253,11 @@ def _high_risk_request(registry):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Phase 4 受控执行闭环")
     parser.add_argument("--json", action="store_true", help="只打印结论 JSON")
-    parser.add_argument("--keep", action="store_true", help="保留演示目录（默认保留）")
+    # 这里曾经有一个 `--keep`（帮助写着"保留演示目录（默认保留）"），但 `args.keep` 全文件没人读、
+    # `prepare()` 也无条件 `shutil.rmtree(DEMO_ROOT)`——一个"声明了却永远不生效"的开关，
+    # 而且帮助文本说的默认值正好与实现相反（条目 [30]）。删掉它，让 CLI 与行为一致。
+    # 真要支持"保留上一轮"得给出明确语义（dsh_sandbox_loop.py 的 --keep 是现成先例：
+    # 只重置被治理的源文件、保留审计与采集），那是另一次改动，不在这里顺手发明。
     args = parser.parse_args(argv)
 
     prepare()
