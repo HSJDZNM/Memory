@@ -41,7 +41,7 @@ import sys
 import traceback
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import Iterable, NoReturn, Sequence
+from typing import NoReturn, Sequence
 
 HERE = Path(__file__).resolve().parent
 
