@@ -195,6 +195,40 @@ def test_verdict_serialises_with_grade_and_line_numbers() -> None:
     assert json.loads(json.dumps(payload, ensure_ascii=False)) == payload
 
 
+def test_verdict_records_the_real_source_line_not_the_ordinal() -> None:
+    """结论里的 records 必须是**产物行号**：空行/坏行会让"序号"与"行号"分家。"""
+
+    work = REPO_ROOT / ".tmp" / "tests" / "enforcement-verdict-lines"
+    work.mkdir(parents=True, exist_ok=True)
+    path = work / "audit.jsonl"
+    path.write_text(
+        chr(10)  # 第 1 行：空行
+        + "{ 这不是 JSON"  # 第 2 行：坏行
+        + chr(10)
+        + json.dumps(pre(decision="block", exit_code=2, reason_code="policy_block"))  # 第 3 行
+        + chr(10),
+        encoding="utf-8",
+        newline=chr(10),
+    )
+
+    records, bad, lines = load_audit(path)
+    verdict = grade_attempt(records, action_id=ACTION, line_numbers=lines)
+
+    assert bad == [2]
+    assert lines == [3]
+    assert verdict.outcome is AttemptOutcome.BLOCKED
+    assert verdict.records == (3,), "序号 1 会被读成'产物第 1 行'，那是空的"
+    assert verdict.to_dict()["records"] == [3]
+
+    # 行号与记录对不上时不许猜：宁可报错，也不给一个指错位置的读数。
+    try:
+        grade_attempt(records, action_id=ACTION, line_numbers=[1, 2])
+    except ValueError as error:
+        assert "一一对应" in str(error)
+    else:  # pragma: no cover - 走到这里说明校验丢了
+        raise AssertionError("长度不一致的 line_numbers 必须被拒绝")
+
+
 def test_load_audit_reports_unparsable_lines_instead_of_skipping() -> None:
     """读不出来的行必须显式返回：把"产物坏了"读成"没人尝试"正是这条判据要防的错误。"""
 
@@ -212,7 +246,9 @@ def test_load_audit_reports_unparsable_lines_instead_of_skipping() -> None:
         newline=chr(10),
     )
 
-    records, bad = load_audit(path)
+    records, bad, lines = load_audit(path)
 
     assert len(records) == 1
     assert bad == [2, 4]
+    # 记录在序列里是第 1 条，在产物里是第 1 行；带出真实行号才不会指错位置。
+    assert lines == [1]

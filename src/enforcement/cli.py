@@ -766,7 +766,7 @@ def _verdict(args: argparse.Namespace, _repo: Path) -> int:
     path = Path(args.audit)
     if not path.is_file():
         raise CliError(f"审计文件不存在：{args.audit}")
-    records, bad = load_audit(path)
+    records, bad, lines = load_audit(path)
     if bad:
         shown = ", ".join(str(item) for item in bad[:5])
         raise CliError(
@@ -777,6 +777,9 @@ def _verdict(args: argparse.Namespace, _repo: Path) -> int:
         action_id=args.action_id,
         tool=args.tool,
         artifact_changed=bool(args.artifact_changed),
+        # 结论里的"依据在第几行"必须是**产物里的行号**（中间的空行/坏行会拉开差距），
+        # 第三方才能照它回到原始产物上重算。
+        line_numbers=lines,
     )
     payload = verdict.to_dict()
     payload["audit_records"] = len(records)
