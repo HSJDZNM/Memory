@@ -167,14 +167,16 @@ def _from_targets(raw_module: str, raw_names: str) -> Tuple[str, ...]:
     targets: list[str] = []
     if module.strip("."):
         targets.append(module)
-    prefix = "" if module == "." else module
+    # 相对导入的点数就是层级：module 全由点组成（"." / ".." / "…"）时**不再补一个点**，
+    # 否则 from .. import x 会被登记成 "...x"（多报一层），与 depgraph 侧的 marker 对不上。
+    separator = "" if module and not module.strip(".") else "."
     for token in _name_tokens(raw_names):
         if token == _WILDCARD:
             continue
         name = token.split()[0]  # 去掉 as 别名
         if not _IDENTIFIER_RE.match(name):
             continue
-        targets.append(canonical_identifier(prefix + "." + name if prefix else "." + name))
+        targets.append(canonical_identifier(f"{module}{separator}{name}"))
     return tuple(targets)
 
 
