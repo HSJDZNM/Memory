@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
-from enforcement.audit import redact_text, sanitize_payload
+from enforcement.audit import sanitize_payload
 
 from .errors import ApiError, ErrorCode
 
@@ -404,12 +404,6 @@ class Metrics:
                 "timeouts": self.timeouts,
                 "replays": self.replays,
             }
-
-
-def redacted(value: Any, *, limit: int = 240) -> str:
-    """把任意文本压成可安全落盘的一行（日志字段用）。"""
-
-    return redact_text(str(value), limit=limit)
 
 
 def seal_audit(log: RequestLog) -> Mapping[str, Any]:
