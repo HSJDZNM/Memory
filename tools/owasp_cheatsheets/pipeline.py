@@ -57,6 +57,13 @@ def main():
             return 2
         if rc != 0:
             print("")
+            if rc < 0:
+                # POSIX 下子进程被信号杀死时 subprocess.call 返回负值（SIGKILL → -9）。
+                # 直接把它当退出码返回，sys.exit(-9) 会被操作系统折成 247（256-9），
+                # 调用方读到的状态就是错的。按惯例记 128+signal。
+                print("!! " + s + " 被信号终止（signal " + str(-rc) + "）：记 128+signal = "
+                      + str(128 - rc))
+                return 128 - rc
             print("!! " + s + " 失败，退出码 " + str(rc))
             return rc
     print("")
