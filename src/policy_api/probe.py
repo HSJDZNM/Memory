@@ -52,7 +52,9 @@ class HttpApiClient:
         self.token = token
         self.timeout = timeout
         self._opener = opener or urllib.request.urlopen
-        self.calls: list[dict[str, Any]] = []
+        # 这里曾有一个 `self.calls` 累加器：每次请求 append 一条，**全仓没有任何读取点**，也从不裁剪——
+        # 长跑客户端会按请求数无界增长（一次请求一个 dict）。诊断需要的是"计数 + 最近几条"，
+        # 那要有人读、有上限；两者都没有时，删掉比留着一个只增不减的列表更诚实。
 
     @staticmethod
     def _parse_body(raw: bytes, *, label: str) -> Mapping[str, Any]:
@@ -88,7 +90,6 @@ class HttpApiClient:
                 "Authorization": f"Bearer {self.token}",
             },
         )
-        self.calls.append({"path": path, "request_id": payload.get("request_id")})
         try:
             with self._opener(request, timeout=self.timeout) as response:  # type: ignore[call-arg]
                 return int(response.status), self._parse_body(
