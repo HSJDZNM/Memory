@@ -1062,7 +1062,10 @@ def check_recorded_versions(
                     # 记录文档按不可信加载：它里面的 executable / args / version_pattern
                     # 必须与活体探测那条路径同口径过 redact()，否则手改记录就能把绝对路径
                     # 带回报告（本模块的口径是报告里不出现机器布局）。
-                    detail=(
+                    # 记录文档按不可信加载：它里面的 executable / args / version_pattern
+                    # 必须与活体探测那条路径同口径过 redact()，否则手改记录就能把绝对路径
+                    # 带回报告（本模块的口径是报告里不出现机器布局）。
+                    detail=redact(
                         "记录里的探测读法 "
                         + _describe_reading(entry.executable, entry.args, entry.version_pattern)
                         + " 与当前声明 "
@@ -1077,7 +1080,7 @@ def check_recorded_versions(
             findings.append(
                 HostVersionFinding(
                     status=HostVersionStatus.DRIFT,
-                    detail=(
+                    detail=redact(
                         f"声明 {manifest.agent_version} 不等于记录里的实测值 "
                         f"{entry.observed_version}（记录于 {entry.recorded_at}，探测 {probe_text}）"
                     ),
