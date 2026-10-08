@@ -148,6 +148,10 @@ digest = "sha256:" + hashlib.sha256(PAGE.read_bytes()).hexdigest()
                     "title": "示例指南",
                     "sha256": digest,
                     "bytes": PAGE.stat().st_size,
+                    # 真实镜像 manifest 每一页都写这个键（实测 255/255 都是精确 true）；
+                    # 夹具以前省了它，于是"缺键"从"没人管"变成了"没保存"（corpus.py 的
+                    # not_saved 判定线收紧为 `is not True`）。补上才是与真实语料同形。
+                    "saved": True,
                 }
             ],
         },
