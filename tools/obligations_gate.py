@@ -192,6 +192,16 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         except ObligationsError as error:
             print("义务账本读不懂：" + str(error), file=sys.stderr)
             return 2
+        except (OSError, UnicodeDecodeError) as error:
+            # `obligations.load()` 是直接 `path.open(..., encoding="utf-8")`：非 UTF-8 的账本
+            # 抛 UnicodeDecodeError、权限 / 竞态抛 OSError，二者都不在 ObligationsError 里。
+            # 让它们逃出去的话进程以 **1** 退出——而 1 在本文件里的含义是"读到了命中"，
+            # 于是"读不懂账本"会被当成一次命中记进升格判据（还带着 traceback）。契约是 2。
+            print(
+                "义务账本读不出来（" + type(error).__name__ + "）：" + str(path),
+                file=sys.stderr,
+            )
+            return 2
         if not report["applicable"]:
             not_applicable += 1
         elif report["hit"]:
