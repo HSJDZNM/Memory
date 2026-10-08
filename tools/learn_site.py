@@ -94,7 +94,9 @@ def _fetch_toc():
             except Exception as exc:
                 last = exc
                 time.sleep(1.0)
-    raise RuntimeError("目录接口抓取失败: " + TOC_URL + " -> " + repr(last))
+    # `from last` 保留最后一次失败的原始 traceback：只把 repr 拼进消息会丢掉"在哪一行炸的"，
+    # 而这条异常正是排障入口（网络问题 / 代理 / 站点改版都从这里冒出来）。
+    raise RuntimeError("目录接口抓取失败: " + TOC_URL + " -> " + repr(last)) from last
 
 
 def _canon(href):
