@@ -15,9 +15,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 from datetime import datetime, timezone
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Optional, Tuple
 
@@ -60,6 +62,7 @@ from orchestration_support import (
     platform_runner,
     readiness,
     scripted_client,
+    tool_request,
     readiness_response,
     retrieval_ok,
     retrieval_unavailable,
@@ -632,6 +635,58 @@ def test_readiness_calls_unreadable_bodies_unknown(body: bytes) -> None:
 
     assert value.state == "unknown"
     assert value.ready is False
+
+
+def test_the_recorded_change_follows_the_executed_workspace_and_normalized_path(tmp_root) -> None:
+    """执行后记录的证据必须与**真正写下去的那份**同一口径（根目录 + 规范化路径）。
+
+    旧实现永远用 `self.workspace`，并且直接用调用方原样给的参数：
+      - 带 per-request workspace 时（`_action` / `pre_execute` / `execute` 都按它解析），
+        同一个相对路径在另一个根下是**另一个文件**——记下来的摘要与大小与平台实际写的无关；
+      - 绝对路径（工作区内、会被规范化成相对形式）与超长路径会让 `ArtifactRef` 校验失败，
+        而这一步发生在**副作用与审计都已经落盘之后**：一次成功的受治理写入变成崩溃。
+    """
+
+    root = Path(tmp_root)
+    workspace = root / "ws"
+    (workspace / "src").mkdir(parents=True, exist_ok=True)
+    (workspace / "src" / "target.py").write_text("x = 1\n", encoding="utf-8")
+    # 同相对路径、不同内容：这正是 runner 自己的 workspace（旧实现会读它）
+    other = root / "other"
+    (other / "src").mkdir(parents=True, exist_ok=True)
+    (other / "src" / "target.py").write_text("DIFFERENT CONTENT\n", encoding="utf-8")
+
+    runner = platform_runner(root, workspace=other, name="changed")
+    spec = runner.spec_for("orc.fs.write")
+
+    request = tool_request(
+        params={"file_path": str(workspace / "src" / "target.py"), "content": "y = 2\n"},
+        workspace=str(workspace),
+    )
+    action = runner._action(request, spec)
+
+    refs = runner._changed(spec, action, request)
+
+    assert len(refs) == 1
+    digest = hashlib.sha256((workspace / "src" / "target.py").read_bytes()).hexdigest()
+    assert refs[0].digest == "sha256:" + digest
+    assert refs[0].bytes == len((workspace / "src" / "target.py").read_bytes())
+    assert refs[0].path == "src/target.py", "路径取规范化后的仓库相对形式"
+
+    # 超长路径：artifact_id 的上限是 128，超出就用摘要收口——不许在副作用之后抛 ValidationError
+    deep = workspace / ("d" * 40) / ("e" * 40)
+    deep.mkdir(parents=True, exist_ok=True)
+    (deep / "long_target.py").write_text("z = 3\n", encoding="utf-8")
+    long_request = tool_request(
+        params={"file_path": f"{'d' * 40}/{'e' * 40}/long_target.py", "content": "w = 4\n"},
+        workspace=str(workspace),
+    )
+    long_action = runner._action(long_request, spec)
+
+    long_refs = runner._changed(spec, long_action, long_request)
+
+    assert len(long_refs) == 1
+    assert len(long_refs[0].artifact_id) <= 128
 
 
 def test_the_tenant_hint_reaches_the_platform() -> None:
