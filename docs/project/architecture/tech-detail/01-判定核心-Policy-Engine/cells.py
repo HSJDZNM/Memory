@@ -150,7 +150,10 @@ ARCH_RULE = next(rule for rule in RULES.rules if rule.id == "ARCH-001")
 ARCH_RULES = models.RuleSet(rules=(ARCH_RULE,))
 
 matrix = (
-    ({}, "两条规则都要的维度都没给全：operation 缺失"),
+    # 空补充 = 只有基础上下文（`src/order/controller.py`：language=python、layer=controller）。
+    # ARCH-001 的 scope 正需要这两项，**已经满足**（命中）；只有 TESTING-001 因为缺 operation 出局。
+    # 原文写的是"两条规则都要的维度都没给全"，与这一行自己的读数相反。
+    ({}, "operation 缺失：TESTING-001 出局；ARCH-001 的维度由基础上下文给全了"),
     ({"operation": "edit"}, "edit 落在 [create, edit] 里（同维多值 = OR）"),
     ({"operation": "create"}, "create 同样落在列表里"),
     ({"operation": "read"}, "read 不在列表里：范围不匹配"),
