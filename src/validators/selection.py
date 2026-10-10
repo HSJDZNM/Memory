@@ -2,6 +2,15 @@
 
 选择顺序由 validation/test-layout.yaml 声明（related → package → suite）；
 本模块只做选择，不运行进程——运行在 adapters/pytest_runner.py。
+
+**变更集里本身就有测试文件时**（P4 / 5.58）：那些文件就是要跑的测试，直接选中它们
+（`level="target"`）。少了这一支，只改测试文件的变更会得到 `level="none"`——pytest 根本
+不被调起，`failing_tests` 拿不到证据，TESTING-002 于是以 critical 阻断（AGENTS 第 20 条），
+受治工作区**写不了任何测试**；而 TESTING-001 又拦住"只改实现"，两条测试规则合起来是一条
+死路，与第 51 条「先写测试不该被自己的平台拦死」正好相反。
+
+"哪些路径算测试"只有一份声明（AGENTS 第 49 条）：这里只认 `validation/test-layout.yaml` 的
+`test_patterns`——不按文件名猜、也不把"测试目录下的辅助文件"顺手算进来（那会是第二份声明）。
 """
 
 from __future__ import annotations
@@ -36,6 +45,18 @@ class TestSelection:
     - **跑什么**：related → package 找不到时升级到 suite（相关性不足就多跑一点）；
     - **有没有对应测试**：只看 related / package。升级到 suite 不代表"这个变更带了测试"，
       否则只要工作区里存在任意一个测试文件，TESTING-001 就永远不会触发（等价死规则）。
+
+    `level` 是受控取值（每一种都对应一个可读的"这次是怎么选的"）：
+
+    | 取值 | 含义 |
+    | --- | --- |
+    | `target` | 本次变更（含目标本身）里就有声明为测试路径的文件：它们**就是**要跑的测试 |
+    | `related` / `package` / `suite` | 由生产文件按 test-layout.yaml 的层级选出来的测试 |
+    | `none` | 没有选中任何测试（`missing` 说明哪几条生产变更缺对应测试） |
+
+    `target` 只描述"生产文件一个都没有、选中的全是变更里的测试文件"这一种形状；
+    生产文件与测试文件同时在变更集里时仍然报 related / package / suite（那些测试文件
+    会以最高相关性并入候选，见 `select_tests`）。
     """
 
     level: str
@@ -149,14 +170,45 @@ def select_tests(
     """选出最小相关测试；找不到任何测试的生产变更记进 missing（由规则决定是否阻断）。"""
 
     tests = list_test_files(workspace, layout)
-    production = sorted(
-        {
-            item
-            for item in (*changed_files, target_path)
-            if layout.is_production(item)
-        }
+    changed = (*changed_files, target_path)
+    production = sorted({item for item in changed if layout.is_production(item)})
+    # P4 / 5.58：变更集（含目标本身）里**被声明为测试路径**、且真的在这棵树里的文件。
+    # 它们本身就是"要跑的测试"——不需要（也不可能）再去找"与生产文件同名的测试"。
+    # 两个条件都不能省：
+    #   - layout.is_test 是唯一一份"哪些路径算测试"的声明（AGENTS 第 49 条），不按文件名猜；
+    #   - item in on_disk 保证交出去的 node id 真的存在——不在树里的路径交给 pytest 只会
+    #     变成一条读不懂的用法错误，而不是证据。
+    on_disk = set(tests)
+    changed_tests = tuple(
+        sorted({item for item in changed if item in on_disk and layout.is_test(item)})
     )
     if not production:
+        if changed_tests:
+            nodeids = changed_tests[:max_nodeids]
+            truncated = len(changed_tests) > len(nodeids)
+            if not nodeids:
+                # 上限为 0 的退化形状：仍然说得出"为什么一个都没选中"，而不是报一个空的 target。
+                return TestSelection(
+                    level="none",
+                    related=changed_tests,
+                    reason="目标在测试路径上，但候选上限为 0：一个测试都没选中",
+                )
+            reason = (
+                "目标本身在测试路径上（validation/test-layout.yaml 的 test_patterns）："
+                "本次变更中的 " + str(len(nodeids)) + " 个测试文件直接作为选中结果"
+            )
+            if truncated:
+                reason += (
+                    "（候选 " + str(len(changed_tests)) + " 个，超过上限 "
+                    + str(max_nodeids) + "，已截断）"
+                )
+            return TestSelection(
+                level="target",
+                nodeids=nodeids,
+                related=changed_tests,
+                reason=reason,
+                truncated=truncated,
+            )
         return TestSelection(level="none", reason="变更集里没有生产文件，测试选择不适用")
     if not tests:
         # 工作区里一个测试文件都没有：生产变更全部算"缺少对应测试"，
@@ -169,7 +221,9 @@ def select_tests(
 
     # 每个候选记下**它是在哪一级被选中的**：截断必须保相关性高的（复核发现：旧实现按字母序
     # 截断，套件升级一旦把候选顶过上限，tests/aaa/... 会把真正相关的测试挤出名单）。
-    ranked: dict[str, int] = {}
+    # 变更集里的测试文件与"由生产文件选出来的测试"一起排序：它们本身就在这次变更里，
+    # 相关性等同于 related 级（截断时不该被挤掉）。missing 仍然只看生产文件。
+    ranked: dict[str, int] = {item: _ORDER["related"] for item in changed_tests}
     missing: list[str] = []
     highest = "related"
     for path in production:

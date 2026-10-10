@@ -85,7 +85,12 @@ __all__ = [
 #      （Q7：「测试已落地、目标模块还不存在」是「待实现」，不是 validator crashed）。
 #      1.1 的载荷里没有这一族字段：读到一条待实现记录的人只会看到"某个 checker 不在
 #      served_checkers 里"，因此不能静默接受。
-PIPELINE_SCHEMA_VERSION = "1.2"
+# 1.3：selection.level 多出一个取值 "target"（P4 / 5.58：本次变更本身就是测试路径上的文件时，
+#      选中的就是它自己——只改测试文件的变更因此不再落进 level="none" 的失败关闭）。
+#      取值集合是载荷语义的一部分：1.2 的读者只认 related / package / suite / none，
+#      读到 "target" 会把「目标就是要跑的测试」读成「没见过的层级」。这是新增键之外
+#      同样要显式升版的那一类变化（AGENTS 第 55 条）。
+PIPELINE_SCHEMA_VERSION = "1.3"
 
 # checker 的"非判定"口径（PipelineReport.judgements 的 outcome）：
 #   empty      —— 验证器跑成了，但本次一条诊断都没归到任何规则（只计数、不判定）；

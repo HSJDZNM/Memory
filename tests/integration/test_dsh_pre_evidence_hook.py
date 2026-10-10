@@ -907,3 +907,306 @@ def test_a_third_party_import_failure_still_blocks_at_the_production_entry(
     assert "收集失败" in detail
     assert "待实现" not in detail
     assert "关键验证器不可用" not in detail
+
+# --------------------------------------------------------------------------- P4 / 5.58
+#
+# 开启 pre_evidence 之后，变更集里**只有测试文件**的编辑曾经一律被拦：\`select_tests\` 返回
+# \`level="none"\`（那时它只认生产文件），pytest 根本不被调起，\`failing_tests\` 拿不到证据，
+# TESTING-002 于是以 critical 阻断（AGENTS 第 20 条）。后果是受治工作区**写不了任何测试**，
+# 而 TESTING-001 又拦住"只改实现"——两条测试规则合起来是一条死路，与第 51 条
+# 「先写测试不该被自己的平台拦死」正好相反。
+#
+# 下面这组用例守三件事：
+#   1) 测试文件**真的被跑起来**（选中的就是它自己），而不是换个名字记成"查过了"；
+#   2) 一条反例都不许放宽——第三方包缺失、语法错误、断言失败、conftest 出错、
+#      一个用例都没收集到，全部保持原来的真违规 / 失败关闭；
+#   3)「先写测试、再写实现」两步都走得通。
+
+TEST_ONLY_TARGET = "tests/test_order_service.py"
+TEST_ONLY_DOCSTRING = '"""与服务同名的测试：related 层级应当命中它。"""'
+TEST_ONLY_DOCSTRING_TOUCHED = '"""与服务同名的测试：related 层级应当命中它（只改测试文件）。"""'
+
+# 每一条都是"目标本身在测试路径上、但测试这一侧真的坏了"：它们不许被放宽成 warning 或 pending。
+BROKEN_TEST_ONLY_CONTENTS: tuple[tuple[str, str], ...] = (
+    (
+        "third-party-missing",
+        '"""第三方包缺失。"""' + chr(10) + chr(10) + "import requests_absent_package" + chr(10)
+        + chr(10) + chr(10) + "def test_noop() -> None:" + chr(10)
+        + "    assert requests_absent_package" + chr(10),
+    ),
+    (
+        "syntax-error",
+        '"""语法错误。"""' + chr(10) + chr(10) + "def test_broken(:" + chr(10) + "    pass" + chr(10),
+    ),
+    (
+        "assertion-failure",
+        '"""断言失败。"""' + chr(10) + chr(10) + chr(10) + "def test_fails() -> None:" + chr(10)
+        + '    assert False, "故意失败"' + chr(10),
+    ),
+    (
+        # 把测试写成"不测任何东西的占位"不是出路：pytest 退出码 5 = 零个用例被执行，
+        # failing_tests 没有执行证据，仍然是失败关闭（AGENTS 第 51 条收尾那句）。
+        "no-test-collected",
+        '"""占位：一个用例都没有。"""' + chr(10),
+    ),
+)
+
+
+def write_payload_for(
+    project: Path, *, file_path: str, content: str, tool_use_id: str
+) -> dict:
+    """任意文件路径的 write 载荷（write_payload 写死了 TARGET，这里要换目标）。"""
+
+    return dsh_event(
+        "pre-tool-use-write-block.json",
+        cwd=str(project),
+        tool_name="write",
+        tool_input={"file_path": file_path, "content": content},
+        tool_use_id=tool_use_id,
+    )
+
+
+def edit_test_only_payload(
+    project: Path, *, old_string: str, new_string: str, tool_use_id: str
+) -> dict:
+    """目标就是测试文件本身的 edit 载荷。"""
+
+    return dsh_event(
+        "pre-tool-use-edit-allow.json",
+        cwd=str(project),
+        tool_name="edit",
+        tool_input={
+            "file_path": TEST_ONLY_TARGET,
+            "old_string": old_string,
+            "new_string": new_string,
+            "replace_all": False,
+        },
+        tool_use_id=tool_use_id,
+    )
+
+
+def pytest_record_of(record: dict) -> dict:
+    """审计里 tool.pytest 的那条验证器记录（决定"这次到底查了多少"）。"""
+
+    return next(
+        item
+        for item in record["pre_evidence"]["validators"]
+        if item["id"] == "tool.pytest@1.0"
+    )
+
+
+def config_for_test_only_edits(tmp_root: Path, project: Path, rules: Path) -> Path:
+    return config_with_evidence(
+        tmp_root,
+        project,
+        rules,
+        shadow_root=tmp_root / "shadow",
+        # 只让 pytest 进树：这一组用例问的是"测试这一侧查到了什么"。
+        evidence_overrides={"validators": ["tool.pytest"]},
+    )
+
+
+def test_a_test_only_edit_is_really_run_instead_of_blocked(tmp_root: Path) -> None:
+    """改动集里只有测试文件时，选中的就是它自己：pytest 真的跑，failing_tests 拿得到证据。"""
+
+    project = controlled_project(tmp_root)
+    rules = write_testing_rules(tmp_root)
+    config_path = config_for_test_only_edits(tmp_root, project, rules)
+    audit = tmp_root / "audit.jsonl"
+
+    completed = run_cli(
+        config_path=config_path,
+        wiring=hooks_json(tmp_root),
+        audit=audit,
+        payload=edit_test_only_payload(
+            project,
+            old_string=TEST_ONLY_DOCSTRING,
+            new_string=TEST_ONLY_DOCSTRING_TOUCHED,
+            tool_use_id="call-558-test-only-allow",
+        ),
+    )
+
+    assert completed.returncode == EXIT_ALLOW, completed.stderr
+    record = last_decision(audit)
+    assert record["decision"] == "allow"
+    assert record["violations"] == []
+    assert record["pending_findings"] == []
+    summary = record["pre_evidence"]
+    facts = pytest_record_of(record)
+    assert facts["status"] == "ok", facts
+    assert facts["reason"] == "选中的测试全部通过", facts
+    # 机器可读的判据只有这一格：failing_tests 进 served_checkers 的唯一路径是
+    # **pytest 带着非空 node id 真的跑过**（零个用例 / 工具没起 / 待实现三条返回都不写它，
+    # 见 adapters/pytest_runner.py）。修复前这一格里没有 failing_tests，唯一 violation
+    # 是 TESTING-900 的 uncovered_checker（critical）。
+    assert "failing_tests" in summary["served_checkers"], summary["served_checkers"]
+    assert record["violations_by_severity"] == {}
+    assert "missing_tests" in summary["served_checkers"]
+    assert "TESTING-900@1" in record["matched_rules"]
+    assert "TESTING-901@1" in record["matched_rules"]
+
+
+@pytest.mark.parametrize(
+    ("case", "content"),
+    BROKEN_TEST_ONLY_CONTENTS,
+    ids=[case for case, _ in BROKEN_TEST_ONLY_CONTENTS],
+)
+def test_a_broken_test_only_edit_is_still_a_real_violation(
+    tmp_root: Path, case: str, content: str
+) -> None:
+    """反例守卫：测试文件这一侧真的坏了时，一条都不许放宽成 warning / pending。"""
+
+    project = controlled_project(tmp_root)
+    rules = write_testing_rules(tmp_root)
+    config_path = config_for_test_only_edits(tmp_root, project, rules)
+    audit = tmp_root / "audit.jsonl"
+
+    completed = run_cli(
+        config_path=config_path,
+        wiring=hooks_json(tmp_root),
+        audit=audit,
+        payload=write_payload_for(
+            project,
+            file_path=TEST_ONLY_TARGET,
+            content=content,
+            tool_use_id="call-558-broken-" + case,
+        ),
+    )
+
+    assert completed.returncode == EXIT_BLOCK, completed.stderr
+    record = last_decision(audit)
+    assert record["decision"] == "block"
+    assert [item["rule_id"] for item in record["violations"]] == ["TESTING-900@1"]
+    # 这两条对所有反例都成立：没有任何"待实现"通道被打开，也没有被读成"关键验证器不可用"。
+    assert record["pending_findings"] == []
+    assert record["pre_evidence"]["pending_implementation"] == []
+    violation = record["violations"][0]
+    if case == "no-test-collected":
+        # 零个用例被执行 = 没有执行证据：仍然按"没有验证器为 failing_tests 提供证据"失败关闭，
+        # 而不是"选中的测试都通过了"。
+        assert violation["severity"] == "critical"
+        assert violation["evidence"]["detail"] == "uncovered_checker"
+        assert "failing_tests" not in record["pre_evidence"]["served_checkers"]
+        assert "退出码 5" in pytest_record_of(record)["reason"]
+        return
+    # 其余三条都是**真违规**：规则自己的 severity，理由指向测试这一侧的问题。
+    assert violation["severity"] == "error"
+    detail = violation["evidence"]["detail"]
+    assert "待实现" not in detail
+    assert "关键验证器不可用" not in detail
+    # 证据落在**被改的那个测试文件**上：这说明真的跑起来的就是它，不是别的测试、
+    # 也不是"换个名字记成查过了"。
+    assert violation["evidence"]["file"] == TEST_ONLY_TARGET, violation["evidence"]
+    if case == "assertion-failure":
+        # 断言失败不是收集失败：证据里是 FAILED 的用例名，不是"收集失败"。
+        assert "FAILED" in detail
+        assert "收集失败" not in detail
+        # test_fails 只存在于本次写进 TEST_ONLY_TARGET 的内容里。
+        assert violation["evidence"]["value"] == "test_fails"
+    else:
+        assert "收集失败" in detail
+    assert "failing_tests" in record["pre_evidence"]["served_checkers"]
+
+
+def test_a_broken_conftest_under_a_test_only_edit_is_still_a_real_violation(
+    tmp_root: Path,
+) -> None:
+    """conftest 加载失败：整套测试跑不起来，仍然是真违规（绝不是"待实现"）。"""
+
+    project = controlled_project(tmp_root)
+    (project / "conftest.py").write_text(
+        "import definitely_absent_conftest_dependency" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+    rules = write_testing_rules(tmp_root)
+    config_path = config_for_test_only_edits(tmp_root, project, rules)
+    audit = tmp_root / "audit.jsonl"
+
+    completed = run_cli(
+        config_path=config_path,
+        wiring=hooks_json(tmp_root),
+        audit=audit,
+        payload=edit_test_only_payload(
+            project,
+            old_string=TEST_ONLY_DOCSTRING,
+            new_string=TEST_ONLY_DOCSTRING_TOUCHED,
+            tool_use_id="call-558-broken-conftest",
+        ),
+    )
+
+    assert completed.returncode == EXIT_BLOCK, completed.stderr
+    record = last_decision(audit)
+    assert record["decision"] == "block"
+    assert [item["rule_id"] for item in record["violations"]] == ["TESTING-900@1"]
+    violation = record["violations"][0]
+    assert violation["severity"] == "error"
+    assert "conftest" in violation["evidence"]["detail"]
+    assert "收集失败" in violation["evidence"]["detail"]
+    assert record["pending_findings"] == []
+    assert record["pre_evidence"]["pending_implementation"] == []
+
+
+def test_the_test_first_flow_passes_through_both_steps(tmp_root: Path) -> None:
+    """Q7 + P4：先写测试（实现还没落地）、再写实现——**两步都通得过**。
+
+    第一步的放行不是"没查"：它是「待实现」这条显式状态（failing_tests 不进 served_checkers，
+    判定侧给 warning）。第二步实现落地之后同一条测试真的跑起来，两个通道都空了。
+    """
+
+    project = controlled_project(tmp_root)
+    rules = write_testing_rules(tmp_root)
+    config_path = config_for_test_only_edits(tmp_root, project, rules)
+    wiring = hooks_json(tmp_root)
+    audit = tmp_root / "audit.jsonl"
+
+    # —— 第一步：把测试写下来（它 import 的项目内模块还不存在）。
+    first = run_cli(
+        config_path=config_path,
+        wiring=wiring,
+        audit=audit,
+        payload=write_payload_for(
+            project,
+            file_path=PENDING_TEST_MODULE,
+            content=PENDING_TEST_SOURCE,
+            tool_use_id="call-558-tdd-1",
+        ),
+    )
+
+    assert first.returncode == EXIT_ALLOW, first.stderr
+    first_record = last_decision(audit)
+    assert first_record["decision"] == "allow_with_warnings"
+    assert first_record["violations"] == []
+    assert [item["rule_id"] for item in first_record["pending_findings"]] == ["TESTING-900@1"]
+    [pending] = first_record["pre_evidence"]["pending_implementation"]
+    assert pending["test_modules"] == [PENDING_TEST_MODULE]
+    # 缺失目标是**整个模块**（它一行都还没写）：这一条同时证明"选中的测试就是刚写下的那一个"。
+    assert pending["missing_targets"] == ["shop.audit_repository"]
+    # 没查成的不能记成查过了——而它之所以"没查成"，是因为目标本身就是要跑的测试：
+    # 修复前同一份载荷得到的是 TESTING-900 的 uncovered_checker（critical，退出码 2）。
+    assert "failing_tests" not in first_record["pre_evidence"]["served_checkers"]
+
+    # —— 第二步：Agent 真的执行了上一步的写入，实现随之落地。
+    (project / PENDING_TEST_MODULE).write_text(
+        PENDING_TEST_SOURCE, encoding="utf-8", newline=""
+    )
+    second = run_cli(
+        config_path=config_path,
+        wiring=wiring,
+        audit=audit,
+        payload=write_payload_for(
+            project,
+            file_path=PENDING_TARGET,
+            content=PENDING_LANDED,
+            tool_use_id="call-558-tdd-2",
+        ),
+    )
+
+    assert second.returncode == EXIT_ALLOW, second.stderr
+    second_record = last_decision(audit)
+    assert second_record["decision"] == "allow"
+    assert second_record["violations"] == []
+    assert second_record["pending_findings"] == []
+    assert second_record["pre_evidence"]["pending_implementation"] == []
+    assert "failing_tests" in second_record["pre_evidence"]["served_checkers"]
+    assert pytest_record_of(second_record)["status"] in {"ok", "findings"}

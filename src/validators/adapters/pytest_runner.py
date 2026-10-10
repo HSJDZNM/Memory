@@ -176,7 +176,10 @@ def run_pytest(
 
     if not selection.nodeids:
         # 一个测试都没选中 = pytest **根本没被调起**：本次只服务 missing_tests
-        # （它的证据来自选择阶段）。`served` 不写就等于"与注册表声明相同"
+        # （它的证据来自选择阶段）。P4 / 5.58 之后"目标本身就是测试文件"不会再落进这一支：
+        # selection 以 level="target" 带上那些文件自己的 node id，走下面真的把 pytest 调起来的
+        # 路径——否则只改测试文件的变更没有执行证据，只能被失败关闭拦死。
+        # `served` 不写就等于"与注册表声明相同"
         # （base.py 的 AdapterResult.served 约定），于是 failing_tests 在零执行证据下
         # 被记成"服务过"，TESTING-002 静默通过——引擎只在 `not bundle.serves(checker)`
         # 时才以 uncovered_checker 阻断。与下面退出码 5 那一支同一条口径：

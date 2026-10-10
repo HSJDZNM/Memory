@@ -26,11 +26,11 @@ from conftest import (
 )
 from policy.check import EXIT_ALLOWED, EXIT_ERROR, EXIT_VIOLATION
 from policy.engine import evaluate
-from policy.evidence import EVIDENCE_SCHEMA_VERSION, ValidatorStatus
+from policy.evidence import ValidatorStatus
 from policy.loader import load_rule_set
 from policy.models import RuleSet
 from validators.adapters.base import probe_tool
-from validators.pipeline import PipelineRequest, run_pipeline
+from validators.pipeline import PIPELINE_SCHEMA_VERSION, PipelineRequest, run_pipeline
 from validators.registry import load_config
 
 pytestmark = pytest.mark.integration
@@ -988,8 +988,10 @@ def test_cli_json_exposes_the_evidence_section() -> None:
 
     payload = json.loads(completed.stdout)
     assert completed.returncode == EXIT_ALLOWED, payload
-    # 协议版本由契约测试逐字钉住（tests/contract/test_validator_protocol.py），这里跟随常量
-    assert payload["evidence"]["schema_version"] == EVIDENCE_SCHEMA_VERSION
+    # 协议版本由契约测试逐字钉住（tests/contract/test_validator_protocol.py），这里跟随常量。
+    # CLI 的 evidence 段就是 **PipelineReport 的载荷**（validators/cli.py 的 _payload），
+    # 所以它跟的是 PIPELINE_SCHEMA_VERSION——两个常量在 1.2 时数值相同，别按数值认。
+    assert payload["evidence"]["schema_version"] == PIPELINE_SCHEMA_VERSION
     assert payload["evidence"]["served_checkers"] == [
         "forbidden_dependency",
         "missing_docstring",

@@ -279,6 +279,9 @@ print("三种解析失败都落成 critical 阻断；同一批里其他验证器
 #
 # 同一节还要看**测试选择**：`validation/test-layout.yaml` 声明了从窄到宽的升级层级
 # `related`（同名测试）→ `package`（同包测试）→ `suite`（整个套件）。
+# 还有一支不在那条升级链上：**变更集里本身就有声明为测试路径的文件**时（`level="target"`），
+# 选中的就是它自己——"只改测试文件"的变更因此跑得起来，而不是落进"没有生产文件、测试选择
+# 不适用"的失败关闭（那会让受治工作区写不了任何测试）。
 #
 # **输出怎么读**：依赖表里"依赖名"一列就是参与规则匹配的名字，最后两列是解析结果与行号；
 # 选中的测试会被**真的跑起来**——`tool.pytest` 退出码 1 时，每个失败用例都会变成一条
@@ -330,7 +333,12 @@ print()
 print(pad("目标文件", 36) + pad("选中的层级", 12) + pad("测试用例", 26) + "缺测试")
 print("-" * 94)
 selection = {}
-for target in ("src/shop/order_service.py", "src/shop/order_controller_bad.py"):
+for target in (
+    "src/shop/order_service.py",
+    "src/shop/order_controller_bad.py",
+    # 目标本身就是测试路径上的文件：选中的是它自己（level="target"）。
+    "tests/test_order_service.py",
+):
     chosen = select_tests(
         target_path=target,
         changed_files=(target,),
@@ -344,6 +352,11 @@ for target in ("src/shop/order_service.py", "src/shop/order_controller_bad.py"):
 assert selection["src/shop/order_service.py"].level == "related"
 assert selection["src/shop/order_controller_bad.py"].level == "suite"
 assert selection["src/shop/order_controller_bad.py"].missing == ("src/shop/order_controller_bad.py",)
+# 目标本身在测试路径上：选中的就是它自己——这一支不存在时，只改测试文件的变更
+# 会得到 level="none"，pytest 根本不被调起，TESTING-002 以 critical 阻断。
+assert selection["tests/test_order_service.py"].level == "target"
+assert selection["tests/test_order_service.py"].nodeids == ("tests/test_order_service.py",)
+assert selection["tests/test_order_service.py"].missing == ()
 
 # operation=edit 才会让 TESTING-001/002 参与判断：没有"正在变更"这件事时它们不该命中。
 passing_report, passing_result = decide(

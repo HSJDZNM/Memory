@@ -949,7 +949,9 @@ def test_validate_runs_the_real_pipeline_and_returns_a_decision(tmp_root: Path) 
     assert response.status_code == 200
     body = response.json()
     report = body["report"]
-    assert report["schema_version"] == "1.2"
+    # 这一格跟的是 **PipelineReport** 的版本轴（validators.pipeline.PIPELINE_SCHEMA_VERSION），
+    # 不是证据包那条：P4 / 5.58 给 selection.level 加了取值 "target"，那条轴 1.2 → 1.3。
+    assert report["schema_version"] == "1.3"
     assert report["target"]["file"] == "src/shop/order_controller.py"
     assert report["served_checkers"] == ["forbidden_dependency"]
     # 记录里的身份字段是 `validator`（形如 py.depgraph@1.0）：证据必须能追到"谁产的"。

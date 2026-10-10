@@ -171,10 +171,14 @@ def test_package_derivation_handles_glob_roots_and_root_level_files() -> None:
     )
 
 
-def test_escalation_covers_both_test_naming_conventions(tmp_path: Path) -> None:
-    """每一级都要覆盖 test_*.py 与 *_test.py 两种约定（复核发现：后缀约定整级选不中）。"""
+def test_escalation_covers_both_test_naming_conventions(tmp_root: Path) -> None:
+    """每一级都要覆盖 test_*.py 与 *_test.py 两种约定（复核发现：后缀约定整级选不中）。
 
-    workspace = tmp_path / "workspace"
+    用仓库自己的 tmp_root，不用 pytest 的 tmp_path：后者依赖 tempfile.mkdtemp/chmod，
+    在受限沙箱里会被拒绝，制造与被测行为无关的 setup 错误（tests/conftest.py 里同一条理由）。
+    """
+
+    workspace = tmp_root / "workspace"
     (workspace / "src" / "shop").mkdir(parents=True)
     (workspace / "src" / "shop" / "order_widget.py").write_text(
         "x = 1" + chr(10), encoding="utf-8", newline=""
@@ -288,6 +292,161 @@ def test_selection_is_not_applicable_without_production_changes() -> None:
 
     assert selection.level == "none"
     assert "没有生产文件" in selection.reason
+
+
+def test_a_test_file_target_selects_itself(tmp_root: Path) -> None:
+    """P4 / 5.58：目标本身在测试路径上时，选中的就是它自己。
+
+    修复前这一支返回 level="none"：pytest 根本不被调起，failing_tests 拿不到证据，
+    TESTING-002 以 critical 阻断——受治工作区写不了任何测试。
+    """
+
+    workspace = tmp_root / "workspace"
+    (workspace / "tests").mkdir(parents=True)
+    (workspace / "tests" / "test_order_service.py").write_text(
+        "def test_x():" + chr(10) + "    assert True" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    selection = select_tests(
+        target_path="tests/test_order_service.py",
+        changed_files=("tests/test_order_service.py",),
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=10,
+    )
+
+    assert selection.level == "target", selection.reason
+    assert selection.nodeids == ("tests/test_order_service.py",)
+    assert selection.related == ("tests/test_order_service.py",)
+    # 「有没有对应测试」一个字没放宽：没有生产文件变更就没有 missing。
+    assert selection.missing == ()
+    assert selection.escalated is False
+
+
+def test_a_test_file_target_that_is_not_in_the_tree_selects_nothing(tmp_root: Path) -> None:
+    """声明命中但树里没有那个文件时不许猜：交不出真实的 node id 就落回失败关闭。"""
+
+    workspace = tmp_root / "workspace"
+    (workspace / "tests").mkdir(parents=True)
+    (workspace / "tests" / "test_order_service.py").write_text(
+        "def test_x():" + chr(10) + "    assert True" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    selection = select_tests(
+        target_path="tests/test_not_on_disk.py",
+        changed_files=("tests/test_not_on_disk.py",),
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=10,
+    )
+
+    assert selection.level == "none"
+    assert selection.nodeids == ()
+
+
+def test_only_the_declared_test_patterns_count_as_tests(tmp_root: Path) -> None:
+    """测试目录下的辅助文件不是"测试文件"：口径只有 validation/test-layout.yaml 一份。
+
+    这一条守的是"不按文件名/目录猜"：`tests/helpers.py` 既不是生产文件、也没有被
+    test_patterns 声明，于是它仍然落回 level="none"（失败关闭），而不是被顺手放行。
+    """
+
+    workspace = tmp_root / "workspace"
+    (workspace / "tests").mkdir(parents=True)
+    (workspace / "tests" / "helpers.py").write_text(
+        "VALUE = 1" + chr(10), encoding="utf-8", newline=""
+    )
+    (workspace / "tests" / "test_order_service.py").write_text(
+        "def test_x():" + chr(10) + "    assert True" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    selection = select_tests(
+        target_path="tests/helpers.py",
+        changed_files=("tests/helpers.py",),
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=10,
+    )
+
+    assert selection.level == "none"
+    assert selection.nodeids == ()
+
+
+def test_a_changed_test_file_is_kept_alongside_the_production_selection(tmp_root: Path) -> None:
+    """生产文件与测试文件同时在变更集里时：那个测试文件不会因为"名字对不上"被丢掉。"""
+
+    workspace = tmp_root / "workspace"
+    (workspace / "src" / "shop").mkdir(parents=True)
+    (workspace / "src" / "shop" / "order_widget.py").write_text(
+        "x = 1" + chr(10), encoding="utf-8", newline=""
+    )
+    (workspace / "tests").mkdir(parents=True)
+    (workspace / "tests" / "test_order_widget.py").write_text(
+        "def test_x():" + chr(10) + "    assert True" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+    (workspace / "tests" / "misc").mkdir(parents=True)
+    (workspace / "tests" / "misc" / "test_extra.py").write_text(
+        "def test_y():" + chr(10) + "    assert True" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    changed = ("src/shop/order_widget.py", "tests/misc/test_extra.py")
+    with_changed_test = select_tests(
+        target_path="src/shop/order_widget.py",
+        changed_files=changed,
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=10,
+    )
+    without_changed_test = select_tests(
+        target_path="src/shop/order_widget.py",
+        changed_files=("src/shop/order_widget.py",),
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=10,
+    )
+
+    # 对照：只有生产文件时，变更里那个测试文件根本不进候选。
+    assert without_changed_test.nodeids == ("tests/test_order_widget.py",)
+    assert with_changed_test.level == "related", with_changed_test.reason
+    assert set(with_changed_test.nodeids) == {
+        "tests/misc/test_extra.py",
+        "tests/test_order_widget.py",
+    }
+    assert with_changed_test.missing == ()
+
+
+def test_a_test_file_target_is_not_selected_when_the_cap_is_zero(tmp_root: Path) -> None:
+    """上限为 0 的退化形状：报 level="none" 并说明原因，不报一个空的 target。"""
+
+    workspace = tmp_root / "workspace"
+    (workspace / "tests").mkdir(parents=True)
+    (workspace / "tests" / "test_order_service.py").write_text(
+        "def test_x():" + chr(10) + "    assert True" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    selection = select_tests(
+        target_path="tests/test_order_service.py",
+        changed_files=("tests/test_order_service.py",),
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=0,
+    )
+
+    assert selection.level == "none"
+    assert selection.nodeids == ()
+    assert "上限为 0" in selection.reason
 
 
 def test_selection_caps_node_ids() -> None:

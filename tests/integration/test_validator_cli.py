@@ -12,6 +12,7 @@ import pytest
 
 from conftest import POLICIES_DIR, REPO_ROOT, write_validation_config
 from policy.loader import load_rule_set
+from validators.pipeline import PIPELINE_SCHEMA_VERSION
 
 pytestmark = pytest.mark.integration
 
@@ -123,7 +124,8 @@ def test_check_command_only_produces_evidence() -> None:
     payload = json.loads(completed.stdout)
     assert payload["result"] is None  # check 不做判定
     assert payload["evidence"]["dependencies"][0]["name"] == "repository"
-    assert payload["evidence"]["schema_version"] == "1.2"
+    # evidence 段是 PipelineReport 的载荷，版本跟 PIPELINE_SCHEMA_VERSION（不是 EVIDENCE_*）。
+    assert payload["evidence"]["schema_version"] == PIPELINE_SCHEMA_VERSION
 
 
 def test_check_command_exits_one_on_findings() -> None:

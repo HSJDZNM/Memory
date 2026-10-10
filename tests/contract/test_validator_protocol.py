@@ -62,12 +62,12 @@ def test_evidence_schema_version_is_pinned() -> None:
 
 
 def test_pipeline_schema_version_is_pinned_and_single_sourced() -> None:
-    """流水线载荷也变了（validators[] 的键 + language_coverage + pending_implementation），
-    版本号同步且只有一份真值。"""
+    """流水线载荷也变了（validators[] 的键 + language_coverage + pending_implementation
+    + selection.level 的取值集合），版本号同步且只有一份真值。"""
 
     import validators
 
-    assert PIPELINE_SCHEMA_VERSION == "1.2"
+    assert PIPELINE_SCHEMA_VERSION == "1.3"
     assert validators.PIPELINE_SCHEMA_VERSION == PIPELINE_SCHEMA_VERSION
 
 
@@ -105,6 +105,38 @@ def test_report_payload_carries_every_field() -> None:
     assert set(EvidenceBundle().to_payload()) == set(EvidenceBundle.model_fields) | {"schema"}
     assert set(report.to_payload()) == {item.name for item in dataclass_fields(PipelineReport)}
     assert report.to_payload()["pending_implementation"] == []
+
+
+def test_a_test_file_target_is_reported_as_the_target_level() -> None:
+    """P4 / 5.58：`selection.level` 多出取值 "target"——只改测试文件时，选中的就是它自己。
+
+    这一条钉的是**载荷语义**（不是"某个测试跑没跑"）：level 的取值集合属于协议的一部分，
+    所以 PIPELINE_SCHEMA_VERSION 跟着进了 1.3（AGENTS 第 55 条：加键与改语义同等对待）。
+    它同时是修复前那条失败关闭的可复现读数——修复前这里是 level="none"、nodeids=[]。
+    """
+
+    rules = load_rule_set([POLICIES_DIR], repo_root=REPO_ROOT)
+    context = make_context(
+        file="tests/test_order_service.py", language="python", operation="edit"
+    )
+    report = run_pipeline(
+        PipelineRequest(
+            target=context.file,
+            workspace=VALIDATOR_PROJECT,
+            context=context,
+            rules=rules,
+            changed_files=("tests/test_order_service.py",),
+        ),
+        config=CONFIG,
+    )
+
+    assert report.schema_version == "1.3"
+    assert report.selection["level"] == "target", report.selection
+    assert report.selection["nodeids"] == ["tests/test_order_service.py"]
+    # 「有没有对应测试」这一侧一个字没放宽：没有生产文件变更就没有 missing。
+    assert report.selection["missing"] == []
+    # failing_tests 真的被服务过：pytest 带着非空 node id 跑过（这正是修复前缺的那一格）。
+    assert "failing_tests" in report.served_checkers, report.served_checkers
 
 
 def test_checker_vocabulary_agrees_across_layers() -> None:
