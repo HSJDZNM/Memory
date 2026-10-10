@@ -195,6 +195,21 @@ def run_approve(args: argparse.Namespace) -> int:
         return EXIT_USAGE
 
     target = Path(args.approved) if args.approved else root / DEFAULT_APPROVED_PATH
+    # 这份记录写的是「按当前声明审核通过」，所以快照里的 ceiling_reasons 必须按**这次要写进去的
+    # 摘要**再取一次。descriptors() 里那条「manifest 与已审核哈希不一致或尚未审核」是**读的时候**
+    # 比较出来的**状态**，不是能力理由：拿加载时那份旧清单去算，会把「刚刚审核通过」写成
+    # 「尚未审核」——记录自相矛盾（2026-10-10 实测：改过 dsh 的 manifest 之后重跑 approve，
+    # 写出来的那一行就在说自己未审核，而同一个条目里的摘要正是当前声明的摘要）。
+    approved_view = AdapterRegistry(
+        list(registry.manifests.values()),
+        approved={
+            "schema_version": APPROVED_SCHEMA_VERSION,
+            "adapters": {
+                item.agent_id: {"manifest_digest": item.manifest_digest}
+                for item in listing.descriptors
+            },
+        },
+    )
     payload = {
         "schema_version": APPROVED_SCHEMA_VERSION,
         "reviewed_by": args.reviewer,
@@ -212,7 +227,7 @@ def run_approve(args: argparse.Namespace) -> int:
                 ),
                 "ceiling_reasons": list(item.ceiling_reasons),
             }
-            for item in listing.descriptors
+            for item in approved_view.as_list().descriptors
         },
     }
     target.parent.mkdir(parents=True, exist_ok=True)

@@ -421,6 +421,30 @@ def test_cli_rejects_a_probe_binary_for_an_unknown_agent(tmp_root, capsys):
     assert "nobody" in capsys.readouterr().err
 
 
+def test_approve_never_writes_the_unapproved_status_into_its_own_snapshot(tmp_root, capsys):
+    """刚审核完写下的记录，不许在里面说「manifest 与已审核哈希不一致或尚未审核」。
+
+    这是审核记录的自洽性：ceiling_reasons 装的是**能力**理由（「没有声明执行前钩子」那一类），
+    而「尚未审核」是**读的时候**比较摘要得出的状态。审核入口若拿加载时那份旧清单去算它，
+    写出来的文件就会自相矛盾——同一个条目里 manifest_digest 正是当前声明的摘要，
+    ceiling_reasons 却说它没被审核过（2026-10-10 实测：dsh 那一行就是这样写出来的）。
+    所以这里审核两次：第二次**先改声明**再审核，正是会触发旧写法的那一步。
+    """
+
+    root = tmp_root / "repo"
+    _write_temp_repo(root, declared="1.0.0", args=["-c", "print('1.0.0')"], capture=capsys)
+    first = json.loads((root / "adapters" / "approved.json").read_text(encoding="utf-8"))
+    assert "未审核" not in "".join(first["adapters"]["demo-agent"]["ceiling_reasons"])
+
+    # 改声明 → 重新审核：旧写法会把「与已审核哈希不一致」写进刚刚写下的那条记录。
+    _write_temp_repo(root, declared="1.0.1", args=["-c", "print('1.0.0')"], capture=capsys)
+    second = json.loads((root / "adapters" / "approved.json").read_text(encoding="utf-8"))
+    entry = second["adapters"]["demo-agent"]
+    assert entry["agent_version"] == "1.0.1"
+    assert entry["manifest_digest"] == _manifest_digest_of(root)
+    assert "未审核" not in "".join(entry["ceiling_reasons"]), entry["ceiling_reasons"]
+
+
 # --------------------------------------------------------------------------- 观测记录（CI 形态）
 #
 # 这一节对应修复轮 14 的尾巴（Q8）：检查修好了、也接进门禁了，但在**没有 dsh 的 CI 上**它读不到
