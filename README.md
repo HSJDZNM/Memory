@@ -134,6 +134,35 @@ dsh 对"超时 / 崩溃 / 配置读不到"一律按放行处理，所以失败�
 （内部预算小于 dsh 超时、异常全部转成 exit 2、运行期接线自检）。设计与证据见
 [Adapter README](src/adapters/dsh/README.md)。
 
+### 把本平台接到**本机** dsh（G1）
+
+上面两层说的是"受治项目该长什么样"。把桥真的挂到本机 dsh 的某个 profile 上是**主机侧**的动作，
+仓库带不了它（`$DSH_HOME/profiles/<name>/cordis.patch.yml` 不在仓库里）。先看现状：
+
+```powershell
+python -m adapters.cli wiring          # 逐通道给 wiring_status 与 freshness_status（--check 变成门禁）
+```
+
+它读宿主的真实配置，所以"没接线"是一个**可失败的结论**，不是印象。接线 / 复核 / 撤回：
+
+```powershell
+python tools/dsh_bridge.py --check     # 只读：九条事实，含"真的把 Hook 起一次"（--self-check）
+python tools/dsh_bridge.py --scaffold  # 给受治项目生成 .policy/{dsh-adapter.yaml,hooks.json}
+python tools/dsh_bridge.py --install --profile desktop   # 默认桌面 profile；首次改动前备份
+python tools/dsh_bridge.py --uninstall                   # 撤回：文件逐字节回到原样
+```
+
+三条必须知道的事：
+
+- **装完要重启 dsh**：profile 的 patch 只在启动时加载一次；
+- **一个 profile 一个受治项目**：`projectDir` 就是判定边界。指向本仓库根 = 本仓库自管；
+  会话工作在别的目录时那些路径落在边界之外——平台**失败关闭**（拒绝），不是放行；
+- `spawn_teammate` 拉起的子会话不经过父会话的 PreToolUse（AGENTS 第 24 条），这条接线**管不到**它。
+
+装完用 `python -m adapters.cli wiring` 复核：该通道应当从 `not_wired` 变成 `wired`——
+**留痕仍然是 `never_written`**，直到真的跑过一次会话：两根事实轴各自独立，
+"接上了"不等于"有留痕"（`src/adapters/wiring.py` 的口径）。
+
 ### 离线规范检索（Phase 3）
 
 从仓库已有的官方文档镜像里检索与任务相关的片段，并组装成**带来源、长度受控**的 Engineering Context。

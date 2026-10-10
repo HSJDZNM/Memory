@@ -468,6 +468,11 @@
     - 本机门禁与仪器：`tools.obligations_gate.REPORT_SCHEMA_VERSION`（义务账门禁的报告载荷——
       账本不存在时从"没有依据的命中"改成"不适用"那一档，1.0 → 1.1；
       1.2 = 现形状：顶层多一份 `reading_context`）；
+      `tools.dsh_bridge.BRIDGE_REPORT_SCHEMA_VERSION`（把策略桥装到**本机** dsh profile 的
+      `--check` / `--install` / `--uninstall` 的 `--json` 载荷——**1.0 = 首次建轴**：
+      九条事实的名字与三态 `pass` / `fail` / `unavailable`（**`unavailable` 不是通过**），
+      外加 `action` / `notes` / `result`；它与 `adapters.wiring` 的**清点**载荷是两件事，
+      各走各的轴——那个回答「现在接没接」，这个回答「装 / 撤这一次做了什么」）；
       `tools.exemption_expiry.EXEMPTION_REPORT_SCHEMA_VERSION`（豁免到期读数的 `--json` 载荷——
       **1.1 = 首次建轴**（台阶 4 第二件给它加了 `reading_context`）；`ci_local.py` 读的是
       **默认输出**里的 `HITS:` 机器行，那条是跨文件契约，与这个载荷各走各的、不随它动）；
