@@ -696,3 +696,31 @@ def test_tmp_swapped_after_enumeration_deletes_nothing(monkeypatch, capsys, tmp_
     assert (tmp_root / ".tmp" / "artifacts" / "keep.json").is_file(), (
         "复核不通过时一项都不许删——这正是 [22] 要堵的那个窗口"
     )
+
+
+def test_tmp_identity_survives_our_own_deletions(monkeypatch, tmp_root):
+    """身份读数不许把「我们自己的删除」读成「.tmp 被换掉了」（POSIX 的 `st_ctime` 会变）。
+
+    回归背景（2026-10-10 CI 实测）：`_tmp_identity()` 原先收 `st_ctime_ns`，而 POSIX 的
+    `st_ctime` 是 **inode 变更时间**——删掉 `.tmp/` 的第一个子项就会让它变，同一个 `.tmp`
+    于是在第二次迭代被自己的复核判成"已变化"，清理删完一项就退出 1。ubuntu 上的实测形态是
+    `test_cleanup_removes_tmp_children_but_never_the_lock_file` 红在 `assert 1 == 0`；
+    而 Windows 的 `st_ctime` 恰好是创建时间，所以**本机门禁一直是绿的**——这条用例把不变式
+    直接钉住（两个平台都跑，POSIX 上修复前必红）：删自己枚举出来的子项不改变 `.tmp` 的身份。
+
+    说清覆盖边界：在 Windows 上这条用例修复前也是绿的（那里的 `st_ctime` 不会因删子项而变），
+    它真正能失败的地方是 CI 的 POSIX 运行——这正是"本机绿不等于 CI 绿"的那个缺口。
+    """
+
+    cleanup = _load_cleanup_with_tmp_root(monkeypatch, tmp_root)
+    first = _make_candidate(tmp_root, "artifacts")
+    _make_candidate(tmp_root, "retrieval")
+    before = cleanup._tmp_identity()
+    assert before is not None
+
+    error = cleanup._remove(first)  # 模拟清理删掉一个子项：这正是复核要放行的那一步
+    assert error is None, error
+
+    assert cleanup._tmp_identity() == before, (
+        "删一个自己枚举出来的子项不该改变 .tmp 的身份——否则清理会删一项就自判「被换掉了」"
+    )

@@ -180,11 +180,19 @@ def tmp_children() -> list[Path]:
     )
 
 
-def _tmp_identity() -> tuple[int, int, int] | None:
-    """`.tmp/` 自身的身份读数 `(st_dev, st_ino, st_ctime_ns)`（**不跟随**链接）；读不到返回 None。
+def _tmp_identity() -> tuple[int, int, int | None] | None:
+    """`.tmp/` 自身的身份读数 `(st_dev, st_ino, 创建时间)`（**不跟随**链接）；读不到返回 None。
 
-    为什么带上创建时间：前两个数是设备 + 文件索引，足以区分"换了另一个目录"；再把 `st_ctime_ns`
-    一并记上，是为了让"原地删掉再建一个"这种（索引可能被复用的）情形也多一道区分。
+    为什么第三个数是**创建时间**、而不是 `st_ctime`：POSIX 的 `st_ctime` 是 **inode 变更时间**，
+    删掉 `.tmp/` 的一个子项就会让它变——身份复核于是把"我们自己的删除"读成"`.tmp` 被换掉了"，
+    删完第一项就 break 并计入 blocked，整轮清理退出 1。2026-10-10 CI 实测：ubuntu 上
+    `tests/unit/test_cleanup.py::test_cleanup_removes_tmp_children_but_never_the_lock_file`
+    红在 `assert 1 == 0`（而且是在**这批改动之前**就红的）；Windows 的 `st_ctime` 恰好是创建
+    时间，所以本机门禁一直看不见它。创建时间优先取 `st_birthtime_ns`（Windows 3.12+ / macOS），
+    取不到就是 `None`——"读不到创建时间"与"创建时间相等"是两件事，不拿一个会随时间变的字段冒充。
+
+    前两个数是设备 + 文件索引，足以区分"换了另一个目录"；创建时间是为了让"原地删掉再建一个"
+    （索引可能被复用）这种情形也多一道区分。
     这道复核的**边界**要说清：它只能发现"路径现在指的东西与枚举时不同"；若攻击者能让三者全部
     保持一致，路径式复核就看不出来——那种情形要靠 POSIX 的 fd 相对删除（见下）才能从根上堵住。
 
@@ -201,7 +209,7 @@ def _tmp_identity() -> tuple[int, int, int] | None:
         info = os.stat(tmp_dir(), follow_symlinks=False)
     except OSError:
         return None
-    return (info.st_dev, info.st_ino, info.st_ctime_ns)
+    return (info.st_dev, info.st_ino, getattr(info, "st_birthtime_ns", None))
 
 
 def _touches_tmp(path: Path) -> bool:
