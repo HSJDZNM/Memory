@@ -20,7 +20,18 @@ SRC_DIR = REPO_ROOT / "src"
 
 # Phase 5 的夹具项目是**被验证的样本**，它的 tests/ 必须能被测试验证器真的收集到，
 # 因此只能在仓库自己的收集路径上屏蔽它（而不是在夹具项目里加 collect_ignore）。
-collect_ignore_glob = ["fixtures/validators/project/tests/*"]
+collect_ignore_glob = [
+    "fixtures/validators/project/tests/*",
+    # 规则组合语料的夹具项目（_combinations/project）：它同样是被验证的样本，由
+    # tests/integration/test_rule_combinations.py 复制进临时目录后跑，仓库自己不该收集。
+    #
+    # 忽略的是**整个项目目录**，不是它下面的 tests/*：pytest 只对「要收集的那个路径」找
+    # **最近的** conftest（_pytest/main.py::pytest_ignore_collect），而夹具项目自己的
+    # tests/conftest.py 就是那个「最近的 conftest」——它没有声明 collect_ignore_glob，
+    # 忽略会整体失效，而且它会以模块名 conftest 抢先注册、把仓库自己的 tests/conftest.py
+    # 顶掉（实测全量收集报 59 个 ImportError）。忽略项目目录本身，pytest 就不下降进去。
+    "fixtures/rules/_combinations/project",
+]
 TOOLS_DIR = REPO_ROOT / "tools"
 TMP_ROOT = REPO_ROOT / ".tmp" / "tests"
 

@@ -42,6 +42,11 @@ pytestmark = pytest.mark.integration
 
 # 夹具契约（见 tests/fixtures/rules/README.md）：目录名 = 规则 id，正反例各一个文件。
 FIXTURES_ROOT = REPO_ROOT / "tests" / "fixtures" / "rules"
+
+# 保留目录：不是「某条规则的正反例」，而是另一份语料——规则**组合**（见
+# tests/integration/test_rule_combinations.py）。它同样受「目录名必须对得上」的纪律约束，
+# 只不过对的是另一张名单，因此在这里显式跳过，而不是靠命名侥幸躲过孤儿检查。
+RESERVED_DIRS = frozenset({"_combinations"})
 FEEDS: tuple[str, ...] = ("good", "bad")
 FIXTURE_LAYER = "fixture"
 FIXTURE_LANGUAGE = "python"
@@ -246,6 +251,8 @@ def test_fixture_directories_are_named_after_rules() -> None:
     stale: list[Path] = []
     for child in sorted(FIXTURES_ROOT.iterdir()):
         if not child.is_dir() or child.name.startswith(".") or child.name == "__pycache__":
+            continue
+        if child.name in RESERVED_DIRS:
             continue
         # 一个"既没有 bad.py 也没有 good.py"的目录同样是孤儿：旧写法在这里 continue，
         # 于是放了几百 KB 笔记、或者改名改了一半的空目录会被静默跳过——

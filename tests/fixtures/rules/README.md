@@ -1,7 +1,11 @@
 # 规则语料夹具：每条规则的正反例
 
-这里放的是「由镜像文档提炼的规则」的可判定语料，唯一消费者是
+这里放的是「由镜像文档提炼的规则」的可判定语料，消费者是
 `tests/integration/test_rule_corpus.py`。它只回答一个问题：**这条规则到底判不判得出来？**
+
+同目录下的 `_combinations/` 是**另一份**语料——多条规则叠加在**同一次变更**上的结论
+（消费者 `tests/integration/test_rule_combinations.py`，契约见 `_combinations/README.md`）。
+它是**保留目录**，不参与下面「目录名 = 规则 id」的检查。
 
 ## 契约
 
@@ -13,6 +17,7 @@
 | 必须齐全 | `source.kind == "standard"`（由镜像文档提炼）的规则必须两个文件都有，缺一个就 FAIL；`project-policy`（项目自订）不强制，但一旦有夹具就会被同样判定 |
 | 必须能解析 | 两个文件都要是合法 Python：语法错误会让 `py.ast` 失败关闭，需要 docstring 证据的规则会被 critical 顶掉 |
 | 只约束自己 | `good.py` 里出现**别的**规则违规是允许的，`bad.py` 同理；测试只断言本条规则 |
+| 保留目录 | `_combinations/` 不是规则夹具（契约见它自己的 README），其余目录名必须等于规则 id |
 | 建议最小化 | `bad.py` 尽量只触发本条规则：文件里其他 error / critical 级违规会把整体决策抬成 `block`（允许，但「恰好 allow_with_warnings」只在没有其他阻断项时才检查） |
 | 不要 noqa | `# noqa` 会让 Ruff 不再报诊断，规则就永远判不出来——测试会以「bad.py 没有命中」失败 |
 

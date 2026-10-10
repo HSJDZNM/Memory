@@ -1,0 +1,25 @@
+# 条目 2 / 3：同一个动作、同一棵树，只把变更集换成"支撑文件 + 它服务的实现"。
+#
+# 这是 5.68 研讨报告里那条决定性读数 R5 的固化：同一个 edit tests/conftest.py，
+# 批次从 (tests/conftest.py,) 换成 (tests/conftest.py, src/shop/order_service.py)，
+# selection 从 none 变成 related（选中 tests/test_order_service.py），
+# failing_tests 于是有证据 → 结论从 block 变 allow。
+#
+# **它记录的是"批次粒度"的后果，不是今天 Hook 能表达的形状**：真实 Hook 每次只报一个文件
+# （pre_evidence 里 changed_files=(event.file,)），批次 / 意图粒度正是 5.68 里"方案 A"要做的事。
+# 本条目把"批次一旦进来会是什么结论"钉在语料里，方案 A 落地时它就是现成的验收读数。
+project: tests/fixtures/rules/_combinations/project
+target: tests/conftest.py
+operation: edit
+changed:
+  - tests/conftest.py
+  - src/shop/order_service.py
+layer: test
+language: python
+expected_decision: allow
+expected_served_checkers:
+  - failing_tests
+  - missing_docstring
+  - missing_tests
+  - style_lint
+note: "R5：与条目 1 只差变更集，结论 block → allow；selection.level=none → related。"

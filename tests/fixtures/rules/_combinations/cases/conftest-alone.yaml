@@ -1,0 +1,26 @@
+# 条目 1 / 3：只改测试**支撑**文件（tests/conftest.py），变更集里没有生产文件。
+#
+# **这条记录的是已知的死锁，不是期望的行为**（04-open-work 5.66 / 5.68 的类 B）：
+#   tests/conftest.py 既不是 production_patterns（src/**/*.py），也不是 test_patterns
+#   （tests/**/test_*.py / tests/**/*_test.py）→ select_tests 返回 level="none" →
+#   pytest 根本没被调起 → failing_tests 拿不到证据 → TESTING-002 以 critical 失败关闭。
+#   而 TESTING-001 又要求"改实现必须带测试"，两条规则合起来让这个文件改不动。
+#
+# 读数由 2026-10-11 实测记录（真实验证器：Ruff 0.14.13 + pytest；43 条规则参与判定）。
+#
+# 什么时候翻面：5.68 的方案 C / A 落地，或 validation/test-layout.yaml 加第二份
+# "测试支撑文件"声明之后，本条目应**显式改成** allow 并重采 expected_served_checkers——
+# 那是一次可评审的修改，不是"为了让门禁变绿"而放宽断言。
+project: tests/fixtures/rules/_combinations/project
+target: tests/conftest.py
+operation: edit
+changed:
+  - tests/conftest.py
+layer: test
+language: python
+expected_decision: block
+expected_served_checkers:
+  - missing_docstring
+  - missing_tests
+  - style_lint
+note: "已知死锁（5.66）：唯一 violation 是 TESTING-002@1 critical uncovered_checker（failing_tests 无证据）。"

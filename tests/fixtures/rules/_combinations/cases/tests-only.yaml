@@ -1,0 +1,23 @@
+# 条目 3 / 3：只改测试文件（5.58 的修复对象）。
+#
+# 5.58 之前：改动集里只有测试文件 → select_tests 返回 level="none" → 同样被 TESTING-002
+# 失败关闭 → 受治工作区**写不了任何测试**。2026-10-10 的修复给 select_tests 加了
+# level="target"（PIPELINE_SCHEMA_VERSION 1.2 → 1.3）：变更集里被 test_patterns 命中、
+# 且真的在树里的文件就是"要跑的测试"，pytest 于是真的被调起。
+#
+# 本条目是这条修复的**回归门禁**：改动 target 这一支（或改坏 test_patterns 的消费）会让
+# selection.level 退回 none、failing_tests 从 served_checkers 里消失，本门禁立刻红。
+project: tests/fixtures/rules/_combinations/project
+target: tests/test_order_service.py
+operation: edit
+changed:
+  - tests/test_order_service.py
+layer: test
+language: python
+expected_decision: allow
+expected_served_checkers:
+  - failing_tests
+  - missing_docstring
+  - missing_tests
+  - style_lint
+note: "5.58 的修复：selection.level=target，pytest 真的跑起来，failing_tests 有证据。"
