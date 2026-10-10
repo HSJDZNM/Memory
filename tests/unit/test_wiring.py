@@ -851,6 +851,40 @@ def test_observed_runtime_tools_are_reported_but_never_block(tmp_root: Path) -> 
     assert unknown_tool in report.tools.observed_not_in_table
 
 
+def test_v4_session_records_use_tool_call_parts(tmp_root: Path) -> None:
+    """真实 v4 记录写的是 `tool-call` 部件：这一列以前恒为空（修复前会红）。
+
+    回归背景（2026-10-10）：`observe_runtime_tools` 只认 `tool_use`（0.1.x 时代 / 外部方言的
+    形状），而 dsh 0.2.x 的会话记录写 `tool-call`。实测 400 份真实记录里 `tool_use` 部件
+    0 个、`tool-call` 覆盖 16 个工具，于是**被调用过、但工具表里没有**的工具（`run_command`）
+    一次都没被报出来——漂移只看得见 header 里声明过的那些。这里喂真实形状，并刻意让被调用的
+    那个工具不出现在 header 里：修复前 `runtime_called` 是空的，下面的断言必红。
+    """
+
+    home = make_home(tmp_root)
+    wired_profile(home)
+    sessions = home / "sessions" / "--ws--"
+    sessions.mkdir(parents=True)
+    called_only = "run_command"
+    _write(
+        sessions / "session.v4.jsonl",
+        json.dumps({"data": {"header": {"tools": [{"name": "edit"}]}}})
+        + "\n"
+        + json.dumps(
+            {"data": {"message": {"content": [{"type": "tool-call", "name": called_only}]}}}
+        )
+        + "\n",
+    )
+
+    report = probe(home, observed_sessions=4)
+
+    assert report.tools.observation_status is ToolObservationStatus.OBSERVED
+    assert report.tools.runtime_declared == ("edit",)
+    assert report.tools.runtime_called == (called_only,)
+    assert called_only in report.tools.observed_not_in_table
+    assert "edit" not in report.tools.observed_not_in_table
+
+
 def test_unavailable_observation_is_explicit_not_a_clean_bill(tmp_root: Path) -> None:
     home = make_home(tmp_root)
     wired_profile(home)

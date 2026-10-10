@@ -135,6 +135,10 @@ PROFILE_PATCH_NAME = "cordis.patch.yml"
 PROFILE_ROOT_NAME = "cordis.yml"
 PROFILE_MANIFEST_NAME = "package.json"
 PROFILES_DIR_NAME = "profiles"
+# 会话记录里"工具调用"部件的两种真实形状。0.1.x 时代 / 外部生产者写 `tool_use`（Anthropic 形状），
+# 0.2.x 的 v4 记录写 `tool-call`。少认一种，"被调用过"这一列就会结构性地少掉一整代会话。
+TOOL_CALL_PART_TYPES = ("tool_use", "tool-call")
+
 SESSIONS_DIR_NAME = "sessions"
 
 # 桥的两种形态：本仓库的进程内转发插件，或 dsh 自带的 Claude Code / Codex 方言桥。
@@ -986,8 +990,14 @@ def observe_runtime_tools(
     """从 dsh 会话记录里取"运行期真实出现过的工具名"。
 
     取两处：`data.header.tools[].name`（该会话可用的工具清单）与
-    `data.message.content[]` 里 `type=tool_use` 的 `name`（真的被调用过的工具）。
+    `data.message.content[]` 里工具调用部件的 `name`（真的被调用过的工具）。
     只提取工具名，**不读也不留任何会话正文**。
+
+    调用部件有**两种真实形状**（TOOL_CALL_PART_TYPES）：0.1.x 时代 / 外部方言写 `tool_use`，
+    0.2.x 的 v4 会话记录写 `tool-call`。只认前者会让"被调用过"这一列**结构性恒为空**：
+    2026-10-10 实测 400 份真实会话记录，`tool_use` 部件 0 个、`tool-call` 部件覆盖 16 个工具，
+    于是"被调用过、但工具表里没有"的 `run_command` 一次都没被报出来——漂移只看得见 header
+    里声明过的工具（仪器也要能失败：一条永远为空的轴等于没有这条轴）。
     """
 
     source = "$DSH_HOME/" + SESSIONS_DIR_NAME
@@ -1049,9 +1059,11 @@ def observe_runtime_tools(
             message = data.get("message")
             if isinstance(message, Mapping):
                 for part in message.get("content") or []:
+                    # 两种部件名都是真的调用（见本函数 docstring 的代际说明）：只认 `tool_use`
+                    # 会让这一列恒为空，而"被调用过但表里没有"的工具恰恰只能从这里看见。
                     if (
                         isinstance(part, Mapping)
-                        and part.get("type") == "tool_use"
+                        and part.get("type") in TOOL_CALL_PART_TYPES
                         and isinstance(part.get("name"), str)
                     ):
                         called.add(part["name"])
