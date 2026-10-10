@@ -273,3 +273,8 @@ Get-Content "$g/.policy/approval.json" -Raw
   两侧工作树 sha256 清单、真实会话记录 `.dsh/sessions/**/session.v4.jsonl.zstd`（多帧 zstd，需流式解）。
 - 平台侧登记：`docs/project/engineering-policy-platform/04-open-work.md`（审批形状绑定那条）。
 - **复核日期**：挂 2026-12-31 的统一复审（与只报告步骤同批），或更早——**审批有效期只有 7 天**。
+
+**读数落点**：`gui-runs/<日期>-<级>.md`（本仓库内）。
+研讨时建议的是仓库外 `Comparison-test/comparison-runs/`，但 2026-10-11 实测 **Lead 的会话身份对该目录没有写权限**
+（`Access denied`）——要么由使用者的 shell 落盘，要么落仓库内。第一轮选了仓库内，登记在这次偏离里。
+为什么不能落 `.tmp/`：`tools/cleanup.py` 会删（那是 5.32 已登记的错）；为什么不能落 `.policy/` 或两侧树：读数自己会被治理、且会破坏两侧树相等。
