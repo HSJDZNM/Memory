@@ -725,13 +725,15 @@ const handlers = {};
 const sent = [];
 const ctx = {
   on(name, fn) { (handlers[name] = handlers[name] || []).push(fn); },
+  // N25：0.2.x 宿主只有 execute（返回句柄，前景结果在 result() 里）。
   shell: {
     resolve(request) { return request; },
-    async run(request) {
+    async execute(request) {
       sent.push({ stdin: request.stdin, workdir: request.workdir, command: request.command });
-      if (mode === 'exit2') return { exitCode: 2, stderr: { text: 'blocked by policy' } };
-      if (mode === 'exit1') return { exitCode: 1, stderr: { text: 'hook crashed' } };
-      return { exitCode: 0, stderr: { text: '' } };
+      let runResult = { exitCode: 0, stderr: { text: '' } };
+      if (mode === 'exit2') runResult = { exitCode: 2, stderr: { text: 'blocked by policy' } };
+      if (mode === 'exit1') runResult = { exitCode: 1, stderr: { text: 'hook crashed' } };
+      return { async result() { return runResult; } };
     },
   },
 };
@@ -790,9 +792,10 @@ const shapes = {
 const handlers = {};
 const ctx = {
   on(name, registered) { (handlers[name] = handlers[name] || []).push(registered); },
+  // N25：0.2.x 宿主只有 execute（返回句柄，前景结果在 result() 里）。
   shell: {
     resolve(request) { return request; },
-    async run() { return shapes[mode]; },
+    async execute() { return { async result() { return shapes[mode]; } }; },
   },
 };
 

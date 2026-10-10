@@ -54,6 +54,14 @@ const DEFAULT_TIMEOUT_MS = 30000;
 // 与台账（事后核对要的是"这次执行发生了什么"的摘要，不是全文）。
 const MAX_TOOL_RESPONSE_CHARS = 4000;
 
+// 载荷自己的版本轴（AGENTS 第 55 条：加键就是改协议）。
+// 与 hooks.py 的 HOOK_PAYLOAD_SCHEMA_VERSION / HOOK_PAYLOAD_VERSION_KEY 是**同一份跨语言契约**，
+// 两侧必须同批改：Python 侧按精确版本号读，不认识的版本失败关闭（不静默降级）。
+// 第 1 代（无这个键）是 0.1.x 起的形状，也包含 claude-code 方言桥那条外部生产者；
+// 第 2 代（1.0）唯一的区别是多出会话 cwd，供作用域判定使用。
+const PAYLOAD_VERSION_KEY = 'hook_payload_version';
+const PAYLOAD_SCHEMA_VERSION = '1.0';
+
 /** 把 dsh 的 content blocks 折叠成文本（与官方桥 blocksToText 同口径）。 */
 function blocksToText(content) {
   if (typeof content === 'string') {
@@ -231,6 +239,20 @@ const FIX_WORKDIR_UNREADABLE = '先确认这个目录存在、可读、真的是
 const FIX_SPAWN_DENIED = '这是沙箱对"管道 stdio"的限制：在允许它的环境里重跑，或让 Hook 不依赖管道 stdio；在此之前不要改工作目录（目录这一侧已排除）';
 const FIX_SPAWN_FAILED = '把这条命令在**同一个工作目录**里单独跑一遍，按它自己的报错改命令 / 运行时（工作目录这一侧已排除）';
 const FIX_MISSING_ACTION = '先补一条可执行的修复动作（例如：写明这个对象的真实路径，并给出一条能验证它的检查命令），再重新取证；在此之前不许把它归到任何一侧';
+
+// N25（2026-10-10 移植）：宿主 shell API 的形状。
+//
+// 0.2.x 的 shell 服务只有 resolve + execute（execute 返回**句柄**，前景结果由 handle.result() 给出），
+// 0.1.x 的 run 已经不在——桌面端 0.2.0-rc.2 与 CLI 0.2.1-alpha.2 都只有 execute。宿主缺 execute 时
+// 这是一条**平台事实**，不是"命令写错了"：所以理由里只说缺什么、怎么改，不掺工作目录
+// （那是另一条归因线，混进来会把读者带偏）。
+const FIX_HOST_SHELL_API =
+  '把 dsh 升到 0.2.x 再重试（桌面端 0.2.0-rc.2 与 CLI 0.2.1-alpha.2 都提供 shell.execute）';
+const HOST_SHELL_API_MISSING =
+  'policy-hook: 宿主缺少 ctx.shell.execute —— 本插件自 2026-10 起只支持 dsh 0.2.x 的 shell API' +
+  '（0.1.x 的 shell.run 不再被覆盖），按失败关闭拒绝该工具调用。要改的话：' +
+  FIX_HOST_SHELL_API +
+  '。';
 
 /**
  * 产出一条结构化归因。纯函数：除读一次时钟（verified_at）之外不碰任何外部状态。
@@ -513,6 +535,27 @@ export function createRunHook(ctx, config) {
    * 放行路径**不产出**任何归因（不许给放行的调用编造一个"为什么"）。
    */
   const runHook = async (exec, { hookEvent, fields }) => {
+    // 宿主 API 缺失**必须在调用期**拒绝，不能靠装配期抛出去：装配期抛错会让 dsh 的插件树
+    // 加载失败（整个会话起不来），比"这次工具调用被拒"更糟；而让裸 TypeError 冒到 catch 里
+    // 又会被读成"命令有问题"——那是错的归因（Q6 的同一条纪律）。
+    if (typeof ctx.shell?.execute !== 'function') {
+      return {
+        allowed: false,
+        reason: HOST_SHELL_API_MISSING,
+        origin: buildOrigin({
+          origin: 'unknown_origin',
+          owner: 'agent_runtime',
+          objectKind: 'runtime',
+          objectValue: 'ctx.shell',
+          objectSource: 'dsh 注入的 shell 服务（inject: [shell]）',
+          method: 'load',
+          result: '宿主没有可调用的 ctx.shell.execute（dsh 0.1.x 只有 shell.run）',
+          verified: false,
+          fix: FIX_HOST_SHELL_API,
+        }),
+      };
+    }
+
     // 空串 / 非字符串的 projectDir 与「没写」同义（头部文档：「不填则用会话工作目录」）：
     // `??` 只兜 null/undefined，于是 `projectDir: ""` 会被当成「声明过了」——会话 cwd 永远
     // 不被采纳、cwdSource 谎报成 config.projectDir，`workdir: ""` 还会一路传给 spawn，
@@ -530,6 +573,17 @@ export function createRunHook(ctx, config) {
       const outcome = hookFailureReason(command, workdir, '');
       return { allowed: false, reason: outcome.reason, origin: outcome.origin };
     }
+    // 作用域事实：**会话自己的 cwd**。它与上面那个 `cwd` 不是一回事——桥一定声明了
+    // projectDir，于是 `cwd` 恒等于 projectDir（它兼任"Hook 在哪个目录启动"），拿它判范围
+    // 会把所有会话都判成"在受治范围内"：别的目录的绝对路径被拒、相对路径被拿去相对
+    // projectDir 解析（判定关于另一个文件——比拦住更坏）。
+    // 拿不到会话 cwd 时**不声明第 2 代**（载荷退回第 1 代形状，见 hooks.py 的 session_scope）：
+    // 范围问题在那条载荷上不成立，而不是伪造一个值。
+    const sessionHeaderCwd = exec.agent?.session?.header?.cwd;
+    const sessionCwd =
+      typeof sessionHeaderCwd === 'string' && sessionHeaderCwd.trim() !== ''
+        ? sessionHeaderCwd
+        : undefined;
     const payload = JSON.stringify({
       session_id: exec.agent?.session?.header?.id ?? '',
       transcript_path: '',
@@ -538,6 +592,9 @@ export function createRunHook(ctx, config) {
       tool_name: exec.name,
       tool_input: exec.arguments,
       tool_use_id: exec.callId,
+      ...(sessionCwd !== undefined
+        ? { [PAYLOAD_VERSION_KEY]: PAYLOAD_SCHEMA_VERSION, session_cwd: sessionCwd }
+        : {}),
       ...fields,
     }) + '\n';
 
@@ -551,7 +608,11 @@ export function createRunHook(ctx, config) {
 
     let result;
     try {
-      result = await ctx.shell.run(ctx.shell.resolve(request));
+      // 0.2.x：execute 准备并 spawn，返回**句柄**；前景与否取决于调用方等不等 result()。
+      // 两步都留在同一个 try 里——准备失败（execute 抛）与运行失败（result() 拒绝）走同一条
+      // 失败关闭，不新增第二条判定路径（README §2.3.2）。
+      const handle = await ctx.shell.execute(ctx.shell.resolve(request));
+      result = await handle.result();
     } catch (error) {
       // 起不来、被杀、被沙箱拒绝——都不能静默放行：按失败关闭阻断。
       // 归因同样按工作目录的真实状态走：目录在预检之后被删掉（或预检查不出来）时，

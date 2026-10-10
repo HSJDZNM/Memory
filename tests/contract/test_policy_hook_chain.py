@@ -63,17 +63,28 @@ const ctx = {
     resolve(request) {
       return request;
     },
-    async run(request) {
+    // N25：dsh 0.2.x 的宿主形状——**只有 execute，没有 run**。假 ctx 照搬这一条，因为
+    // "插件到底在调哪个 API"正是这轮要钉住的契约：插件若退回 ctx.shell.run，这里会以
+    // TypeError 失败关闭，放行用例随即变红（见 test_a_plugin_that_still_calls_shell_run...）。
+    async execute(request) {
       calls.push(request);
       if (behaviour.throwError) {
         throw new Error(behaviour.throwError);
       }
-      if ('returnValue' in behaviour) {
-        // 形状漂移：result 整个缺失、退出码改名、stderr 变成裸字符串——都必须由插件
-        // 明确拒绝，而不是让翻译步骤自己抛出去。
-        return behaviour.returnValue;
-      }
-      return { exitCode: behaviour.exitCode, stderr: { text: behaviour.stderr } };
+      return {
+        // 前景结果只在这里给出：execute 返回句柄，语义由"调用方等不等 result()"决定。
+        async result() {
+          if (behaviour.rejectResult) {
+            throw new Error(behaviour.rejectResult);
+          }
+          if ('returnValue' in behaviour) {
+            // 形状漂移：result 整个缺失、退出码改名、stderr 变成裸字符串——都必须由插件
+            // 明确拒绝，而不是让翻译步骤自己抛出去。
+            return behaviour.returnValue;
+          }
+          return { exitCode: behaviour.exitCode, stderr: { text: behaviour.stderr } };
+        },
+      };
     },
   },
 };
@@ -294,7 +305,8 @@ function mountForWorkdir(projectDir, sessionCwd) {
       resolve(request) {
         return request;
       },
-      async run(request) {
+      // N25：0.2.x 宿主只有 execute（没有 run）——假 ctx 照搬真实形状。
+      async execute(request) {
         calls.push(request);
         if (state.vanishWorkdir && request.workdir !== undefined) {
           // 竞态：预检时目录还在，spawn 之前没了。
@@ -307,7 +319,8 @@ function mountForWorkdir(projectDir, sessionCwd) {
           // 真实 Node：cwd 不存在 → ENOENT，但报的是**可执行文件**。
           throw new Error('spawn ' + process.execPath + ' ENOENT');
         }
-        return { exitCode: state.exitCode, stderr: { text: state.stderr } };
+        const runResult = { exitCode: state.exitCode, stderr: { text: state.stderr } };
+        return { async result() { return runResult; } };
       },
     },
   };
@@ -401,10 +414,15 @@ const ctx = {
     resolve(request) {
       return request;
     },
-    async run() {
+    // N25：0.2.x 宿主形状（只有 execute，返回句柄）。
+    async execute() {
       return {
-        exitCode: Number(process.argv[4]),
-        stderr: { text: process.argv[3] },
+        async result() {
+          return {
+            exitCode: Number(process.argv[4]),
+            stderr: { text: process.argv[3] },
+          };
+        },
       };
     },
   },
@@ -1308,7 +1326,8 @@ function mountForWorkdir(projectDir, sessionCwd) {
       resolve(request) {
         return request;
       },
-      async run(request) {
+      // N25：0.2.x 宿主只有 execute（没有 run）——假 ctx 照搬真实形状。
+      async execute(request) {
         calls.push(request);
         if (state.vanishWorkdir && request.workdir !== undefined) {
           // 竞态：预检时目录还在，spawn 之前没了。
@@ -1321,7 +1340,8 @@ function mountForWorkdir(projectDir, sessionCwd) {
           // 真实 Node：cwd 不存在 → ENOENT，但报的是**可执行文件**。
           throw new Error('spawn ' + process.execPath + ' ENOENT');
         }
-        return { exitCode: state.exitCode, stderr: { text: state.stderr } };
+        const runResult = { exitCode: state.exitCode, stderr: { text: state.stderr } };
+        return { async result() { return runResult; } };
       },
     },
   };
@@ -1521,7 +1541,7 @@ def test_an_unrecognised_result_shape_is_forwarded_not_dropped(tmp_root) -> None
 def test_a_malformed_hook_result_is_refused_not_thrown(tmp_root) -> None:
     """shell 结果形状漂移时必须**由插件**明确拒绝，而不是让翻译步骤抛出去。
 
-    `ctx.shell.run` 是唯一被 try/catch 包住的调用，其后的一切（取退出码、取 stderr、判定行
+    `ctx.shell.execute` 与 `handle.result()` 是唯一被 try/catch 包住的一对调用，其后的一切（取退出码、取 stderr、判定行
     解析）此前都裸露在外：`result` 缺失时 `result.exitCode` 抛 TypeError，逃出插件处理器后
     由 dsh 的错误处理接管——「只有 exit 0 放行」这条契约就不再由本插件保证。另外
     `result.stderr?.text` 遇到裸字符串 stderr 会静默变成 ''，把 Hook 写的阻断理由整条丢掉。
@@ -1978,3 +1998,296 @@ def test_a_payload_without_a_tool_use_id_leaves_the_audit_action_id_unset(
     record = load_jsonl(audit)[0]
     assert record["reason_code"] == "context_error"
     assert "action_id" not in record
+
+# ------------------------------------------- 载荷代际（task-2）：作用域事实由**生产者**声明
+#
+# 插件与 Hook 之间那条 stdin 载荷此前没有版本号。加 `session_cwd` 就是改协议（AGENTS 第 55 条），
+# 所以同一个提交里给它建了轴（hooks.py 的 HOOK_PAYLOAD_SCHEMA_VERSION，与 VERDICT 行同型）。
+# 这三条钉住**生产者**那一侧：声明第 2 代时带上会话自己的 cwd；拿不到就不声明第 2 代
+# （退回第 1 代形状，而不是伪造一个值）；`cwd` 始终是 Hook 的工作目录，一个字不改——
+# 「范围内行为逐字节不变」靠的就是最后这一条。
+
+HARNESS_PAYLOAD_SCOPE = '''/**
+ * argv: <plugin.mjs> <projectDir>
+ */
+import { pathToFileURL } from 'node:url';
+
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const projectDir = process.argv[3];
+const command = 'python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml';
+const OUTSIDE = '/workspace/elsewhere';
+
+function makeExec(headerCwd) {
+  const header = { id: 'sess-payload-scope' };
+  if (headerCwd !== undefined) {
+    header.cwd = headerCwd;
+  }
+  return {
+    name: 'edit',
+    callId: 'call-payload-scope',
+    arguments: { file_path: 'src/inventory_controller.py', old_string: 'a', new_string: 'b' },
+    signal: undefined,
+    agent: { session: { header } },
+  };
+}
+
+async function stdinFor(headerCwd) {
+  let seen = null;
+  const shell = {
+    resolve(request) {
+      return request;
+    },
+    async execute(spec) {
+      seen = spec.stdin;
+      return {
+        async result() {
+          return { exitCode: 0, stderr: { text: '' } };
+        },
+      };
+    },
+  };
+  const registrations = {};
+  const ctx = { on(name, handler) { registrations[name] = handler; }, shell };
+  mod.apply(ctx, { command, timeoutMs: 30000, projectDir });
+  await registrations['tools/pre-execute'](makeExec(headerCwd), async () => ({ kind: 'enter' }));
+  return seen === null ? null : JSON.parse(seen);
+}
+
+const out = {
+  in_scope: await stdinFor(projectDir),
+  outside: await stdinFor(OUTSIDE),
+  without_session_cwd: await stdinFor(undefined),
+};
+
+process.stdout.write(JSON.stringify(out));
+'''
+
+
+def run_payload_scope_harness(tmp_root: Path, plugin: Path | None = None) -> dict:
+    script = tmp_root / "payload_scope_harness.mjs"
+    script.write_text(HARNESS_PAYLOAD_SCOPE, encoding="utf-8", newline=chr(10))
+    completed = subprocess.run(
+        [_require_node(), str(script), str(plugin or PLUGIN), str(tmp_root)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
+def test_the_plugin_declares_the_payload_generation_with_the_session_cwd(tmp_root):
+    """第 2 代载荷必须同时带版本键与会话 cwd，而 cwd 仍是 Hook 的工作目录。"""
+
+    in_scope = run_payload_scope_harness(tmp_root)["in_scope"]
+
+    assert in_scope["hook_payload_version"] == "1.0"
+    assert in_scope["session_cwd"] == str(tmp_root)
+    # 这一条是「范围内行为逐字节不变」的来源：判定基准 cwd 一个字没改。
+    assert in_scope["cwd"] == str(tmp_root)
+
+
+def test_out_of_scope_session_cwd_is_forwarded_rather_than_the_project_dir(tmp_root):
+    """会话在别处时，载荷必须报出**会话自己的** cwd——否则 Hook 判的是另一个文件。"""
+
+    outside = run_payload_scope_harness(tmp_root)["outside"]
+
+    assert outside["hook_payload_version"] == "1.0"
+    assert outside["session_cwd"] == "/workspace/elsewhere"
+    assert outside["cwd"] == str(tmp_root)
+
+
+def test_without_a_session_cwd_the_payload_stays_on_generation_one(tmp_root):
+    """拿不到会话 cwd 时不声明第 2 代：退回第 1 代形状，而不是伪造一个值。"""
+
+    legacy = run_payload_scope_harness(tmp_root)["without_session_cwd"]
+
+    assert "hook_payload_version" not in legacy
+    assert "session_cwd" not in legacy
+
+
+
+# ------------------------------------------------- N25：宿主 shell API 的形状（0.2.x 只有 execute）
+#
+# dsh 0.2.x 的 shell 服务只有 resolve + execute：execute 准备并 spawn，返回**句柄**，
+# 前景结果在 handle.result() 里。0.1.x 的 run 已经不在（桌面端 0.2.0-rc.2 与 CLI
+# 0.2.1-alpha.2 都只有 execute）。这一节把形状差异摆成三份假 ctx，钉住两件事：
+#
+#   1. 只有 execute（没有 run）的宿主上，放行 / 阻断必须**一个字都不变**；
+#   2. 缺 execute 的宿主（0.1.x 形状、或两个都没有）→ 失败关闭，且理由点名缺的 API 与
+#      怎么改 —— 不许让裸 TypeError 冒出去（那会被读成"命令写错了"，是错的归因）。
+#
+# 探针只观察不断言，断言全在 Python 侧；真 node 驱动的是**仓库里那份**插件源码。
+
+HARNESS_SHELL_API = '''/**
+ * argv: <plugin.mjs> <projectDir>
+ */
+import { pathToFileURL } from 'node:url';
+
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const apply = mod.apply;
+const createRunHook = mod.createRunHook;
+const projectDir = process.argv[3];
+const command = 'python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml';
+
+let exitCode = 0;
+let stderrText = '';
+
+const makeExec = () => ({
+  name: 'edit',
+  callId: 'call-shell-api',
+  arguments: { file_path: 'src/inventory_controller.py', old_string: 'a', new_string: 'b' },
+  signal: undefined,
+  agent: { session: { header: { id: 'sess-shell-api', cwd: projectDir } } },
+});
+
+async function drive(shell) {
+  const registrations = {};
+  const ctx = { on(name, handler) { registrations[name] = handler; }, shell };
+  apply(ctx, { command, timeoutMs: 30000, projectDir });
+  let nextCalls = 0;
+  const next = async () => {
+    nextCalls += 1;
+    return { kind: 'enter' };
+  };
+  const outcome = await registrations['tools/pre-execute'](makeExec(), next);
+  return { outcome: outcome === undefined ? null : outcome, nextCalls };
+}
+
+// 0.2.x 的真实形状：只有 resolve + execute（没有 run）。
+const executeOnly = {
+  resolve(request) {
+    return request;
+  },
+  async execute() {
+    return {
+      async result() {
+        return { exitCode, stderr: { text: stderrText } };
+      },
+    };
+  },
+};
+
+// 0.1.x 的形状：只有 resolve + run（没有 execute）。
+const runOnly = {
+  resolve(request) {
+    return request;
+  },
+  async run() {
+    return { exitCode, stderr: { text: stderrText } };
+  },
+};
+
+// 两个都没有。
+const noApi = {
+  resolve(request) {
+    return request;
+  },
+};
+
+const out = {
+  execute_only_has_execute: typeof executeOnly.execute,
+  execute_only_has_run: typeof executeOnly.run,
+  run_only_has_execute: typeof runOnly.execute,
+};
+
+exitCode = 0;
+stderrText = '';
+out.execute_only_allow = await drive(executeOnly);
+
+exitCode = 2;
+stderrText = 'blocked by ARCH-001';
+out.execute_only_block = await drive(executeOnly);
+
+exitCode = 0;
+stderrText = '';
+out.run_only_allow = await drive(runOnly);
+out.no_shell_api_allow = await drive(noApi);
+
+// 结构化归因只出现在 createRunHook 的返回值里（apply 交给 dsh 的只有 deny / reason）。
+const runHook = createRunHook(noApi, { command, timeoutMs: 30000, projectDir });
+out.no_shell_api_runhook = await runHook(makeExec(), { hookEvent: 'PreToolUse', fields: {} });
+
+process.stdout.write(JSON.stringify(out));
+'''
+
+
+def run_shell_api_harness(tmp_root: Path, plugin: Path | None = None) -> dict:
+    script = tmp_root / "shell_api_harness.mjs"
+    script.write_text(HARNESS_SHELL_API, encoding="utf-8", newline=chr(10))
+    completed = subprocess.run(
+        [_require_node(), str(script), str(plugin or PLUGIN), str(tmp_root)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
+def test_a_host_that_exposes_shell_execute_only_keeps_the_verdict_unchanged(tmp_root):
+    """N25①：0.2.x 宿主（只有 execute、没有 run）上，放行与阻断必须照旧。"""
+
+    observed = run_shell_api_harness(tmp_root)
+
+    # 先证明这个假 ctx 真的缺 run：否则下面两条断言测不到"插件调的是哪个 API"。
+    assert observed["execute_only_has_execute"] == "function"
+    assert observed["execute_only_has_run"] == "undefined"
+
+    allow = observed["execute_only_allow"]
+    assert allow["outcome"] == {"kind": "enter"}, allow["outcome"]
+    assert allow["nextCalls"] == 1, allow
+
+    block = observed["execute_only_block"]
+    assert block["outcome"]["kind"] == "deny", block["outcome"]
+    assert "ARCH-001" in block["outcome"]["reason"], block["outcome"]
+    assert block["nextCalls"] == 0, block
+
+
+def test_a_host_without_shell_execute_is_refused_with_a_diagnosable_reason(tmp_root):
+    """N25②：0.1.x 形状（只有 run）与两个都没有 —— 失败关闭，理由可诊断。"""
+
+    observed = run_shell_api_harness(tmp_root)
+
+    assert observed["run_only_has_execute"] == "undefined"
+    for key in ("run_only_allow", "no_shell_api_allow"):
+        outcome = observed[key]["outcome"]
+        assert outcome["kind"] == "deny", (key, outcome)
+        # 理由要点名**缺的是哪个 API**与**怎么改**，不能只说"出错了"。
+        assert "ctx.shell.execute" in outcome["reason"], (key, outcome["reason"])
+        assert "0.1.x" in outcome["reason"], (key, outcome["reason"])
+        assert "0.2" in outcome["reason"], (key, outcome["reason"])
+        assert "TypeError" not in outcome["reason"], (key, outcome["reason"])
+        assert observed[key]["nextCalls"] == 0, key
+
+    # 归因孪生：同一条拒绝也带一条闭集内的 origin（形状由 Python 侧校验）。
+    runhook = observed["no_shell_api_runhook"]
+    assert runhook["allowed"] is False, runhook
+    _assert_origin_shape(runhook["origin"])
+    assert runhook["origin"]["origin"] == "unknown_origin", runhook["origin"]
+    assert runhook["origin"]["causal_link"] == "unproven", runhook["origin"]
+
+
+def test_a_plugin_that_still_calls_shell_run_is_refused_by_a_0_2_host(tmp_root):
+    """约束 3 的常驻版：把插件变异回 ctx.shell.run，同一个假宿主必须拒绝。
+
+    对照是未变异那一次（execute_only_allow = enter）。变异只在**临时副本**上做，真 node 里
+    跑的仍是仓库那份实现，所以这条证明不是"读源码推断"：插件若退回 0.1.x 的 API，放行路径
+    会当场变成拒绝。
+    """
+
+    control = run_shell_api_harness(tmp_root)
+    assert control["execute_only_allow"]["outcome"] == {"kind": "enter"}
+
+    tampered = _tampered_plugin(
+        tmp_root,
+        "policy-hook.plugin.legacy-run.mjs",
+        "const handle = await ctx.shell.execute(ctx.shell.resolve(request));",
+        "const handle = ctx.shell.run(ctx.shell.resolve(request));",
+    )
+    mutated = run_shell_api_harness(tmp_root, plugin=tampered)
+    assert mutated["execute_only_allow"]["outcome"]["kind"] == "deny", mutated["execute_only_allow"]

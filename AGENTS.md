@@ -447,7 +447,17 @@
       `HOST_VERSION_RECORD_SCHEMA_VERSION`（提交进仓库的观测记录）；
     - dsh Hook：`adapters.dsh.hooks.AUDIT_SCHEMA_VERSION`（判定记录）；`VERDICT_SCHEMA_VERSION`
       （阻断判定行——**跨语言**：Python 与 `policy-hook.plugin.mjs` 必须同批改，插件按精确版本号读，
-      不认识就回到"未知状态"）；
+      不认识就回到"未知状态"）；`adapters.dsh.hooks.HOOK_PAYLOAD_SCHEMA_VERSION`
+      （**插件→Hook 的 stdin 载荷**自己的轴，键名 `hook_payload_version`；**跨语言**，同样是两侧
+      同批改——**1.0 = 首次建轴**（2026-10-10 作用域感知）：第 1 代（**没有这个键**）是 0.1.x 起的
+      形状，也包含 claude-code 方言桥那条外部生产者，范围问题在它上面不成立 → 走既有路径；
+      第 2 代多出 `session_cwd`（**会话自己的** cwd，不是 Hook 的工作目录）供作用域判定。
+      缺键 = 第 1 代；版本不认识 = 失败关闭（核心层约束 3））；
+      `adapters.dsh.hooks.SCOPE_FALLBACK_SCHEMA_VERSION`（**范围外记账降级**的 stderr 机读行
+      `[policy] SCOPE-FALLBACK {...}`——**1.0 = 首次建轴**（2026-10-10 故障修复）：会话 cwd 不在
+      受治项目内、而受治账又写不进去时（别的会话没有那个文件夹的写权限），这条行说明「这次没管、
+      为什么没记上账、退到哪去了」；回退落点是 `<temp>/dsh-policy/out-of-scope.jsonl`，按**约定**
+      渲染、不写绝对路径。**范围外专属**：范围内的账写不进去仍然失败关闭，一个字不变）；
     - 受控执行与编排：`enforcement.models.ENFORCEMENT_SCHEMA_VERSION` / `REGISTRY_SCHEMA_VERSION`、
       `enforcement.registry.APPROVED_SCHEMA_VERSION`、`enforcement.ledger.LEDGER_SCHEMA_VERSION`、
       `enforcement.approvals.APPROVAL_SCHEMA_VERSION`、`orchestration.checkpoint.CHECKPOINT_SCHEMA_VERSION`；

@@ -12,6 +12,8 @@
 | Hook 相关包（Phase 2 调查时） | dsh-hook-protocol / dsh-hooks-claude-code / dsh-hooks-codex / dsh-base 为 0.1.5-rc.2 |
 | **dsh CLI（本轮实测 2026-09-27）** | **0.1.6-alpha.2**（dsh --version；shutil.which('dsh') 命中 C:\Users\ZNM\AppData\Roaming\npm\dsh.CMD） |
 | **Hook 相关包（本轮实测 2026-09-27）** | **dsh-hook-protocol / dsh-hooks-claude-code / dsh-hooks-codex = 0.1.6-alpha.2**（与 CLI 同号：Phase 2 那句"补丁号不一致"在本机已不再成立） |
+| **dsh CLI（本轮实测 2026-10-10）** | **0.2.1-alpha.2**（dsh --version） |
+| **Hook 相关包（本轮实测 2026-10-10）** | **已不再是依赖**：0.2.1 的安装里没有 dsh-hooks-* 包（列过整个 @deepseek-ai 目录），仓库改走进程内插件（§2.3.2）；上面两行 0.1.6 时代的读数作为历史保留 |
 | 实现位置 | C:\Users\ZNM\Downloads\study\.cache\npm-cache\_npx\1e7f6d9597241db0\node_modules\@deepseek-ai\ |
 | 平台 | Windows，node v24.19.0，hook 命令由 pwsh 执行 |
 | 事件 fixture | tests/fixtures/agent_events/dsh/（脱敏后的真实载荷） |
@@ -20,6 +22,12 @@
 升级后要重跑 fixture 契约测试与沙箱闭环。本轮重新核对的结果写在上面两行（证据
 .tmp/round-10/b/01-dsh-version.txt 与 50-installed-package-versions.txt）；
 **能力声明里那个版本由 §13 的检查守着**，不再靠"人记得改"。
+
+**覆盖范围（2026-10-10 起收窄，必须知道）**：本插件只覆盖 **dsh 0.2.x**。宿主从 0.1.x 到 0.2.x
+换掉了 shell 服务的 API（`ctx.shell.run(spec)` → `ctx.shell.execute(spec)` → `await handle.result()`），
+本插件已按 0.2.x 移植（见 §2.3.2）；**0.1.x 不再被覆盖**——在那种宿主上插件会对每次工具调用
+失败关闭，并给出点名"缺少 ctx.shell.execute"的理由（不是裸 TypeError）。本机现状：桌面端
+0.2.0-rc.2、CLI 0.2.1-alpha.2，两者都只提供 `execute`。
 
 ## 2. 调查结论（Phase 2 文档要求的 6 项）
 
@@ -112,6 +120,85 @@ Hook 自己的 `exit 2` 到了插件手里是 `1`。机制已定位（不再标 
 判定行读不到、读不懂、`schema_version` 不认识，一律回到"未知状态"——**两条分支都是拒绝**，
 `exit 0` 仍是唯一的放行信号；真正生效的兜底仍是插件里"除 0 之外一律 deny"（G12），
 所以"非 0 非 2 也拒绝"这条路径必须继续有契约测试钉着。
+
+#### 2.3.2 宿主 shell API：0.2.x 只有 `execute`（0.1.x 不再被覆盖）
+
+插件用 **`ctx.shell`** 运行 Hook 命令。这个服务的形状在两个大版本之间换过一次，而它**是宿主提供的**，
+仓库里写死哪一份都只对一半：
+
+| 宿主 | 方法 | 返回值 |
+| --- | --- | --- |
+| 0.1.x | `resolve(request)` + `run(spec)` | `ShellRunResult`（`exitCode` / `stdout` / `stderr` …） |
+| 0.2.x（桌面端 0.2.0-rc.2 / CLI 0.2.1-alpha.2） | `resolve(request)` + `execute(spec)` | `ShellExecution` **句柄**；前景结果由 `await handle.result()` 给出 |
+
+请求字段（`command` / `workdir` / `timeoutMs` / `signal` / `stdin`）两代一致，事件名
+（`tools/pre-execute` / `tools/post-execute`）也一致——**只有方法名与返回值形状变了**。
+
+插件的处置（三条，各有契约测试钉着，见 `tests/contract/test_policy_hook_chain.py` 的 N25 一节）：
+
+1. `execute` 与 `result()` **在同一对 try/catch 里**：准备失败（`execute` 抛）与运行失败
+   （`result()` 拒绝）走同一条失败关闭，不新增第二条判定路径；
+2. 宿主**没有** `execute`（0.1.x 形状，或两个都没有）→ **调用期**拒绝，理由点名
+   `ctx.shell.execute` 与"升到 0.2.x"这条修法。**不在装配期抛**：装配期抛错会让 dsh 的插件树
+   加载失败（整个会话起不来），比"这次调用被拒"更糟；也不让裸 `TypeError` 冒进 catch——
+   那会被读成"命令写错了"（Q6 的同一条纪律：失败关闭不等于理由正确）；
+3. 语义一个字不变：`exit 0` 放行、其余一律拒绝、判定行解析与 `origin` 归因照旧。
+
+**这条移植是宿主升级逼出来的**：桌面端 0.2.0-rc.2 的 `shell` 服务里没有 `run`，也就是说插件在
+CLI 升级之前就已经与桌面端不兼容——装上桥的结果不是"开始治理"，而是每次工具调用都被失败关闭
+拒绝（`ctx.shell.run is not a function`），理由还会指向"要启动的命令"那一侧，把人带偏。
+
+### 2.3.3 载荷代际与作用域（2026-10-10 起）
+
+插件与 Hook 之间那条 stdin 载荷现在带自己的版本轴：`hook_payload_version`（`hooks.py` 的
+`HOOK_PAYLOAD_SCHEMA_VERSION = "1.0"`，登记在 AGENTS 第 55 条那张表里）。它解决的是**作用域**问题。
+
+**问题**：插件的 `projectDir` 兼任「Hook 在哪个目录启动」与「载荷里 `cwd` 的取值」。桥一定声明
+`projectDir`，于是载荷里的 `cwd` 恒等于 projectDir，而 `hooks.py` 拿它当归一化工具目标的基准。
+会话开在**别的目录**时：绝对路径落进范围外被拒；相对路径被拿去相对 projectDir 解析——
+判定**关于另一个文件**，而结论照样进账本（比拦住更坏）。
+
+**代际**（`session_cwd` = 会话自己的 cwd，不是 Hook 的工作目录）：
+
+| 载荷 | 判据 | 行为 |
+| --- | --- | --- |
+| 第 1 代（没有 `hook_payload_version`） | 0.1.x 起的形状，含 claude-code 方言桥那条外部生产者 | 范围问题不适用，走既有路径（逐字节不变） |
+| 第 2 代（`"1.0"`） | 多出 `session_cwd` | 见下表四条 |
+| 版本不认识（例如 `"9.9"`） | 未知协议版本 | 失败关闭：`payload_version_unsupported` |
+
+第 2 代的四条分支（实现在 `hooks.py::session_scope`）：
+
+| 会话 cwd | reason_code（pre / post） | 行为 |
+| --- | --- | --- |
+| 在 `project_root` 内 | 照旧（`policy_block` / `allow` / …） | 与第 1 代逐字相同，**不**多出作用域键 |
+| 在外 | `session_out_of_scope` / `post_session_out_of_scope`（作用域族**专属**） | **放行** + 一条显式记录（`governed: false`、`session_scope: outside_project`、`session_cwd`、`project_root`） |
+| 缺失 / 不是绝对路径 / 解析不出来 | `payload_scope_unprovable` | 失败关闭（「证明不了」不是「允许」） |
+
+**三条要读对的地方**：
+
+- **范围外 ≠ 通过，也 ≠ 只读降级**：放行是为了「别的目录照常用」，账本上写的是
+  `session_out_of_scope` + `governed: false`——它与只读工具降级那条 `not_governed` 是**两个含义**
+  （AGENTS 第 50 条：同名两义一律改名；两条记录都还在，只是不再同名，对照用例见
+  `tests/integration/test_dsh_hook.py` 的 `test_scope_outside_and_read_only_degradation_are_different_reason_codes`），
+  与「治理了、没违规」（`reason_code: allow` / `allow_with_warnings`）在**原因码层面**就分得开；
+  这条记录里也没有 `event_id` / `violations` 一类的判定产物——没做判定就不许伪造判定清单。
+- **审计里放的是形态不是原文**：`session_cwd` 渲染成 `<outside-workspace>`、`project_root` 渲染成 `.`
+  （`reading.display_path`；审计不放绝对路径是既有纪律）。要原始路径看 `--capture` 的载荷。
+- **post 侧同一条判据**：事前「没管」，事后就不能反过来宣称「验证过」——用作用域族自己的事后码
+  `post_session_out_of_scope`（不是只读降级那条 `post_not_governed`），作用域事实由同样三个键承载。
+
+- **范围外 + 受治账写不进去（2026-10-10 真机故障）**：桥挂在桌面 profile 上之后**每个**会话都跑
+  Hook，而 Hook 要往**受治项目**的 `.policy/audit.jsonl` 记账；别的会话（工作区不是受治文件夹）
+  没有那个路径的写权限 → `PermissionError` → 失败关闭 → **那个会话整个干不了活**（对比测试里
+  第二个工作区不是「不受管」而是「干不了活」）。现在范围外这一侧按三级降级：受治账 →
+  `<temp>/dsh-policy/out-of-scope.jsonl`（带 `audit_fallback` / `audit_fallback_reason` /
+  `audit_fallback_target` 三件事实）→ 只剩 stderr 机读行 `[policy] SCOPE-FALLBACK {...}`
+  （`SCOPE_FALLBACK_SCHEMA_VERSION`，已登记 AGENTS 第 55 条）。**三条里至少有一条留下痕迹**，
+  所以这仍然不是静默跳过。**范围内一个字不变**：账写不进去仍然不许执行（有用例钉住两个方向）。
+
+**未覆盖**：真实 GUI 会话里「插件报出的会话 cwd 就是 dsh 会话的工作目录」这一步只有真机闭环能覆盖；
+契约用例覆盖的是「插件按约定组装了这两个键」（真 node + 假宿主）。宿主拿不出会话 cwd 时插件退回
+第 1 代形状（不伪造值），此时范围问题不成立——这是有意留下的边界，不是静默降级。
 
 ### 2.4 工具名与参数结构
 

@@ -18,9 +18,14 @@ import pytest
 from conftest import POLICIES_DIR, REPO_ROOT, dsh_event, write_dsh_config
 
 from adapters.dsh.adapter import PolicyEvent, load_config
+from adapters.dsh import hooks as hooks_module
 from adapters.dsh.hooks import (
     EXIT_ALLOW,
     EXIT_BLOCK,
+    SCOPE_FALLBACK_LINE_PREFIX,
+    SCOPE_FALLBACK_SCHEMA_VERSION,
+    SCOPE_OUTSIDE_POST_REASON,
+    SCOPE_OUTSIDE_REASON,
     AuditLedger,
     ControlledExecutor,
     DshPreExecuteHook,
@@ -796,3 +801,342 @@ def test_the_phase_four_block_detail_is_redacted_in_the_audit(
     assert str(dsh_project).replace("\\", "/") not in detail
     # 脱敏是换成可读记号，不是删掉信息：读者仍看得出这里出现过一个绝对路径
     assert "<abs>" in detail or "<workspace>" in detail
+
+# --------------------------------------------------------------------------- 作用域感知（task-2）
+#
+# 背景：桥一定声明 projectDir，而 projectDir 兼任「Hook 在哪个目录启动」与「载荷里 cwd 的取值」。
+# 于是判定用来归一化工具目标的 cwd 被覆盖成 projectDir——会话开在别的目录时，绝对路径被拒、
+# 相对路径被拿去相对 projectDir 解析（判定关于**另一个文件**，而结论照样进账本，比拦住更坏）。
+#
+# 第 2 代载荷（hook_payload_version: "1.0"）多带一个**会话自己的** cwd，Hook 于是能先判范围：
+#   会话 cwd 在 project_root 内 → 与今天逐字节相同；
+#   在外                      → 放行，但写一条**显式**的 session_out_of_scope
+#                              （专属码；与只读降级的 not_governed 不是同一件事，见本文件末尾那条对照）；
+#   声明第 2 代却给不出可解析的绝对会话 cwd → 失败关闭（「证明不了」不是「允许」）；
+#   没有版本键（第 1 代 / 外部方言桥）→ 范围问题不适用，走今天的路径。
+
+
+def _audit_rows(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+
+
+def test_out_of_scope_session_is_allowed_with_an_explicit_record(dsh_config_path, dsh_project):
+    """范围外的会话：放行，但账本上必须能读出「这次没管」+ 两个事实。"""
+
+    audit = dsh_config_path.parent / "scope-outside.jsonl"
+    hook = build_hook(dsh_config_path, audit=audit)
+    outside = dsh_project.parent / "elsewhere"
+
+    outcome = hook.handle(
+        payload(
+            "pre-tool-use-edit-block.json",
+            dsh_project,
+            hook_payload_version="1.0",
+            session_cwd=str(outside),
+        )
+    )
+
+    # 关键：这条结论**不是** allow，而是一个显式的「没治理」——两者的区别就是本次修复的目的。
+    assert outcome.exit_code == EXIT_ALLOW
+    assert outcome.reason_code == SCOPE_OUTSIDE_REASON
+
+    record = _audit_rows(audit)[0]
+    assert record["hook_event"] == "PreToolUse"
+    assert record["reason_code"] == SCOPE_OUTSIDE_REASON
+    assert record["governed"] is False
+    assert record["session_scope"] == "outside_project"
+    # 两个事实分开写：会话 cwd 折叠成 <outside-workspace>、项目根渲染成 "."。
+    # （审计里不放绝对路径是既有脱敏纪律；要原始路径看 --capture 的载荷。）
+    assert record["session_cwd"] == "<outside-workspace>"
+    assert record["project_root"] == "."
+    assert record["scope_note"]
+    # 范围外**没有做判定**：没有 event_id，也没有 violations 一类的判定产物。
+    assert "event_id" not in record
+    assert "violations" not in record
+
+
+def test_out_of_scope_post_execute_records_the_scope_reason(dsh_config_path, dsh_project):
+    """成对契约：事前判「没管」，事后就不能反过来宣称「验证过」。"""
+
+    audit = dsh_config_path.parent / "scope-outside-post.jsonl"
+    hook = build_hook(dsh_config_path, audit=audit)
+    outside = dsh_project.parent / "elsewhere"
+
+    # PostToolUse 由 run_hook 分派到事后路径（handle() 是 pre 专用入口）——这里走真分派。
+    outcome = run_hook(
+        payload(
+            "post-tool-use-edit.json",
+            dsh_project,
+            hook_payload_version="1.0",
+            session_cwd=str(outside),
+        ),
+        config_path=dsh_config_path,
+        audit_path=audit,
+    )
+
+    assert outcome.exit_code == EXIT_ALLOW
+    assert outcome.reason_code == SCOPE_OUTSIDE_POST_REASON
+    record = _audit_rows(audit)[0]
+    assert record["hook_event"] == "PostToolUse"
+    assert record["governed"] is False
+    assert record["session_scope"] == "outside_project"
+    assert record["session_cwd"] == "<outside-workspace>"
+    assert record["project_root"] == "."
+
+
+def test_scope_outside_and_read_only_degradation_are_different_reason_codes(
+    dsh_config_path, dsh_project
+):
+    """AGENTS 第 50 条：一个 reason_code 只许有一个含义。
+
+    `not_governed` / `post_not_governed` 的原本含义是「只读工具的授权链路显式降级」；
+    「会话在受治范围外」是另一件事（这次根本没管），所以它有自己的码。两者一旦共用一个名字，
+    按 reason_code 聚合读账本的人就会把「没管」与「管了但降级」读成同一件事——
+    这正是本次返工要钉开的东西：**两条记录都必须还在，只是不再同名**。
+    """
+
+    outside = dsh_project.parent / "elsewhere"
+
+    scope_pre_audit = dsh_config_path.parent / "codes-scope-pre.jsonl"
+    scope_pre = build_hook(dsh_config_path, audit=scope_pre_audit).handle(
+        payload(
+            "pre-tool-use-edit-block.json",
+            dsh_project,
+            hook_payload_version="1.0",
+            session_cwd=str(outside),
+        )
+    )
+
+    readonly_audit = dsh_config_path.parent / "codes-readonly.jsonl"
+    readonly = build_hook(dsh_config_path, audit=readonly_audit).handle(
+        payload("pre-tool-use-read-not-governed.json", dsh_project)
+    )
+
+    scope_post_audit = dsh_config_path.parent / "codes-scope-post.jsonl"
+    scope_post = run_hook(
+        payload(
+            "post-tool-use-edit.json",
+            dsh_project,
+            hook_payload_version="1.0",
+            session_cwd=str(outside),
+        ),
+        config_path=dsh_config_path,
+        audit_path=scope_post_audit,
+    )
+
+    # 事前：范围外 vs 只读降级——两个含义、两个码。
+    assert scope_pre.reason_code == SCOPE_OUTSIDE_REASON
+    assert readonly.reason_code == "not_governed"
+    assert scope_pre.reason_code != readonly.reason_code
+    # 事后：范围外用作用域族自己的事后码，不是只读降级那条。
+    assert scope_post.reason_code == SCOPE_OUTSIDE_POST_REASON
+    assert scope_post.reason_code != "post_not_governed"
+
+    # 记录也必须是两件事：范围外带作用域事实，只读降级带的是「为什么没进授权链路」。
+    assert _audit_rows(scope_pre_audit)[0]["session_scope"] == "outside_project"
+    assert "session_scope" not in _audit_rows(readonly_audit)[0]
+    assert _audit_rows(readonly_audit)[0]["scope_note"]
+
+
+def test_in_scope_session_keeps_the_normal_decision(dsh_config_path, dsh_project):
+    """同一个会话 cwd = 项目根：结论与第 1 代逐字相同，且**不**多出作用域键。"""
+
+    audit = dsh_config_path.parent / "scope-inside.jsonl"
+    hook = build_hook(dsh_config_path, audit=audit)
+
+    outcome = hook.handle(
+        payload(
+            "pre-tool-use-edit-block.json",
+            dsh_project,
+            hook_payload_version="1.0",
+            session_cwd=str(dsh_project),
+        )
+    )
+
+    assert outcome.exit_code == EXIT_BLOCK
+    assert outcome.reason_code == "policy_block"
+    record = _audit_rows(audit)[0]
+    assert record["governed"] is True
+    assert "session_scope" not in record
+    assert "session_cwd" not in record
+
+
+def test_legacy_payload_still_takes_todays_path(dsh_config_path, dsh_project):
+    """第 1 代（没有版本键）走今天的路径——这条是「范围内行为不变」的锚点。"""
+
+    audit = dsh_config_path.parent / "scope-legacy.jsonl"
+    hook = build_hook(dsh_config_path, audit=audit)
+
+    outcome = hook.handle(payload("pre-tool-use-edit-block.json", dsh_project))
+
+    assert outcome.exit_code == EXIT_BLOCK
+    assert outcome.reason_code == "policy_block"
+    record = _audit_rows(audit)[0]
+    assert record["governed"] is True
+    assert "session_scope" not in record
+
+
+def test_second_generation_without_a_session_cwd_fails_closed(dsh_config_path, dsh_project):
+    """声明了第 2 代却不给会话 cwd：证明不了范围 → 失败关闭，绝不默认放行。"""
+
+    audit = dsh_config_path.parent / "scope-unprovable.jsonl"
+    hook = build_hook(dsh_config_path, audit=audit)
+
+    outcome = hook.handle(
+        payload("pre-tool-use-edit-block.json", dsh_project, hook_payload_version="1.0")
+    )
+
+    assert outcome.exit_code == EXIT_BLOCK
+    assert outcome.reason_code == "payload_scope_unprovable"
+
+
+def test_unknown_payload_version_fails_closed(dsh_config_path, dsh_project):
+    """未知协议版本一律拒收（核心层约束 3），不静默降级到第 1 代。"""
+
+    audit = dsh_config_path.parent / "scope-version.jsonl"
+    hook = build_hook(dsh_config_path, audit=audit)
+
+    outcome = hook.handle(
+        payload(
+            "pre-tool-use-edit-block.json",
+            dsh_project,
+            hook_payload_version="9.9",
+            session_cwd=str(dsh_project),
+        )
+    )
+
+    assert outcome.exit_code == EXIT_BLOCK
+    assert outcome.reason_code == "payload_version_unsupported"
+
+
+# --------------------------------------------------------------------------- 范围外 + 账写不进去
+#
+# 2026-10-10 真机故障：桥挂在 desktop profile 上之后**每个** GUI 会话都跑 Hook，而 Hook 要往
+# **受治项目**的 .policy/audit.jsonl 记账。别的会话（工作区不是受治文件夹）没有那个路径的写权限
+# → PermissionError → 失败关闭 → 那个会话整个干不了活（用户要做的对比测试里，第二个工作区
+# 不是「不受管」而是「干不了活」）。
+#
+# 修的是**范围外**这一侧：账写不进去不许拦人，但「这次没管」与「为什么没记上账」都要留下来。
+# 范围内一个字不变：账写不进去仍然不许执行。
+#
+# 「不可写」用**真被 OS 拒**的落点制造——把审计目标做成一个**目录**（append 打不开目录：
+# Windows 是 PermissionError、POSIX 是 IsADirectoryError，两个都是 OSError）。这不是打桩：
+# 拒绝来自文件系统本身，而且与"目标在沙箱外"是同一类失败。
+
+
+def _unwritable_ledger(tmp_root: Path) -> Path:
+    """一个**真的打不开**的审计目标：目录。"""
+
+    target = tmp_root / "audit-as-directory"
+    target.mkdir(exist_ok=True)
+    return target
+
+
+@pytest.fixture()
+def fallback_ledger(tmp_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """把降级落点指到本次用例自己的目录（落点不是被测行为；写进去仍然是一次真写）。"""
+
+    path = tmp_root / "scope-fallback" / "out-of-scope.jsonl"
+    monkeypatch.setattr(hooks_module, "scope_fallback_path", lambda: path)
+    return path
+
+
+def test_out_of_scope_session_survives_an_unwritable_governed_ledger(
+    dsh_config_path, dsh_project, tmp_root, fallback_ledger, capsys
+):
+    """范围外：受治账写不进去**不拦人**，但回退记录与 stderr 机读行都要在。"""
+
+    outside = dsh_project.parent / "elsewhere"
+    hook = build_hook(dsh_config_path, audit=_unwritable_ledger(tmp_root))
+
+    outcome = hook.handle(
+        payload(
+            "pre-tool-use-edit-block.json",
+            dsh_project,
+            hook_payload_version="1.0",
+            session_cwd=str(outside),
+        )
+    )
+
+    assert outcome.exit_code == EXIT_ALLOW
+    assert outcome.reason_code == SCOPE_OUTSIDE_REASON
+
+    line = capsys.readouterr().err.split(SCOPE_FALLBACK_LINE_PREFIX, 1)[1].splitlines()[0]
+    parsed = json.loads(line)
+    assert parsed["schema_version"] == SCOPE_FALLBACK_SCHEMA_VERSION
+    assert parsed["session_scope"] == "outside_project"
+    assert parsed["audit_fallback"]
+
+    rows = _audit_rows(fallback_ledger)
+    assert rows, "范围外不能静默跳过：受治账写不进去时必须留下回退记录"
+    assert rows[-1]["reason_code"] == SCOPE_OUTSIDE_REASON
+    assert rows[-1]["governed"] is False
+    # 「记不到账」这件事本身必须可读：回退记录带原因与它本来该去哪儿。
+    assert rows[-1]["audit_fallback"] is True
+    assert rows[-1]["audit_fallback_reason"]
+    assert rows[-1]["audit_fallback_target"] is not None
+
+
+def test_run_hook_out_of_scope_survives_the_ledger_derivation_write(
+    dsh_config_path, dsh_project, tmp_root, fallback_ledger
+):
+    """真分派路径：N21 那条「台账派生」元信息写不进去时，范围外**仍然放行**。
+
+    这条正是本次故障的翻车点：元信息写在判定**之后**，它一抛就把一次本该放行的调用翻成了
+    startup_error——于是整段会话连一次工具调用都做不成。事后事务不许反过来改写判定。
+    """
+
+    outside = dsh_project.parent / "elsewhere"
+    outcome = run_hook(
+        payload(
+            "pre-tool-use-edit-block.json",
+            dsh_project,
+            hook_payload_version="1.0",
+            session_cwd=str(outside),
+        ),
+        config_path=dsh_config_path,
+        audit_path=_unwritable_ledger(tmp_root),
+        hooks_config_path=HOOKS_CONFIG,
+    )
+
+    assert outcome.exit_code == EXIT_ALLOW
+    assert outcome.reason_code == SCOPE_OUTSIDE_REASON
+    assert _audit_rows(fallback_ledger), "元信息写不进去也不能静默：痕迹要落到回退账"
+
+
+def test_scope_is_decided_before_the_ledger_never_the_other_way_round(
+    dsh_config_path, dsh_project, tmp_root
+):
+    """④ 同一条「账写不进去」的事实，在两个范围上得到**相反**的后果。
+
+    先判范围、再动账。反过来说：若让"账写不进去"本身成为放行判据，范围内的会话只要把账弄坏
+    就能逃逸——那是把失败关闭反过来用。
+    """
+
+    outside = dsh_project.parent / "elsewhere"
+
+    out_side = build_hook(dsh_config_path, audit=_unwritable_ledger(tmp_root)).handle(
+        payload(
+            "pre-tool-use-edit-block.json",
+            dsh_project,
+            hook_payload_version="1.0",
+            session_cwd=str(outside),
+        )
+    )
+    assert out_side.exit_code == EXIT_ALLOW
+
+    # 范围内：连一条**本来会放行**的改动也不许执行（账写不进去 = 失败关闭）。
+    in_side = build_hook(dsh_config_path, audit=_unwritable_ledger(tmp_root)).handle(
+        payload(
+            "pre-tool-use-edit-allow.json",
+            dsh_project,
+            hook_payload_version="1.0",
+            session_cwd=str(dsh_project),
+        )
+    )
+    assert in_side.exit_code == EXIT_BLOCK
+    assert in_side.reason_code == "config_error"

@@ -40,6 +40,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -85,6 +86,22 @@ __all__ = [
     "EXIT_ALLOW",
     "EXIT_BLOCK",
     "AUDIT_SCHEMA_VERSION",
+    "HOOK_PAYLOAD_SCHEMA_VERSION",
+    "HOOK_PAYLOAD_VERSION_KEY",
+    "OUT_OF_SCOPE_NOTE",
+    "SCOPE_IN_SCOPE",
+    "SCOPE_LEGACY",
+    "SCOPE_OUTSIDE",
+    "SCOPE_OUTSIDE_POST_REASON",
+    "SCOPE_OUTSIDE_REASON",
+    "SCOPE_FALLBACK_SCHEMA_VERSION",
+    "scope_fallback_path",
+    "scope_fallback_line",
+    "write_scope_fallback",
+    "SCOPE_UNPROVABLE",
+    "SCOPE_UNSUPPORTED_VERSION",
+    "SessionScope",
+    "session_scope",
     "BUDGET_STATUSES",
     "ORIGIN_PREFIX",
     "PRE_EVIDENCE_STATUSES",
@@ -133,6 +150,48 @@ EXIT_BLOCK = 2
 # 对应三种行为）。两条都是"加键"，所以按本协议自己的规则递增（第 55 条）；
 # 决策协议、证据协议、VERDICT 行都不动——它们是**另外几套**协议。
 AUDIT_SCHEMA_VERSION = "1.3"
+
+# 插件→Hook 的 stdin 载荷自己的版本轴（AGENTS 第 55 条：加键就是改协议）。
+#
+# 为什么必须有这一条：`session_cwd` 是**跨语言**契约（policy-hook.plugin.mjs 组装、本模块
+# 消费），而这条载荷此前一个版本号都没有——「没有版本号」不等于「可以随便加键」。两侧必须
+# 同批改：本模块按精确版本号认，不认识就失败关闭（核心层约束 3：未知协议版本一律报错）。
+#
+# 代际：
+#   第 1 代（**没有这个键**）= 0.1.x 起的形状，也包含 claude-code 方言桥那条外部生产者。
+#     范围问题在那条载荷上不成立 → 走既有路径（逐字节不变）；
+#   第 2 代（"1.0"）= 多出 `session_cwd`（**会话自己的** cwd，不是 Hook 的工作目录）。
+HOOK_PAYLOAD_SCHEMA_VERSION = "1.0"
+HOOK_PAYLOAD_VERSION_KEY = "hook_payload_version"
+
+# 作用域判定的五个取值。它们是**数据**（进审计），所以写成闭集；
+# 只有 SCOPE_OUTSIDE 走「放行 + 显式记录」，UNSUPPORTED / UNPROVABLE 一律失败关闭。
+SCOPE_LEGACY = "legacy"
+SCOPE_IN_SCOPE = "in_scope"
+SCOPE_OUTSIDE = "outside_project"
+SCOPE_UNPROVABLE = "unprovable"
+SCOPE_UNSUPPORTED_VERSION = "unsupported_payload_version"
+
+# 作用域族的两个**专属**原因码（AGENTS 第 50 条：同名两义一律改名）。
+# 它们只表示「这次会话根本不在受治范围内」，既不表示「查过了、没违规」，也不表示
+# 「只读工具走了显式降级」——后者才是 `not_governed` / `post_not_governed` 的含义
+# （pre 见 _decide 里 `not admission.governed` 的分支、post 见 bridge 为 None 的分支）。
+# 复用同一个码，会让按 reason_code 聚合读账本的人把两件事读成一件。
+SCOPE_OUTSIDE_REASON = "session_out_of_scope"
+SCOPE_OUTSIDE_POST_REASON = "post_session_out_of_scope"
+
+# 范围外记录的**降级落点**（受治账写不进去时用）。它是这条 stderr 机读行自己的版本轴
+# （AGENTS 第 55 条：加键就是改协议）。
+SCOPE_FALLBACK_SCHEMA_VERSION = "1.0"
+SCOPE_FALLBACK_DIRNAME = "dsh-policy"
+SCOPE_FALLBACK_FILENAME = "out-of-scope.jsonl"
+SCOPE_FALLBACK_LINE_PREFIX = "[policy] SCOPE-FALLBACK "
+
+# 范围外那条记录的说明文本（固定句、不含路径：路径由 SessionScope.record 渲染）。
+OUT_OF_SCOPE_NOTE = (
+    "会话 cwd 不在受治项目内：这次调用不经过策略判定（它不是「判定通过」，只是「没管」）。"
+    "要改的话：把会话开在受控项目内，或把该项目的 project_root / 插件 projectDir 指到会话所在的项目"
+)
 
 # 反馈文本长度上限：阻断理由会进入模型上下文，必须足够短且不含敏感内容。
 FEEDBACK_MAX_CHARS = 4000
@@ -568,6 +627,159 @@ class AuditLedger:
             handle.write(line + "\n")
 
 
+@dataclass(frozen=True)
+class SessionScope:
+    """一次调用里「这次会话在不在受治范围内」的读数（三态 + 两条前置，见 session_scope）。"""
+
+    status: str
+    session_cwd: Optional[Path] = None
+    detail: str = ""
+
+    def record(self, *, project_root: Path) -> dict[str, Any]:
+        """写进审计的两条事实：会话 cwd 与受治项目根。
+
+        两条都经 `reading.display_path` 渲染——范围外折叠成 `<outside-workspace>`、
+        项目根渲染成 `.`——审计里不放绝对路径是既有脱敏纪律（AGENTS 第 16 条）。
+        「两个事实各是什么」由**键**承载：`session_cwd` 与 `project_root` 分开写，
+        读到 `<outside-workspace>` + `.` 就知道这次会话在项目外面。
+        """
+
+        fields: dict[str, Any] = {"session_scope": self.status}
+        if self.session_cwd is not None:
+            fields["session_cwd"] = reading.display_path(self.session_cwd, root=project_root)
+        fields["project_root"] = reading.display_path(project_root, root=project_root)
+        return fields
+
+
+def session_scope(raw_payload: Any, *, config: AdapterConfig) -> SessionScope:
+    """会话 cwd 与受治范围（`config.project_root`）的关系。
+
+    为什么必须单独判：插件的 `projectDir` 同时兼任「Hook 在哪个目录启动」与「载荷里 `cwd`
+    的取值」。桥一定声明 `projectDir`，于是**载荷 `cwd` 被覆盖成 projectDir**，而本模块拿它
+    当归一化工具目标的基准——会话开在别的目录时：绝对路径被拒（范围外），相对路径被拿去
+    相对 projectDir 解析；后者是**关于另一个文件**的判定，而结论照样进账本（比拦住更坏）。
+
+    判据（全部写在这里，不散在调用点）：
+
+    * 没有版本键 = 第 1 代（含外部方言桥）：范围问题不适用 → `legacy`，走既有路径；
+    * 版本键不认识 → `unsupported_payload_version` → 调用方失败关闭；
+    * 认得出第 2 代但没有可解析的**绝对** `session_cwd` → `unprovable`（失败关闭）——
+      「证明不了」既不是「在范围内」，也不是「允许」；
+    * 会话 cwd 落在 `project_root` 内 → `in_scope` → 既有路径；
+    * 落在外面 → `outside_project` → 调用方用**作用域族专属**的 `session_out_of_scope`
+      （事后那一步是 `post_session_out_of_scope`）写一条显式记录并放行——它与只读工具降级的
+      `not_governed` / `post_not_governed` 是两个含义，不许共用一个码。
+    """
+
+    if not isinstance(raw_payload, Mapping):
+        return SessionScope(SCOPE_LEGACY)
+    declared = raw_payload.get(HOOK_PAYLOAD_VERSION_KEY)
+    if declared is None:
+        return SessionScope(SCOPE_LEGACY)
+    if declared != HOOK_PAYLOAD_SCHEMA_VERSION:
+        return SessionScope(
+            SCOPE_UNSUPPORTED_VERSION,
+            detail=(
+                f"载荷声明的 {HOOK_PAYLOAD_VERSION_KEY}={declared!r} 不被本 Hook 支持"
+                f"（只认 {HOOK_PAYLOAD_SCHEMA_VERSION!r}）"
+            ),
+        )
+    raw_cwd = raw_payload.get("session_cwd")
+    if not isinstance(raw_cwd, str) or raw_cwd.strip() == "":
+        return SessionScope(
+            SCOPE_UNPROVABLE,
+            detail="载荷声明了第 2 代却没有给出会话 cwd：证明不了这次会话在不在受治范围内",
+        )
+    try:
+        candidate = Path(raw_cwd.strip())
+        if not candidate.is_absolute():
+            return SessionScope(
+                SCOPE_UNPROVABLE,
+                detail="会话 cwd 不是绝对路径：证明不了这次会话在不在受治范围内",
+            )
+        session_cwd = candidate.resolve()
+        root = config.project_root.resolve()
+    except (OSError, ValueError) as error:  # noqa: BLE001 - 解析不出来就是证明不了
+        return SessionScope(
+            SCOPE_UNPROVABLE, detail=f"会话 cwd 解析失败：{type(error).__name__}"
+        )
+    if session_cwd == root or root in session_cwd.parents:
+        return SessionScope(SCOPE_IN_SCOPE, session_cwd=session_cwd)
+    return SessionScope(SCOPE_OUTSIDE, session_cwd=session_cwd)
+
+def scope_fallback_path() -> Path:
+    """范围外记录的**降级落点**：会话自己的临时目录（每个会话可写，不污染任何项目）。
+
+    为什么不落在受治项目里：那正是写不进去的地方（真机故障的根因——别的会话没有受治文件夹的写权限）。
+    为什么不只打一行 stderr：**放行**路径的 stderr 会被插件丢掉（只有阻断路径读它），
+    留痕因此必须落在一个能被读到的文件里；stderr 机读行只是同时给一份（给日志与分类器）。
+    """
+
+    return Path(tempfile.gettempdir()) / SCOPE_FALLBACK_DIRNAME / SCOPE_FALLBACK_FILENAME
+
+
+def scope_fallback_line(
+    *, record: Mapping[str, Any], target: str, fallback: str, reason: str
+) -> str:
+    """机读行：这次「没管」为什么没能记进受治账、退到哪去了。
+
+    落点按**约定**渲染（`<temp>/dsh-policy/out-of-scope.jsonl`），不写绝对路径——与审计里
+    「不放绝对路径」是同一条纪律；读者按这个约定就能找到文件。
+    """
+
+    return SCOPE_FALLBACK_LINE_PREFIX + json.dumps(
+        {
+            "schema_version": SCOPE_FALLBACK_SCHEMA_VERSION,
+            "reason_code": SCOPE_OUTSIDE_REASON,
+            "session_scope": record.get("session_scope"),
+            "session_cwd": record.get("session_cwd"),
+            "governed": False,
+            "audit_target": target,
+            "audit_fallback": fallback,
+            "reason": reason,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def write_scope_fallback(
+    record: Mapping[str, Any], *, outcome: HookOutcome, config: AdapterConfig, detail: str
+) -> Optional[Path]:
+    """把范围外那条记录落到**写得到的地方**。返回落点；连它都写不进去返回 None。
+
+    它**只服务范围外**：范围内的账写不进去必须失败关闭（那条不变量一个字不动，见 `_decide`）。
+    记录要能读出两件事：这次「没管」，以及**为什么没能记进受治账**。
+    """
+
+    payload: dict[str, Any] = {
+        "scope_fallback_schema_version": SCOPE_FALLBACK_SCHEMA_VERSION,
+        "timestamp": _utc_now(),
+        "agent": "dsh",
+        "agent_version": config.agent_version,
+        "reason_code": outcome.reason_code,
+        "exit_code": outcome.exit_code,
+        "executed": outcome.executed,
+        "governed": False,
+        "audit_fallback": True,
+        "audit_fallback_target": sanitize(
+            "" if config.audit_log is None else str(config.audit_log),
+            project_root=config.project_root,
+        ),
+        "audit_fallback_reason": detail,
+    }
+    payload.update({key: value for key, value in record.items() if value is not None})
+    target = scope_fallback_path()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+    except OSError:
+        # 连降级落点都写不进去：只剩 stderr 机读行（调用方一定会打）。
+        return None
+    return target
+
+
 def _within_budget(
     run: Callable[[], Any],
     *,
@@ -759,6 +971,48 @@ class DshPreExecuteHook:
         # 放在既有键之后写，既有键的取值一个字符都不动。
         payload["reading_context"] = self.reading_context_for_record(payload)
         self.ledger.append(payload)
+
+    def _audit_out_of_scope(self, record: Mapping[str, Any], *, outcome: HookOutcome) -> None:
+        """范围外的「没管」记录：**受治账写不进去也不许拦人**，但必须把这件事写下来。
+
+        为什么与范围内不同罪：范围外的会话既没有受治项目的写权限、也不受它治理；拿「记不到账」
+        去阻断它，等于让一个无关的工作区因为**别人的账本**不可写而停摆（2026-10-10 真机实测：
+        整个会话干不了活）。回退顺序是：受治账 → 会话临时目录里的回退账（带 audit_fallback 三件事实）
+        → 只剩 stderr 机读行；**三条里至少有一条会留下痕迹**，所以这仍然不是静默跳过。
+        """
+
+        if self.ledger is None:
+            return
+        try:
+            self._audit(record, outcome=outcome)
+            return
+        except OSError as error:
+            detail = sanitize(str(error), project_root=self.config.project_root)
+        self.report_scope_ledger_unavailable(record, outcome=outcome, detail=detail)
+
+    def report_scope_ledger_unavailable(
+        self, record: Mapping[str, Any], *, outcome: HookOutcome, detail: str
+    ) -> None:
+        """把「范围外这次没管、但受治账写不进去」落成回退记录 + stderr 机读行。"""
+
+        fallback = write_scope_fallback(record, outcome=outcome, config=self.config, detail=detail)
+        target = sanitize(
+            "" if self.config.audit_log is None else str(self.config.audit_log),
+            project_root=self.config.project_root,
+        )
+        convention = (
+            fallback is not None
+            and fallback.name == SCOPE_FALLBACK_FILENAME
+        )
+        print(
+            scope_fallback_line(
+                record=record,
+                target=target,
+                fallback="<temp>/" + SCOPE_FALLBACK_DIRNAME + "/" + SCOPE_FALLBACK_FILENAME if convention else "",
+                reason=detail,
+            ),
+            file=sys.stderr,
+        )
 
     def reading_context_for_record(self, record: Mapping[str, Any]) -> dict[str, Any]:
         r"""台阶 4：这条审计记录属于哪棵树 / 哪一套声明 / 哪台宿主（形状只有一份实现）。
@@ -1305,6 +1559,41 @@ class DshPreExecuteHook:
     def _decide(
         self, raw_payload: Any, *, started: float, base_record: dict[str, Any]
     ) -> HookOutcome:
+        # 作用域先行：范围外的会话**不进入判定**——连 to_policy_event 都不该跑，它会拿被
+        # 覆盖过的 `cwd` 去归一化目标，那正是「关于另一个文件」的误判来源。
+        scope = session_scope(raw_payload, config=self.config)
+        if scope.status == SCOPE_UNSUPPORTED_VERSION:
+            return self._fail(
+                "payload_version_unsupported",
+                scope.detail,
+                started=started,
+                base_record=base_record,
+            )
+        if scope.status == SCOPE_UNPROVABLE:
+            return self._fail(
+                "payload_scope_unprovable", scope.detail, started=started, base_record=base_record
+            )
+        if scope.status == SCOPE_OUTSIDE:
+            # 显式「没管」：放行，但留一条能读出**两个事实**（会话 cwd 与受治项目根）的记录。
+            # 绝不静默跳过——「没治理」与「治理了没违规」必须能分开。
+            # 原因码是作用域族专属的：与只读工具降级的 not_governed 不是同一件事。
+            outcome = HookOutcome(
+                exit_code=EXIT_ALLOW,
+                reason_code=SCOPE_OUTSIDE_REASON,
+                event=None,
+                elapsed_ms=int((self.clock() - started) * 1000),
+            )
+            self._audit_out_of_scope(
+                {
+                    **base_record,
+                    **scope.record(project_root=self.config.project_root),
+                    "governed": False,
+                    "scope_note": OUT_OF_SCOPE_NOTE,
+                },
+                outcome=outcome,
+            )
+            return outcome
+
         admission = to_policy_event(raw_payload, config=self.config)
         spec = None if self.bridge is None else self.bridge.spec_for(
             str(raw_payload.get("tool_name", "")) if isinstance(raw_payload, Mapping) else ""
@@ -1858,6 +2147,42 @@ def post_execute_outcome(
         "tool_use_id": raw_payload.get("tool_use_id"),
         "action_id": call_action_id(raw_payload),
     }
+    scope = session_scope(raw_payload, config=config)
+    if scope.status in (SCOPE_UNSUPPORTED_VERSION, SCOPE_UNPROVABLE):
+        # 事前那一侧是同一条判据；post 只是把同一次拒绝也记在事后阶段（成对契约）。
+        reason = (
+            "payload_version_unsupported"
+            if scope.status == SCOPE_UNSUPPORTED_VERSION
+            else "payload_scope_unprovable"
+        )
+        outcome = HookOutcome(
+            exit_code=EXIT_BLOCK,
+            reason_code=reason,
+            stderr=sanitize(
+                f"[policy] BLOCKED ({reason}) detail: {scope.detail}",
+                project_root=config.project_root,
+            ),
+            elapsed_ms=int((hook.clock() - started) * 1000),
+        )
+        hook._audit(record, outcome=outcome)  # noqa: SLF001 - 与 pre 走同一条审计写入路径
+        return outcome
+    if scope.status == SCOPE_OUTSIDE:
+        # 事前已经判成「没管」（放行），事后就不能反过来给这次执行加事后核对：
+        # 那不是「验证通过」，只是「没验证」；用**作用域族自己的**事后码
+        # （不是只读降级那条 post_not_governed），作用域事实由 session_scope /
+        # session_cwd / project_root 三个键承载。
+        record.update(scope.record(project_root=config.project_root))
+        record["governed"] = False
+        record["scope_note"] = OUT_OF_SCOPE_NOTE
+        outcome = HookOutcome(
+            exit_code=EXIT_ALLOW,
+            reason_code=SCOPE_OUTSIDE_POST_REASON,
+            elapsed_ms=int((hook.clock() - started) * 1000),
+        )
+        # 作用域族的事后记录同样**不许**因为受治账写不进去而拦人（与 pre 同一条降级路径）。
+        hook._audit_out_of_scope(record, outcome=outcome)  # noqa: SLF001
+        return outcome
+
     outcome = _post_decision_outcome(
         raw_payload, bridge=bridge, config=config, hook=hook, started=started
     )
@@ -2034,13 +2359,30 @@ def run_hook(
 
     # N21：写在本次判定**之后**——既有消费方按"首行 = 本次判定"读审计，元信息不许插队。
     if effective_ledger is not None and audit_file_path is not None:
-        record_ledger_derivation(
-            hook,
-            audit_path=audit_file_path,
-            declared=config.enforcement_ledger,
-            effective=effective_ledger,
-            raw_payload=raw_payload,
-        )
+        try:
+            record_ledger_derivation(
+                hook,
+                audit_path=audit_file_path,
+                declared=config.enforcement_ledger,
+                effective=effective_ledger,
+                raw_payload=raw_payload,
+            )
+        except OSError as error:
+            # 范围外：**不因为账写不进去而拦人**（真机故障——别的会话没有受治文件夹的写权限，
+            # 于是整条 N21 元信息把一次本该放行的调用翻成了阻断）。
+            # 范围内：原样抛出，`main()` 把它翻成 startup_error 的那条既有路径一个字不变。
+            scope_here = session_scope(raw_payload, config=config)
+            if scope_here.status != SCOPE_OUTSIDE:
+                raise
+            hook.report_scope_ledger_unavailable(  # noqa: SLF001 - 与判定记录同一条降级路径
+                {
+                    **scope_here.record(project_root=config.project_root),
+                    "governed": False,
+                    "scope_note": OUT_OF_SCOPE_NOTE,
+                },
+                outcome=outcome,
+                detail=sanitize(str(error), project_root=config.project_root),
+            )
     return outcome
 
 
