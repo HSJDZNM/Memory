@@ -9,6 +9,9 @@
 
 - 工具必须在 Tool Registry 里登记且描述与已审核哈希一致，否则阻断；
 - 参数只取注册表声明过的那些，未声明的参数由 enforcement 的 allowlist 直接拒绝；
+- 审批文件可以放**多条记录**（1.2 的审批集），按当前工具选择：run_code 与 exec.pwsh
+  各持一份放行、互不挤占。选择不是判定——选中的记录仍由 pre_execute 完整校验；
+  只有需要审批的动作才会去读这个文件（坏文件不冻结会话）；
 - 执行前基线只写摘要（路径 + 哈希 + 字节数），不把文件内容写进台账；
 - 台账里带 secret 参数的请求不参与事后重建（宁可判"证据不足"，也不把密钥落盘）。
 """
@@ -20,10 +23,16 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from enforcement.action import build_action_request, redacted_request_payload
+from enforcement.approvals import (
+    ApprovalRecord,
+    load_approvals,
+    select_approval,
+)
 from enforcement.audit import FileAuditSink
 from enforcement.ledger import EnforcementLedger
 from enforcement.models import (
     ActionRequest,
+    ApprovalMode,
     AuditStage,
     ExecutionRecord,
     ExecutionStatus,
@@ -187,17 +196,36 @@ class EnforcementBridge:
         self.workspace = Path(workspace)
         self.agent_version = agent_version
         # 人工门禁：审批必须与具体 action_hash 绑定，因此这里只加载、不"申请"。
+        # 文件里可以放多条记录（1.2 的审批集），按工具选择——见 approval_for。
         self.approval_file = None if approval_file is None else Path(approval_file)
 
-    def _approval(self):
+    def approval_for(self, request: ActionRequest) -> Optional[ApprovalRecord]:
+        """选出当前动作该出示的那一张审批条子；这个工具没有条子就返回 None。
+
+        修前这里是"一个审批文件 = 一条记录"，于是名额只能给一个工具：给了 run_code
+        （PTC 传输），exec.pwsh 一律 approval_invalid；给了 pwsh，run_code 被拦、
+        整个会话冻结。现在按 tool_id 选择，每个工具各持一份放行、互不挤占。
+
+        **这不是判定**：选中的记录随后仍由 pre_execute → verify_approval 完整校验
+        （工具 / 主体 / 时效 / 角色 / 参数模式 / 次数），选择不改变任何 allow / block。
+        没有本工具的记录时返回 None（调用方据此得到 approval_required：这个工具没有条子），
+        绝不用别的工具的记录顶替。
+
+        **读不出来就报错，不吞**：修前 `except ApprovalError: return None` 把
+        "审批文件坏了"静默降级成"没有审批"——两者的修复动作完全不同（前者改文件，
+        后者签条子）。这个函数只在**该工具需要审批**时才被调用（见 pre），
+        因此一个坏文件不会冻结整个会话：不需要审批的动作照常判定。
+        """
+
         if self.approval_file is None or not self.approval_file.is_file():
             return None
-        from enforcement.approvals import ApprovalError, load_approval
-
-        try:
-            return load_approval(self.approval_file)
-        except ApprovalError:
-            return None
+        records = load_approvals(self.approval_file)
+        return select_approval(
+            records,
+            tool_id=request.tool_id,
+            action_id=request.action_id,
+            subject=request.subject,
+        )
 
     # ------------------------------------------------------------------ 解析
     def spec_for(self, tool_name: str) -> Optional[ToolSpec]:
@@ -240,19 +268,26 @@ class EnforcementBridge:
         policy_skipped_reason: str = "",
         dry_run: bool = False,
     ) -> PrecheckOutcome:
+        spec = self.registry.tool(request.tool_id)
+        # 只在**该工具需要审批**时才碰审批文件：一个坏掉的审批文件必须只拦住需要审批的
+        # 动作，而不是把整个会话（连读一个文件）都冻住——那正是本次要修掉的那个失败模式。
+        approval = (
+            self.approval_for(request)
+            if spec is not None and spec.approval is ApprovalMode.REQUIRED
+            else None
+        )
         outcome = pre_execute(
             request,
             registry=self.registry,
             ledger=self.ledger,
             sink=self.sink,
-            approval=self._approval(),
+            approval=approval,
             policy_decision=policy_decision,
             policy_error=policy_error,
             policy_detail=policy_detail,
             policy_skipped_reason=policy_skipped_reason,
             dry_run=dry_run,
         )
-        spec = self.registry.tool(request.tool_id)
         if (
             not dry_run
             and outcome.decision.decision is not Decision.BLOCK

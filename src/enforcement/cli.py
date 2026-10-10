@@ -15,6 +15,11 @@
         --granted-by alice --roles reviewer --binding pattern --max-uses 5 \
         --param-pattern "command=^python -m pytest( .*)?$" \
         --param-pattern "description=.*"
+    # 审批文件可以放**多条记录**（审批协议 1.2）：默认**并入**——再签一条给别的工具，
+    # 已有工具的放行原样保留（每个工具各持一份，互不挤占：桌面端 GUI 的 run_code 传输
+    # 工具与 exec.pwsh 必须各有一条，否则名额只有一个）。同一个工具重签 = 取代旧的那条；
+    # --replace 才是"丢掉文件里已有的记录，只写这一条"。
+    # 形状随条数：只有一条时仍写成历史上的单记录文档（老消费者照常能读），两条起写成记录集。
     python -m enforcement.cli trace    --audit .tmp/artifacts/enforcement-audit.jsonl \
         --action-id sess-1:call-1
     python -m enforcement.cli verify
@@ -48,7 +53,15 @@ from policy.loader import LoaderError, load_rule_set
 from policy.models import Decision, PolicyContext, PolicyContextError, RuleSet, ValidationResult
 
 from . import action as action_module
-from .approvals import ApprovalBinding, ApprovalRecord, approval_payload
+from .approvals import (
+    ApprovalBinding,
+    ApprovalRecord,
+    approval_payload,
+    approval_store_payload,
+    available_tools,
+    load_approvals,
+    select_approval,
+)
 from .audit import FileAuditSink
 from .drivers import drivers_for
 from .executor import ControlledExecutor, summarise_chain
@@ -459,9 +472,15 @@ def _prepare(args: argparse.Namespace, repo: Path):
     ledger = EnforcementLedger(args.ledger)
     approval = None
     if args.approval:
-        from .approvals import load_approval
-
-        approval = load_approval(args.approval)
+        # 审批文件可以放多条记录：**按本次动作的工具**选一张出示。选不出来（这个工具没有
+        # 条子）就留空——pre-check 会给出 approval_required（"没有条子"），而不是拿别的
+        # 工具的条子顶上去报 approval_invalid（"你的条子写错了"），那是两件不同的事。
+        approval = select_approval(
+            load_approvals(args.approval),
+            tool_id=request.tool_id,
+            action_id=request.action_id,
+            subject=request.subject,
+        )
     return (
         loaded.registry, request, spec, decision, error, detail,
         skipped, audit, ledger, approval, workspace,
@@ -661,20 +680,76 @@ def _approve(args: argparse.Namespace, repo: Path) -> int:
         param_patterns=patterns,
         note=args.note or "",
     )
-    payload = approval_payload(record)
     target = Path(args.out)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    existing: tuple[ApprovalRecord, ...] = ()
+    if not args.replace and target.is_file():
+        # 默认**并入**而不是覆盖：给 exec.pwsh 签条子不该把 run_code 的放行悄悄抹掉
+        # （那是"名额只有一个"的老毛病换了个形状）。读不出来就报错退出（exit 2）——
+        # 绝不在"读不懂的授权文件"上直接盖写。
+        existing = load_approvals(target)
+    # 同一个工具**取代**（一个工具一份放行：重签必须是重签，不是叠加一张更旧/更松的条子
+    # 和它并排躺着）；同一个 approval_id 也取代（台账按 id 记账，同 id 两条就是同名两义）。
+    superseded = [
+        item.approval_id
+        for item in existing
+        if item.tool_id == record.tool_id or item.approval_id == record.approval_id
+    ]
+    # 取代是**原地**的：每个工具在文件里占一个位置，重签不该把文件顺序搅乱
+    # （顺序稳定，人和 diff 都读得出来"这次只动了哪一格"）。
+    merged: list[ApprovalRecord] = []
+    placed = False
+    for item in existing:
+        if item.tool_id == record.tool_id or item.approval_id == record.approval_id:
+            if not placed:
+                merged.append(record)
+                placed = True
+            continue
+        merged.append(item)
+    if not placed:
+        merged.append(record)
+    document = write_approval_store(target, merged)
+    # 打印的是**这次签发的结果汇总**，形状固定（approval / schema_version / records /
+    # superseded / tools），因此机器消费者不必看"文件里是一条还是多条"来决定怎么解析 stdout。
     print(
         json.dumps(
-            {"approval": str(target), **payload}, ensure_ascii=False, indent=2, sort_keys=True
+            {
+                "approval": str(target),
+                "schema_version": document["schema_version"],
+                "records": [approval_payload(item) for item in merged],
+                "superseded": superseded,
+                "tools": list(available_tools(merged)),
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
         )
     )
     return EXIT_ALLOWED
+
+
+def write_approval_store(target: Path, records: Sequence[ApprovalRecord]) -> dict[str, Any]:
+    """把审批记录集**原子地**写到目标路径（同目录临时文件 + 替换），返回写出的载荷。
+
+    审批文件是授权凭据：写到一半（磁盘满 / 进程被杀）留下的半份 JSON 会让**所有**受控
+    动作在下一次读取时被拒——失败关闭的方向是安全的，但"授权文件坏了"和"没有授权"
+    是两件事，前者会把人带向错误的修复动作。因此先写同目录临时文件再替换：
+    读者要么看到旧的完整文件，要么看到新的完整文件，看不到第三种。
+    """
+
+    payload = approval_store_payload(records)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".writing")
+    try:
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        temporary.replace(target)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+    return payload
 
 
 def _trace(args: argparse.Namespace, _repo: Path) -> int:
@@ -931,6 +1006,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="NAME=REGEX（可重复）：模式化审批的参数模式，整串匹配规范化取值",
     )
     approve_parser.add_argument("--approval-id", default=None, help="审批 ID（默认随机）")
+    approve_parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="丢掉目标文件里已有的记录，只写这一条（默认是并入：给另一个工具签条子会保留已有的放行）",
+    )
     approve_parser.add_argument("--note", default=None, help="备注")
     approve_parser.add_argument("--workspace", default=None, help="受控工作区（默认仓库根目录）")
 

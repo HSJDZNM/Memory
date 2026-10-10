@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from enforcement.approvals import APPROVAL_SCHEMA_VERSION
 from enforcement_support import (
     EnforcementPaths,
     enforcement_paths,
@@ -62,6 +63,19 @@ def paths_args(paths: EnforcementPaths) -> list[str]:
         "--ledger",
         str(paths.ledger),
     ]
+
+
+def approval_records(path: Path) -> list[dict]:
+    """读回 approve 写出的**审批文档**，返回其中的记录（两种形状都认）。
+
+    审批协议 1.2 起一个文件可以放多条记录（`records`，按 `tool_id` 选择，每个工具各持
+    一份放行）；只有一条时仍写成历史上的单记录文档——形状由 `records` 键唯一确定。
+    这些用例断言的是"签出来的那条记录长什么样"，因此统一走这个读取口。
+    """
+
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document["schema_version"] == APPROVAL_SCHEMA_VERSION, document["schema_version"]
+    return list(document["records"]) if "records" in document else [document]
 
 
 def write_request(paths: EnforcementPaths, name: str, **overrides) -> Path:
@@ -373,8 +387,9 @@ def test_high_risk_tool_needs_an_approval_file_and_then_executes(enforcement_pat
         *paths_args(enforcement_paths),
     )
     assert approve.returncode == 0, approve.stderr
-    payload = json.loads(approval.read_text(encoding="utf-8"))
-    assert payload["subject"] == "local-user"
+    records = approval_records(approval)
+    assert [item["subject"] for item in records] == ["local-user"]
+    assert [item["tool_id"] for item in records] == ["exec.process"]
 
     executed = run_cli(
         "execute",
@@ -530,7 +545,9 @@ def test_pattern_approval_makes_a_governed_session_rerunnable(enforcement_paths)
         *paths_args(enforcement_paths),
     )
     assert approved.returncode == 0, approved.stderr
-    payload = json.loads(approval.read_text(encoding="utf-8"))
+    records = approval_records(approval)
+    assert [item["tool_id"] for item in records] == ["exec.shell"]
+    payload = records[0]
     assert payload["binding"] == "pattern"
     assert payload["max_uses"] == 3
     assert payload["action_hash"] is None, "模式化审批不得绑定运行期生成的调用编号"
@@ -576,6 +593,182 @@ def test_pattern_approval_makes_a_governed_session_rerunnable(enforcement_paths)
     assert exhausted.returncode == 1
     assert "approval_invalid" in exhausted.stdout
     assert "次数上限" in exhausted.stdout
+
+
+def test_approve_merges_records_for_several_tools_into_one_store(enforcement_paths):
+    """G4/5.21：一个审批文件可以放**多个工具**的放行；默认**并入**，不是覆盖。
+
+    修前是"一个文件一条记录"，而桌面端 GUI 的每个动作都经过 run_code 传输工具——
+    名额只能给一个工具，另一个永远拿不到审批（给了传输工具，跑命令的工具一律
+    approval_invalid；反过来则整个会话冻结）。这里钉住两件事：
+
+    1. 签第二个工具**不会抹掉**第一个（否则"名额只有一个"只是换了个形状）；
+    2. **重签同一个工具**是取代，不会并排留下两张条子（一张更旧/更松的条子留在文件里，
+       下一次加载就得靠选择规则去猜该用哪张）。
+    """
+
+    store = enforcement_paths.root / "store" / "approval.json"
+    shell = write_shell_request(enforcement_paths, "merge-shell.json", action_id="merge-shell-1")
+    delegated = write_request(
+        enforcement_paths,
+        "merge-delegated.json",
+        action_id="merge-delegated-1",
+        tool_id="exec.delegated",
+        roles=["owner"],
+        params={"code": "value = 1\n", "description": "demo"},
+    )
+
+    def approve(request: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+        return run_cli(
+            "approve",
+            "--request",
+            str(request),
+            "--out",
+            str(store),
+            "--granted-by",
+            "alice",
+            "--roles",
+            "reviewer",
+            "--binding",
+            "pattern",
+            "--max-uses",
+            "3",
+            *extra,
+            *paths_args(enforcement_paths),
+        )
+
+    shell_patterns = (
+        "--param-pattern", "command=^print[(]'ok'[)]$",
+        "--param-pattern", "description=.*",
+    )
+    delegated_patterns = (
+        "--param-pattern", "code=(?s).*",
+        "--param-pattern", "description=.*",
+    )
+
+    first = approve(shell, *shell_patterns, "--approval-id", "approval-merge-shell")
+    assert first.returncode == 0, first.stderr
+    assert json.loads(first.stdout)["tools"] == ["exec.shell"]
+
+    second = approve(delegated, *delegated_patterns, "--approval-id", "approval-merge-delegated")
+    assert second.returncode == 0, second.stderr
+    assert json.loads(second.stdout)["tools"] == ["exec.delegated", "exec.shell"]
+    assert [item["tool_id"] for item in approval_records(store)] == [
+        "exec.shell",
+        "exec.delegated",
+    ]
+
+    # 两个工具各自用自己的条子通过审批这一关（同一个文件、同一份注册表）
+    for request in (shell, delegated):
+        checked = run_cli(
+            "precheck",
+            "--request",
+            str(request),
+            "--approval",
+            str(store),
+            "--workspace",
+            str(enforcement_paths.workspace),
+            *paths_args(enforcement_paths),
+        )
+        assert "[passed ] approval" in checked.stdout, checked.stdout
+
+    # 重签 exec.shell：取代旧的那条，另一个工具一个字不动
+    again = approve(shell, *shell_patterns, "--approval-id", "approval-merge-shell-2")
+    assert again.returncode == 0, again.stderr
+    summary = json.loads(again.stdout)
+    assert summary["superseded"] == ["approval-merge-shell"]
+    assert summary["tools"] == ["exec.delegated", "exec.shell"]
+    remaining = approval_records(store)
+    assert [item["approval_id"] for item in remaining] == [
+        "approval-merge-shell-2",
+        "approval-merge-delegated",
+    ]
+
+
+def test_two_records_in_one_store_each_execute_under_their_own_approval(enforcement_paths):
+    """①（执行侧）：两份记录并存时，两个工具**各自执行一次**，各用各的条子。
+
+    与上面那条（只看审批这一关）不同，这里走完整的 execute：认领 action_id →
+    占用审批额度 → 签发授权 → 执行 → 事后核对。判据是审计里两次 pre_decision 用的
+    approval_id 不同——"各自持一份放行"在账本上必须看得见。
+    """
+
+    store = enforcement_paths.root / "store" / "approval.json"
+    shell = write_shell_request(enforcement_paths, "store-shell.json", action_id="store-shell-1")
+    process = write_request(
+        enforcement_paths,
+        "store-process.json",
+        action_id="store-process-1",
+        tool_id="exec.process",
+        roles=["owner"],
+        params={"argv": ["python", "-c", "print('cli-ok')"], "description": "demo"},
+    )
+
+    def approve(request: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+        return run_cli(
+            "approve",
+            "--request",
+            str(request),
+            "--out",
+            str(store),
+            "--granted-by",
+            "alice",
+            "--roles",
+            "reviewer",
+            *extra,
+            *paths_args(enforcement_paths),
+        )
+
+    patterned = approve(
+        shell,
+        "--binding",
+        "pattern",
+        "--max-uses",
+        "3",
+        "--param-pattern",
+        "command=^print[(]'ok'[)]$",
+        "--param-pattern",
+        "description=.*",
+        "--approval-id",
+        "approval-store-shell",
+    )
+    assert patterned.returncode == 0, patterned.stderr
+
+    # exec.process 的参数 argv 是列表（模式匹配只支持字符串 / 整数 / 布尔），
+    # 因此这一格只能走单次绑定——两种档位在同一个文件里并存，互不影响。
+    bound = approve(process, "--approval-id", "approval-store-process")
+    assert bound.returncode == 0, bound.stderr
+    assert json.loads(bound.stdout)["tools"] == ["exec.process", "exec.shell"]
+
+    for request in (shell, process):
+        executed = run_cli(
+            "execute",
+            "--request",
+            str(request),
+            "--approval",
+            str(store),
+            "--workspace",
+            str(enforcement_paths.workspace),
+            *paths_args(enforcement_paths),
+        )
+        assert executed.returncode == 0, executed.stdout + executed.stderr
+        assert "final: delivered" in executed.stdout
+
+    pre = [
+        item
+        for item in (
+            json.loads(line)
+            for line in enforcement_paths.audit.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if item.get("stage") == "pre_decision"
+    ]
+    assert [item["payload"]["approval_id"] for item in pre] == [
+        "approval-store-shell",
+        "approval-store-process",
+    ]
+
+
 
 
 def test_approve_refuses_contradictory_or_unknown_binding_flags(enforcement_paths):

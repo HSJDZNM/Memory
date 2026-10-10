@@ -379,7 +379,7 @@ Phase 4 之后，受控工具（写类 + 高权限执行类）在 Hook 里多走
     registry:             <仓库>/registry/tool-registry.yaml            # 工具授权表（数据）
     registry_approved:    <仓库>/registry/tool-registry.approved.json   # 已审核哈希
     enforcement_ledger:   .policy/enforcement-ledger.jsonl              # 幂等 / 授权 / 限流台账（可选）
-    approval_file:        .policy/approval.json                         # 高风险动作审批（可选）
+    approval_file:        .policy/approval.json                         # 高风险动作审批（可选；一个文件可放多条记录，按工具选）
     obligations_ledger:   .policy/obligations.jsonl                     # 义务账（可选，台阶 3c）
 
 两条与 Phase 2 不同的行为（都有回归用例）：
@@ -829,13 +829,19 @@ shell **照搬** Node 的 spawn 行为，所以修前读到的那一句就是真
 
 换 profile 装配就可能不同，所以这是**装配事实**而不是仓库缺陷。
 
-### 11.2 N24 · `binding=action` 在会话里过不去；一个 `approval.json` 只放一条记录
+### 11.2 N24 · `binding=action` 在会话里过不去（已缓解一半）
 
 1. **单次绑定在会话里不可用**：`action_hash` 覆盖运行时生成的 `action_id` / `tool_use_id`，
    模型每次重试都换新的调用编号 → 签好的条子立刻失配。这不是缺陷（防重放、防一签多用是方向），
    但实际后果是“会话里只有模式化审批（`binding=pattern`）可用”——这正是 G4 必须补这一档的原因。
-2. **一个 `approval.json` 只解析一个 JSON 对象**，因此**一次只能授权一个执行工具**；
-   要同时授权 `pwsh` 与另一个工具，需要另一份文件（并且要显式改配置里的 `approval_file`）。
+2. ~~一个 `approval.json` 只解析一个 JSON 对象，因此一次只能授权一个执行工具~~
+   **2026-10-10 已修**：审批协议 1.2 起一个文件可以放**多条记录**——**两条起**写成记录集
+   `{"schema_version": "1.2", "records": [...]}`，加载期按 `tool_id` 选择
+   （`enforcement.approvals.select_approval`），每个工具各持一份放行、互不挤占；
+   **只有一条**时仍写成历史上的单记录文档（按"一个文件一条记录"解析的老消费者不受影响，
+   `tools/orchestration_loop.py` 就是其中之一）。PTC 宿主（桌面端 GUI 的每个动作都包在
+   `run_code` 里）因此不再二选一：`python -m enforcement.cli approve` 默认**并入**，
+   重签同一个工具是取代。1.1 的单记录文件继续可读。
 
 `binding=action` 仍然是默认档、也是更严格的那一档，不要因为不可用就把它删掉。
 

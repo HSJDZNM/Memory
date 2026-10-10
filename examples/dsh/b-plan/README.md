@@ -41,7 +41,7 @@
 | # | 限制 | 读数 / 条目 |
 | --- | --- | --- |
 | 1 | **改测试文件会被拦**：改动集里只有测试文件时选不出任何测试，`failing_tests` 拿不到证据 → 失败关闭 | 第 5.58 条 |
-| 2 | **跑终端命令会被拦**：一个 approval 文件只放一条记录、`approval_file` 是单值（第 5.21 条），而本机 GUI 的每个动作都经过 `run_code` 传输工具 → 名额只能给它，`exec.pwsh` 拿不到审批（`approval_invalid`） | 第 5.21 条 + 第 5.59 条 |
+| 2 | ~~**跑终端命令会被拦**：一个 approval 文件只放一条记录、`approval_file` 是单值（第 5.21 条），而本机 GUI 的每个动作都经过 `run_code` 传输工具 → 名额只能给它，`exec.pwsh` 拿不到审批（`approval_invalid`）~~ **2026-10-10 已修**：审批协议 1.2 起一个文件是**记录集**，加载期按 `tool_id` 选择——`run_code` 与 `exec.pwsh` 各持一份放行。第 3 步的两条 `approve` 命令就是新的姿态 | 第 5.21 条 + 第 5.59 条 |
 | 3 | **`run_code` 本身声明为不可结构化治理**：宿主执行 TypeScript，平台唯一的结构化检查是 Python 解析器；套用会把**每一次**工具调用都拦死。声明进审计（`ungoverned_declared`），子工具调用仍逐次判定 | 第 5.20 条 + 本地注册表的注释 |
 
 命令白名单与结构性阻断本身**没有失效**——用真 Hook 单独压过：`python -m pytest -q` 放行、
@@ -61,12 +61,19 @@ Copy-Item -Recurse -Force examples/dsh/b-plan/sample-project/* $f/
 # 2) 更新受治侧的本地配置（对比测试版：test 层 + pre_evidence）
 Copy-Item -Force examples/dsh/b-plan/dsh-adapter.yaml "$g/.policy/"
 
-# 3) 更新本地注册表与审批（2026-10-10 实测修订：run_code 改 ungoverned 声明；审批名额给它）
+# 3) 更新本地注册表与审批
+#    审批协议 1.2 起一个审批文件可以放**多条记录**：每个工具各持一份放行、互不挤占。
+#    第一条命令给 PTC 传输工具 run_code 签放行；第二条**并入同一个文件**给 exec.pwsh 签，
+#    run_code 那条原样保留（默认并入；同一个工具重签是取代，--replace 才是只留这一条）。
+#    只有一条记录时文件仍是历史上那种单记录形状（老脚本照常能读），两条起变成
+#    {"schema_version": "1.2", "records": [...]}。
 Copy-Item -Force examples/dsh/b-plan/tool-registry.local.yaml "$g/.policy/"
 Copy-Item -Force examples/dsh/b-plan/run-code-request.json "$g/.policy/"
+Copy-Item -Force examples/dsh/b-plan/shell-request.json "$g/.policy/"
 $env:PYTHONPATH = "src"
 python -m enforcement.cli registry --registry "$g/.policy/tool-registry.local.yaml" --approved "$g/.policy/tool-registry.approved.json" --approve --reviewer dshznm
-python -m enforcement.cli approve --registry "$g/.policy/tool-registry.local.yaml" --approved "$g/.policy/tool-registry.approved.json" --request "$g/.policy/run-code-request.json" --out "$g/.policy/approval.json" --granted-by dshznm --roles reviewer --binding pattern --param-pattern "code=(?s).*" --param-pattern "description=.*" --max-uses 1000 --ttl 86400
+python -m enforcement.cli approve --registry "$g/.policy/tool-registry.local.yaml" --approved "$g/.policy/tool-registry.approved.json" --request "$g/.policy/run-code-request.json" --out "$g/.policy/approval.json" --granted-by dshznm --roles reviewer --binding pattern --param-pattern "code=(?s).*" --param-pattern "description=.*" --max-uses 1000 --ttl 86400 --approval-id approval-run-code
+python -m enforcement.cli approve --registry "$g/.policy/tool-registry.local.yaml" --approved "$g/.policy/tool-registry.approved.json" --request "$g/.policy/shell-request.json" --out "$g/.policy/approval.json" --granted-by dshznm --roles reviewer --binding pattern --param-pattern "command=^python -m pytest( .*)?$" --param-pattern "description=.*" --max-uses 1000 --ttl 86400 --approval-id approval-pwsh
 
 # 4) 装桥（写 $DSH_HOME，必须你自己跑；已装过且命令没变就不必重跑）
 python tools/dsh_bridge.py --install --profile desktop --project "$g"
@@ -83,8 +90,17 @@ python -m adapters.cli wiring
 
 放行是 **1000 次 / 24 小时**的；到期后动作会重新被拦住（不是坏了），重签一次即可。
 
-`shell-request.json` 是 **exec.pwsh** 的请求样例，本次不用它：审批名额给了 `run_code`（见上面第 2 条限制）。
-要恢复"跑命令也走审批"的姿态，得等审批协议支持按工具分文件（open-work 5.21 / 5.59）。
+`shell-request.json` 是 **exec.pwsh** 的请求样例，第 3 步的第二条命令用它签 pwsh 的放行。
+
+**一条要记住的纪律**：模式化审批必须**逐格覆盖本次调用实际带的参数**（1.1 起）。
+上面给 pwsh 签的是 `command` + `description` 两格，因此它覆盖的是"调用里只有这两个参数"的
+pwsh 调用；模型若带上 `workdir` / `timeoutMs` / `run_in_background`，那张条子会被拒——
+**拒绝理由会把缺的那几格连命令一起给出来**（"有意放行的参数请显式写成通配模式
+（例如 --param-pattern run_in_background=.*）"），照抄重签即可；带上同一个
+`--approval-id approval-pwsh` 就是**取代**那张条子，而不是并排留两张。
+
+> 这条纪律是 1.1 起就有的安全性质（未声明的参数不得跟着条子一起放行），本次没有放宽：
+> 一格不漏才算覆盖，反过来多声明一格也会被拒（"声明的参数不在本次请求里"）。
 
 `Free` 那个工作区**什么都不用做**——作用域感知保证它不受影响（受治账本里不会出现它的记录，
 它自己的痕迹在 `<temp>/dsh-policy/out-of-scope.jsonl`，写明「这次没管」）。

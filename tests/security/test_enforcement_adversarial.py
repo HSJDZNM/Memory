@@ -208,6 +208,50 @@ def test_forged_approval_without_the_approval_role_is_rejected(enforcement_paths
         )
 
 
+def test_a_record_selected_from_the_store_still_has_to_pass_every_check(enforcement_paths):
+    """审批集的选择**不是**授权：挑出来的那张条子照样要过 verify_approval 的每一关。
+
+    选择只回答"该出示哪张条子"（按 tool_id），它不校验主体、时效、角色或参数——
+    那些仍然由 Phase 4 的判定做。这张条子绑的是**别人**的主体，因此即使它确实属于本工具、
+    确实被选中出示，也必须以"主体不符"被拒。
+    """
+
+    from enforcement.approvals import approval_store_payload, load_approvals, select_approval
+
+    registry = enforcement_paths.registry_object()
+    request = make_action(
+        registry,
+        enforcement_paths,
+        "exec.shell",
+        {"command": "print('ok')", "description": "demo"},
+        roles=("owner",),
+    )
+    stolen = approval_for(request, subject="someone-else")
+    store = enforcement_paths.root / "store.json"
+    store.write_text(
+        json.dumps(approval_store_payload([stolen])), encoding="utf-8", newline=""
+    )
+
+    selected = select_approval(
+        load_approvals(store),
+        tool_id=request.tool_id,
+        action_id=request.action_id,
+        subject=request.subject,
+    )
+    assert selected is not None, "用例前提：它属于本工具，因此会被出示"
+
+    pre = pre_execute(
+        request,
+        registry=registry,
+        ledger=EnforcementLedger(enforcement_paths.ledger),
+        sink=FileAuditSink(enforcement_paths.audit, workspace=enforcement_paths.workspace),
+        approval=selected,
+    )
+    assert pre.decision.decision is Decision.BLOCK
+    assert pre.decision.reason_code is ReasonCode.APPROVAL_INVALID
+    assert "主体" in pre.decision.check("approval").detail
+
+
 def test_tampered_approval_file_is_detected(enforcement_paths, tmp_root):
     registry = enforcement_paths.registry_object()
     request = make_action(

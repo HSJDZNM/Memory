@@ -717,3 +717,302 @@ def test_a_malformed_exit_fact_is_refused_instead_of_silently_dropped(tmp_root, 
         assert post.exit_code == EXIT_BLOCK, bad
         assert post.reason_code == "post_error", (bad, post.reason_code)
         assert "tool_exit_code" in post.stderr, (bad, post.stderr)
+
+
+# --------------------------------------------------------------------------- 审批集：按工具分放行
+#
+# 实测背景（open-work 5.21 / 5.59）：桌面端 GUI 的每个动作都包在 `run_code`（PTC 传输）里，
+# 子工具调用（write / edit / pwsh）由运行时**逐个派发、逐个判定**（审计里是 <callId>:ptc:N）。
+# 而"一个审批文件只放一条记录"意味着名额只能给一个工具：给了 run_code，exec.pwsh 一律
+# `approval_invalid`（实测 python -m pytest -q 被拦）；给了 pwsh，run_code 被拦，
+# **整个会话冻结**（连读一个文件都进不去）。
+#
+# 审批协议 1.2 起一个文件是**记录集**（`records`），加载期按 `tool_id` 选择：每个工具各持
+# 一份放行、互不挤占。下面这组用例走的是**真实 Hook 链路**（不是手工调 select_approval），
+# 因为要证明的正是"会话里两个工具都能过"。
+
+RUN_CODE_INPUT: dict[str, object] = {"code": "value = 1\n", "description": "PTC 传输（占位）"}
+PWSH_INPUT: dict[str, object] = {
+    "command": "python -m pytest tests/unit -q",
+    "description": "run tests",
+    "run_in_background": False,
+}
+
+
+def pattern_record(
+    *,
+    tool_id: str,
+    patterns: dict[str, str],
+    approval_id: str,
+    subject: str = "local-user",
+    max_uses: int = 5,
+):
+    """构造一条模式化审批记录（不落盘）：审批集里的每一格都是一个工具自己的放行。"""
+
+    from datetime import timedelta
+
+    from enforcement.approvals import ApprovalRecord
+    from enforcement.models import utc_now
+
+    now = utc_now()
+    return ApprovalRecord(
+        approval_id=approval_id,
+        binding="pattern",
+        tool_id=tool_id,
+        subject=subject,
+        granted_by="alice",
+        granted_by_roles=("reviewer",),
+        granted_at=now - timedelta(seconds=1),
+        expires_at=now + timedelta(seconds=300),
+        max_uses=max_uses,
+        param_patterns=patterns,
+    )
+
+
+def write_approval_store(path: Path, records: list) -> Path:
+    """把若干条记录写成一个**审批集**文件（协议 1.2：一个文件，多个工具）。"""
+
+    from enforcement.approvals import approval_store_payload
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(approval_store_payload(records), ensure_ascii=False, indent=2) + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+    return path
+
+
+def store_config(tmp_root: Path, dsh_project: Path, *, name: str, store: Path) -> Path:
+    return write_dsh_config(
+        tmp_root / "config" / f"{name}.yaml",
+        project_root=dsh_project,
+        rules=REPO_ROOT / "policies",
+        principal={"subject": "local-user", "roles": ["owner"]},
+        approval_file=str(store),
+    )
+
+
+def pre_decisions(audit: Path) -> list[dict]:
+    return [item for item in records(audit) if item.get("stage") == "pre_decision"]
+
+
+def test_one_store_signs_both_the_transport_tool_and_the_command_tool(tmp_root, dsh_project):
+    """① 两份记录并存：run_code 与 pwsh **各自**用自己那张条子通过。
+
+    判据是机器可读的：两条 pre_decision 审计记录里的 approval_id 不同——各用各的，
+    没有"谁挤占谁"。
+    """
+
+    store = write_approval_store(
+        tmp_root / "config" / "two-tools-approval.json",
+        [
+            pattern_record(
+                tool_id="exec.run_code",
+                approval_id="approval-store-run-code",
+                # run_code 的 code 天然多行：模式必须带 DOTALL（.* 不匹配换行）
+                patterns={"code": "(?s).*", "description": ".*"},
+            ),
+            pattern_record(
+                tool_id="exec.pwsh",
+                approval_id="approval-store-pwsh",
+                patterns={
+                    "command": "^python -m pytest( .*)?$",
+                    "description": ".*",
+                    "run_in_background": ".*",
+                },
+            ),
+        ],
+    )
+    config_path = store_config(tmp_root, dsh_project, name="two-tools", store=store)
+    audit = dsh_project.parent / "audit.jsonl"
+
+    transport = run_hook(
+        payload(
+            "pre-tool-use-pwsh-execute.json",
+            dsh_project,
+            tool_name="run_code",
+            tool_input=RUN_CODE_INPUT,
+            tool_use_id="call-run-code",
+        ),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert transport.exit_code == EXIT_ALLOW, transport.stderr
+
+    command = run_hook(
+        payload("pre-tool-use-pwsh-execute.json", dsh_project, tool_input=PWSH_INPUT),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert command.exit_code == EXIT_ALLOW, command.stderr
+
+    used = [item["payload"]["approval_id"] for item in pre_decisions(audit)]
+    assert used == ["approval-store-run-code", "approval-store-pwsh"], used
+
+
+def test_with_only_the_transport_tool_signed_the_command_tool_is_still_refused(
+    tmp_root, dsh_project
+):
+    """② 只给 run_code 签放行时，pwsh **仍然被拒**——而且理由说的是"没有条子"。
+
+    修前这里报的是 `approval_invalid`（"审批绑定的工具与当前动作不一致"），
+    读的人会以为是自己那张条子写错了；事实是这个工具根本没有条子。
+    """
+
+    store = write_approval_store(
+        tmp_root / "config" / "transport-only-approval.json",
+        [
+            pattern_record(
+                tool_id="exec.run_code",
+                approval_id="approval-store-run-code",
+                patterns={"code": "(?s).*", "description": ".*"},
+            )
+        ],
+    )
+    config_path = store_config(tmp_root, dsh_project, name="transport-only", store=store)
+    audit = dsh_project.parent / "audit.jsonl"
+
+    transport = run_hook(
+        payload(
+            "pre-tool-use-pwsh-execute.json",
+            dsh_project,
+            tool_name="run_code",
+            tool_input=RUN_CODE_INPUT,
+            tool_use_id="call-run-code",
+        ),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert transport.exit_code == EXIT_ALLOW, transport.stderr
+
+    command = run_hook(
+        payload("pre-tool-use-pwsh-execute.json", dsh_project, tool_input=PWSH_INPUT),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert command.exit_code == EXIT_BLOCK
+    assert command.reason_code == "approval_required", command.reason_code
+    assert "工具与当前动作不一致" not in command.stderr
+
+
+def test_a_record_bound_to_another_tool_is_never_presented_as_this_tools_approval(
+    tmp_root, dsh_project
+):
+    """③ 不串味：别人的条子既不选中、也不充当拒绝理由。
+
+    拒绝理由里不该出现 pwsh 那张条子的参数模式——"拿另一把工具的条子去解释这次拒绝"
+    正是修前把人带偏的那一步。
+    """
+
+    store = write_approval_store(
+        tmp_root / "config" / "command-only-approval.json",
+        [
+            pattern_record(
+                tool_id="exec.pwsh",
+                approval_id="approval-store-pwsh",
+                patterns={
+                    "command": "^python -m pytest( .*)?$",
+                    "description": ".*",
+                    "run_in_background": ".*",
+                },
+            )
+        ],
+    )
+    config_path = store_config(tmp_root, dsh_project, name="command-only", store=store)
+    audit = dsh_project.parent / "audit.jsonl"
+
+    transport = run_hook(
+        payload(
+            "pre-tool-use-pwsh-execute.json",
+            dsh_project,
+            tool_name="run_code",
+            tool_input=RUN_CODE_INPUT,
+            tool_use_id="call-run-code",
+        ),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert transport.exit_code == EXIT_BLOCK
+    assert transport.reason_code == "approval_required", transport.reason_code
+    assert "python -m pytest" not in transport.stderr
+
+    # 反过来也一样：pwsh 那张条子在自己的工具上照常生效（不是"被我藏起来了"）
+    command = run_hook(
+        payload("pre-tool-use-pwsh-execute.json", dsh_project, tool_input=PWSH_INPUT),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert command.exit_code == EXIT_ALLOW, command.stderr
+
+
+def test_a_legacy_single_record_file_still_authorizes_exactly_its_own_tool(tmp_root, dsh_project):
+    """④ 旧形状（1.1 的单记录文件）**继续被接受**，而且只授权它自己那个工具。
+
+    1.1 的文档键集合与字段语义一个字都没变，读法因此没有歧义——它不需要重签。
+    但它**不会**因为"文件里只有一条"就顺手放行别的工具。
+    """
+
+    legacy = tmp_root / "config" / "legacy-approval.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    record = pattern_record(
+        tool_id="exec.run_code",
+        approval_id="approval-legacy-11",
+        patterns={"code": "(?s).*", "description": ".*"},
+    ).model_copy(update={"schema_version": "1.1"})
+    legacy.write_text(record.model_dump_json() + chr(10), encoding="utf-8", newline="")
+
+    config_path = store_config(tmp_root, dsh_project, name="legacy", store=legacy)
+    audit = dsh_project.parent / "audit.jsonl"
+
+    transport = run_hook(
+        payload(
+            "pre-tool-use-pwsh-execute.json",
+            dsh_project,
+            tool_name="run_code",
+            tool_input=RUN_CODE_INPUT,
+            tool_use_id="call-run-code",
+        ),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert transport.exit_code == EXIT_ALLOW, transport.stderr
+
+    command = run_hook(
+        payload("pre-tool-use-pwsh-execute.json", dsh_project, tool_input=PWSH_INPUT),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert command.exit_code == EXIT_BLOCK
+    assert command.reason_code == "approval_required", command.reason_code
+
+
+def test_a_broken_approval_store_does_not_freeze_actions_that_need_no_approval(
+    tmp_root, dsh_project
+):
+    """坏掉的审批文件只拦住**需要审批**的动作，不会把整个会话冻住。
+
+    读不出来就报错（不静默降级成"没有审批"，那是两件需要不同修复动作的事），
+    但这条读盘只发生在需要审批的工具上：按规则写文件（fs.edit，approval=none）照常判定。
+    """
+
+    store = tmp_root / "config" / "broken-approval.json"
+    store.parent.mkdir(parents=True, exist_ok=True)
+    store.write_text("{ 这不是 JSON", encoding="utf-8", newline="")
+    config_path = store_config(tmp_root, dsh_project, name="broken-store", store=store)
+    audit = dsh_project.parent / "audit.jsonl"
+
+    edit = run_hook(
+        payload("pre-tool-use-edit-allow.json", dsh_project),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert edit.exit_code == EXIT_ALLOW, edit.stderr
+
+    command = run_hook(
+        payload("pre-tool-use-pwsh-execute.json", dsh_project, tool_input=PWSH_INPUT),
+        config_path=config_path,
+        audit_path=audit,
+    )
+    assert command.exit_code == EXIT_BLOCK
+    assert "broken-approval.json" in command.stderr, command.stderr

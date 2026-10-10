@@ -293,9 +293,9 @@ tools:
     #
     # 审批保持 required（honest）：risk=privileged_execution 的工具按加载期规则**必须** required
     # （实测：写成 none 会在注册表加载期被拒），因此部署侧必须为它签一份放行。
-    # 已知代价（open work 5.21）：一个 approval 文件只放一条记录、approval_file 是单值——本机 GUI 里
-    # 每一个动作都要经过 run_code，所以这个名额只能给 run_code（传输），跑命令的 exec.pwsh 就签不下；
-    # 这是**平台的审批协议限制**，不是这里可以顺手绕开的判断。
+    # 一个审批文件可以放**多条记录**（审批协议 1.2 的记录集），加载期按 tool_id 选择：
+    # run_code 与 exec.pwsh 各持一份放行、互不挤占——本机 GUI 的每个动作都要经过 run_code，
+    # 而"名额只有一个"曾让跑命令的 exec.pwsh 一律 approval_invalid（open work 5.21 / 5.59）。
     # 仍在生效的判定：
     #   - run_code 内部的每一次子工具调用都是**独立判定**的工具调用（审计里是 <callId>:ptc:N）：
     #     写文件走 43 条规则、跑命令走 exec.pwsh 的白名单 + 结构性阻断；
