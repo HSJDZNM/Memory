@@ -16,9 +16,12 @@
 
 schema_version: "1.0"
 agent_id: dsh
-# 实测日期 2026-xx：见 .tmp/round-10/b/REPORT.md 的 02 / 03 / 06 号证据
-# （dsh --version = 0.1.6-alpha.2；一致性套件在它上面 87 项全绿）。
-agent_version: 0.1.6-alpha.2
+# 实测日期 2026-10-10：dsh --version = 0.2.1-alpha.2。注意 `host_version` 探的是 `dsh --version`，
+# 也就是 **CLI** 这条线；桌面端 0.2.0-rc.2 是另一条版本线，不在这条探测里
+# （已登记为待裁定：04-open-work 的 5.61，两条线各自的实测读数在那里）。
+# 证据：tools/dsh_sandbox_loop.py 真机闭环 pass（block 场景 executed=false 且文件哈希不变 /
+# allow 场景 executed=true）、一致性套件 87 项全绿、Phase 6 多 Agent 闭环 7/7。
+agent_version: 0.2.1-alpha.2
 display_name: DeepSeek Harness (dsh)
 protocol: canonical-tool-table   # 复用 Phase 2 的代码工具表（受契约测试保护）
 protocol_version: dsh-hooks-claude-code@0.1.x

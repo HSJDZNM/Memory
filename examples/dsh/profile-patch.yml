@@ -1,4 +1,4 @@
-# 把 dsh 的工具调用接到本仓库的策略 Hook（dsh 0.1.6-alpha.2，与 adapters/dsh/manifest.yaml 的声明同值）。
+# 把 dsh 的工具调用接到本仓库的策略 Hook（dsh 0.2.1-alpha.2，与 adapters/dsh/manifest.yaml 的声明同值）。
 #
 # 用法（不改动别人的 profile 文件，只叠加一层 patch）：
 #   dsh --profile headless --patch <本文件的绝对路径> "任务描述"

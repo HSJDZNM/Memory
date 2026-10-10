@@ -1,14 +1,14 @@
 {
   "adapters": {
     "dsh": {
-      "agent_version": "0.1.6-alpha.2",
+      "agent_version": "0.2.1-alpha.2",
       "ceiling_reasons": [],
       "enforcement": "full",
       "fixtures": [
         "tests/fixtures/agent_events/dsh/pre-tool-use-edit-block.json",
         "tests/fixtures/agent_events/dsh/post-tool-use-edit.json"
       ],
-      "manifest_digest": "sha256:5363a76fe0b38d60e33afdc1f05dad3b5e14b4a2914e1faa680516ea116a4280",
+      "manifest_digest": "sha256:2c5e1b922a3d77e6d55ebc83a0a782f78a004badad9484ee738ec4e2dfc28e71",
       "protocol": "canonical-tool-table",
       "protocol_version": "dsh-hooks-claude-code@0.1.x",
       "requested_enforcement": "full"
@@ -30,8 +30,7 @@
     "legacy-post-only": {
       "agent_version": "legacy-agent-2.4.7",
       "ceiling_reasons": [
-        "没有声明执行前钩子：无法在工具执行前拒绝",
-        "manifest 与已审核哈希不一致或尚未审核：改能力声明必须重新审核（python -m adapters.cli approve --reviewer <name>）"
+        "没有声明执行前钩子：无法在工具执行前拒绝"
       ],
       "enforcement": "read_only",
       "fixtures": [
@@ -43,7 +42,7 @@
       "requested_enforcement": "read_only"
     }
   },
-  "approved_at": "2026-10-07T23:47:23.518705Z",
-  "reviewed_by": "fix-adapters",
+  "approved_at": "2026-10-10T04:32:48.790449Z",
+  "reviewed_by": "dshznm",
   "schema_version": "1.0"
 }

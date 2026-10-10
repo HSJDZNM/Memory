@@ -22,7 +22,7 @@
 # （包含边界）会挪到项目之外——规则 / 注册表 / 台账多半不存在（失败关闭），
 # 恰好存在时则是**静默**加载了项目外的数据。
 
-agent_version: "0.1.6-alpha.2" # 记录用；必须与宿主实际版本一致（python -m adapters.cli host-version --check 会比对）；升级 dsh 后先重跑 fixture 与沙箱闭环再改这里
+agent_version: "0.2.1-alpha.2" # 记录用；与 adapters/dsh/manifest.yaml 的声明必须相等（tests/contract/test_dsh_layer_declaration.py 钉住）；必须与宿主实际版本一致（python -m adapters.cli host-version --check 会比对）；升级 dsh 后先重跑 fixture 与沙箱闭环再改这里
 project: memory
 project_root: ../.. # 相对**本文件所在目录**（见文件头）；越出这个根目录的写入一律拒绝
 rules:
