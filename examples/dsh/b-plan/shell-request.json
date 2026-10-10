@@ -1,0 +1,15 @@
+{
+  "action_id": "task3:shell-2",
+  "request_id": "task3:shell-2",
+  "agent": "dsh",
+  "agent_version": "0.2.1-alpha.2",
+  "tool_id": "exec.pwsh",
+  "subject": "local-user",
+  "roles": [
+    "governed-dev"
+  ],
+  "params": {
+    "command": "python -m pytest -q",
+    "description": "run tests"
+  }
+}

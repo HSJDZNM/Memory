@@ -1,0 +1,55 @@
+# B 方案：受治工作区的本地配置（2026-10-10 对比测试版）。
+# 路径基准是**本文件所在目录**（.policy/）。
+#
+# 与 task-3 版的差别只有两处，都是为了让"受治"名副其实：
+#   1. 分层判定加了 test 层 + test_paths/test_layer（M1）：否则 tests/test_x_controller.py
+#      会被第一条生产层 glob 命中、当成 controller 层。
+#   2. 启用 pre_evidence（G3）：43 条规则全部参与判定；不声明时只有上下文类 checker 参与，
+#      其余 42 条进 skipped_rules——"没查"和"查了没问题"必须分得开。
+agent_version: "0.2.1-alpha.2"
+project: governance
+project_root: ..
+rules:
+  - C:/Users/ZNM/Downloads/Memory/policies
+rules_root: C:/Users/ZNM/Downloads/Memory
+timeout_ms: 5000
+layers:
+  - pattern: "tests/**"
+    layer: test
+  - pattern: "**/*_controller.py"
+    layer: controller
+  - pattern: "**/*_service.py"
+    layer: service
+  - pattern: "**/*_repository.py"
+    layer: repository
+  - pattern: "**/*.py"
+    layer: module
+  - pattern: "**/*.md"
+    layer: docs
+test_paths:
+  - "tests/**/test_*.py"
+  - "tests/**/*_test.py"
+test_layer: test
+languages:
+  - pattern: "**/*.py"
+    language: python
+default_language: text
+audit_log: audit.jsonl
+# B 方案的两个开关：最小执行身份（有 shell.exec，无提权）+ 一次性 pattern 放行（见 approval.json）。
+principal:
+  subject: local-user
+  roles:
+    - governed-dev
+registry: tool-registry.local.yaml
+registry_approved: tool-registry.approved.json
+enforcement_ledger: enforcement-ledger.jsonl
+approval_file: approval.json
+# —— G3：动手前取证 ——
+# 声明后每次写类动作都在**影子副本**上跑真实验证器（用完必删），证据交给引擎。
+# 预算不等式（接线自检会查）：pre_evidence.timeout_ms + timeout_ms < hooks.json 的 timeout
+# 即 20000 + 5000 < 30000。实测每次编辑约 2 秒（ruff 0.14.13 + pytest 8）。
+pre_evidence:
+  enabled: true
+  registry_root: C:/Users/ZNM/Downloads/Memory
+  exclude: [".git/**", ".policy/**", "**/__pycache__/**", ".pytest_cache/**"]
+  timeout_ms: 20000

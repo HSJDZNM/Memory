@@ -1,0 +1,439 @@
+# Phase 4 Tool Registry：所有受控工具的授权表。
+#
+# 这份文件是**数据**，不是代码：风险级别、参数白名单、权限、审批门禁、事后验证器、
+# 超时与限流都写在这里，模型在调用时无法自行声明"我这个动作属于哪一类"。
+#
+# 任何改动都必须重新审核：
+#     python -m enforcement.cli registry --verify     # 看哪些工具没被审核
+#     python -m enforcement.cli registry --approve --reviewer <name>
+# 运行时描述与已审核哈希不一致的工具**不可使用**（pre-check 直接 block）。
+#
+# 工具名来自 dsh 0.1.5-rc.1 的真实装配（证据见 src/adapters/dsh/README.md）。
+# 升级 Agent 后：先核对工具参数表，再改这里，再重新审核，最后补契约测试。
+#
+# Phase 8 起这张表**按 Agent 分段**：`agent: dsh` 是 Agent 产品那一段，
+# `agent: orchestrator` 是编排层那一段（改规则文件需要人工审批）。
+# 两段各自审核：改任一段都要重新生成 registry/tool-registry.approved.json。
+
+registry_schema_version: "1.0"
+version: 1
+
+defaults:
+  timeout_ms: 5000 # 单次执行预算（毫秒）
+  grant_ttl_seconds: 60 # 允许结果的有效期：短时效，过期必须重走 pre-check
+  max_grant_ttl_seconds: 300 # 有效期硬上限，执行器会再校验一次
+
+permissions:
+  repo.read: 读取仓库内容（只读动作）
+  repo.write: 修改仓库内容（可逆写入）
+  repo.approve: 审批高风险动作（与执行权分离，不能自己批自己）
+  shell.exec: 执行命令或代码（高权限执行）
+  sandbox.escalate: 提升沙箱权限（例如 danger-full-access）
+
+roles:
+  developer: [repo.read, repo.write]
+  reviewer: [repo.read, repo.write, repo.approve]
+  owner: [repo.read, repo.write, repo.approve, shell.exec, sandbox.escalate]
+  # B 方案：受治工作区的最小执行身份——有 shell.exec，没有 repo.approve / sandbox.escalate。
+  governed-dev: [repo.read, repo.write, shell.exec]
+
+approvals:
+  require_role: reviewer
+
+tools:
+  # —— 可逆写入：需要 pre-check 与 post-check，参数与 schema 都绑定在授权里 ——
+  - id: fs.edit
+    title: 字面量替换文件内容
+    agent: dsh
+    tool_name: edit
+    schema_version: "1.0"
+    risk: reversible_write
+    effect: file_write
+    driver: file_edit
+    required_permissions: [repo.write]
+    approval: none
+    rollback: file_snapshot
+    post_checks: [content_matches, file_changed, file_syntax, diff_recorded]
+    rate_limit: {max_calls: 200, window_seconds: 60, max_failures: 5, breaker_seconds: 120}
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+        # 控制面保护：这个工具是 `approval: none` 的自动放行写工具，而 policies/ registry/
+        # adapters/ api/ validation/ 里的数据**定义治理本身**（规则、工具授权、适配器声明、
+        # 已审核哈希）。少了这一行，它们就能被自动放行的写工具改写，篡改要到运行期哈希
+        # 对不上时才被发现；编排层同形的 orc.fs.edit / orc.fs.write 一直是挡着的，
+        # 两侧不对称留下的是一条无门禁的路径。需要改这些文件时走人工审批的工具
+        # （exec.pwsh 等 approval: required 的动作）。
+        blocked_prefixes: [policies, registry, adapters, api, validation]
+        description: 目标文件（仓库相对路径；逃出工作区一律拒绝）
+      - name: old_string
+        type: string
+        required: true
+        max_chars: 20000
+      - name: new_string
+        type: string
+        required: true
+        max_chars: 20000
+      - name: replace_all
+        type: boolean
+    notes: 只检查本次引入的文本；变更前后哈希与 diff 由 post-check 记录
+
+  - id: fs.write
+    title: 整文件写入（create-or-overwrite）
+    agent: dsh
+    tool_name: write
+    schema_version: "1.0"
+    risk: reversible_write
+    effect: file_write
+    driver: file_write
+    required_permissions: [repo.write]
+    approval: none
+    rollback: file_snapshot
+    post_checks: [content_matches, target_exists, file_syntax, diff_recorded]
+    rate_limit: {max_calls: 200, window_seconds: 60, max_failures: 5, breaker_seconds: 120}
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+        # 与 fs.edit 同一组受保护前缀（理由见那里）：create-or-overwrite 能覆盖任何路径，
+        # 控制面因此同样不能由自动放行的写工具触达。
+        blocked_prefixes: [policies, registry, adapters, api, validation]
+      - name: content
+        type: string
+        required: true
+        max_chars: 200000
+    notes: write 是 create-or-overwrite，覆盖已存在文件在 Phase 4 里按可逆写入处理；
+      content_matches 用来发现"工具声称成功、目标却不是请求声明的那个结果"
+
+  # —— 只读：显式降级（不进入 pre-check 链路）但仍然登记，便于审计与后续阶段 ——
+  - id: fs.read
+    title: 读取文件
+    agent: dsh
+    tool_name: read
+    schema_version: "1.0"
+    risk: read_only
+    effect: none
+    driver: none
+    required_permissions: [repo.read]
+    approval: none
+    post_checks: []
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+    notes: 只读动作由 Agent 侧放行并记入审计，不做 pre-check；"显式降级"写在这里而不是异常处理里
+
+  # —— 高权限执行：最小权限 + 命令白名单 + 人工门禁 + 默认 block ——
+  - id: exec.pwsh
+    title: PowerShell 命令
+    agent: dsh
+    tool_name: pwsh
+    schema_version: "1.0"
+    risk: privileged_execution
+    effect: process
+    driver: shell_command
+    shell: [pwsh, -NoLogo, -NoProfile, -NonInteractive, -Command]
+    command_param: command
+    required_permissions: [shell.exec]
+    approval: required
+    post_checks: [exit_code_zero]
+    timeout_ms: 60000
+    rate_limit: {max_calls: 20, window_seconds: 60, max_failures: 3, breaker_seconds: 300}
+    allowed_commands:
+    # —— B 方案（用户 2026-10-10 选定）：跑测试 / 跑项目脚本 / 只读查看 ——
+      - '^python -m unittest( .*)?$'
+      - '^uv run python -m pytest( .*)?$'
+      - '^pytest( .*)?$'
+      - '^python scripts/[A-Za-z0-9_./-]+[.]py( .*)?$'
+      - '^git (status|diff|log|show|ls-files|rev-parse)( .*)?$'
+      - '^Get-Content( .*)?$'
+      - '^Select-String( .*)?$'
+      - '^Test-Path( .*)?$'
+      - "^python -m pytest( .*)?$"
+      - "^uv run python -m pytest( .*)?$"
+      - "^python tools/[A-Za-z0-9_./-]+\\.py( .*)?$"
+      - "^python -m (policy\\.check|retrieval\\.cli|enforcement\\.cli|adapters\\.dsh\\.hooks)( .*)?$"
+      - "^git (status|diff|log|show)( .*)?$"
+      - "^Write-Output( .*)?$"
+      - "^Get-ChildItem( .*)?$"
+    # 白名单只描述"命令长什么样"，描述不了"这个选项会干什么"——下面这些片段决定它会做什么：
+    #   ../  ..\        路径穿越：python tools/../../x.py 同样能完整匹配上面的白名单
+    #   --output        git 的写文件选项：完整匹配通过，却能把内容写到受控工作区外的任意路径
+    #   --ext-diff      交给外部 diff 工具执行（代码执行的入口）
+    #   --no-index      直接读写任意两个路径，绕过仓库边界
+    # 已知边界：白名单不是沙箱。任何被允许的命令只要会读仓库内的配置（如 .git/config、
+    # .gitattributes 的 textconv/filter），就仍可能被改写成执行外部命令；真正的隔离要靠
+    # 运行时的文件系统与进程沙箱，不属于本阶段。这里只保证"选常见的写法钻不过去"。
+    forbidden_command_fragments: ["../", "..\\", "--output", "--ext-diff", "--no-index"]
+    parameters:
+      - name: command
+        type: string
+        required: true
+        max_chars: 4000
+      - name: description
+        type: string
+        required: true
+        max_chars: 400
+      # —— 下面三个是 dsh 侧真实存在的调用参数，**授权面**上是必需的：参数白名单要放行它们，
+      #    审批模式（binding=pattern）也必须逐参数覆盖它们（只覆盖 command 等于放行它们的任意
+      #    取值：改 workdir 就是改这次调用干什么，见 tests/contract/test_approval_binding_modes.py）。
+      #    驱动层**真的消费**它们（src/enforcement/drivers.py）：timeoutMs 定本次预算、
+      #    workdir 定进程 cwd；run_in_background=true 一律**显式拒绝**（不是静默忽略）——
+      #    后台进程没有退出码，exit_code_zero 事后核对必然退化成 repair_required（§5.35），
+      #    平台也没有进程树回收与回滚语义；要后台执行必须另立工具并写清事后核对与回滚方式。
+      - name: timeoutMs
+        type: integer
+        description: 本次调用的超时预算（毫秒）：缺省用注册表 timeout_ms，**超过它一律拒绝**（驱动层消费）
+      # path_kind 是**数据**，不是代码里的特判：workdir 指向目录，
+      # 因此"工作目录 = 项目根"归一化为 "." 并通过校验（G5）；
+      # 而写文件类参数保留默认 path_kind=file，传 "." 仍被拒（它不是文件）。
+      - name: workdir
+        type: path
+        path_scope: workspace
+        path_kind: directory
+        description: 命令的工作目录（受控工作区内、必须是已存在的目录，越界或不存在的目录都拒绝）：驱动层作为进程 cwd 使用
+      - name: run_in_background
+        type: boolean
+        description: 后台执行：true 一律**显式拒绝**（后台进程没有退出码，事后核对会退化成修复，也没有进程树回收与回滚）——不是静默忽略
+      - name: sandbox_permissions
+        type: string
+        enum: [workspace-write, danger-full-access]
+        escalating_values: [danger-full-access]
+        requires_permission: sandbox.escalate
+        description: 提权参数：取值会额外要求 sandbox.escalate 权限
+      - name: justification
+        type: string
+        max_chars: 1000
+    notes: 白名单只做完整匹配；此外命令里出现分号 / 管道 / 命令替换 / 重定向 / 换行
+      一律结构性阻断（command_composition_blocked）——只靠 ( .*)? 的正则会被 " ; 任意命令" 绕过。
+      需要组合命令时必须先改这里、重新审核，并说明为什么安全
+
+  - id: exec.bash
+    title: Bash 命令
+    agent: dsh
+    tool_name: bash
+    schema_version: "1.0"
+    risk: privileged_execution
+    effect: process
+    driver: shell_command
+    shell: [bash, -lc]
+    command_param: command
+    required_permissions: [shell.exec]
+    approval: required
+    post_checks: [exit_code_zero]
+    timeout_ms: 60000
+    rate_limit: {max_calls: 20, window_seconds: 60, max_failures: 3, breaker_seconds: 300}
+    allowed_commands:
+      - "^python -m pytest( .*)?$"
+      - "^uv run python -m pytest( .*)?$"
+      - "^python tools/[A-Za-z0-9_./-]+\\.py( .*)?$"
+      - "^git (status|diff|log|show)( .*)?$"
+      - "^echo( .*)?$"
+    # 白名单只描述"命令长什么样"，描述不了"这个选项会干什么"——下面这些片段决定它会做什么：
+    #   ../  ..\        路径穿越：python tools/../../x.py 同样能完整匹配上面的白名单
+    #   --output        git 的写文件选项：完整匹配通过，却能把内容写到受控工作区外的任意路径
+    #   --ext-diff      交给外部 diff 工具执行（代码执行的入口）
+    #   --no-index      直接读写任意两个路径，绕过仓库边界
+    # 已知边界：白名单不是沙箱。任何被允许的命令只要会读仓库内的配置（如 .git/config、
+    # .gitattributes 的 textconv/filter），就仍可能被改写成执行外部命令；真正的隔离要靠
+    # 运行时的文件系统与进程沙箱，不属于本阶段。这里只保证"选常见的写法钻不过去"。
+    forbidden_command_fragments: ["../", "..\\", "--output", "--ext-diff", "--no-index"]
+    parameters:
+      - name: command
+        type: string
+        required: true
+        max_chars: 4000
+      - name: description
+        type: string
+        required: true
+        max_chars: 400
+      # 三个参数由驱动层消费：语义与 exec.pwsh 完全一致（预算 / cwd / 后台显式拒绝）。
+      - name: timeoutMs
+        type: integer
+        description: 本次调用的超时预算（毫秒）：缺省用注册表 timeout_ms，超过它一律拒绝
+      # path_kind 是数据，不是代码里的特判（同 exec.pwsh）
+      - name: workdir
+        type: path
+        path_scope: workspace
+        path_kind: directory
+        description: 命令的工作目录（受控工作区内、必须是已存在的目录）：驱动层作为进程 cwd 使用
+      - name: run_in_background
+        type: boolean
+        description: 后台执行：true 一律显式拒绝（后台进程没有退出码，事后核对会退化成修复）
+      - name: sandbox_permissions
+        type: string
+        enum: [workspace-write, danger-full-access]
+        escalating_values: [danger-full-access]
+        requires_permission: sandbox.escalate
+      - name: justification
+        type: string
+        max_chars: 1000
+
+  - id: exec.run_code
+    title: 代码运行时
+    agent: dsh
+    tool_name: run_code
+    schema_version: "1.0"
+    risk: privileged_execution
+    effect: process
+    driver: none
+    required_permissions: [shell.exec]
+    # —— 2026-10-10 对比测试实测后的修订（本地副本；仓库对外姿态未动）——
+    # 本机 GUI 的 run_code 执行的是 **TypeScript**（PTC 运行时），而平台唯一的结构化检查是
+    # Python 解析器（SUPPORTED_CODE_CHECKS 只有 python_forbidden_surface）。拿它检查 TS 只会得到
+    # code_parse_failed：实测受治会话里**每一次**工具调用（连读一个文件）都被拦死，工作区完全不可用。
+    # 平台对「driver=none + effect=process」的委派工具只给两个选项（models.py 的加载期校验）：
+    #   ① 声明 code_check；② 显式声明 ungoverned。这里选 ②——如实说清覆盖面，而不是留一个假的检查。
+    # 声明后不是静默通过：pre-check 输出 governance_coverage=ungoverned_declared、写进审计，
+    # 并让决策至少是 allow_with_warnings。
+    #
+    # 审批保持 required（honest）：risk=privileged_execution 的工具按加载期规则**必须** required
+    # （实测：写成 none 会在注册表加载期被拒），因此部署侧必须为它签一份放行。
+    # 已知代价（open work 5.21）：一个 approval 文件只放一条记录、approval_file 是单值——本机 GUI 里
+    # 每一个动作都要经过 run_code，所以这个名额只能给 run_code（传输），跑命令的 exec.pwsh 就签不下；
+    # 这是**平台的审批协议限制**，不是这里可以顺手绕开的判断。
+    # 仍在生效的判定：
+    #   - run_code 内部的每一次子工具调用都是**独立判定**的工具调用（审计里是 <callId>:ptc:N）：
+    #     写文件走 43 条规则、跑命令走 exec.pwsh 的白名单 + 结构性阻断；
+    #   - run_code 自己有速率上限（下面的 rate_limit）。
+    # 已知边界（不假装覆盖）：run_code 内用原始 fs / 子进程直接写文件不经过工具层——
+    # 与 AGENTS 第 17 条「白名单不是沙箱」同一口径。
+    ungoverned:
+      declared_by: dshznm
+      reason: "宿主 run_code 执行 TypeScript，平台唯一的结构化检查是 Python 解析器；套用会拦死每一次调用。子工具调用仍逐次判定（写文件过 43 条规则、跑命令过白名单），原始文件写入不在本声明覆盖范围内"
+    approval: required
+    post_checks: []
+    timeout_ms: 120000
+    rate_limit: {max_calls: 10, window_seconds: 60, max_failures: 2, breaker_seconds: 300}
+    parameters:
+      - name: code
+        type: string
+        required: true
+        max_chars: 20000
+      - name: description
+        type: string
+        required: true
+        max_chars: 400
+    notes: 平台侧 driver=none：只有 Agent 运行时能执行它，平台绝不假装执行过（driver_unavailable）。
+      2026-10-10 实测后把 code_check 换成 ungoverned 声明：本机运行 TypeScript，Python 解析器只会给出
+      code_parse_failed 并把工作区锁死；该声明进审计，不是静默通过
+
+  # —— Phase 8：编排层（`orchestrator`）的工具表 ——
+  # 编排层自己不做授权判断：它只提出动作，判定与执行由图谱之外的受控执行链完成。
+  # 目标路径仍受 path_scope: workspace 约束；改这些声明必须重新审核。
+  - id: orc.fs.edit
+    title: 编排层的字面量替换（在受控工作区内）
+    agent: orchestrator
+    tool_name: edit_file
+    schema_version: "1.0"
+    risk: reversible_write
+    effect: file_write
+    driver: file_edit
+    required_permissions: [repo.write]
+    approval: none
+    rollback: file_snapshot
+    post_checks: [content_matches, file_changed, file_syntax, diff_recorded]
+    rate_limit: {max_calls: 50, window_seconds: 60, max_failures: 3, breaker_seconds: 120}
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+        blocked_prefixes: [policies, registry, adapters, api, validation]
+        description: 目标文件（工作区相对路径；逃出工作区一律拒绝）
+      - name: old_string
+        type: string
+        required: true
+        max_chars: 20000
+      - name: new_string
+        type: string
+        required: true
+        max_chars: 20000
+      - name: replace_all
+        type: boolean
+    notes: 编排层的修复节点只能基于结构化 violation 提出改动，具体写什么由这里授权
+
+  - id: orc.fs.write
+    title: 编排层的整文件写入（受控工作区）
+    agent: orchestrator
+    tool_name: write_file
+    schema_version: "1.0"
+    risk: reversible_write
+    effect: file_write
+    driver: file_write
+    required_permissions: [repo.write]
+    approval: none
+    rollback: file_snapshot
+    post_checks: [content_matches, target_exists, file_syntax, diff_recorded]
+    rate_limit: {max_calls: 50, window_seconds: 60, max_failures: 3, breaker_seconds: 120}
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+        blocked_prefixes: [policies, registry, adapters, api, validation]
+      - name: content
+        type: string
+        required: true
+        max_chars: 200000
+    notes: 与 dsh 的 fs.write 同形，但主体与审计命名空间是编排层自己：两个 Agent 不共用授权
+
+  - id: orc.policy.write
+    title: 编排层新建规则文件（高风险：必须人工审批）
+    agent: orchestrator
+    tool_name: write_policy
+    schema_version: "1.0"
+    risk: reversible_write
+    effect: file_write
+    driver: file_write
+    required_permissions: [repo.write]
+    approval: required
+    rollback: file_snapshot
+    post_checks: [content_matches, target_exists, file_syntax, diff_recorded]
+    rate_limit: {max_calls: 10, window_seconds: 60, max_failures: 2, breaker_seconds: 300}
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+        pattern: ^policies/[A-Za-z0-9._/-]+$
+        description: 只允许新建工作区内 policies/ 下的规则文件
+      - name: content
+        type: string
+        required: true
+        max_chars: 200000
+    notes: 新建规则同样会改变判定依据，必须走与规则编辑相同的人工审批门禁
+
+  - id: orc.policy.edit
+    title: 编排层修改规则文件（高风险：必须人工审批）
+    agent: orchestrator
+    tool_name: edit_policy
+    schema_version: "1.0"
+    risk: reversible_write
+    effect: file_write
+    driver: file_edit
+    required_permissions: [repo.write]
+    approval: required
+    rollback: file_snapshot
+    post_checks: [content_matches, file_changed, file_syntax, diff_recorded]
+    rate_limit: {max_calls: 10, window_seconds: 60, max_failures: 2, breaker_seconds: 300}
+    parameters:
+      - name: file_path
+        type: path
+        required: true
+        path_scope: workspace
+        pattern: ^policies/[A-Za-z0-9._/-]+$
+        description: 只允许改工作区内 policies/ 下的规则文件
+      - name: old_string
+        type: string
+        required: true
+        max_chars: 20000
+      - name: new_string
+        type: string
+        required: true
+        max_chars: 20000
+    notes: 改规则等于改"判定依据"本身，因此审批门禁与执行权分离；审批必须与 action_hash 绑定

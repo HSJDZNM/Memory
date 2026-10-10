@@ -1,0 +1,15 @@
+{
+  "action_id": "b-plan:run-code-1",
+  "request_id": "b-plan:run-code-1",
+  "agent": "dsh",
+  "agent_version": "0.2.1-alpha.2",
+  "tool_id": "exec.run_code",
+  "subject": "local-user",
+  "roles": [
+    "governed-dev"
+  ],
+  "params": {
+    "code": "return 0;",
+    "description": "一次性放行的形态占位（binding=pattern 只按参数模式匹配，不看这一份取值）"
+  }
+}
