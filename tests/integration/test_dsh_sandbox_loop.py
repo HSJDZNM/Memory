@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -241,7 +242,9 @@ def drive_main(
     monkeypatch.setattr(loop, "LOGS", logs)
     monkeypatch.setattr(loop, "ARTIFACT", artifact)
     monkeypatch.setattr(loop, "TREE_ROOT", tmp_root)
-    monkeypatch.setattr(loop, "build_project", lambda *, keep: None)
+    monkeypatch.setattr(loop, "build_project", lambda **_kwargs: None)
+    # 版本探测要确定性：不让用例真的去起 dsh（那会把本机装没装 dsh 变成用例结果）。
+    monkeypatch.setattr(loop, "host_agent_version", lambda *_args, **_kwargs: "test")
     monkeypatch.setattr(loop, "dsh_argv", (lambda: ["dsh"]) if dsh_available else (lambda: None))
 
     audit: list[dict] = []
@@ -1254,4 +1257,46 @@ def test_capture_names_only_lists_this_round(monkeypatch: pytest.MonkeyPatch, tm
 
     (captures / "new.json").write_text("{}", encoding="utf-8")
     assert loop.capture_names({"old.json"}) == ["new.json"]
+
+
+# --------------------------------------------------------------------------- 宿主版本：探测，不是常量
+#
+# 2026-10-09 的真机读数里，跑的是 dsh 0.2.1-alpha.2，结论载荷与账本上写的却是 0.1.5-rc.1——
+# 因为 AGENT_VERSION 是个从 Phase 2 留到现在的常量。这个值会进两处（受控项目的配置 +
+# 结论载荷），而它同时是审计记录里 agent_version 的来源，所以"写死的旧值"等于账本说谎。
+
+
+def test_host_agent_version_reads_the_first_line_of_version_output():
+    """探到的第一行就是版本；通过一个真进程拿，不依赖本机装没装 dsh。"""
+
+    assert loop.host_agent_version([sys.executable, "-c", "print('9.9.9')"]) == "9.9.9"
+
+
+def test_host_agent_version_is_unavailable_instead_of_guessing():
+    """读不到就写 unavailable——不许拿声明里的旧值或任意默认值冒充一次真读数。"""
+
+    assert loop.host_agent_version([]) == loop.AGENT_VERSION_UNAVAILABLE
+    assert (
+        loop.host_agent_version([sys.executable, "-c", "import sys; sys.exit(3)"])
+        == loop.AGENT_VERSION_UNAVAILABLE
+    )
+    assert loop.host_agent_version([sys.executable, "-c", "pass"]) == loop.AGENT_VERSION_UNAVAILABLE
+    assert (
+        loop.host_agent_version(["definitely-not-an-executable-xyz"])
+        == loop.AGENT_VERSION_UNAVAILABLE
+    )
+
+
+def test_build_project_writes_the_probed_version_into_the_adapter_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_root: Path
+):
+    """配置里的 agent_version 必须是**本次探测到的**那个值（它是账本里 agent_version 的来源）。"""
+
+    project = tmp_root / "demo-shop"
+    monkeypatch.setattr(loop, "PROJECT", project)
+    monkeypatch.setattr(loop, "LOGS", tmp_root / "logs")
+    loop.build_project(keep=False, agent_version="9.9.9-probed")
+
+    config = (project / ".policy" / "dsh-adapter.yaml").read_text(encoding="utf-8")
+    assert 'agent_version: "9.9.9-probed"' in config, config
     assert loop.capture_names({"old.json", "new.json"}) == []

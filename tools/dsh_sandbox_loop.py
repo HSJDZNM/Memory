@@ -105,7 +105,8 @@ from provenance import reading_context as reading  # noqa: E402
 # 形状」必须能读出来——这就是本轴存在的理由；下一族诊断键落地时，这里跟着递增。
 SANDBOX_RESULT_SCHEMA_VERSION = "1.2"
 
-AGENT_VERSION = "0.1.5-rc.1"
+# 探测不到宿主版本时的**显式**取值：不是猜一个版本号，也不是拿声明里的旧值冒充。
+AGENT_VERSION_UNAVAILABLE = "unavailable"
 RULE_ID = "ARCH-001@1"
 
 CONTROLLER_START = '''"""订单 HTTP 入口。"""
@@ -211,12 +212,20 @@ def write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
-def build_project(*, keep: bool) -> None:
+def build_project(*, keep: bool, agent_version: str) -> None:
     """重建受控项目；--keep 时只重置被治理的源文件，保留审计与采集。"""
 
     (PROJECT / "src" / "shop").mkdir(parents=True, exist_ok=True)
     (PROJECT / ".policy").mkdir(parents=True, exist_ok=True)
     LOGS.mkdir(parents=True, exist_ok=True)
+    # --isolated-home 的两个隔离根必须**先建出来**（2026-10-09 定位的真失败）：
+    # dsh 的 @deepseek-ai/dsh-spill-local 启动时对 TEMP 做 mkdtempSync，临时根不存在时
+    # 它以 ENOENT 结束在**插件树加载**阶段——dsh 根本没起来，于是一个工具调用都没发生、
+    # Hook 一次都没被调用。现象与"策略放行"同形（审计为空 + 文件哈希不变），
+    # 所以它只能靠这两条 mkdir 消灭，不能靠读审计反推。
+    # 与开关无关：这两处是模块 docstring 第 49-50 行就已声明的产物位置。
+    ISOLATED_HOME.mkdir(parents=True, exist_ok=True)
+    ISOLATED_TMP.mkdir(parents=True, exist_ok=True)
 
     write(PROJECT / "AGENTS.md", (
         "# demo-shop（受控沙箱）\n\n"
@@ -229,7 +238,7 @@ def build_project(*, keep: bool) -> None:
 
     write(
         PROJECT / ".policy" / "dsh-adapter.yaml",
-        ADAPTER_CONFIG.format(agent_version=AGENT_VERSION, repo=REPO_ROOT.as_posix()),
+        ADAPTER_CONFIG.format(agent_version=agent_version, repo=REPO_ROOT.as_posix()),
     )
     write(
         PROJECT / ".policy" / "hooks.json",
@@ -251,6 +260,37 @@ def build_project(*, keep: bool) -> None:
                 shutil.rmtree(target, ignore_errors=True)
             elif target.exists():
                 target.unlink()
+
+
+def host_agent_version(argv: list[str] | None = None) -> str:
+    """宿主**实际**版本：跑一次 `<dsh> --version` 取出来（探测，不是查表）。
+
+    为什么不能再用常量：这个值会被写进两处——受控项目的 `.policy/dsh-adapter.yaml` 与结论载荷的
+    `agent_version`——而它同时是**审计记录**里 `agent_version` 的来源（`adapter.py` 从配置取值）。
+    常量会漂：2026-10-09 那次真机读数跑的是 0.2.1-alpha.2，账本上写的却是 0.1.5-rc.1。
+    探测不到（没有 dsh / 非零退出 / 超时 / 读不出）就写 `unavailable`——"读不到"是一个事实，
+    不许拿声明里的旧值冒充（同一条纪律：AGENTS 第 54 条，缺记录就是缺记录）。
+    """
+
+    resolved = dsh_argv() if argv is None else argv
+    if not resolved:
+        return AGENT_VERSION_UNAVAILABLE
+    try:
+        completed = subprocess.run(
+            [*resolved, "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return AGENT_VERSION_UNAVAILABLE
+    if completed.returncode != 0:
+        return AGENT_VERSION_UNAVAILABLE
+    lines = (completed.stdout or "").strip().splitlines()
+    return lines[0].strip() if lines and lines[0].strip() else AGENT_VERSION_UNAVAILABLE
 
 
 def dsh_argv() -> list[str] | None:
@@ -1280,7 +1320,9 @@ def main(argv: list[str] | None = None) -> int:
         ) + chr(10))
         return 0
 
-    build_project(keep=args.keep)
+    # 宿主版本**探测一次**：它要同时进受控项目的配置与结论载荷，两处必须同一个值。
+    agent_version = host_agent_version()
+    build_project(keep=args.keep, agent_version=agent_version)
     controller = PROJECT / "src" / "shop" / "order_controller.py"
 
     # `--keep` 保留上一轮的审计与采集：本轮只认**新增**的那一批（见 new_audit_records 的三个后果）。
@@ -1327,7 +1369,7 @@ def main(argv: list[str] | None = None) -> int:
         "schema_version": SANDBOX_RESULT_SCHEMA_VERSION,
         "phase": 2,
         "agent": "dsh",
-        "agent_version": AGENT_VERSION,
+        "agent_version": agent_version,
         "result": "pass" if (block_ok and allow_ok) else "fail",
         # 环境跳过 ≠ 通过：这个字段是消费者区分"已验证 / 没跑过"的唯一依据
         # （result 的取值集合保持不变，免得动到已验证过的退出码契约）。
