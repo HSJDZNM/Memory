@@ -1168,3 +1168,36 @@ python -m adapters.cli host-version --record                   # ④ 唯一写�
   活体 `--check` 在没有 dsh 的机器上退 0，不能当门禁）；
 - 变异证明（把声明改回 0.1.5-rc.1 → 检查红 → 撤回 → 绿）：
   .tmp/round-10/b/40-mutation-proof.txt。
+
+## 14. `protocol_version` 命名的是什么（2026-10-10 裁定：**不随宿主版本改**）
+
+**问题**：manifest 写着 `protocol_version: dsh-hooks-claude-code@0.1.x`，而宿主已经是 0.2.x
+（桌面端 0.2.0-rc.2 / CLI 0.2.1-alpha.2）。它该跟着改吗？
+
+**裁定：不改。** 两条轴各自独立，混在一起会写出一个**不存在的产品版本**：
+
+| 轴 | 它是什么 | 谁在核对 |
+| --- | --- | --- |
+| `agent_version` | 宿主**产品**版本（`dsh --version`） | `host-version --check` / `--record-check`（§13，漂移即红） |
+| `protocol_version` | 本 Adapter 消费的**载荷方言**的标识 | 没有自动核对——它是声明，改动要走 `approve` + `--record` |
+
+**三条证据**（2026-10-10 实测）：
+
+1. **0.2.x 里没有这个包**：`@deepseek-ai` 目录下已无 `dsh-hooks-*`（§1 表第三行）。
+   把它改成 `dsh-hooks-claude-code@0.2.x`，等于声明一个不存在的产品版本——比留着旧值更假。
+2. **方言没变**：0.2.x 走的进程内插件（§2.3.2）产生的仍是同一套 Claude Code 形状的载荷
+   （`session_id` / `transcript_path` / `cwd` / `hook_event_name` / `tool_name` / `tool_input` /
+   `tool_use_id`）；我们自己给载荷加的两代键由 `hook_payload_version` 单独管（§2.3.3）。
+   0.2.x 换掉的是**插件↔宿主**的 API（`shell.run` → `shell.execute`）——那是插件的宿主要求，
+   不是 Hook 载荷协议：它由运行期守卫（宿主缺 `execute` 即拒绝）与 §2.3.2 记录，不占这条轴。
+3. **改了要付两次代价且没有收益**：`protocol_version` 参与 manifest 哈希，改它必须重跑
+   `approve` 与 `host-version --record`；而所有消费方只是**转发**这个字符串
+   （`matrix` / `wiring --json` / `approved.json`），没有任何判据读它。
+
+**它什么时候才该动**：载荷方言本身变了（宿主不再给这套事件字段、或需要新的字段映射）。
+那时改它同样要走 `approve` + `record`，并在本文件写清新旧方言的差异；**不许**为了
+“看起来跟上了 0.2.x”而改。
+
+**会失败的检查**：`tests/contract/test_adapter_version_declaration.py` 的
+`test_protocol_version_does_not_carry_the_host_version`——声明的 `protocol_version` 里
+不许出现声明的 `agent_version`（两条轴解耦；要打破它必须是一次显式裁定，而不是顺手改一个字符串）。

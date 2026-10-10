@@ -117,6 +117,29 @@ def test_full_enforcement_adapters_declare_a_host_version_probe():
         )
 
 
+def test_protocol_version_does_not_carry_the_host_version():
+    """两条轴解耦：`protocol_version` 命名载荷方言，不是宿主产品版本（2026-10-10 裁定，README §14）。
+
+    混轴的后果是写出一个**不存在的产品版本**：0.2.x 的安装里已经没有 `@deepseek-ai/dsh-hooks-*`
+    包，把它写成 `dsh-hooks-claude-code@0.2.x` 比留着旧值更假。所以这条检查断言"声明的
+    protocol_version 里不出现声明的 agent_version"——要打破它必须是一次显式裁定。
+    """
+
+    seen: list[str] = []
+    for agent_id, document in manifest_documents().items():
+        manifest = AdapterSpec.model_validate(document).to_manifest(
+            path=ADAPTERS_ROOT / agent_id / "manifest.yaml"
+        )
+        seen.append(agent_id)
+        assert manifest.agent_version not in manifest.protocol_version, (
+            agent_id,
+            manifest.agent_version,
+            manifest.protocol_version,
+        )
+    # 对照：这条检查必须真的走过所有声明（空循环不算覆盖）。
+    assert seen, "没有任何 manifest 被检查"
+
+
 def test_the_drift_check_entry_point_exists():
     """检查入口是契约的一部分：CI 没有 dsh 也能证明这个入口在。"""
 

@@ -24,6 +24,10 @@ agent_id: dsh
 agent_version: 0.2.1-alpha.2
 display_name: DeepSeek Harness (dsh)
 protocol: canonical-tool-table   # 复用 Phase 2 的代码工具表（受契约测试保护）
+# protocol_version 命名的是**载荷方言**（0.1.x 起就是这套 Claude Code 形状的事件字段），
+# 不是宿主产品版本：它**不随** agent_version 改（0.2.x 的安装里已经没有 dsh-hooks-* 包；
+# 0.2.x 换掉的是插件↔宿主的 shell API，记在 src/adapters/dsh/README.md §2.3.2 与 §14）。
+# 改动它 = 改声明，同样要走 approve + host-version --record。
 protocol_version: dsh-hooks-claude-code@0.1.x
 
 pre_hook:
