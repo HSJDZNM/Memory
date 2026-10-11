@@ -36,6 +36,11 @@ Phase 4 文档要求"参数绑定授权与人工门禁"。这里刻意不做任�
 - 于是加载期**按 `tool_id` 选择**记录（`select_approval`）：每个工具各持一份放行，互不挤占。
 - 选择**不是判定**：选中的记录随后仍由 `verify_approval` 完整校验（工具 / 主体 / 时效 /
   角色 / 参数模式 / 次数）。选择只回答"该出示哪一张条子"，不改变任何 allow / block 结论。
+- 同一个工具可以有**多条记录**（存与选都支持；`approve` **写**的时候每次只签一条，
+  同一 `approval_id` 重签=取代，要按「族」分签就手写这份存储），只要 `approval_id` 不重复。
+  选择因此先按**形状**排：本次请求的参数能对上模式的那张排在前面（对不上的排后面，
+  但**不是不选中**——出示哪张与判定成立与否是两件事）；形状一档之后仍按
+  "未过期 > 主体相符 > 绑定档 > `approval_id` 升序"排。
 - 没有该工具的记录时**不拿别人的条子顶替**：调用方据此得到 `approval_required`
   （"这个工具没有条子"），而不是把人引向"我的条子写错了"（`approval_invalid`）。
 """
@@ -367,6 +372,7 @@ def select_approval(
     action_id: Optional[str] = None,
     subject: Optional[str] = None,
     now: Optional[datetime] = None,
+    params: Optional[Mapping[str, Any]] = None,
 ) -> Optional[ApprovalRecord]:
     """按当前动作**选出该出示哪一张条子**；没有这个工具的记录就返回 None。
 
@@ -378,17 +384,24 @@ def select_approval(
     拒绝理由——"给 run_code 签的条子"和"pwsh 没有条子"是两件不同的事，前者会把人引向
     "我的条子写错了"，后者才是事实。
 
-    规则二（确定地选一张）：候选按下面的偏好升序排列，取第一条。四档都是"哪个理由更贴切"，
-    没有任何一档让判定更容易通过。
+    规则二（确定地选一张）：候选按下面的偏好升序排列，取第一条。**每一档都只回答
+    "该出示哪一张"，没有任何一档让判定更容易通过**——被选中的那张随后照样要过
+    `verify_approval` 的每一关，选错条子的后果是这次被拒，不是被放行。
 
     | 序 | 偏好 | 为什么 |
     | --- | --- | --- |
+    | 0 | **参数形状对得上**（传了 `params` 时） | 同一个工具可以有多张条子（各自一个命令族）。不带这一档，选中的永远是 `approval_id` 最小的那张，第二族就**永远出示不到**——表现为"白名单里明明允许的命令却被拒"。它排在"未过期"之前：一张**对不上形状的**有效条子只会给出误导性的拒绝理由 |
     | 1 | 未过期 | 过期的条子必然被拒；让它排在后面只为了理由说的是"参数不匹配"而不是"过期" |
     | 2 | 主体相等 | 同上：跨主体的条子必然被拒，但"主体不符"比"参数不符"更接近真相 |
     | 3 | 绑定档：本次 action_id 的单次绑定 > 模式化 > 其它单次绑定 | 越具体越该被出示；陈旧的单次绑定只会得到"绑的是另一次调用" |
     | 4 | `approval_id` 升序 | 确定性：同样的输入必须选出同一张条子（AGENTS 第 5 条的口径） |
 
-    主体未知（请求没有主体）时第 2 档对所有候选同值，不影响排序。
+    主体未知（请求没有主体）时第 2 档对所有候选同值，不影响排序；`params` 缺省（旧调用方）
+    时第 0 档对所有候选同值，于是排序与加这一档之前**逐位相同**（向后兼容，不是新语义）。
+
+    形状对不上的候选**仍然留在候选集里**（排在第 4 档之后按 `approval_id` 定序），
+    于是"这个工具只有一张对不上的条子"仍然得到 `approval_invalid` + 具体的参数不匹配理由，
+    而"这个工具压根没有条子"仍然得到 `None` → `approval_required`。两件事依旧分得开。
     """
 
     moment = now or utc_now()
@@ -396,12 +409,34 @@ def select_approval(
     if not candidates:
         return None
 
-    def rank(record: ApprovalRecord) -> Tuple[int, int, int, str]:
+    def shape_matches(record: ApprovalRecord) -> bool:
+        """本次请求的参数是否落在这一张条子声明的模式里（只读判断，不抛错、不判定）。
+
+        这不是 `verify_approval` 的替代品：次数、时效、主体、角色一概不看，
+        只看"参数形状像不像"。缺参数 / 参数没声明 / 取值类型不支持模式匹配都算"对不上"——
+        那是排序的输入，不是拒绝的理由（拒绝由 `verify_approval` 给出）。
+        """
+
+        if params is None:
+            return False
+        if set(params) != set(record.param_patterns):
+            return False
+        for name, pattern in record.param_patterns.items():
+            try:
+                text = pattern_text(params[name], name=name)
+            except ApprovalError:
+                return False
+            if re.fullmatch(pattern, text) is None:
+                return False
+        return True
+
+    def rank(record: ApprovalRecord) -> Tuple[int, int, int, int, str]:
         if record.binding is ApprovalBinding.ACTION:
             binding_rank = 0 if (action_id is not None and record.action_id == action_id) else 2
         else:
             binding_rank = 1
         return (
+            0 if shape_matches(record) else 1,
             0 if record.expires_at > moment else 1,
             0 if (subject is not None and record.subject == subject) else 1,
             binding_rank,

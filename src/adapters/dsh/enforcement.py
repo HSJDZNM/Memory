@@ -225,6 +225,10 @@ class EnforcementBridge:
             tool_id=request.tool_id,
             action_id=request.action_id,
             subject=request.subject,
+            # 同一个工具可以有多张条子（各管一个命令族）：把本次的规范化参数交给选择器，
+            # 它才能把"形状对得上"的那张排在前面。**这不是判定**——选中的那张随后照样
+            # 逐个参数过 verify_approval；这里只看"像不像"，不看次数/时效/主体。
+            params={item.name: item.value for item in request.params},
         )
 
     # ------------------------------------------------------------------ 解析

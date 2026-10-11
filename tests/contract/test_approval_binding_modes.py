@@ -104,9 +104,7 @@ def run_pre(
     )
     ledger = EnforcementLedger(paths.ledger)
     audit = sink if sink is not None else FileAuditSink(paths.audit, workspace=paths.workspace)
-    outcome = pre_execute(
-        request, registry=registry, ledger=ledger, sink=audit, approval=approval
-    )
+    outcome = pre_execute(request, registry=registry, ledger=ledger, sink=audit, approval=approval)
     return outcome, request
 
 
@@ -175,7 +173,9 @@ def test_pattern_approval_lets_the_same_command_run_under_a_new_call_id(enforcem
     paths = EnforcementPaths(enforcement_paths.root / "pattern")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
-    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=3)
+    approval = pattern_approval(
+        first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=3
+    )
 
     one, _ = run_pre(paths, "exec.shell", shell_params(), approval=approval, action_id="call-1")
     two, _ = run_pre(paths, "exec.shell", shell_params(), approval=approval, action_id="call-2")
@@ -190,7 +190,9 @@ def test_pattern_approval_rejects_a_command_that_does_not_match_the_pattern(enfo
     paths = EnforcementPaths(enforcement_paths.root / "mismatch")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
-    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=3)
+    approval = pattern_approval(
+        first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=3
+    )
 
     # echo hi 本身在白名单内（^echo( .*)?$），但它不匹配审批模式
     outcome, _ = run_pre(
@@ -206,15 +208,17 @@ def test_pattern_approval_stops_at_the_declared_use_limit(enforcement_paths):
     paths = EnforcementPaths(enforcement_paths.root / "quota")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
-    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=2)
+    approval = pattern_approval(
+        first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=2
+    )
 
     for index in (1, 2):
         allowed, _ = run_pre(
             paths, "exec.shell", shell_params(), approval=approval, action_id=f"call-{index}"
         )
-        assert allowed.decision.decision is not Decision.BLOCK, (
-            allowed.decision.check("approval").detail
-        )
+        assert allowed.decision.decision is not Decision.BLOCK, allowed.decision.check(
+            "approval"
+        ).detail
 
     exhausted, _ = run_pre(
         paths, "exec.shell", shell_params(), approval=approval, action_id="call-3"
@@ -240,9 +244,7 @@ def test_pattern_approval_must_cover_every_request_parameter(enforcement_paths):
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
     partial = pattern_approval(first, patterns={"command": COMMAND_PATTERN}, max_uses=3)
 
-    outcome, _ = run_pre(
-        paths, "exec.shell", shell_params(), approval=partial, action_id="call-1"
-    )
+    outcome, _ = run_pre(paths, "exec.shell", shell_params(), approval=partial, action_id="call-1")
 
     assert outcome.decision.decision is Decision.BLOCK
     assert outcome.decision.reason_code is ReasonCode.APPROVAL_INVALID
@@ -272,7 +274,9 @@ def test_expired_pattern_approval_is_refused(enforcement_paths):
     paths = EnforcementPaths(enforcement_paths.root / "expired")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
-    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, expired=True)
+    approval = pattern_approval(
+        first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, expired=True
+    )
 
     outcome, _ = run_pre(paths, "exec.shell", shell_params(), approval=approval, action_id="call-1")
 
@@ -287,7 +291,9 @@ def test_the_same_action_id_can_never_run_twice_even_with_pattern_approval(enfor
     paths = EnforcementPaths(enforcement_paths.root / "replay")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
-    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=5)
+    approval = pattern_approval(
+        first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=5
+    )
 
     one, _ = run_pre(paths, "exec.shell", shell_params(), approval=approval, action_id="call-1")
     assert one.decision.decision is not Decision.BLOCK
@@ -304,7 +310,9 @@ def test_approval_quota_is_returned_when_the_audit_is_unwritable(enforcement_pat
     paths = EnforcementPaths(enforcement_paths.root / "release")
     registry = paths.registry_object()
     first = make_action(registry, paths, "exec.shell", shell_params(), roles=("owner",))
-    approval = pattern_approval(first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=1)
+    approval = pattern_approval(
+        first, patterns={"command": COMMAND_PATTERN, "description": ".*"}, max_uses=1
+    )
 
     blocked, _ = run_pre(
         paths, "exec.shell", shell_params(), approval=approval, sink=NullAuditSink()
@@ -315,9 +323,9 @@ def test_approval_quota_is_returned_when_the_audit_is_unwritable(enforcement_pat
     assert ledger.of_kind("approval_use_released"), "审计不可写时必须归还审批额度"
 
     retried, _ = run_pre(paths, "exec.shell", shell_params(), approval=approval)
-    assert retried.decision.decision is not Decision.BLOCK, (
-        retried.decision.check("approval_use").detail
-    )
+    assert retried.decision.decision is not Decision.BLOCK, retried.decision.check(
+        "approval_use"
+    ).detail
     assert retried.decision.check("approval_use").detail.startswith("第 1/1 次")
 
 
@@ -520,7 +528,9 @@ def test_selection_is_deterministic_and_prefers_the_usable_ticket(tmp_root):
     """
 
     dead = record_for("exec.pwsh", approval_id="app-dead", expires_in=-60)
-    stale_action = record_for("exec.pwsh", approval_id="app-stale", binding="action", action_id="other")
+    stale_action = record_for(
+        "exec.pwsh", approval_id="app-stale", binding="action", action_id="other"
+    )
     pattern = record_for("exec.pwsh", approval_id="app-pattern")
     exact = record_for("exec.pwsh", approval_id="app-exact", binding="action", action_id="act-7")
 
@@ -547,14 +557,96 @@ def test_selection_is_deterministic_and_prefers_the_usable_ticket(tmp_root):
     assert picked([theirs, mine], tool_id="exec.pwsh", subject="local-user") == "app-mine"
 
 
+def test_selection_picks_the_record_whose_shape_matches_the_request(tmp_root):
+    """② 同一个工具的多张条子（每张管一个命令族）：按**本次参数形状**出示。
+
+    没有这一档时，选中的永远是 `approval_id` 最小的那张，第二族**永远出示不到**——
+    表现为"白名单里明明允许的命令却被拒（approval_invalid，理由是参数不匹配）"。
+    2026-10-11 的 GUI 实测就是这个形态：受治侧 `exec.pwsh` 只有一张
+    `command=^python -m pytest( .*)?$` 的条子，于是同一会话里的 `git diff` 被拒。
+    """
+
+    # 有效期放宽（夹具把 granted_at 放在"现在 + expires_in - 1 秒"），
+    # 好让下面那次 verify 能把判定时刻显式挪进签发之后的窗口里。
+    ttl = 6000
+    readonly = record_for(
+        "exec.pwsh",
+        approval_id="app-readonly",
+        # 故意让"只读族"的 approval_id 排在前面：不带参数形状这一档时，选中的就会是它。
+        patterns={"command": "^git (status|diff)( .*)?$", "description": ".*"},
+        expires_in=ttl,
+    )
+    tests = record_for(
+        "exec.pwsh",
+        approval_id="app-tests",
+        patterns={"command": "^python -m pytest( .*)?$", "description": ".*"},
+        expires_in=ttl,
+    )
+    records = [readonly, tests]
+
+    def picked(**kwargs) -> str | None:
+        selected = select_approval(records, tool_id="exec.pwsh", **kwargs)
+        return None if selected is None else selected.approval_id
+
+    assert picked(params={"command": "python -m pytest -q", "description": "run"}) == "app-tests"
+    assert picked(params={"command": "git diff", "description": "show"}) == "app-readonly"
+    # 族外命令：两张都对不上 → 落在后面的排序里，出示的仍是确定的那一张（第二档 approval_id 升序）
+    assert picked(params={"command": "rm -rf src", "description": "nope"}) == "app-readonly"
+    # 参数形状不匹配的候选**不是被跳过**，而是排在后面：它随后仍由 verify_approval 给出
+    # "参数不匹配"这条具体理由（而不是含糊的"没有条子"）。这条用例钉住"选择 ≠ 授权"。
+    from enforcement.approvals import verify_approval
+
+    selected = select_approval(records, tool_id="exec.pwsh")
+    with pytest.raises(ApprovalError) as error:
+        verify_approval(
+            selected,
+            action_hash="sha256:h",
+            action_id="act-1",
+            tool_id="exec.pwsh",
+            subject="local-user",
+            approval_roles=("reviewer",),
+            used=False,
+            params={"command": "rm -rf src", "description": "nope"},
+            uses=0,
+            # 判定时刻取在窗口 [granted_at, expires_at) 的中点：要考的是**参数模式**那一关，
+            # 不是"签发时间在未来 / 已过期"。用记录自己的字段算，夹具的偏移量怎么改都不影响。
+            now=selected.granted_at + (selected.expires_at - selected.granted_at) / 2,
+        )
+    assert "'command'" in str(error.value)
+    assert "不匹配审批模式" in str(error.value)
+
+
+def test_selection_without_params_keeps_the_old_order_exactly(tmp_root):
+    """③ 旧调用方（不给 params）的排序逐位不变：这一档是**加**在最前面，不是重排。
+
+    形状档在 `params is None` 时对所有候选同值，于是"未过期 > 主体相符 > 绑定档 >
+    `approval_id` 升序"的既有口径一个字都没动——旧调用方不该因为新能力而换一张条子。
+    """
+
+    dead = record_for("exec.pwsh", approval_id="app-dead", expires_in=-60)
+    pattern = record_for("exec.pwsh", approval_id="app-pattern")
+    other_subject = record_for("exec.pwsh", approval_id="app-theirs", subject="someone-else")
+    exact = record_for("exec.pwsh", approval_id="app-exact", binding="action", action_id="act-7")
+
+    def picked(records, **kwargs) -> str | None:
+        selected = select_approval(records, tool_id="exec.pwsh", **kwargs)
+        return None if selected is None else selected.approval_id
+
+    assert picked([dead, pattern]) == "app-pattern"
+    assert picked([other_subject, pattern], subject="local-user") == "app-pattern"
+    assert picked([pattern, exact], action_id="act-7") == "app-exact"
+    assert (
+        picked([pattern, exact], params={"command": "python -m pytest -q", "description": "d"})
+        == "app-pattern"
+    )
+
+
 def test_selection_does_not_make_an_unusable_record_usable(tmp_root):
     """选中 ≠ 授权：挑出来的那张条子照样要过 verify_approval 的每一关。"""
 
     from enforcement.approvals import verify_approval
 
-    record = record_for(
-        "exec.pwsh", approval_id="app-wrong-subject", subject="someone-else"
-    )
+    record = record_for("exec.pwsh", approval_id="app-wrong-subject", subject="someone-else")
     path = write_store(tmp_root / "store.json", record)
     selected = select_approval(load_approvals(path), tool_id="exec.pwsh", subject="local-user")
 

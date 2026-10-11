@@ -480,6 +480,9 @@ def _prepare(args: argparse.Namespace, repo: Path):
             tool_id=request.tool_id,
             action_id=request.action_id,
             subject=request.subject,
+            # 同一个工具可以有多张条子（各管一个命令族）：带上本次规范化参数，
+            # 让"形状对得上"的那张排在前面（选择 ≠ 授权，判定仍在 pre-check 里）。
+            params={item.name: item.value for item in request.params},
         )
     return (
         loaded.registry, request, spec, decision, error, detail,
