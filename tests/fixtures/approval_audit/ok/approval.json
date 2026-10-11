@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.2",
+  "records": [
+    {
+      "action_hash": null,
+      "action_id": null,
+      "approval_id": "app-tests",
+      "binding": "pattern",
+      "expires_at": "2027-01-01T00:00:00Z",
+      "granted_at": "2026-01-01T00:00:00Z",
+      "granted_by": "reviewer-1",
+      "granted_by_roles": [
+        "reviewer"
+      ],
+      "max_uses": 100,
+      "note": "验收夹具：只有测试族",
+      "param_patterns": {
+        "command": "^python -m pytest( .*)?$",
+        "description": ".*"
+      },
+      "schema_version": "1.2",
+      "subject": "local-user",
+      "tool_id": "exec.pwsh"
+    }
+  ]
+}

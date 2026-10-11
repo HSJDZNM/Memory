@@ -1,0 +1,116 @@
+registry_schema_version: '1.0'
+version: 1
+defaults:
+  timeout_ms: 5000
+  grant_ttl_seconds: 60
+  max_grant_ttl_seconds: 300
+permissions:
+  repo.read: 读取仓库内容（只读动作）
+  repo.write: 修改仓库内容（可逆写入）
+  repo.approve: 审批高风险动作（与执行权分离，不能自己批自己）
+  shell.exec: 执行命令或代码（高权限执行）
+  sandbox.escalate: 提升沙箱权限（例如 danger-full-access）
+roles:
+  developer:
+  - repo.read
+  - repo.write
+  reviewer:
+  - repo.read
+  - repo.write
+  - repo.approve
+  owner:
+  - repo.read
+  - repo.write
+  - repo.approve
+  - shell.exec
+  - sandbox.escalate
+  governed-dev:
+  - repo.read
+  - repo.write
+  - shell.exec
+approvals:
+  require_role: reviewer
+tools:
+- id: exec.pwsh
+  title: PowerShell 命令
+  agent: dsh
+  tool_name: pwsh
+  schema_version: '1.0'
+  risk: privileged_execution
+  effect: process
+  driver: shell_command
+  shell:
+  - pwsh
+  - -NoLogo
+  - -NoProfile
+  - -NonInteractive
+  - -Command
+  command_param: command
+  required_permissions:
+  - shell.exec
+  approval: required
+  post_checks:
+  - exit_code_zero
+  timeout_ms: 60000
+  rate_limit:
+    max_calls: 20
+    window_seconds: 60
+    max_failures: 3
+    breaker_seconds: 300
+  allowed_commands:
+  - ^python -m unittest( .*)?$
+  - ^uv run python -m pytest( .*)?$
+  - ^pytest( .*)?$
+  - ^python scripts/[A-Za-z0-9_./-]+[.]py( .*)?$
+  - ^git (status|diff|log|show|ls-files|rev-parse)( .*)?$
+  - ^Get-Content( .*)?$
+  - ^Select-String( .*)?$
+  - ^Test-Path( .*)?$
+  - ^python -m pytest( .*)?$
+  - ^uv run python -m pytest( .*)?$
+  - ^python tools/[A-Za-z0-9_./-]+\.py( .*)?$
+  - ^python -m (policy\.check|retrieval\.cli|enforcement\.cli|adapters\.dsh\.hooks)(
+    .*)?$
+  - ^git (status|diff|log|show)( .*)?$
+  - ^Write-Output( .*)?$
+  - ^Get-ChildItem( .*)?$
+  forbidden_command_fragments:
+  - ../
+  - ..\
+  - --output
+  - --ext-diff
+  - --no-index
+  parameters:
+  - name: command
+    type: string
+    required: true
+    max_chars: 4000
+  - name: description
+    type: string
+    required: true
+    max_chars: 400
+  - name: timeoutMs
+    type: integer
+    description: 本次调用的超时预算（毫秒）：缺省用注册表 timeout_ms，**超过它一律拒绝**（驱动层消费）
+  - name: workdir
+    type: path
+    path_scope: workspace
+    path_kind: directory
+    description: 命令的工作目录（受控工作区内、必须是已存在的目录，越界或不存在的目录都拒绝）：驱动层作为进程 cwd 使用
+  - name: run_in_background
+    type: boolean
+    description: 后台执行：true 一律**显式拒绝**（后台进程没有退出码，事后核对会退化成修复，也没有进程树回收与回滚）——不是静默忽略
+  - name: sandbox_permissions
+    type: string
+    enum:
+    - workspace-write
+    - danger-full-access
+    escalating_values:
+    - danger-full-access
+    requires_permission: sandbox.escalate
+    description: 提权参数：取值会额外要求 sandbox.escalate 权限
+  - name: justification
+    type: string
+    max_chars: 1000
+  notes: 白名单只做完整匹配；此外命令里出现分号 / 管道 / 命令替换 / 重定向 / 换行 一律结构性阻断（command_composition_blocked）——只靠
+    ( .*)? 的正则会被 " ; 任意命令" 绕过。 需要组合命令时必须先改这里、重新审核，并说明为什么安全
