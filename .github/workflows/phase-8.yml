@@ -32,7 +32,7 @@ jobs:
       - name: Install uv
         # 第三方 action 锁到完整 commit SHA：可变 tag 可以被重新指向，
         # 供应链上等于"每次 CI 跑的是别人此刻的内容"。（actions/* 是平台方，按 vN 引用。）
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
           # 缓存失效的键默认是 **/uv.lock，而本仓库**故意没有** uv.lock（见下面的注释）：
