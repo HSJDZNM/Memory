@@ -26,6 +26,7 @@ from adapters.wiring import (
     ToolObservationStatus,
     WiringError,
     WiringStatus,
+    _config_audit_target,
     _names_a_specific_file,
     build_reading_context,
     combine_status,
@@ -46,7 +47,9 @@ POLICY_COMMAND_WITHOUT_AUDIT = (
     "python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml "
     "--hooks-config .policy/hooks.json"
 )
-ADAPTER_CONFIG = "project: demo\ntimeout_ms: 5000\naudit_log: .policy/audit.jsonl\n"
+# audit_log 写的是**相对配置文件所在目录**的名字（真机 .policy/dsh-adapter.yaml 就是
+# `audit_log: audit.jsonl`）：运行期 load_config 按 base_dir=config_path.parent 解析它。
+ADAPTER_CONFIG = "project: demo\ntimeout_ms: 5000\naudit_log: audit.jsonl\n"
 # 不带 audit_log 的变体：用来测"接线成立且预算可证，但没有声明审计目标"。
 ADAPTER_CONFIG_WITHOUT_AUDIT = "project: demo\ntimeout_ms: 5000\n"
 
@@ -433,8 +436,131 @@ def test_audit_log_from_adapter_config_is_used(tmp_root: Path) -> None:
     report = probe(home)
 
     # 声明了目标但文件不存在：这正是 audit_never_written（而不是"没有目标"）。
+    # 目标按**配置文件所在目录**解析：<profile>/.policy/dsh-adapter.yaml + audit.jsonl。
     assert report.channels[0].status is ChannelStatus.AUDIT_NEVER_WRITTEN
     assert report.channels[0].audit_path == "profiles/desktop/.policy/audit.jsonl"
+
+
+def test_config_audit_target_matches_the_runtime_loader(tmp_root: Path) -> None:
+    """配置里 `audit_log` 的解析必须与运行期 load_config **逐字同口径**（04 号 5.72）。
+
+    运行期唯一的规则在 `adapters/dsh/adapter.py`：`base_dir=config_path.parent` +
+    `_as_path`。这条用例让两侧各算一次同一个相对名字，断言得到同一个绝对路径；
+    并钉住"修前口径"（按 projectDir 拼）确实得到另一个答案——否则这个回归就测不出东西。
+    """
+
+    from adapters.dsh.adapter import load_config
+
+    project = tmp_root / "demo"
+    project.mkdir()
+    config = write_dsh_config(
+        tmp_root / "cfg" / "dsh-adapter.yaml",
+        project_root=project,
+        rules=POLICIES_DIR,
+        audit_log="audit.jsonl",
+    )
+
+    runtime_target = load_config(config).audit_log
+
+    assert runtime_target is not None
+    assert runtime_target == (config.parent / "audit.jsonl").resolve()
+    assert _config_audit_target(config, "audit.jsonl") == runtime_target
+    # 修前 wiring 的候选基准是 bridge.projectDir：它必须与运行期答案不同，否则夹具没抓住缺陷。
+    assert (project / "audit.jsonl").resolve() != runtime_target
+
+
+def desktop_layout(tmp_root: Path) -> tuple[Path, Path]:
+    """复现本机**真实桌面通道**的布局（04 号 5.72 / A3 报告 §10）：
+
+    - profile patch 在 profile 目录里，桥把 projectDir 指到**另一个**受治项目；
+    - 桥命令**不带 --audit**（真机 desktop profile 就是这样）：运行期于是采用 adapter
+      配置里的 audit_log，而不是 hooks.json 里那条命令的 --audit；
+    - adapter 配置在 `<受治项目>/.policy/` 下，写 `audit_log: audit.jsonl`——运行期
+      load_config 按**配置文件所在目录**解析 ⇒ `<受治项目>/.policy/audit.jsonl`。
+
+    返回 `(home, 受治项目目录)`。修前 wiring 按 projectDir 把它解析成
+    `<受治项目>/audit.jsonl`（不存在），把真实账本报成 never_written。
+    """
+
+    home = make_home(tmp_root)
+    profile = make_profile(home, "desktop")
+    project = tmp_root / "Comparison-test" / "Governance"
+    project.mkdir(parents=True, exist_ok=True)
+    _write(
+        profile / "cordis.patch.yml",
+        in_process_patch(project, command=POLICY_COMMAND_WITHOUT_AUDIT),
+    )
+    # 真机 hooks.json 的那条命令带 --audit（它只服务运行期接线自检）；in-process 桥真正
+    # 执行的是 patch 里的 command（不带 --audit）——留痕事实因此只能从 audit_log 读。
+    _write(project / ".policy" / "hooks.json", json.dumps(policy_hooks(POLICY_COMMAND)))
+    _write(project / ".policy" / "dsh-adapter.yaml", ADAPTER_CONFIG)
+    return home, project
+
+
+def test_desktop_layout_reads_the_runtime_ledger(tmp_root: Path) -> None:
+    """真机布局必须读到运行期账本本身（5.72 的正例）。"""
+
+    home, project = desktop_layout(tmp_root)
+    _write(
+        project / ".policy" / "audit.jsonl",
+        audit_line("2026-09-25T11:58:00Z")
+        + audit_line("2026-09-25T11:59:00Z")
+        + audit_line("2026-09-25T11:59:30Z"),
+    )
+    # 诱饵：旧口径（projectDir/audit.jsonl）的位置放一份**更旧**的账本。按错的基准解析
+    # 会读到它（记录 1 条、时间更旧）；断言读数来自 .policy 下那份。
+    _write(project / "audit.jsonl", audit_line("2026-09-01T00:00:00Z"))
+
+    report = probe(home)
+    channel = report.channels[0]
+
+    assert channel.wiring_status is WiringStatus.WIRED
+    assert channel.freshness_status is FreshnessStatus.FRESH
+    assert channel.status is ChannelStatus.WIRED
+    assert channel.audit_records == 3
+    assert channel.last_record_at == "2026-09-25T11:59:30Z"
+    assert report.result == "pass", report.failures
+
+
+def test_desktop_layout_with_a_missing_ledger_is_never_written(tmp_root: Path) -> None:
+    """审计目标**确实不存在**时仍是 never_written，不得把"读不到"当新鲜（5.72 的负例）。
+
+    这里只放旧口径位置的诱饵账本：如果实现回落到 projectDir，就会把它读成 fresh——
+    那是 5.72 的反方向错误，正是这条用例要挡住的东西。
+    """
+
+    home, project = desktop_layout(tmp_root)
+    _write(project / "audit.jsonl", audit_line("2026-09-25T11:59:00Z"))  # 诱饵，不是运行时账本
+
+    report = probe(home)
+    channel = report.channels[0]
+
+    assert channel.freshness_status is FreshnessStatus.NEVER_WRITTEN
+    assert channel.status is ChannelStatus.AUDIT_NEVER_WRITTEN
+    assert channel.audit_records == 0
+    assert channel.ok is False
+    assert "审计目标不存在" in channel.detail
+
+
+def test_missing_adapter_config_is_unresolved_not_fresh(tmp_root: Path) -> None:
+    """配置读不到 ⇒ 审计目标解析不出：显式不可用，不回落到 projectDir 猜（也不当新鲜）。"""
+
+    home = make_home(tmp_root)
+    command = POLICY_COMMAND_WITHOUT_AUDIT
+    profile = make_profile(home, "desktop")
+    _write(profile / "cordis.patch.yml", in_process_patch(profile, command=command))
+    _write(profile / ".policy" / "hooks.json", json.dumps(policy_hooks(command)))
+    # adapter 配置不存在；旧口径位置放一份新鲜账本作为诱饵。
+    _write(profile / "audit.jsonl", audit_line("2026-09-25T11:59:00Z"))
+
+    report = probe(home)
+    channel = report.channels[0]
+
+    assert channel.freshness_status is FreshnessStatus.NO_AUDIT_TARGET
+    assert channel.status is ChannelStatus.TIMEOUT_BUDGET_UNKNOWN
+    assert channel.audit_path is None
+    # 读不到的原因必须写出来："取不到"不等于"没声明过"。
+    assert "audit_log 取不到" in channel.detail
 
 
 def test_audit_never_written_when_file_is_missing(tmp_root: Path) -> None:

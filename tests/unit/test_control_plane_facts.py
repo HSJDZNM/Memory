@@ -871,7 +871,8 @@ def test_real_rows_cover_the_tools_with_governed_hits():
 
     另外钉住两条**已知洞**不许被写成已覆盖：run_code 必须有显式 declared_uncovered
     （代码/命令里的文件写入不受 path_scope 约束）、desktop-entry-points 四行都必须是
-    declared_uncovered + 到期日（接线成立但从未留痕）。
+    declared_uncovered + 到期日（接线与留痕都成立，但账本里没有可归因到本通道、覆盖当前
+    会话的受治理判定——见 validation/channel-coverage.yaml 的文件头与 04 号 5.72）。
     """
 
     module = _load_tool()

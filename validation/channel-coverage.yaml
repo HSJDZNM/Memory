@@ -217,16 +217,21 @@ rows:
     expires_at: null
   # ---------------------------------------------------------------- 桌面通道（desktop-entry-points）
   #
-  # 2026-10-18 接线读数（python -m adapters.cli wiring）：dsh:desktop 的 wiring_status=wired
-  # （策略桥挂在 profile 的 cordis.patch.yml 里）；wiring 报 freshness_status=never_written，
-  # 但这是**审计目标解析错位**，不是「审计目标不存在」：wiring 按 bridge.projectDir/profile 找
-  # <受治项目>/audit.jsonl，而运行时 audit_log 按配置文件目录解析、实际落在
-  # <受治项目>/.policy/audit.jsonl（真实存在，15,421 条，含 governed=true 127 条）。
-  # 本轮只登记不修（04 号 5.72）。**这四行仍按 declared_uncovered 记账**：账本里没有可归因到
-  # 本通道、覆盖当前会话的受治理判定（本会话 cwd 不在受治项目内，记录为 session_out_of_scope）
-  # ——「桥装上了」不等于「已经管住」。到期日与 adapters/wiring-scope.yaml 的声明同一天
-  # （2026-12-31），到时必须续期或改判。mode 取该工具在受控通道里的主治理阶段
-  # （edit / write: policy；run_code / pwsh: delegated）。
+  # 2026-10-18 接线 / 留痕读数（python -m adapters.cli wiring）：dsh:desktop 的
+  # wiring_status=wired（策略桥挂在 profile 的 cordis.patch.yml 里）；审计目标解析修好
+  # 之后（04 号 5.72）freshness_status=fresh——wiring 与运行期同口径：运行时 audit_log 按
+  # **配置文件所在目录**解析，实际账本是 <受治项目>/.policy/audit.jsonl（2026-10-18 读数
+  # 17,674 条时间戳记录，最后一条 2026-10-18T05:40:08Z；另有 202 条 Phase 4 执行链记录没有
+  # timestamp 字段，wiring 按既有口径记为 bad_lines——结论按其余记录算）。
+  # 修前 wiring 把同一个 audit_log 按 bridge.projectDir/profile 目录解析、找
+  # <受治项目>/audit.jsonl（不存在）⇒ 系统性报 never_written；那是**解析 bug**，不是
+  # 「从未留痕」。
+  # **这四行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理
+  # 判定——governed=true 记录 127 条且**截止 2026-10-11T18:53:33Z**；当前桌面入口会话的
+  # cwd 不在受治项目内，判定记录为 reason_code=session_out_of_scope（8,496 条）——那是
+  # 「没管」，不是受治理判定。「桥装上了、账本也读到了」不等于「已经管住」。到期日与
+  # adapters/wiring-scope.yaml 的声明同一天（2026-12-31），到时必须续期或改判。mode 取该
+  # 工具在受控通道里的主治理阶段（edit / write: policy；run_code / pwsh: delegated）。
 
   - channel: desktop-entry-points
     tool: edit
@@ -234,7 +239,7 @@ rows:
     coverage: declared_uncovered
     check_id: null
     owner: host
-    reason: 接线成立（wiring_status=wired）；wiring 报留痕 never_written，但这是**审计目标解析错位**（04 号 5.72）：它找 <受治项目>/audit.jsonl，运行时账本实际落在 <受治项目>/.policy/audit.jsonl（15,421 条，含 governed=true 127 条）。**本行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理判定（本会话 cwd 不在受治项目内，记录为 session_out_of_scope）——「桥装上了」不等于「已经管住」。没有任何一条受治理判定可证明 Phase 1 规则引擎在桌面通道上跑过（覆盖尚未建立）。
+    reason: 接线成立（wiring_status=wired）；审计目标解析修好后留痕也读得到（freshness_status=fresh：<受治项目>/.policy/audit.jsonl，2026-10-18 读数 17,674 条 / 最后一条 2026-10-18T05:40:08Z）。**本行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理判定——governed=true 记录 127 条且截止 2026-10-11T18:53:33Z（edit 23 / write 4 / run_code 93 / pwsh 7）；当前桌面入口会话的 cwd 不在受治项目内，判定记为 reason_code=session_out_of_scope（8,496 条）——那是「没管」，不是受治理判定。没有任何一条受治理判定可证明 Phase 1 规则引擎在桌面通道上跑过（覆盖尚未建立）。
     expires_at: "2026-12-31"
 
   - channel: desktop-entry-points
@@ -243,7 +248,7 @@ rows:
     coverage: declared_uncovered
     check_id: null
     owner: host
-    reason: 接线成立（wiring_status=wired）；wiring 报留痕 never_written，但这是**审计目标解析错位**（04 号 5.72）：它找 <受治项目>/audit.jsonl，运行时账本实际落在 <受治项目>/.policy/audit.jsonl（15,421 条，含 governed=true 127 条）。**本行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理判定（本会话 cwd 不在受治项目内，记录为 session_out_of_scope）——「桥装上了」不等于「已经管住」。没有任何一条受治理判定可证明 Phase 1 规则引擎在桌面通道上跑过（覆盖尚未建立）。
+    reason: 接线成立（wiring_status=wired）；审计目标解析修好后留痕也读得到（freshness_status=fresh：<受治项目>/.policy/audit.jsonl，2026-10-18 读数 17,674 条 / 最后一条 2026-10-18T05:40:08Z）。**本行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理判定——governed=true 记录 127 条且截止 2026-10-11T18:53:33Z（edit 23 / write 4 / run_code 93 / pwsh 7）；当前桌面入口会话的 cwd 不在受治项目内，判定记为 reason_code=session_out_of_scope（8,496 条）——那是「没管」，不是受治理判定。没有任何一条受治理判定可证明 Phase 1 规则引擎在桌面通道上跑过（覆盖尚未建立）。
     expires_at: "2026-12-31"
 
   - channel: desktop-entry-points
@@ -252,7 +257,7 @@ rows:
     coverage: declared_uncovered
     check_id: null
     owner: host
-    reason: 接线成立（wiring_status=wired）；wiring 报留痕 never_written，但这是**审计目标解析错位**（04 号 5.72）：它找 <受治项目>/audit.jsonl，运行时账本实际落在 <受治项目>/.policy/audit.jsonl（15,421 条，含 governed=true 127 条）。**本行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理判定（本会话 cwd 不在受治项目内，记录为 session_out_of_scope）——「桥装上了」不等于「已经管住」。没有一条 allow_delegated 记录可证明 Phase 4 的委派 pre-check 在桌面通道上跑过（覆盖尚未建立），别把「桥装上了」读成「已经管住了 run_code」。
+    reason: 接线成立（wiring_status=wired）；审计目标解析修好后留痕也读得到（freshness_status=fresh：<受治项目>/.policy/audit.jsonl，2026-10-18 读数 17,674 条 / 最后一条 2026-10-18T05:40:08Z）。**本行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理判定——governed=true 记录 127 条且截止 2026-10-11T18:53:33Z（edit 23 / write 4 / run_code 93 / pwsh 7）；当前桌面入口会话的 cwd 不在受治项目内，判定记为 reason_code=session_out_of_scope（8,496 条）——那是「没管」，不是受治理判定。没有一条 allow_delegated 记录可证明 Phase 4 的委派 pre-check 在桌面通道上跑过（覆盖尚未建立），别把「桥装上了」读成「已经管住了 run_code」。
     expires_at: "2026-12-31"
 
   - channel: desktop-entry-points
@@ -261,5 +266,5 @@ rows:
     coverage: declared_uncovered
     check_id: null
     owner: host
-    reason: 接线成立（wiring_status=wired）；wiring 报留痕 never_written，但这是**审计目标解析错位**（04 号 5.72）：它找 <受治项目>/audit.jsonl，运行时账本实际落在 <受治项目>/.policy/audit.jsonl（15,421 条，含 governed=true 127 条）。**本行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理判定（本会话 cwd 不在受治项目内，记录为 session_out_of_scope）——「桥装上了」不等于「已经管住」。没有一条 allow_delegated 记录可证明 Phase 4 的委派 pre-check 在桌面通道上跑过（覆盖尚未建立）。
+    reason: 接线成立（wiring_status=wired）；审计目标解析修好后留痕也读得到（freshness_status=fresh：<受治项目>/.policy/audit.jsonl，2026-10-18 读数 17,674 条 / 最后一条 2026-10-18T05:40:08Z）。**本行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理判定——governed=true 记录 127 条且截止 2026-10-11T18:53:33Z（edit 23 / write 4 / run_code 93 / pwsh 7）；当前桌面入口会话的 cwd 不在受治项目内，判定记为 reason_code=session_out_of_scope（8,496 条）——那是「没管」，不是受治理判定。没有一条 allow_delegated 记录可证明 Phase 4 的委派 pre-check 在桌面通道上跑过（覆盖尚未建立）。
     expires_at: "2026-12-31"

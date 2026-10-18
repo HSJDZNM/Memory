@@ -35,7 +35,8 @@ POLICY_COMMAND = (
     "python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml "
     "--hooks-config .policy/hooks.json --audit .policy/audit.jsonl"
 )
-ADAPTER_CONFIG = "project: demo\ntimeout_ms: 5000\naudit_log: .policy/audit.jsonl\n"
+# audit_log 相对**配置文件所在目录**解析（运行期 load_config 的 base_dir=config_path.parent）。
+ADAPTER_CONFIG = "project: demo\ntimeout_ms: 5000\naudit_log: audit.jsonl\n"
 
 
 def _write(path: Path, text: str) -> Path:
@@ -167,6 +168,50 @@ def test_wiring_check_exits_zero_only_for_a_wired_channel(tmp_root: Path, capsys
 
     assert code == 0, out
     assert "result" not in out or "pass" in out
+
+
+def test_config_audit_log_is_resolved_against_its_own_directory(
+    tmp_root: Path, capsys: Any
+) -> None:
+    """真机桌面布局的 CLI 级回归（04 号 5.72）：留痕事实来自**配置目录下**的账本。
+
+    修前 wiring 按 bridge.projectDir 把它解析成 <受治项目>/audit.jsonl（不存在），于是
+    --check 因为一条**假缺口**退出 1；修后同一夹具下 freshness=fresh、--check 退出 0。
+    旧口径位置再放一份更旧的诱饵账本：读数必须来自 .policy 那份，否则这条用例没测到东西。
+    """
+
+    home = make_home(tmp_root)
+    profile = home / "profiles" / "desktop"
+    profile.mkdir(parents=True, exist_ok=True)
+    project = tmp_root / "Comparison-test" / "Governance"
+    project.mkdir(parents=True, exist_ok=True)
+    # 真机 desktop profile 的桥命令**不带 --audit**：运行期采用 adapter 配置的 audit_log。
+    command = (
+        "python -m adapters.dsh.hooks --config .policy/dsh-adapter.yaml "
+        "--hooks-config .policy/hooks.json"
+    )
+    _write(profile / "cordis.yml", "[]\n")
+    _write(profile / "cordis.patch.yml", profile_patch(project, command=command))
+    _write(project / ".policy" / "hooks.json", json.dumps(hooks_document()))
+    _write(project / ".policy" / "dsh-adapter.yaml", ADAPTER_CONFIG)
+    _write(
+        project / ".policy" / "audit.jsonl",
+        json.dumps({"timestamp": "2026-09-25T11:59:00Z"}) + "\n",
+    )
+    # 诱饵：修前解析出的那个位置（<受治项目>/audit.jsonl）放一份更旧的账本。
+    _write(
+        project / "audit.jsonl",
+        json.dumps({"timestamp": "2026-09-01T00:00:00Z"}) + "\n",
+    )
+
+    code, payload = run_wiring_json(home, capsys)
+
+    channel = payload["channels"][0]
+    assert code == 0, payload["failures"]
+    assert channel["status"] == ChannelStatus.WIRED.value
+    assert channel["freshness_status"] == FreshnessStatus.FRESH.value
+    assert channel["audit_records"] == 1
+    assert channel["last_record_at"] == "2026-09-25T11:59:00Z"
 
 
 def test_wiring_check_exits_non_zero_and_names_the_unwired_channel(

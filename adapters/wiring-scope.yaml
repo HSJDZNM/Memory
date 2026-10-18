@@ -73,28 +73,27 @@ scope:
     kind: agent_runtime
     owner: host
     covers: ["dsh:desktop"]
-    # 2026-10-18 改判（05 号 §3.4 / §4 A1）：接线成立（wiring_status=wired）；wiring 报
-    # 留痕 never_written，但根因是**审计目标解析错位**（04 号 5.72），不是「审计目标不存在」
-    # ——运行时账本真实存在。桌面 profile 的家目录在宿主侧、不在本仓库内（tree_ref 只放指针）；
-    # 这一条**仍然是声明**，不改变任何运行时行为，也不改退出码。
+    # 2026-10-18 改判（05 号 §3.4 / §4 A1）：接线成立（wiring_status=wired）；同日修好审计目标
+    # 解析（04 号 5.72）后留痕读数=fresh（真实账本 <受治项目>/.policy/audit.jsonl）。桌面 profile
+    # 的家目录在宿主侧、不在本仓库内（tree_ref 只放指针）；这一条**仍然是声明**，不改变任何
+    # 运行时行为，也不改退出码。
     governs_tree: other
     tree_ref: <outside-workspace>
     reason: >-
       2026-10-18 改判 in_scope（此前 out_of_scope）：桌面 GUI 的 dsh profile 今天**接线成立**
       ——策略桥挂在 profile 的 cordis.patch.yml 里，adapters.cli wiring 读到 wiring_status=wired；
-      它报 freshness_status=never_written，但根因是**审计目标解析错位**（04 号 5.72，本轮只登记
-      不修）：wiring 按 bridge.projectDir/profile 找 <受治项目>/audit.jsonl，而运行时 audit_log
-      按配置文件目录解析、实际落在 <受治项目>/.policy/audit.jsonl（真实存在，15,421 条，含
-      governed=true 127 条）。账本里没有可归因到本通道、覆盖当前会话的受治理判定（本会话 cwd
-      不在受治项目内，记录为 session_out_of_scope）——「桥装上了」不等于「已经管住」，所以声明侧
-      仍把覆盖缺口登记进 validation/channel-coverage.yaml 的 declared_uncovered 行（到期日
-      2026-12-31）。桌面 GUI 装不装桥仍是主机配置；改判只是把仓库对它的责任写成可读的声明。
+      2026-10-18 修好审计目标解析（04 号 5.72）后，wiring 读到真实账本
+      <受治项目>/.policy/audit.jsonl（wiring_status=wired、freshness_status=fresh）；账本里
+      governed=true 记录截止 2026-10-11，当前桌面入口会话的 cwd 不在受治项目内、判定记
+      session_out_of_scope——「桥装上了、账本读得到」不等于「已经管住」，所以声明侧仍把覆盖
+      缺口登记进 validation/channel-coverage.yaml 的 declared_uncovered 行（到期日 2026-12-31）。
+      桌面 GUI 装不装桥仍是主机配置；改判只是把仓库对它的责任写成可读的声明。
     consequence: >-
       仓库现在对这条通道承担「在范围内」的**声明**责任：接线事实坏了会落进 adapters.cli wiring
-      的 in_scope_not_wired 读数；留痕读数（含上面的解析错位根因）与覆盖缺口都是显式读数
+      的 in_scope_not_wired 读数；留痕读数（解析修好后为 fresh）与覆盖缺口都是显式读数
       （不是 0 命中）。**声明文件不参与 Hook 路径**：仓库不为桌面通道签发任何运行时
-      allow / block，也不把「wiring 报 never_written」读成「通过」；要真正覆盖，得先修好留痕
-      目标解析（04 号 5.72）并让该 profile 产生可归因到本通道、覆盖当前会话的受治理判定。
+      allow / block，也不把「wiring 报 fresh」读成「覆盖已建立」；要真正覆盖，得让该 profile
+      产生可归因到本通道、覆盖当前会话的受治理判定（解析已修，见 04 号 5.72）。
 
   - id: ci-agent-runtime
     decision: expected_absent

@@ -32,7 +32,13 @@
   桥（`policy-hook.plugin.mjs` 或 `@deepseek-ai/dsh-hooks-*`）是不是真的挂上去了；
 - 桥声明的 hooks 配置（`--hooks-config` / `configPath`）里有没有指向 `adapters.dsh.hooks` 的命令；
 - 钩子命令里的 `--audit`（或 `--config` 指向的 adapter 配置里的 `audit_log`）对应的 JSONL
-  存不存在、最后一条记录是什么时间；
+  存不存在、最后一条记录是什么时间；两个来源的**解析基准不同**，必须各按运行期的口径来：
+  `--audit` 由 Hook 进程按**它自己的工作目录**解析（进程内插件把 cwd 钉成
+  `config.projectDir`）；`audit_log` 由 `adapters.dsh.adapter.load_config` 按
+  **配置文件所在目录**解析（`base_dir=config_path.parent`，见 `adapter.py` 的 `_as_path`）。
+  本模块不另选一个基准：2026-10-18 的 5.72 就是拿 `projectDir` 一刀切 `audit_log`，
+  把一份一万多条的真实账本报成了 `never_written`；基准证明不了（配置读不到）时显式
+  报「没有可解析的审计目标」，不回落、不猜；
 - `$DSH_HOME/sessions/**/*.jsonl[.zstd]` 里**运行期真实出现过**的工具名，
   与 `TOOL_TABLE` 比对（R5：声明与运行期现实之间没有漂移检测）。
 """
@@ -1138,19 +1144,27 @@ def _audit_facts(
     renderer: _PathRenderer,
     now: clock.datetime,
     stale_after_seconds: float,
+    unresolved_detail: Optional[str] = None,
 ) -> _AuditFacts:
     """读审计 JSONL，只返回**留痕事实**（接线事实由调用方另行判定）。
 
     ""没有目标"" / ""目标不存在"" / ""读不到"" / ""一行都解析不出来"" / ""有记录但太旧""
     是五个不同的事实，
     每一个都必须能被单独说出来——把任一种折叠成"正常"就是本模块要消灭的那种假安全感。
+
+    `unresolved_detail` 是"目标**解析不出**"而不是"没声明目标"时的确切原因（adapter 配置
+    读不到 / 不可解析）：两者都是显式的不可用态，但把"证明不了"说成"没这回事"同样是一次
+    口径混同（AGENTS 第 50 条）。不给就是真的没声明。
     """
 
     if audit_path is None:
         return _AuditFacts(
             FreshnessStatus.NO_AUDIT_TARGET,
-            "接线里没有声明审计目标（命令没有 --audit，adapter 配置也没有 audit_log）："
-            "留痕无从证明",
+            unresolved_detail
+            or (
+                "接线里没有声明审计目标（命令没有 --audit，adapter 配置也没有 audit_log）："
+                "留痕无从证明"
+            ),
             0,
             0,
             None,
@@ -1423,6 +1437,28 @@ def _resolve_ref(
             return candidate, label, tuple(attempts)
     assert first is not None  # 调用方保证 bases 非空
     return first[0], first[1], tuple(attempts)
+
+
+def _config_audit_target(config_path: Path, raw: str) -> Path:
+    """按**运行期**的口径解析 adapter 配置里的 `audit_log`（04 号 5.72）。
+
+    运行期唯一的规则在 `adapters/dsh/adapter.py`：`load_config` 调
+    `config_from_mapping(document, base_dir=config_path.parent)`，`_as_path` 再用
+    `base_dir / 相对路径`（绝对路径原样）。本函数只复刻这一条，**不**回落到
+    `bridge.projectDir` / profile 目录——多试一个基准就是猜，而 5.72 正是猜错基准：
+    `audit_log: audit.jsonl` 在 `<受治项目>/.policy/dsh-adapter.yaml` 里指向
+    `<受治项目>/.policy/audit.jsonl`，按 projectDir 解析却得到 `<受治项目>/audit.jsonl`
+    （不存在）⇒ 一万多条的真实留痕被报成 `never_written`。
+    换成"配置内引用统一交给 load_config"也不可行：清点要能在**只写了部分键**的配置上工作
+    （夹具与真机都出现过），而 `load_config` 会因缺 `project_root` / `rules` 等键整份拒绝。
+    所以这里只钉它与运行期**同一条路径解析规则**，并由用例与 `load_config` 逐字比对。
+    """
+
+    # 与 `adapter._as_path` 同口径：先把 Windows 反斜杠归一成 `/`，再判绝对/相对。
+    candidate = Path(raw.replace("\\", "/"))
+    if not candidate.is_absolute():
+        candidate = config_path.parent / candidate
+    return candidate.resolve()
 
 
 def _profile_bundles(profile_dir: Path, notes: list[str]) -> tuple[str, ...]:
@@ -1708,11 +1744,21 @@ def _probe_channel(
         )
     config_path, config_base, _ = _resolve_ref(adapter_config_ref, channel_bases, renderer)
     config_rel = renderer.render(config_path)
+    # adapter 配置里的 audit_log 原文：只用于**按配置文件目录**解析（见 _config_audit_target）；
+    # 报告里的取值走 flags（绝对路径要先渲染，AGENTS 第 19 条）。
+    config_audit_ref: Optional[str] = None
+    # 审计目标"取不到"时的确切原因（配置读不到 / 解析不了）：留痕轴要说出这句话，
+    # 不许拿默认的"没有声明审计目标"顶替——那会把"证明不了"读成"没这回事"。
+    audit_unresolved_detail: Optional[str] = None
     if not config_path.is_file():
         budget_input_error = (
             "adapter 配置不存在（" + str(config_rel) + "，解析基准 " + config_base + "）"
         )
         notes.append(budget_input_error + "：audit_log 与 timeout_ms 取不到")
+        audit_unresolved_detail = (
+            "adapter 配置不存在（" + str(config_rel) + "）：audit_log 取不到，"
+            "审计目标解析不出（不是「从未留痕」）"
+        )
     else:
         try:
             config_document = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -1722,12 +1768,17 @@ def _probe_channel(
             )
             notes.append(budget_input_error)
             config_document = None
+            audit_unresolved_detail = (
+                "adapter 配置不可读或不可解析（" + type(error).__name__ + "）："
+                "audit_log 取不到，审计目标解析不出（不是「从未留痕」）"
+            )
         if isinstance(config_document, Mapping):
             declared_audit = config_document.get("audit_log")
             if declared_audit is not None and not isinstance(declared_audit, str):
                 notes.append("adapter 配置的 audit_log 不是字符串：按未声明处理")
             elif isinstance(declared_audit, str):
-                flags.setdefault("audit_log", declared_audit)
+                config_audit_ref = declared_audit
+                flags.setdefault("audit_log", _render_flag_value(renderer, declared_audit))
             budget = config_document.get("timeout_ms")
             if budget is None:
                 # 运行期 load_config 的缺省值，不是本模块自己定的。
@@ -1750,14 +1801,33 @@ def _probe_channel(
             budget_input_error = "adapter 配置结构不是映射：" + str(config_rel)
             notes.append(budget_input_error)
 
+    # 审计目标的解析基准必须与运行期**同一口径**（04 号 5.72），两个来源各有各的基准：
+    # - 命令里的 --audit：Hook 进程按**它自己的工作目录**解析。进程内插件把 cwd 钉成
+    #   config.projectDir（policy-hook.plugin.mjs 的 inspectWorkdir/spawn），方言桥也以
+    #   projectDir 为工作目录，因此沿用 channel_bases（projectDir 排第一）。
+    # - adapter 配置里的 audit_log：运行期 load_config 按**配置文件所在目录**解析
+    #   （base_dir=config_path.parent），所以这里只认 config_path.parent 一个基准。
+    #   多试一个基准就是猜；5.72 就是拿 projectDir 猜它，把 15k+ 条的账本报成 never_written。
+    audit_source: Optional[str] = None
     audit_ref = _string_flag(policy_command, "--audit")
-    if audit_ref is None:
-        audit_ref = flags.get("audit_log")
-    audit_path: Optional[Path] = None
     if audit_ref is not None:
+        audit_source = "hook_command"
+    elif config_audit_ref is not None:
+        audit_ref = config_audit_ref
+        audit_source = "adapter_config"
+    audit_path: Optional[Path] = None
+    if audit_ref is not None and audit_source == "hook_command":
         audit_path, _, _ = _resolve_ref(audit_ref, channel_bases, renderer)
+    elif audit_ref is not None and config_path.is_file():
+        # 配置文件在，基准就证明得了；配置不存在 / 不可读时上面已经记了 audit_unresolved_detail，
+        # 这里保持 audit_path=None（显式不猜，不是"回落到 projectDir 试试"）。
+        audit_path = _config_audit_target(config_path, audit_ref)
     facts = _audit_facts(
-        audit_path, renderer=renderer, now=now, stale_after_seconds=stale_after_seconds
+        audit_path,
+        renderer=renderer,
+        now=now,
+        stale_after_seconds=stale_after_seconds,
+        unresolved_detail=audit_unresolved_detail,
     )
 
     # 两个"dsh 侧超时"都要看：进程内插件的 timeoutMs 决定 ctx.shell 何时杀进程，
