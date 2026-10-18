@@ -136,6 +136,7 @@
 | P-A1-004 | 2026-10-18T14:00:00+08:00 | A1（5.72 修复轮） | a4-wiring52（子会话） | HEAD f11e9af；WIRING_SCHEMA_VERSION 1.4 不变 | 修 wiring 审计目标解析（配置内 audit_log 按配置文件目录），同批同步覆盖表 desktop 四行与 04 5.72 | 符合 | src/adapters/wiring.py；tests/unit/test_wiring.py；tests/contract/test_wiring_inventory.py；validation/channel-coverage.yaml；04-open-work.md；git show --stat c4eaa53；pytest 167 passed；真实 wiring dsh:desktop=wired/fresh | 04 5.72 + 05 §3.4 | 无（只报告；--check 判据与退出码不变） | Lead 已提交；wiring-scope.yaml 文案已由 Lead 同批同步 |
 | P-A3-002 | 2026-10-18T14:40:00+08:00 | A3（解冻构造包） | a5-a3-unblock（子会话） | HEAD f47823f（派单记的 f11e9af 已被 Lead 的 c4eaa53 前置） | 交付 A3 解冻构造包：任务包草案、基线树方案、受治臂启动方案、审批重签清单、四数测量口径、使用者待办 12 步；未跑受治会话、未签审批 | 符合 | docs/project/engineering-policy-platform/testing/ab/2026-10-18-A3-unblock.md；git show --stat f3d376f | 05 §4 A3 + §5.2/§5.6 | 8 条未核实 + 3 条需裁定（N-7 A3 是否以 B1 为前置 / N-8 host 权限模式 / N-9 装配器落点） | 先跑单动作探针（U1/U2/U3），再裁定并物化任务包；A3 全量不用等 B1（见 06 P-A3-003） |
 | P-A3-003 | 2026-10-18T14:45:00+08:00 | A3 三项裁定（N-7/N-8/N-9） | Lead | HEAD f3d376f | 定案：A3 不以 B1 为前置（② 失败本身是读数，若因 approval_invalid 失败即构造未就绪，先做 B1，阶段 D 仍不开跑）；受治臂必须用与真实入口一致的权限模式并在读数里记 reading_context.host.sandbox，unrestricted 读数须显式标注、不得混作生产读数；三个只读装配器（audit→actions / session 日志解码 / layer 匹配）探针阶段放 .tmp/a3b/，复用则升格 tools/ 并按第 55 条建轴 | 符合 | 05 §4 A3 + §5.6；docs/.../2026-10-18-A3-unblock.md §5/§7（N-7..N-9） | 05 §5.6 的 4/4 门不变 | 无（裁定即记录，可回退） | 跑单动作探针（U1/U2/U3），再物化任务包 |
+| P-RD-001 | 2026-10-18T14:40:00+08:00 | R-d 工具（阶段 1） | a6-rd-diff（子会话） | HEAD c4eaa53；DECISION_DIFF_SCHEMA_VERSION 首次建轴 1.0 | 新增差集工具 + 14 用例 + 演示读数；README/AGENTS 第 55 条登记；数组三级匹配（可识别键/difflib/位置） | 符合 | tools/decision_diff.py；tests/unit/test_decision_diff.py；docs/project/engineering-policy-platform/readings/2026-10-18-rd-tool-demo.md；git show --stat 6fdc04e | 05 §3.5 + §2.3 | 阶段 2（git worktree 双版本采集器）未实现；同一 rule_id 多条 violation 时退化为序列对齐（已知边界，docstring 写明） | 阶段 B 各项提交时用它出差集并附回退面 |
 
 ### 7.2 阶段 A · 变更记录
 
@@ -149,6 +150,7 @@
 | C-20261018-06 | 2026-10-18T10:15:00+08:00 | docs(plan)：A1 复核修复记录 + 05 §8 变更控制第 6 条（f11e9af） | 06-plan-progress.md、05-implementation-plan.md | A1 | 否 | Lead | git show --stat f11e9af |
 | C-20261018-07 | 2026-10-18T14:00:00+08:00 | fix(wiring)：配置内 audit_log 按配置文件目录解析（c4eaa53） | src/adapters/wiring.py、tests/unit/test_wiring.py、tests/contract/test_wiring_inventory.py、tests/unit/test_control_plane_facts.py（仅 docstring）、validation/channel-coverage.yaml、04-open-work.md、adapters/wiring-scope.yaml（7 文件） | A1 / 04 5.72 | 否（只报告；WIRING_SCHEMA_VERSION 仍 1.4，--check 判据与退出码不变） | Lead（待使用者复核） | git show --stat c4eaa53 |
 | C-20261018-08 | 2026-10-18T14:40:00+08:00 | docs(ab)：A3 解冻构造包（f3d376f） | docs/project/engineering-policy-platform/testing/ab/2026-10-18-A3-unblock.md（1 文件，546 行） | A3 | 否（纯文档） | Lead（待使用者复核） | git show --stat f3d376f |
+| C-20261018-09 | 2026-10-18T14:40:00+08:00 | feat(tools)：R-d 字段级差集工具入库（阶段 1）（6fdc04e） | tools/decision_diff.py、tests/unit/test_decision_diff.py、tools/README.md、AGENTS.md（第 55 条）、readings/2026-10-18-rd-tool-demo.md（5 文件） | R-d 阶段 1 | 否（不改判定路径；新 CLI 不参与 allow/block） | Lead（待使用者复核） | git show --stat 6fdc04e |
 
 ### 7.3 阶段 A · 读数记录
 
@@ -168,6 +170,7 @@
 | R-A-GATE-01 | 2026-10-18T11:20:00+08:00 | 阶段 A 收口 | 本机门禁（干净 worktree） | HEAD f11e9af；worktree .tmp/gate-head；26 正常步骤 + 4 只报告 | 26/26 ok，退出码 0；全量测试 5m22.6s rc=0；阶段验收证据 17.5s rc=0；总耗时 8m12.7s；只报告 4 步 0/0/0/106 | 符合 | docs/project/engineering-policy-platform/readings/2026-10-18-ci-local-green.md；命令 pytest/ci_local 原文在该文件第 2 节 | 环境前提（权限修复）与不可复现边界同文件第 1/4 节 |
 | R-A-A1-09 | 2026-10-18T13:58:00+08:00 | A1（5.72 修复后） | 接线读数 | 7 通道 / 6 声明；真实 Governance 审计 18,075 条（last 2026-10-18T05:56:18Z，读数时刻仍在增长） | dsh:desktop 接线=wired、留痕=fresh；freshness_ok=1/7；in_scope_not_wired=4；--check exit 1（governed stale ×4、headless/web 未接线） | 符合 | python -m adapters.cli wiring → exit 0；--check → exit 1；--json 全文无绝对路径（0 命中） | 修前同命令 audit_records=0/never_written（04 5.72）；修后不再误报 |
 | R-A-A1-10 | 2026-10-18T13:58:00+08:00 | A1（5.72 修复后） | 定向用例 | wiring unit + contract + control_plane_facts 三文件 | 167 passed（176.51s）；新增 5 条（4 unit + 1 contract）；红证明：把配置分支换回 projectDir → 2 红 | 符合 | pytest -q -n0 tests/unit/test_wiring.py tests/contract/test_wiring_inventory.py tests/unit/test_control_plane_facts.py → exit 0 | 新增用例覆盖真机布局正/负例、与 load_config 逐字比对、配置读不到显式不可用、CLI 级 --check |
+| R-RD-01 | 2026-10-18T14:40:00+08:00 | R-d 阶段 1 | 四份决策快照两两差集 | tests/fixtures/decisions/{allow,warning,block,approval}.json；added/modified/removed/total | allow→warning 1/1/0/2；warning→block 1/1/1/3；block→approval 1/2/2/5；自比 0/0/0/0；退出码 1/1/1/0 | 符合 | python tools/decision_diff.py --base … --head …；readings/2026-10-18-rd-tool-demo.md 第 2–3 节 | 同文件自比 exit 0；--json 两次运行逐字节相同；14 passed |
 
 ### 7.4 阶段 A · 偏离/作废记录
 
