@@ -164,6 +164,7 @@
 | C-20261018-13 | 2026-10-18T16:00:00+08:00 | docs(ab)：A3 交接补充 .bat 自检/真签入口（ec63759） | testing/ab/2026-10-18-A3-handoff.md（本机 .ps1 关联缺失；check-sign-approval.bat 先 dry-run、sign-approval.bat 真签）、06-plan-progress.md（本记录） | A3 | 否（纯文档；dry-run 不写 approval.json，已实测 exit 0） | Lead | git show --stat ec63759 |
 | C-20261018-14 | 2026-10-18T19:12:00+08:00 | docs(ab)：A3 U2-b 读数 + 解冻包 §10 更正（本次提交） | readings/2026-10-18-A3-U2b.md、testing/ab/2026-10-18-A3-unblock.md、04-open-work.md（5.73）、06-plan-progress.md（本记录） | A3 | 否（纯文档；探针未改产品代码、未签/改审批） | Lead（待使用者复核） | 本次提交 |
 | C-20261018-18 | 2026-10-18T21:45:00+08:00 | docs(ab)：A3 干跑四数读数与状态（本次提交） | readings/2026-10-18-A3-dryrun.md（新增）、06-plan-progress.md、04-open-work.md（5.73 状态）、05-implementation-plan.md（§4 A3 状态列） | A3 | 否（纯文档；未改产品代码/allow/block/退出码） | Lead（待使用者复核） | 本次提交；git show --stat HEAD |
+| C-20261018-19 | 2026-10-18T22:30:00+08:00 | docs(ab)：A3 修复裁定 + 05/04/06 与 v1 读数更正（本次提交） | readings/2026-10-18-A3-fix-adjudication.md（新增）、readings/2026-10-18-A3-dryrun.md（§12 更正）、05-implementation-plan.md（§4 D 行、§5.1/§5.6/§8）、04-open-work.md（5.73/5.75/5.76/5.77）、06-plan-progress.md（本记录） | A3 / D 前置 | 否（纯文档；未改产品代码/allow-block/退出码；v2 尚未跑） | Lead（待使用者复核） | 本次提交；git show --stat HEAD |
 
 ### 7.3 阶段 A · 读数记录
 
@@ -190,6 +191,7 @@
 | R-A-A3-05 | 2026-10-18T21:20:00+08:00 | A3 | ② 命令族首次成功率 | 分母=预注册 F1/F2 各首次尝试；分子=放行且真进入执行（命令自身退出码不计） | F1 1/1 通过（allow+grant，post_evidence.exit_code=1，post_repair_required 单列）；F2 0/1（circuit_open，未执行）⇒ **1/2=50%**；严格仪器口径 0/2=0%；失败原因无 approval_invalid | 不符合 | readings/2026-10-18-A3-dryrun.md §5.2 | 熔断：三次 post_check_failed 后 circuit_open；M7 与 F2 被挡 |
 | R-A-A3-06 | 2026-10-18T21:20:00+08:00 | A3 | ③ 路径族 layer 声明 | 分母=实际被写任务路径 6；layer 由 .policy/dsh-adapter.yaml first-match | 6/6=**100%**；unmapped 0；审计交叉 8/8 一致；tests 全部 test | 符合 | readings/2026-10-18-A3-dryrun.md §5.3 | load_config + layer_resolution（同一实现，无第二套 glob） |
 | R-A-A3-07 | 2026-10-18T21:20:00+08:00 | A3 | ④ 上下文触顶 | 会话日志 request/context、assistant/message usage、compaction/* | 未触发：compaction 0；峰值 inputTokens 22,435 / contextWindow 1,000,000 = 2.24%；阈值 0.8×W=800,000 | 符合 | readings/2026-10-18-A3-dryrun.md §5.4 | reading_context：host.sandbox=restricted（启动 EPERM 授权）；run id 见 §5.5 |
+| R-A-A3-08 | 2026-10-18T22:15:00+08:00 | A3（修正仪器复算） | ② 的仪器修正前后 | 归档 run-01 数据（同 session/audit）；F1 4 次、F2 1 次、other 1 次 | 修正前 first_pass=**0/2**（F1 被记 host_stage）→ 修正后 **1/2**（F1 通过、F2 仍 circuit_open）；② 仍 50%；u2b 自测 1/1 不变 | 符合（归因修正，判据不变） | readings/2026-10-18-A3-fix-adjudication.md §3；.tmp/a3b/readings/run-01-command-families-fixed.json | 旧 0/2 保留为历史；仪器升格触发见 04 5.77 |
 
 ### 7.4 阶段 A · 偏离/作废记录
 
@@ -204,6 +206,8 @@
 | D-20261018-07 | 2026-10-18T21:12:00+08:00 | 受治 dsh 启动被 workspace-write 文件沙箱拒绝（写 $DSH_HOME/profiles/headless/cordis.yml，EPERM） | 环境/构造：profile-boot 的 prepareProfile 每次 boot 无条件写 profile root；本机默认沙箱不许写工作区外 | 对同一条启动命令做一次性 danger-full-access 授权；受治会话自身 host sandbox 仍 workspace-write、approval/asked=0 | readings/2026-10-18-A3-dryrun.md §3.3/§7；run-01-meta.json |
 | D-20261018-08 | 2026-10-18T21:20:00+08:00 | ② 的预注册判据（run-manifest 的 strict wording）与 05/解冻包口径不一致；装配器把 post-check 阻断误判为 host_stage | 判据表述：解冻包 §5.2 = 放行且真进入执行、命令退出码单列；manifest 写成 +post_validated+isError=false | 主读数按 05/解冻包口径（F1 pass）；严格仪器读数 0/2 同时保留；两者均 <90%，结论不变；装配器升格 tools/ 前必须先修 host_executed（F-4） | readings/2026-10-18-A3-dryrun.md §5.2/§7；run-01-command-families.json |
 | D-20261018-09 | 2026-10-18T21:30:00+08:00 | 任务包构造缺陷在干跑中暴露：M1 测试覆盖 A1（需 M3 的服务改动）→ M2 新模块被 TESTING-002 阻断；tools/audit_demo.py 被 TESTING-002 uncovered_checker（critical）+ STYLE-018 阻断 | 构造：milestones 设计与规则交互；非环境 | 记「不符合」；最小修复清单见 readings §6；修构造后重跑 A3，D 不开跑 | readings/2026-10-18-A3-dryrun.md §4/§5.2/§6；M2/M5 审计记录 |
+| D-20261018-10 | 2026-10-18T22:10:00+08:00 | A3 v1 读数两处口径更正：熔断窗口与 ② 双读数 | 熔断窗口实际取 `breaker_seconds`=300s（precheck.py#L559-L566），失败时间戳 13:10:15/13:11:08/13:11:34、13:11:51 开闸，原写「窗口 60s」是误读；② 主读数按冻结口径应为 1/2（F1 执行证据可读即通过），旧严格仪器 0/2 作历史 | 已发布读数追加 §12 更正；字段两义登记 04 5.76；② 判据冻结见 05 §5.6 与裁定 A-7 | readings/2026-10-18-A3-dryrun.md §12；readings/2026-10-18-A3-fix-adjudication.md §3 |
+| D-20261018-11 | 2026-10-18T22:20:00+08:00 | A3 修复的三派评审与 Lead 裁定（F-2..F-5、B1、D 两门） | 使用者指示「内部多方研讨后自行裁决」；三份独立评审（构造/平台/红队）就 D1–D6 给出分歧与可证伪条件；Lead 裁定 A-1..A-12（F-2 保留 F2+预置 demo；F-3 先构造；F-4 修装配器并复算；F-5 授权启动+跑后复核；B1 条件依赖；D 拆校准门/构造门；② 判据冻结） | 05 §5.1 措辞更正、§5.6 判据冻结、§8 第 7/8/9 条；04 新增 5.75/5.76/5.77、5.73 状态更新；D 校准门待 A3 v2 4/4 后重跑，A/B/C 未开跑 | readings/2026-10-18-A3-fix-adjudication.md §2/§4/§5 |
 
 ### 7.5 阶段 B · 进度记录
 
