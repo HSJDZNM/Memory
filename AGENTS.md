@@ -526,6 +526,13 @@
       `policy` / `pre_evidence` / `enforcement` / `delegated` / `post_check` 与四个红条件
       都写死在文件头；加载器只接受认识的版本号，读不出来只在只报告工具内部降级为
       `unavailable` + reason——**不新增加载期 FATAL**，与上面那条载荷轴各走各的）。
+    - R-d 差集工具：`tools.decision_diff.DECISION_DIFF_SCHEMA_VERSION`（R-d 字段级差集的
+      `--json` 载荷——**1.0 = 首次建轴**（2026-10-18，R-d 阶段 1）：`pairs`（文件级配对）+
+      每条差集条目的 `kind` / `pointer` / `before` / `after` + `counts`；
+      **载荷里没有时戳、没有 run 标识**，相同输入两次运行逐字节相同（与
+      `policy.check.OUTPUT_SCHEMA_VERSION` 1.2 的同一条纪律：包装层不带 run）；
+      退出码 `0` / `1` / `2` 是 **CLI 语义**、不是本载荷的键（见 tools/README.md 的
+      「门禁退出码」表），它**不是恒 0 的只报告读数**——差集非空就是 1）；
     - 规范治理价值评测（W1 保真度）：`tools.eval_corpus.ANNOTATION_SCHEMA_VERSION`（语料注解记录的形状轴，
       现为 "1"——`Annotation` 的键集合、`annotation_scopes` 的取值语义，含 `line == 0` 的文件级哨兵）与
       `tools.eval_corpus.LOCK_SCHEMA_VERSION`（`evaluation/corpora/<id>.lock.json` 的轴，现为 "1"）；
