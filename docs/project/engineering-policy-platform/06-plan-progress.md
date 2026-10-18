@@ -152,7 +152,9 @@
 | C-20261018-07 | 2026-10-18T14:00:00+08:00 | fix(wiring)：配置内 audit_log 按配置文件目录解析（c4eaa53） | src/adapters/wiring.py、tests/unit/test_wiring.py、tests/contract/test_wiring_inventory.py、tests/unit/test_control_plane_facts.py（仅 docstring）、validation/channel-coverage.yaml、04-open-work.md、adapters/wiring-scope.yaml（7 文件） | A1 / 04 5.72 | 否（只报告；WIRING_SCHEMA_VERSION 仍 1.4，--check 判据与退出码不变） | Lead（待使用者复核） | git show --stat c4eaa53 |
 | C-20261018-08 | 2026-10-18T14:40:00+08:00 | docs(ab)：A3 解冻构造包（f3d376f） | docs/project/engineering-policy-platform/testing/ab/2026-10-18-A3-unblock.md（1 文件，546 行） | A3 | 否（纯文档） | Lead（待使用者复核） | git show --stat f3d376f |
 | C-20261018-09 | 2026-10-18T14:40:00+08:00 | feat(tools)：R-d 字段级差集工具入库（阶段 1）（6fdc04e） | tools/decision_diff.py、tests/unit/test_decision_diff.py、tools/README.md、AGENTS.md（第 55 条）、readings/2026-10-18-rd-tool-demo.md（5 文件） | R-d 阶段 1 | 否（不改判定路径；新 CLI 不参与 allow/block） | Lead（待使用者复核） | git show --stat 6fdc04e |
-| C-20261018-10 | 2026-10-18T15:00:00+08:00 | docs(ab)：A3 单动作探针读数 + 解冻包 §9 更正（本次提交） | readings/2026-10-18-A3-single-action-probe.md、testing/ab/2026-10-18-A3-unblock.md（2 文件） | A3 | 否（纯文档；探针未改产品代码、未签审批） | Lead（待使用者复核） | 本次提交 |
+| C-20261018-10 | 2026-10-18T15:00:00+08:00 | docs(ab)：A3 单动作探针读数 + 解冻包 §9 更正（9efe107） | readings/2026-10-18-A3-single-action-probe.md、testing/ab/2026-10-18-A3-unblock.md（2 文件） | A3 | 否（纯文档；探针未改产品代码、未签审批） | Lead（待使用者复核） | git show --stat 9efe107 |
+| C-20261018-11 | 2026-10-18T15:10:00+08:00 | docs(plan)：第二次门禁全绿读数 + A3 解冻包行尾修正（f43feb1） | readings/2026-10-18-ci-local-green.md（第 5 节）、06-plan-progress.md（R-A-GATE-02）、testing/ab/2026-10-18-A3-unblock.md（行尾空行） | A3 / 门禁 | 否（纯文档；门禁读数） | Lead | git show --stat f43feb1 |
+| C-20261018-12 | 2026-10-18T15:30:00+08:00 | docs(plan)：A3 交接与 04 进度更新（本次提交） | testing/ab/2026-10-18-A3-handoff.md（新增）、04-open-work.md（5.72 状态、5.73/5.74 新增）、06-plan-progress.md（本记录） | A3 / R-d | 否（纯文档） | Lead | 本次提交 |
 
 ### 7.3 阶段 A · 读数记录
 
