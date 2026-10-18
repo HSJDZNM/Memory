@@ -36,10 +36,10 @@
 #   coverage     三态：enforced / declared_uncovered / not_applicable
 #   check_id     coverage=enforced 时必填，且必须存在于 validation/instrument-checks.yaml；
 #                其它取值必须写 null（挂了检查的"未覆盖"是自相矛盾，加载期报错）
-#   owner        谁负责补上这个缺口（platform / host；不是"谁观测到"）
+#   owner        谁负责补上这个缺口，闭集 platform / host（加载期校验；不是"谁观测到"）
 #   reason       可评审的理由；enforced 行写证据（审计 reason_code 家族），缺口行写缺什么
-#   expires_at   YYYY-MM-DD 或 null；declared_uncovered 必须写（没有到期日的缺口是空白支票），
-#                enforced 写 null
+#   expires_at   YYYY-MM-DD 或 null；declared_uncovered **必须**写（没有到期日的缺口是
+#                空白支票），enforced / not_applicable **必须**为 null（加载期校验）
 #   covers_facts 可选：本行依赖的 validation/control-plane-facts.yaml key（形态检查 + 引用检查）
 #
 # mode 闭集与语义（写死在这里；四个红键之一专门数「enforced 行缺 mode / mode 不在闭集」）
@@ -65,10 +65,15 @@
 #   mode_without_check         coverage=enforced 的行 check_id 为空或不在
 #                              validation/instrument-checks.yaml 的 check_id 里
 #   tool_with_hits_without_row 审计里 governed=true 的 PreToolUse 命中某个工具，而本表
-#                              没有任何一行覆盖它（**删一行变异必红的落点**）
+#                              **没有任何一行**覆盖它。判据是**工具级**（审计没有通道字段）：
+#                              删掉某工具的**最后一行（或唯一一行）**必红；同一工具按治理阶段
+#                              登记了多行时，删单个阶段行不改变工具级红格——这是本格已知的
+#                              表达力边界（真实表上的证明是「删掉某工具的全部行必红」）。
+#                              审计末行被截断时，这一格会写明「可能少命中」（只漏不多）。
 #   registry_digest_drift      当前注册表 identity 与 registry/tool-registry.approved.json
 #                              的 registry_digest 不一致（摘要由 enforcement.registry 的
-#                              加载 API 算，不在这里重写哈希规则）
+#                              加载 API 算，不在这里重写哈希规则）。本格**独立于覆盖表**：
+#                              覆盖表结构坏不影响它（它读的是 registry/ 下两份文件）。
 #
 # 引用完整性（channel / tool / check_id / covers_facts）是**另立的读数**，不混进上面四格
 # 冒充红条件：拆成四红会让人分不清「覆盖缺口」与「指针写错」。四项都断开 0 才算引用干净。
@@ -93,8 +98,9 @@
 #
 # 版本轴：只有这一个（新文件第一次出现就带轴）。形状变了（加字段 / 改语义 / 改闭集）就递增它；
 # 加载器只接受它认识的版本号，读到别的版本 / 未知字段 / 未知 coverage 取值 / 坏日期 /
-# 重复（channel, tool, mode），一律在**只报告工具内部**降级为 unavailable + reason，
-# **不抛给任何判定路径**（阶段 A 的冻结令：不新增加载期 FATAL）。
+# 未知 owner / expires_at 与 coverage 自相矛盾 / 重复（channel, tool, mode），一律在
+# **只报告工具内部**降级为 unavailable + reason，**不抛给任何判定路径**（阶段 A 的冻结令：
+# 不新增加载期 FATAL；连值类型错的输入也只降级、不 traceback）。
 schema_version: "1"
 
 rows:

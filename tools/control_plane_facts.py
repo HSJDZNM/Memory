@@ -43,9 +43,14 @@ validation/channel-coverage.yaml（自带 schema_version "1"、只放指针、�
 mode 闭集写死在文件头），本工具是它唯一的消费方。四格红条件与 wiring / R-h **同形状**；
 引用完整性（channel / tool / check_id / covers_facts）**另立 references 块**，不混进四红
 冒充。审计输入只由 --audit 显式给（不扫目录、不猜默认路径）：不给 = not_applicable，
-读不了 = unavailable，**都不记作 0 命中**（AGENTS 第 56 条）。注册表摘要直接调用
+读不了 = unavailable，**都不记作 0 命中**（AGENTS 第 56 条）；审计末行正在追加、解析不了时
+照常给读数但**披露"可能少命中"**（tail_in_progress，只漏不多）。注册表摘要直接调用
 enforcement.registry 的加载 API（load_registry → ToolRegistry.identity），不在这里重写
-哈希规则（AGENTS 第 50 条：同名两义一律改名）。
+哈希规则（AGENTS 第 50 条：同名两义一律改名）。**所有进入载荷 / 机器行 / 人类输出的
+reason 一律脱敏**：底层异常原文过 reading.fold_absolute_paths，路径只以仓库相对或
+<outside-workspace>/… 出现（复核必须修 2；--audit 的路径也只以 <outside-workspace>/audit.jsonl 出现）。
+tool_with_hits_without_row 的判据是**工具级**：删某工具的最后一行（或全部行）必红，
+同一工具多阶段行时删单个阶段行不改变红格——这是本格已知的表达力边界（复核必须修 3）。
 
 只报告期怎么表达
 ================
@@ -179,6 +184,8 @@ COVERAGE_RED_KEYS = (
 )
 # coverage 的三态闭集（别的取值是**结构错误**：整节降级为 unavailable）。
 COVERAGE_STATES = ("enforced", "declared_uncovered", "not_applicable")
+# owner 的闭集（文件头写死）：谁负责补上这个缺口，不是"谁观测到"。
+COVERAGE_OWNERS = ("platform", "host")
 # mode 的闭集（写死在表头；enforced 行缺 mode / mode 不在闭集 = row_without_mode）。
 COVERAGE_MODES = ("policy", "pre_evidence", "enforcement", "delegated", "post_check")
 # 行字段：前 8 个必填（mode / check_id 可为 null，由红条件判），covers_facts 可选。
@@ -254,15 +261,28 @@ class FactsTable(NamedTuple):
 # --------------------------------------------------------------------------- 小工具
 
 
-def _text(value: Any, where: str) -> str:
+def _text(value: Any, where: str, *, error_type: type = FactsTableError) -> str:
+    """非空字符串校验。`error_type` 让不同数据表抛**自己的**错误类：
+
+    覆盖表的调用方只 catch CoverageTableError；若这里仍抛 FactsTableError，坏输入
+    （例如 coverage: "enforced-ish" / owner: ""）会逃出 evaluate 变成 traceback + exit 1，
+    违反「只报告、退出码恒 0」（复核发现，2026-10-18）。
+    """
+
     if not isinstance(value, str) or not value.strip():
-        raise FactsTableError(where + " 必须是非空字符串，读到 " + repr(value))
+        raise error_type(where + " 必须是非空字符串，读到 " + repr(value))
     return value
 
 
-def _enum(value: Any, allowed: Sequence[str], where: str) -> str:
+def _enum(
+    value: Any,
+    allowed: Sequence[str],
+    where: str,
+    *,
+    error_type: type = FactsTableError,
+) -> str:
     if value not in allowed:
-        raise FactsTableError(
+        raise error_type(
             where + " 只接受 " + " / ".join(allowed) + "，读到 " + repr(value)
         )
     return str(value)
@@ -272,6 +292,23 @@ def _display(path: Path, *, root: Path) -> str:
     """读数里的路径一律仓库相对（AGENTS 第 19 条）；工作区之外折叠成占位符。"""
 
     return reading.display_path(path, root=root)
+
+
+def _sanitize(text: object, *, root: Path) -> str:
+    """进入载荷 / 机器行 / 人类输出的原文一律脱敏：绝对路径折叠成报告口径。
+
+    唯一实现是 provenance.reading_context.fold_absolute_paths（AGENTS 第 16/34 条；
+    第 50 条：不另写一套脱敏口径）。底层 OSError / RegistryError / WiringScopeError 的
+    原文会带出以盘符（C:）开头的绝对路径——**(复核发现，2026-10-18)**。
+    """
+
+    return reading.fold_absolute_paths(str(text), root=root)
+
+
+def _error_reason(prefix: str, error: BaseException, *, root: Path) -> str:
+    """异常 → reason：类名 + 脱敏后的原文（不把绝对路径写进读数）。"""
+
+    return prefix + type(error).__name__ + "：" + _sanitize(error, root=root)
 
 
 # --------------------------------------------------------------------------- facts 表
@@ -445,7 +482,12 @@ def _coverage_row(item: Any, where: str) -> CoverageRow:
     分工（与 27 号 §3.2 对连接键的分工同型）：
     - 缺 mode / mode 不在闭集 → **不是**结构错误（否则 row_without_mode 永远数不到东西）；
     - enforced 行缺 check_id → **不是**结构错误（mode_without_check 的落点）；
-    - unknown 字段 / 未知 coverage 取值 / 坏日期 / 重复行 → 结构错误。
+    - unknown 字段 / 未知 coverage 取值 / 未知 owner / 坏日期 /
+      expires_at 与 coverage 不配套 / 重复行 → 结构错误。
+
+    所有校验错误都抛 CoverageTableError（复核必须修 1）：早期版本复用 _enum/_text，
+    它们抛的是 FactsTableError，会逃出 evaluate 的 catch 变成 traceback + exit 1——
+    「只报告、退出码恒 0」被打破。
     """
 
     if not isinstance(item, dict):
@@ -469,13 +511,15 @@ def _coverage_row(item: Any, where: str) -> CoverageRow:
     if missing:
         raise CoverageTableError(where + " 缺字段：" + " / ".join(missing))
 
-    coverage = _enum(item["coverage"], COVERAGE_STATES, where + ".coverage")
+    coverage = _enum(
+        item["coverage"], COVERAGE_STATES, where + ".coverage", error_type=CoverageTableError
+    )
     mode: Optional[str] = None
     if item.get("mode") is not None:
-        mode = _text(item["mode"], where + ".mode")
+        mode = _text(item["mode"], where + ".mode", error_type=CoverageTableError)
     check_id: Optional[str] = None
     if item.get("check_id") is not None:
-        check_id = _text(item["check_id"], where + ".check_id")
+        check_id = _text(item["check_id"], where + ".check_id", error_type=CoverageTableError)
     if coverage != "enforced" and check_id is not None:
         raise CoverageTableError(
             where + ".check_id 在 coverage=" + coverage + " 时必须为 null："
@@ -498,6 +542,14 @@ def _coverage_row(item: Any, where: str) -> CoverageRow:
             where + " 在 coverage=declared_uncovered 时必须写 expires_at："
             "没有到期日的缺口是一张永久空白支票（与 wiring-scope 的 out_of_scope 同一条纪律）"
         )
+    if coverage != "declared_uncovered" and expires_at is not None:
+        raise CoverageTableError(
+            where
+            + " 在 coverage="
+            + coverage
+            + " 时 expires_at 必须为 null：只有 declared_uncovered（缺口）才带到期日；"
+            "enforced / not_applicable 写了到期日就是自相矛盾的声明（文件头与加载器同一条口径）"
+        )
 
     raw_covers = item.get("covers_facts", [])
     if not isinstance(raw_covers, list):
@@ -518,14 +570,17 @@ def _coverage_row(item: Any, where: str) -> CoverageRow:
             )
         covers_facts.append(key)
 
+    owner = _enum(
+        item["owner"], COVERAGE_OWNERS, where + ".owner", error_type=CoverageTableError
+    )
     return CoverageRow(
-        channel=_text(item["channel"], where + ".channel"),
-        tool=_text(item["tool"], where + ".tool"),
+        channel=_text(item["channel"], where + ".channel", error_type=CoverageTableError),
+        tool=_text(item["tool"], where + ".tool", error_type=CoverageTableError),
         mode=mode,
         coverage=coverage,
         check_id=check_id,
-        owner=_text(item["owner"], where + ".owner"),
-        reason=_text(item["reason"], where + ".reason"),
+        owner=owner,
+        reason=_text(item["reason"], where + ".reason", error_type=CoverageTableError),
         expires_at=expires_at,
         covers_facts=tuple(covers_facts),
     )
@@ -535,7 +590,8 @@ def load_coverage(path: Path, *, display: Optional[str] = None) -> CoverageTable
     """读通道覆盖表：未知版本 / 未知字段 / 未知 coverage / 坏日期 / 重复行一律报错。
 
     **不抛给判定路径**：调用方（evaluate）把它变成 coverage.table.status=unavailable +
-    reason，四格红条件全部记 unavailable（count=null，**不是 0**）。结构错误与语义错误的
+    reason；依赖覆盖表本身的三格红条件记 unavailable（count=null，**不是 0**），
+    registry_digest_drift 独立读注册表、照常算（复核建议 4）。结构错误与语义错误的
     分工见 _coverage_row 的说明。
     """
 
@@ -625,10 +681,13 @@ def read_governed_audit(path: Optional[Path], *, root: Path) -> dict:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
+        # 原文里最刺眼的是绝对路径（FileNotFoundError 的 str 就是路径本身）：reason 只留
+        # 类名 + 脱敏后的展示路径，路径本身仍然以 <outside-workspace>/audit.jsonl 出现
+        # （与 shared["path"] 同一口径；复核要求：--audit 路径不许带盘符）。
         return {
             **shared,
             "status": STATUS_UNAVAILABLE,
-            "reason": "审计读不出来：" + type(error).__name__ + "：" + str(error),
+            "reason": "审计读不出来：" + type(error).__name__ + "：" + label,
         }
     raw_lines = text.splitlines()
     nonblank = 0
@@ -728,7 +787,7 @@ def registry_digest_reading(root: Path) -> dict:
         return {
             **shared,
             "status": STATUS_UNAVAILABLE,
-            "reason": "注册表或已审核清单读不出来：" + type(error).__name__ + "：" + str(error),
+            "reason": _error_reason("注册表或已审核清单读不出来：", error, root=root),
         }
     registry = loaded.registry
     approved = loaded.approved_document if isinstance(loaded.approved_document, dict) else {}
@@ -872,6 +931,54 @@ _COVERAGE_PROMOTE_WHEN = (
 )
 
 
+def _registry_digest_cell(registry: dict) -> dict:
+    """registry_digest_drift 那一格：**只依赖注册表读数**，不依赖覆盖表结构。
+
+    复核发现（2026-10-18）：旧实现把它和另外三格一起在「覆盖表读不到」时过降级，可它读的是
+    registry/ 下的两份文件——覆盖表坏了照样能算。这里把它抽成独立的一格，一个实现两个调用点。
+    """
+
+    if registry["status"] != STATUS_AVAILABLE:
+        return _unavailable_cell(
+            _COVERAGE_RED_WHEN[RED_REGISTRY_DIGEST_DRIFT],
+            str(registry.get("reason") or "注册表摘要读不出来"),
+            promote_when=_COVERAGE_PROMOTE_WHEN,
+        )
+    if registry["matches"]:
+        return _cell(
+            status=STATUS_AVAILABLE,
+            count=0,
+            items=[],
+            red_when=_COVERAGE_RED_WHEN[RED_REGISTRY_DIGEST_DRIFT],
+            note=(
+                "当前摘要 "
+                + str(registry["current_digest"])
+                + " = 已审核摘要"
+                + "（registry_version="
+                + str(registry["registry_version"])
+                + "）"
+            ),
+            promote_when=_COVERAGE_PROMOTE_WHEN,
+        )
+    return _cell(
+        status=STATUS_AVAILABLE,
+        count=1,
+        items=[
+            {
+                "current_digest": registry["current_digest"],
+                "approved_digest": registry["approved_digest"],
+                "registry_version": registry["registry_version"],
+                "governance_drift_reason": registry.get("governance_drift_reason"),
+                "remedy": "复核 registry/tool-registry.yaml 后重新审核："
+                "python -m enforcement.cli registry --approve --reviewer <name>",
+            }
+        ],
+        red_when=_COVERAGE_RED_WHEN[RED_REGISTRY_DIGEST_DRIFT],
+        note="已审核摘要为 null 时按漂移处理：没有可比的已审核摘要 = 证明不了注册表被审核过",
+        promote_when=_COVERAGE_PROMOTE_WHEN,
+    )
+
+
 def build_coverage_red_conditions(
     *,
     coverage: Optional[CoverageTable],
@@ -890,11 +997,18 @@ def build_coverage_red_conditions(
 
     if coverage is None:
         reason = coverage_error or "通道覆盖表读不到"
-        return {
-            key: _unavailable_cell(
+
+        def _unavailable_for(key: str) -> dict:
+            return _unavailable_cell(
                 _COVERAGE_RED_WHEN[key], reason, promote_when=_COVERAGE_PROMOTE_WHEN
             )
-            for key in COVERAGE_RED_KEYS
+
+        return {
+            # 三格依赖覆盖表本身 → 未评；registry_digest_drift 独立读注册表 → 照常算。
+            RED_ROW_WITHOUT_MODE: _unavailable_for(RED_ROW_WITHOUT_MODE),
+            RED_MODE_WITHOUT_CHECK: _unavailable_for(RED_MODE_WITHOUT_CHECK),
+            RED_TOOL_WITH_HITS_WITHOUT_ROW: _unavailable_for(RED_TOOL_WITH_HITS_WITHOUT_ROW),
+            RED_REGISTRY_DIGEST_DRIFT: _registry_digest_cell(registry),
         }
 
     enforced = [row for row in coverage.rows if row.coverage == "enforced"]
@@ -970,7 +1084,8 @@ def build_coverage_red_conditions(
                 "tool": tool,
                 "governed_pre_tool_use": count,
                 "remedy": "给这个工具补覆盖行（channel × tool × mode × check_id），"
-                "或在 reason 里说明它按设计不进覆盖表；删行的变异就红在这一格",
+                "或在 reason 里说明它按设计不进覆盖表；删掉某工具的最后一行（或全部行）"
+                "就红在这一格——删单个阶段行不改变工具级红格（见文件头的表达力边界）",
             }
             for tool, count in audit["by_tool"].items()
             if tool not in row_tools
@@ -989,52 +1104,17 @@ def build_coverage_red_conditions(
                 + " 条（按工具："
                 + " / ".join(tool + " " + str(count) for tool, count in audit["by_tool"].items())
                 + "）"
+                + (
+                    "；**审计末行被截断、未读**（tail_in_progress）：这一格可能少命中"
+                    "——只会漏报、不会多报，读数时不许当成「没有漏」"
+                    if audit.get("tail_in_progress")
+                    else ""
+                )
             ),
             promote_when=_COVERAGE_PROMOTE_WHEN,
         )
 
-    if registry["status"] != STATUS_AVAILABLE:
-        digest: dict = _unavailable_cell(
-            _COVERAGE_RED_WHEN[RED_REGISTRY_DIGEST_DRIFT],
-            str(registry.get("reason") or "注册表摘要读不出来"),
-            promote_when=_COVERAGE_PROMOTE_WHEN,
-        )
-    elif registry["matches"]:
-        digest = _cell(
-            status=STATUS_AVAILABLE,
-            count=0,
-            items=[],
-            red_when=_COVERAGE_RED_WHEN[RED_REGISTRY_DIGEST_DRIFT],
-            note=(
-                "当前摘要 "
-                + str(registry["current_digest"])
-                + " = 已审核摘要"
-                + "（registry_version="
-                + str(registry["registry_version"])
-                + "）"
-            ),
-            promote_when=_COVERAGE_PROMOTE_WHEN,
-        )
-    else:
-        digest = _cell(
-            status=STATUS_AVAILABLE,
-            count=1,
-            items=[
-                {
-                    "current_digest": registry["current_digest"],
-                    "approved_digest": registry["approved_digest"],
-                    "registry_version": registry["registry_version"],
-                    "governance_drift_reason": registry.get("governance_drift_reason"),
-                    "remedy": "复核 registry/tool-registry.yaml 后重新审核："
-                    "python -m enforcement.cli registry --approve --reviewer <name>",
-                }
-            ],
-            red_when=_COVERAGE_RED_WHEN[RED_REGISTRY_DIGEST_DRIFT],
-            note=(
-                "已审核摘要为 null 时按漂移处理：没有可比的已审核摘要 = 证明不了注册表被审核过"
-            ),
-            promote_when=_COVERAGE_PROMOTE_WHEN,
-        )
+    digest = _registry_digest_cell(registry)
 
     return {
         RED_ROW_WITHOUT_MODE: _cell(
@@ -1137,7 +1217,7 @@ def cross_source_test_paths(root: Path) -> dict:
     except (ValidatorsRegistryError, DshEventError, OSError) as error:
         return {
             "status": STATUS_UNAVAILABLE,
-            "reason": "读不到测试路径的声明：" + type(error).__name__ + "：" + str(error),
+            "reason": _error_reason("读不到测试路径的声明：", error, root=root),
             "scanned": None,
             "enumeration": enumeration,
         }
@@ -1179,7 +1259,7 @@ def cross_source_test_paths(root: Path) -> dict:
                 file_path=Path(name),
             )
         except (ValidatorsRegistryError, OSError) as error:
-            layer_reason = "层级读数读不到：" + type(error).__name__ + "：" + str(error)
+            layer_reason = _error_reason("层级读数读不到：", error, root=root)
             break
         adapter_layer = config.layer_resolution(name).layer
         if layer != adapter_layer:
@@ -1312,7 +1392,7 @@ def cross_source_tool_tables(root: Path) -> dict:
         # 而不是以 UnicodeDecodeError 逃出去（C2 的其余读取都在这一个 try 里）。
         return {
             "status": STATUS_UNAVAILABLE,
-            "reason": "工具表读不出来：" + type(error).__name__ + "：" + str(error),
+            "reason": _error_reason("工具表读不出来：", error, root=root),
         }
 
     by_agent: dict = {}
@@ -1465,7 +1545,7 @@ def budget_instance(config_path: Path, hooks_path: Path, *, root: Path) -> dict:
         return {
             **shared,
             "status": STATUS_UNAVAILABLE,
-            "reason": "配置读不出来：" + type(error).__name__ + "：" + str(error),
+            "reason": _error_reason("配置读不出来：", error, root=root),
         }
     facts = dsh_hooks.budget_inequality_facts(config, hooks_config_path=hooks_path)
     two = facts["two_term"]
@@ -1517,7 +1597,7 @@ def budget_inventory(root: Path, hooks_rel: str) -> dict:
             "status": STATUS_UNAVAILABLE,
             "channels": [],
             "matched": None,
-            "reason": "通道清点跑不起来：" + str(error),
+            "reason": _error_reason("通道清点跑不起来：", error, root=root),
             "note": _INVENTORY_NOTE,
         }
     channels: list = []
@@ -1686,13 +1766,13 @@ def evaluate(
         facts = load_facts(facts_path, display=facts_display)
         facts_error = None
     except FactsTableError as error:
-        facts, facts_error = None, str(error)
+        facts, facts_error = None, _sanitize(error, root=repo)
     checks_display = _display(checks_path, root=repo)
     try:
         checks = isp.load_checks(checks_path, display=checks_display)
         checks_error = None
     except isp.InstrumentChecksError as error:
-        checks, checks_error = None, str(error)
+        checks, checks_error = None, _sanitize(error, root=repo)
 
     facts_table: dict = {
         "status": STATUS_AVAILABLE if facts is not None else STATUS_UNAVAILABLE,
@@ -1747,12 +1827,12 @@ def evaluate(
         coverage = load_coverage(coverage_path, display=coverage_display)
         coverage_error = None
     except CoverageTableError as error:
-        coverage, coverage_error = None, str(error)
+        coverage, coverage_error = None, _sanitize(error, root=repo)
     try:
         wiring_scope = load_wiring_scope(repo / "adapters" / "wiring-scope.yaml")
         wiring_error = None
     except WiringScopeError as error:
-        wiring_scope, wiring_error = None, str(error)
+        wiring_scope, wiring_error = None, _sanitize(error, root=repo)
     audit = read_governed_audit(audit_path, root=repo)
     registry_digest = registry_digest_reading(repo)
     references = build_coverage_references(
@@ -1901,6 +1981,9 @@ def evaluate(
             declarations={
                 reading.DECLARATION_CONTROL_PLANE_FACTS: reading.declaration_block(
                     facts_path, root=repo
+                ),
+                reading.DECLARATION_CHANNEL_COVERAGE: reading.declaration_block(
+                    coverage_path, root=repo
                 ),
                 reading.DECLARATION_INSTRUMENT_CHECKS: reading.declaration_block(
                     checks_path, root=repo

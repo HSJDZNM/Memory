@@ -184,9 +184,17 @@ def test_the_payload_carries_its_own_axis_and_never_blocks(default_payload):
         assert cell["would_exit_code"] == 1
         assert cell["promote_when"]
         assert isinstance(cell["is_red"], bool)
-    # 归属读数：两份声明都在（第 48 条：没写清是哪一套声明才是缺陷）
+    # 归属读数：三份声明都在（第 48 条：没写清是哪一套声明才是缺陷）。
+    # 第三份 channel_coverage 是阶段 A1 的 C4 输入（复核建议 5）：覆盖表自己的路径与摘要。
     declarations = payload["reading_context"]["declarations"]
-    assert sorted(declarations) == ["control_plane_facts", "instrument_checks"]
+    assert sorted(declarations) == [
+        "channel_coverage",
+        "control_plane_facts",
+        "instrument_checks",
+    ]
+    assert declarations["channel_coverage"]["status"] == "available"
+    assert declarations["channel_coverage"]["path"] == "validation/channel-coverage.yaml"
+    assert declarations["channel_coverage"]["digest"].startswith("sha256:")
 
 
 def test_the_default_output_carries_a_hits_line_the_gate_can_read(tmp_root, capsys):
@@ -528,13 +536,14 @@ def test_unavailable_cells_do_not_print_as_ok(tmp_root, capsys):
     assert unavailable, "这条用例的前提：facts 表读不到时至少有一格未评"
 
 def test_deleting_a_row_makes_tool_with_hits_without_row_red(tmp_root):
-    """**删一行变异必红**（A1 的完成判据；AGENTS 第 45 条：自己的仪器也要能失败）。
+    """**删掉某工具的最后一行（或唯一一行）必红**（A1 的完成判据；AGENTS 第 45 条）。
 
-    为什么在影子表上压成「每个工具只留一行」：真实表里每个工具都登记了多个治理阶段
-    （edit 有 policy / pre_evidence / enforcement 三行），删掉其中一行**不会**让任何工具
-    失去全部行——那说明表是冗余的，红格也就数不到东西。把冗余压到最小之后，「删一行」
-    与「某个工具没有行」等价；判据本身与行数无关：有治理命中、表里没有这个工具的行 → 红。
-    真实表上的等价变异是「删掉某个工具的全部行」，两种都证明同一条判据。
+    精确表述（复核更正，2026-10-18）：本格判据是**工具级**——审计里 governed=true 的
+    PreToolUse 命中某个工具，而表里**没有任何一行**覆盖它。因此：
+    - 删掉某工具的**最后一行**（影子表里把每个工具压成一行时就是「删一行」）→ 红；
+    - 真实表里每个工具按治理阶段登记了多行（edit 有 policy / pre_evidence / enforcement
+      三行，run_code 两行），**删单个阶段行不改变工具级红格**——这是本格已知的表达力边界，
+      不是通过了。真实表上的等价变异是「删掉某工具的全部行」（见下一条用例）。
     """
 
     module = _load_tool()
@@ -565,6 +574,41 @@ def test_deleting_a_row_makes_tool_with_hits_without_row_red(tmp_root):
     assert cell["items"][0]["governed_pre_tool_use"] == 1
 
     # 撤回变异 -> 回 0（"能红"与"能收回来"是两件事）。
+    back = _evaluate_coverage(module, coverage=base_path, audit=audit)
+    assert back["coverage"]["red_conditions"]["tool_with_hits_without_row"]["count"] == 0
+
+
+def test_deleting_all_rows_of_one_tool_on_the_real_table_turns_the_cell_red(tmp_root):
+    """真实表上的等价变异：删掉 run_code 的**全部**行 → tool_with_hits_without_row 红 1。
+
+    复核指出「删一行变异必红」按字面在真实表上不成立（每工具 ≥2 行）；判据本身钉死为
+    工具级（05 §3.4），所以真实表上的可证伪变异是「删掉某个工具的全部行」。本用例直接
+    复制**真实**表、只动 run_code 的行，删除前 0、删除后 1、撤回后 0。
+    """
+
+    module = _load_tool()
+    audit = _write_audit(tmp_root, AUDIT_TOOLS)
+    document = _coverage_document()
+    run_code_rows = [row for row in document["rows"] if row["tool"] == "run_code"]
+    assert len(run_code_rows) >= 2, "真实表里 run_code 按治理阶段有多行（本用例的前提）"
+
+    base_path = _shadow_coverage(tmp_root, document, name="real-base.yaml")
+    base = _evaluate_coverage(module, coverage=base_path, audit=audit)
+    assert base["coverage"]["red_conditions"]["tool_with_hits_without_row"]["count"] == 0
+
+    deleted = copy.deepcopy(document)
+    deleted["rows"] = [row for row in deleted["rows"] if row["tool"] != "run_code"]
+    mutant = _evaluate_coverage(
+        module,
+        coverage=_shadow_coverage(tmp_root, deleted, name="real-deleted.yaml"),
+        audit=audit,
+    )
+    cell = mutant["coverage"]["red_conditions"]["tool_with_hits_without_row"]
+    assert cell["status"] == "available"
+    assert cell["count"] == 1
+    assert cell["is_red"] is True
+    assert cell["items"][0]["tool"] == "run_code"
+
     back = _evaluate_coverage(module, coverage=base_path, audit=audit)
     assert back["coverage"]["red_conditions"]["tool_with_hits_without_row"]["count"] == 0
 
@@ -606,6 +650,23 @@ def test_a_truncated_tail_line_does_not_hide_governed_hits(tmp_root):
     assert audit["status"] == "available"
     assert audit["governed_pre_tool_use"] == 1
     assert audit["tail_in_progress"] is True
+
+
+def test_a_truncated_tail_is_disclosed_in_the_hit_cell(tmp_root):
+    """末行截断必须在上的可评单元格里披露「可能少命中」（复核建议 6，不许静默）。"""
+
+    module = _load_tool()
+    path = tmp_root / "audit-tail-cell.jsonl"
+    good = json.dumps({"governed": True, "hook_event": "PreToolUse", "tool": "bash"})
+    path.write_text(good + "\n" + '{"governed": true, "hook_event": "PreTo', encoding="utf-8")
+    payload = _evaluate_coverage(module, audit=path)
+
+    cell = payload["coverage"]["red_conditions"]["tool_with_hits_without_row"]
+    assert cell["status"] == "available"
+    assert cell["count"] == 1, "bash 在 TOOL_TABLE 里，但覆盖表没有它的行"
+    assert cell["items"][0]["tool"] == "bash"
+    assert "tail_in_progress" in cell["note"]
+    assert "可能少命中" in cell["note"]
 
 
 def test_registry_digest_drift_is_red_when_the_approved_digest_differs(monkeypatch):
@@ -853,8 +914,17 @@ def test_a_malformed_coverage_table_degrades_without_blocking(tmp_root, capsys):
     )
     assert payload["coverage"]["table"]["status"] == "unavailable"
     assert "只放指针" in payload["coverage"]["table"]["reason"]
-    for key in COVERAGE_RED_KEYS:
+    # 三格依赖覆盖表本身 → 未评；registry_digest_drift **独立于覆盖表结构**（复核建议 4）：
+    # 它读的是 registry/ 下两份文件，覆盖表坏了照样算得出来（这里真实注册表是匹配的）。
+    for key in (
+        "row_without_mode",
+        "mode_without_check",
+        "tool_with_hits_without_row",
+    ):
         assert payload["coverage"]["red_conditions"][key]["count"] is None
+    digest = payload["coverage"]["red_conditions"]["registry_digest_drift"]
+    assert digest["status"] == "available"
+    assert digest["count"] == 0
     assert payload["coverage"]["references"]["total"] is None
     # 只报告：结构坏不掉退出码（用法错误除外）。
     assert module.run(["--json", "--coverage", str(tmp_root / "pointer.yaml")]) == 0
@@ -876,6 +946,147 @@ def test_a_malformed_coverage_table_degrades_without_blocking(tmp_root, capsys):
     )
     assert payload["coverage"]["table"]["status"] == "unavailable"
     assert "schema_version" in payload["coverage"]["table"]["reason"]
+
+
+
+
+def test_a_bad_coverage_value_degrades_without_traceback(tmp_root, capsys):
+    """坏枚举（coverage: "enforced-ish"）只降级，不许 traceback + exit 1（复核必须修 1）。
+
+    回归点：_coverage_row 曾经用 _enum/_text（抛 FactsTableError），而 evaluate 只 catch
+    CoverageTableError ⇒ 坏输入会逃出只报告工具。现在两条输入都走 CoverageTableError。
+    """
+
+    module = _load_tool()
+    document = _coverage_document()
+    document["rows"][0]["coverage"] = "enforced-ish"
+    path = _shadow_coverage(tmp_root, document, name="bad-coverage.yaml")
+
+    assert module.run(["--json", "--coverage", str(path)]) == 0, "只报告：坏输入也只降级"
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out + captured.err
+    payload = json.loads(captured.out)
+    assert payload["coverage"]["table"]["status"] == "unavailable"
+    assert "coverage" in payload["coverage"]["table"]["reason"]
+    # 机器行仍可读：覆盖表行数写 unavailable，不是崩掉
+    assert "coverage_rows=unavailable" in payload["headline"]["machine_line"]
+
+
+def test_an_empty_owner_degrades_without_traceback(tmp_root, capsys):
+    """坏值（owner: "" / 不在闭集）同样只降级：该节 unavailable + 进程 exit 0。"""
+
+    module = _load_tool()
+    document = _coverage_document()
+    document["rows"][0]["owner"] = ""
+    path = _shadow_coverage(tmp_root, document, name="bad-owner.yaml")
+
+    assert module.run(["--json", "--coverage", str(path)]) == 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out + captured.err
+    payload = json.loads(captured.out)
+    assert payload["coverage"]["table"]["status"] == "unavailable"
+    assert "owner" in payload["coverage"]["table"]["reason"]
+    assert "coverage_rows=unavailable" in payload["headline"]["machine_line"]
+
+
+def _absolute_path_leaks(value, *, trail: str = "") -> list:
+    """递归找出载荷里任何带盘符绝对路径 / /Users/ 的字符串（复核必须修 2 的回归判据）。"""
+
+    leaks: list = []
+    if isinstance(value, str):
+        if "C:\\" in value or "C:/" in value or "/Users/" in value:
+            leaks.append((trail, value))
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            leaks.extend(_absolute_path_leaks(item, trail=trail + "." + str(key)))
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            leaks.extend(_absolute_path_leaks(item, trail=trail + "[" + str(index) + "]"))
+    return leaks
+
+
+def test_absolute_paths_never_reach_the_payload(tmp_root, capsys):
+    """三种错误注入下，--json 全文不得出现盘符路径（C:\\ 或 C:/）与 /Users/。
+
+    复核必须修 2：旧实现把 str(error) 直接塞进 reason——FileNotFoundError / RegistryError /
+    WiringScopeError 的原文都带绝对路径。现在统一走 reading.fold_absolute_paths；--audit 的
+    路径只以 <outside-workspace>/audit.jsonl 出现。
+    """
+
+    module = _load_tool()
+    # 用**盘符根 / 文件系统根**构造一条工作区之外、确定不存在的审计路径：
+    # pytest 的 tempdir 会被 conftest 指到工作区内（.tmp/tmp），拿它测"外部路径"不成立。
+    outside_audit = Path(REPO_ROOT.anchor) / "dsh-a1-nonexistent" / "audit.jsonl"
+    assert not outside_audit.exists(), "这条用例的前提：审计确实不存在"
+
+    # ① 审计不存在（工作区之外的绝对路径）
+    assert module.run(["--json", "--audit", str(outside_audit)]) == 0
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.out + captured.err
+    payload = json.loads(captured.out)
+    assert payload["coverage"]["audit"]["status"] == "unavailable"
+    assert payload["coverage"]["audit"]["path"] == "<outside-workspace>/audit.jsonl"
+    assert _absolute_path_leaks(payload) == []
+
+    # ② 注册表不可读 + ③ wiring-scope 损坏：都放进同一棵临时树里
+    repo = tmp_root / "corrupt-repo"
+    (repo / "registry").mkdir(parents=True, exist_ok=True)
+    (repo / "adapters").mkdir(parents=True, exist_ok=True)
+    (repo / "registry" / "tool-registry.yaml").write_text("{not yaml", encoding="utf-8")
+    (repo / "adapters" / "wiring-scope.yaml").write_text("not-a-mapping\n", encoding="utf-8")
+    broken = module.evaluate(repo=repo, audit_path=outside_audit)
+    assert broken["coverage"]["registry_digest"]["status"] == "unavailable"
+    assert broken["coverage"]["references"]["channel"]["status"] == "unavailable"
+    assert _absolute_path_leaks(broken) == []
+
+
+def test_coverage_row_field_semantics_are_checked_at_load_time(tmp_root):
+    """文件头自述、加载器也要做：owner 闭集 + expires_at 与 coverage 的配套关系（建议 7）。"""
+
+    module = _load_tool()
+    document = _coverage_document()
+
+    bad_owner = copy.deepcopy(document)
+    bad_owner["rows"][0]["owner"] = "nobody"
+    payload = _evaluate_coverage(
+        module, coverage=_shadow_coverage(tmp_root, bad_owner, name="owner.yaml")
+    )
+    assert payload["coverage"]["table"]["status"] == "unavailable"
+    assert "platform / host" in payload["coverage"]["table"]["reason"]
+
+    enforced_expiry = copy.deepcopy(document)
+    enforced_row = next(row for row in enforced_expiry["rows"] if row["coverage"] == "enforced")
+    enforced_row["expires_at"] = "2026-12-31"
+    payload = _evaluate_coverage(
+        module, coverage=_shadow_coverage(tmp_root, enforced_expiry, name="enforced-expiry.yaml")
+    )
+    assert payload["coverage"]["table"]["status"] == "unavailable"
+    assert "expires_at" in payload["coverage"]["table"]["reason"]
+
+    # not_applicable 同理：合法形态（null）加载，加到期日就自相矛盾
+    not_applicable = copy.deepcopy(document)
+    not_applicable["rows"] = [
+        {
+            "channel": "governed-session-hook",
+            "tool": "read",
+            "mode": "policy",
+            "coverage": "not_applicable",
+            "check_id": None,
+            "owner": "platform",
+            "reason": "夹具：只读工具按设计不在覆盖账里",
+            "expires_at": None,
+        }
+    ]
+    ok = _evaluate_coverage(
+        module, coverage=_shadow_coverage(tmp_root, not_applicable, name="na-ok.yaml")
+    )
+    assert ok["coverage"]["table"]["status"] == "available"
+    not_applicable["rows"][0]["expires_at"] = "2026-12-31"
+    payload = _evaluate_coverage(
+        module, coverage=_shadow_coverage(tmp_root, not_applicable, name="na-expiry.yaml")
+    )
+    assert payload["coverage"]["table"]["status"] == "unavailable"
+    assert "expires_at" in payload["coverage"]["table"]["reason"]
 
 
 def test_a_missing_mode_is_red_row_without_mode(tmp_root):

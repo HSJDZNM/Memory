@@ -82,6 +82,7 @@ from .worktree import ProvenanceError, workspace_tree_digest
 
 __all__ = [
     "DECLARATIONS",
+    "DECLARATION_CHANNEL_COVERAGE",
     "DECLARATION_CONTROL_PLANE_FACTS",
     "DECLARATION_INSTRUMENT_CHECKS",
     "OUTSIDE_WORKSPACE",
@@ -106,6 +107,7 @@ __all__ = [
     "declaration_block",
     "declaration_digest",
     "display_path",
+    "fold_absolute_paths",
     "git_revision",
     "host_block",
     "not_applicable",
@@ -164,8 +166,11 @@ DECLARATION_REPORT_ONLY_STEPS = "report_only_steps"
 DECLARATION_INSTRUMENT_CHECKS = "instrument_checks"
 # 台阶 5 的控制面事实表：validation/control-plane-facts.yaml（只报告读数的那一套声明）。
 DECLARATION_CONTROL_PLANE_FACTS = "control_plane_facts"
+# 阶段 A1 的通道覆盖表：validation/channel-coverage.yaml（C4 覆盖账读的那一套声明）。
+DECLARATION_CHANNEL_COVERAGE = "channel_coverage"
 DECLARATIONS = (
     DECLARATION_ADAPTER_CONFIG,
+    DECLARATION_CHANNEL_COVERAGE,
     DECLARATION_CONTROL_PLANE_FACTS,
     DECLARATION_INSTRUMENT_CHECKS,
     DECLARATION_OBLIGATIONS_LEDGER,
@@ -220,9 +225,11 @@ def display_path(path: object, *, root: Path | str) -> str:
 # 底层异常原文里的绝对路径：边界规则与 adapters 侧的脱敏同一口径——没有边界的 "/"
 # 会把普通相对路径（src/shop/x.py）也当成绝对路径。全角标点同样算边界（中英混排的诊断
 # 原文），但**不吞**标点之后的正文：`（读不到就不算数）` 要留在 reason 里。
+# 另外（2026-10-18 复核必须修 2）：单独的 "/" 是**分隔符**不是路径——`platform / host`
+# 这类枚举串在裸 "/" 上折叠会把正文改坏；POSIX 绝对路径要求 "/" 后面紧跟非空白。
 _ABS_PATH_RE = re.compile(
     r"(?:(?<=[\s'\"(\[=:,（）、，。；：])|^)"
-    r"(?:[A-Za-z]:[\\/]|\\\\|/)"
+    r"(?:[A-Za-z]:[\\/]|\\\\|/(?=[^\s]))"
     r"[^\s'\"()（）【】、，。；：,;:]*"
 )
 
@@ -236,6 +243,17 @@ def _fold_absolute_paths(text: str, *, root: Path | str) -> str:
     """
 
     return _ABS_PATH_RE.sub(lambda match: display_path(match.group(0), root=root), text)
+
+
+def fold_absolute_paths(text: str, *, root: Path | str) -> str:
+    """把一段原文里的绝对路径折叠成 display_path 口径（给"异常原文进 reason"的调用点用）。
+
+    与 _fold_absolute_paths 是**同一份实现**（只是把它公开）：控制面读数把底层异常原文写进
+    reason 时必须先过这里，否则 OSError / RegistryError 会带出以盘符（C:）开头的绝对路径
+    （AGENTS 第 16/34 条；第 50 条：同名同义、不另写一套脱敏口径）。
+    """
+
+    return _fold_absolute_paths(text, root=root)
 
 
 def declaration_digest(path: Path | str | None) -> Optional[str]:

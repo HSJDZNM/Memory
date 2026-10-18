@@ -44,11 +44,14 @@
 | 3c 义务账 | 只记账不判罚；键 `(rule_id, target, missing_target)` 不含 `session_id`；解除只由一次真实 pytest 运行判定 | **只报告步骤 1** `Obligations gate (report only)` | `.venv\Scripts\python.exe tools\obligations_gate.py --ledger .tmp/obligations/repo.jsonl` |
 | 4 覆盖账 + `reading_context` | 三数分离（discovered/declared/measured，**整数、禁比例**）、六格差集、红条件；六类读数统一"属于哪棵树 / 哪个环境"的形状；豁免到期读数 | 本机门禁计划第 22 步 `Agent channel wiring inventory`（报告模式、恒退 0）+ **只报告步骤 2** | `.venv\Scripts\python.exe tools\exemption_expiry.py` |
 | 4 仪器自证（R-h） | 对象表四族（门禁步骤 / 探针检查 / 封条场景 / 只报告步骤）+ 三态判据 + 反退化检查；**方案 A**：存量写 `gap_note`、不做变异 | **只报告步骤 3** `Instrument self-proof (report only)` | `.venv\Scripts\python.exe tools\instrument_self_proof.py` |
-| 5 控制面事实表 × 跨源互证 | facts 表 13 行 + 连接键双向必查 + C1/C2/C3 三组读数 + 四格红条件 | **只报告步骤 4** `Control plane facts (report only)`；**workflow 里仍未接** | `.venv\Scripts\python.exe tools\control_plane_facts.py` |
+| 5 控制面事实表 × 跨源互证 | facts 表 14 行 + 连接键双向必查 + C1/C2/C3 三组读数 + C4 通道覆盖账（覆盖表 + 四格红键 + 引用完整性） | **只报告步骤 4** `Control plane facts (report only)`；**workflow 里仍未接** | `.venv\Scripts\python.exe tools\control_plane_facts.py` |
 
-本机实测（2026-10-06）：`CONTROL_PLANE_FACTS: fact_without_check=0 check_covers_unknown_fact=0
-test_path_declaration=101 budget_inequality=0 / facts=13 checks=64` → `HITS: 101`，
-**唯一非 0 的那一格是 C1**（见 §1.2 缺口 3）。
+本机实测（2026-10-18）：`CONTROL_PLANE_FACTS: fact_without_check=0 check_covers_unknown_fact=0
+test_path_declaration=106 budget_inequality=0 / row_without_mode=0 mode_without_check=0
+tool_with_hits_without_row=0 registry_digest_drift=0 / coverage_rows=13 references=0 / facts=14 checks=65`
+→ `HITS: 106`（**合计仍是既有四格之和**，C4 四格作为逐项追加）。**唯一非 0 的既有格是 C1**
+（见 §1.2 缺口 3）；C4 四格在带 `--audit` 的真实读数下是 0，默认无 `--audit` 时
+`tool_with_hits_without_row=not_applicable`（不是 0）。
 
 ### 1.2 剩余缺口 8 条（**未实现**，不许读成已交付）
 
