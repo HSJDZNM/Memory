@@ -41,3 +41,14 @@ C:/Users/ZNM/Downloads/Memory/.venv/Scripts/python.exe tools/ci_local.py
 
 `.tmp/gate-head` 与日志会被 cleanup 删除；本文件保留了结论与命令，但**逐条日志原文不再可读**。
 要复核请重跑上面两条命令（需要同样的权限修复；不修复时 pytest 会以 WinError 5 在 basetemp 扫描处失败）。
+
+## 5 第二次门禁（HEAD d8e4ced，含 5.72 修复与 R-d 工具）
+
+| 项 | 读数 |
+| --- | --- |
+| 树 | 干净 worktree `.tmp/gate-head2` @ `d8e4ced`（含 c4eaa53 fix(wiring)、6fdc04e feat(tools) 与之后的三份 docs 提交） |
+| 命令 | `Set-Location .tmp/gate-head2; C:/Users/ZNM/Downloads/Memory/.venv/Scripts/python.exe tools/ci_local.py` |
+| 结果 | **26/26 ok，退出码 0**；总耗时 7m 55.7s；全量测试 5m 04.8s；阶段验收证据 16.9s |
+| 只报告 4 步 | Obligations 0；Exemption 0；Instrument self-proof 0（objects=65 declared=65）；Control plane facts 106（C1 存量；C4 四红 0、coverage_rows=13、references=0、facts=14、checks=65） |
+
+与第 2 节相比：`dsh:desktop` 的留痕读数已修正为 fresh（04 5.72），WIRING_SCHEMA_VERSION 与 `--check` 判据未变；新增 `tools/decision_diff.py` 及其 14 条用例通过（未接门禁步骤）。
