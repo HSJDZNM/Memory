@@ -11,6 +11,7 @@
 | [04-open-work.md](04-open-work.md) | **未完成工作与复审清单**：还没做完 / 还没核实 / 到期要复看的事项、已知边界、复审日历 |
 | [05-implementation-plan.md](05-implementation-plan.md) | **实施计划**：从「动作判定」到「产物判定」的四阶段路线、每阶段的门与判据、对比实验方案 |
 | [06-plan-progress.md](06-plan-progress.md) | **计划进度**：只规定执行记录的格式与空模板，其余为空；记录按格式追加 |
+| [07-status-brief.md](07-status-brief.md) | **进度简报（给非技术读者）**：在做什么、做到哪了、接下来做什么、你需要做什么；不含命令与内部编号 |
 | [testing/test-strategy.md](testing/test-strategy.md) | 测试策略 |
 | [testing/acceptance-matrix.md](testing/acceptance-matrix.md) | 阶段验收矩阵 |
 | [designs/README.md](designs/README.md) | 设计提案状态表（提案 / 状态 / 影响面 / 下一步） |
@@ -32,6 +33,11 @@
   接成阻断）一项都没做**——2026-10-03 / 2026-10-04 裁定一律不升格，统一到 **2026-12-31 复审**。
   四条只报告步骤的豁免到期日都是 2026-12-31；义务门禁另有一条**结构问题**（仓库门禁里读不到账本）
   同样留给 12-31。
+- **Phase 9 之后的新计划（2026-10-17 起）**：把「动作判定」推进到「产物判定」的四阶段计划已开跑
+  （[05-implementation-plan.md](05-implementation-plan.md)）：**阶段 A** 覆盖表、5.71 探针、5.72 接线修复已落地，
+  A3 干跑的解冻包与 U2-b 探针已交付（审批已签、待正式干跑）；**阶段 B** 的第一项 B2（测试支撑声明）已落地
+  且门禁二次全绿；B1/B3 待使用者逐项解冻。执行记录在 [06-plan-progress.md](06-plan-progress.md)，
+  非技术读者先看 [07-status-brief.md](07-status-brief.md)。
 - **剩下的**：剩余缺口 8 条、各处未核实、已知边界与引用纪律，全部收在
   [04-open-work.md](04-open-work.md)——它是"还没做完"的唯一去处。
 
