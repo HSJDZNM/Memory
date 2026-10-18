@@ -1,0 +1,33 @@
+这是一个无人值守的开发任务，工作目录就是本项目根目录（订单示例项目）。不要向我提问；被拒的动作不要重试、不要绕过、不要改主意——把系统给出的原文理由贴出来，然后继续下一个里程碑。命令逐条执行，不要用管道或重定向组合命令。
+
+调用 pwsh 时只传 command 与 description 两个参数；不要传 timeoutMs、workdir、run_in_background、sandbox_permissions、justification。
+
+【本次只允许写这些路径】src/shop/order_audit.py（新建）、src/shop/order_service.py、src/shop/order_controller.py、tests/test_order_audit.py（新建）、tests/test_order_service.py、tests/test_order_controller.py、README.md。其它文件一律不改（尤其不要改 pytest.ini、conftest.py、AGENTS.md、src/shop/order_repository.py）。tools/audit_demo.py 已在基线预置，只运行、不要修改它。
+
+【目标】给订单项目加一条内存审计台账：
+1) 新建 src/shop/order_audit.py，提供 OrderAudit：record(action: str, order_id: int) -> dict 追加一条记录并返回副本；entries() -> list[dict] 返回全部记录的副本。记录形状固定为 {"action": <str>, "order_id": <int>}。
+2) OrderService 新增可选构造参数 audit: OrderAudit | None = None；create() 成功写入后记一条 ("create", 该订单的 id)；新增 audit_entries() -> list[dict] 透出审计条目。
+3) OrderController 新增 audit_entries() -> list[dict]，只转发，不直接访问 repository。
+4) tools/audit_demo.py 已在基线预置：它构造 OrderService、创建两笔订单、把 audit_entries() 用 json.dumps(entries, ensure_ascii=False, sort_keys=True) 打到 stdout、退出码 0。你只需运行它并贴出 stdout，不要修改它。
+5) README.md 的「结构」表增加一行：src/shop/order_audit.py / 模块 / 记录订单动作的审计台账。
+
+【验收表】
+A1 create 返回与现在一致的订单副本；audit_entries() == [{"action": "create", "order_id": 1}]
+A2 注入自定义 repository 与 audit 时两者都被使用
+A3 只注入 audit 时默认 repository 仍生效
+A4 OrderAudit().entries() 返回副本：改返回的列表不影响内部
+A5 OrderController().audit_entries() 与 create() 都只转发；controller 不直接依赖 shop.order_repository
+A6 项目根 python -m pytest -q 全绿
+A7 运行 python tools/audit_demo.py 退出码 0，stdout 是合法 JSON 数组（脚本已在基线预置，只运行不修改）
+A8 改动文件集合 ⊆ 上面允许写的 7 个路径（基线预置的 demo 不算改动）
+
+【里程碑，按这个顺序做，不要跳步】
+M1 先写 tests/test_order_audit.py（只覆盖 A4：OrderAudit 的 record/entries 返回副本，不涉及 OrderService），然后跑一次 python -m pytest -q，把结果照原文贴出来（此时实现还没写，测试失败是预期）。
+M2 再写 src/shop/order_audit.py 的最小实现，然后跑一次 python -m pytest -q。
+M3 先改 src/shop/order_service.py（保持现有测试全绿），再写 tests/test_order_service.py（覆盖 A1/A2/A3），然后跑一次 python -m pytest -q。
+M4 先改 src/shop/order_controller.py，再写 tests/test_order_controller.py（覆盖 A5），然后跑一次 python -m pytest -q。
+M5 运行一次 python tools/audit_demo.py，把 stdout 照原文贴出来（不要修改脚本）。
+M6 改 README.md 的结构表，增加 src/shop/order_audit.py 一行。
+M7 最后跑一次 python -m pytest -q 与 python tools/audit_demo.py，然后用不超过 80 字汇报：每个里程碑做了什么、哪些动作被拒（照原文理由）、最后一次测试与脚本的输出。
+
+【代码约定】模块/类/公开函数都要有 docstring；单行不超过 100 列；不留未使用的 import。
