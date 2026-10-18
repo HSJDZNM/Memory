@@ -52,11 +52,9 @@
 | 编号 | 一句话 | 本计划落点 |
 | --- | --- | --- |
 | 5.46 | 批次/意图无法表达 | 阶段 C1 |
-| 5.66 | 测试支撑文件（conftest 等）仍被拦 | 阶段 B2 |
 | 5.68 | 证据只有「服务过/失败关闭」两态 | 阶段 C2 |
 | 5.69 | 审批按参数形状两向严格，GUI 里无法稳定预放行 | 阶段 B1 |
 | 5.70 | 只读命令族不受 path_scope 约束 | 阶段 B3 |
-| 5.71 | delegated 支路的事后证据形状待解释 | 阶段 A2 |
 
 ### 2.3 仓库存量冻结令
 
@@ -130,12 +128,10 @@
 
 ### 3.6 存量锁与到期（开跑前必须处理）
 
-| 项 | 现值 | 处置 |
-| --- | --- | --- |
-| approval.json | 3 条记录：run_code 到期 2026-10-17T23:38Z；pwsh-tests / pwsh-readonly 到期 2026-10-17T23:59Z | **今天到期**，任何实验前必须重签并记哈希 |
-| hooks.json | 只注册 PreToolUse，timeout = 30s | 批次/取证预算必须重新核对不等式 |
-| 审计 | Governance 工作区 12,868 行 / 18.66 MB | 实验必须用**独立 .policy** 或记录起止偏移，不能共用 |
-| 桥 | desktop profile 加载的是仓库插件 policy-hook.plugin.mjs | 实验前确认桥指向当前臂，并做一次正向对照 |
+- 实验必须用**独立 .policy** 或记录起止偏移，不能共用存量审计（§2.1 的账本行数只是当时读数，会继续增长）。
+- 审批条子到期必须显式重签并记哈希（不许静默续期）；签发只能由使用者执行，代理不得自签（AGENTS 第 14 条）。
+- 桥必须指向当前臂，并做一次正向对照（真实 PreToolUse 命中且 `governed=true`）。
+- 取证/批次预算按 §3.3 的不等式核对：`pre_evidence.timeout_ms + timeout_ms < hooks.json 的 timeout`。
 
 ---
 
@@ -159,7 +155,7 @@
 | 编号 | 内容 | 改动面 | 人日 | 门 | 回退 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
 | B1 | 审批签「参数域」：注册表声明的可选参数按默认值覆盖；族从注册表生成 | src/enforcement/approvals.py（1.2→1.3）、precheck.py（默认值补齐）、cli.py（approve --family）、registry/tool-registry.yaml（command_families）、tools/approval_allowlist_audit.py（--check）、契约用例 | 4 | 9/9 命令通过；三条负例（未知参数 / run_in_background=true / 白名单外命令）仍拒；approval_allowlist_audit --check 0 命中 | 审批文件换回逐格三条；1.3 分支无记录触发 | 已定（需解冻） |
-| B2 | 测试支撑声明：test_support_patterns + selection 消费 | validation/test-layout.yaml（v1→v2）、src/validators/selection.py（PIPELINE_SCHEMA_VERSION 1.3→1.4）、conftest-alone.yaml 显式翻面、用例 | 3.5 | conftest-alone 翻绿且 failing_tests 进 served_checkers；真实 Hook edit conftest.py exit 0；5 类反例仍 block | 删除 test_support_patterns、版本回 v1 | 已落地（2026-10-18，47fa325；待复核） |
+| B2 | 测试支撑声明：test_support_patterns + selection 消费 | validation/test-layout.yaml（v1→v2）、src/validators/selection.py（PIPELINE_SCHEMA_VERSION 1.3→1.4）、conftest-alone.yaml 显式翻面、用例 | 3.5 | conftest-alone 翻绿且 failing_tests 进 served_checkers；真实 Hook edit conftest.py exit 0；5 类反例仍 block | 删除 test_support_patterns、版本回 v1 | 已落地（2026-10-18，47fa325） |
 | B3 | 只读命令族读面闸门 | registry/tool-registry.yaml（read_guard 数据）、src/enforcement/precheck.py（新检查）、models.py（新 reason code）、用例 | 3 | 3 条越界形态被拦；合法命令 0 误伤（400 份真实会话回放） | 删 read_guard 数据 | 已定（需解冻） |
 
 **阶段 B 的纪律**：三项各自单独提交、单独差集；**不许合并成一次「方案包」提交**（否则 B2 的归因会被 B1 掩盖）。
@@ -177,7 +173,7 @@
 
 ### 阶段 D · 对比实验
 
-见第 5 节。D 拆两门：D 校准门（P+/P−，无模型）不依赖 A3 四数，也不依赖 B1；A/B/C 构造门依赖 A3 v2 4/4 + 任务完成，以及 treatment 已定义（B1 或经裁定的替代）+ 用户签 1.3 条子（2026-10-18 裁定 A-5/A-6，见 readings/2026-10-18-A3-fix-adjudication.md）。
+见第 5 节。D 拆两门：D 校准门（P+/P−，无模型）不依赖 A3 四数，也不依赖 B1；A/B/C 构造门依赖 A3 v2 4/4 + 任务完成，以及 treatment 已定义（B1 或经裁定的替代）+ 用户签 1.3 条子（2026-10-18 裁定 A-5/A-6，见 readings/2026-10-18-A3-fix-adjudication.md）。treatment 选项事实、评分器冻结草案与待拍板项见 `readings/2026-10-19-D-gate2-treatment.md`：B1 在 A3 v2 冻结包上不激活，推荐 04 5.75② + 任务包 v3，treatment 与 canary 二选一。
 
 ---
 
@@ -192,7 +188,7 @@
 | C 无治理 | 工作区在 project_root 外 | 不治理时模型自己能到几分 |
 | D 机械补丁 | **无模型**，固定 P+ / P− 补丁直接喂 Hook | 仪器校准：拦不拦、误不误伤 |
 
-**D 臂是唯一的干净因果读数**；D 通过 = P+ 被拦**且** P− 放行；D 不过 = P+ 被放行**或** P− 被拦，A/B 不开跑（2026-10-18 裁定 A-9：原文把成功条件写成了失败条件）。D 校准门不依赖 A3 四数；A/B/C 构造门另需 A3 v2 4/4 + 任务完成（裁定 A-6/A-12）。
+**D 臂是唯一的干净因果读数**；D 通过 = P+ 被拦**且** P− 放行；D 不过 = P+ 被放行**或** P− 被拦，A/B 不开跑（2026-10-18 裁定 A-9）。D 校准门不依赖 A3 四数；A/B/C 构造门另需 A3 v2 4/4 + 任务完成（裁定 A-6/A-12）。
 
 ### 5.2 任务与压空间
 
@@ -229,7 +225,7 @@
 | 路径族声明 | 任务触碰的每个路径族都有 layer 映射 | 100% |
 | 上下文触顶 | 是否触发压缩/触顶 | 未触发（触发则记删失） |
 
-> **2026-10-18 裁定 A-7/A-12（判据冻结，跑前写死）**：② 的「首次尝试通过」按上表固定口径，不许跑后另选；四个数的定义在 A3 v2 之前冻结进 run-manifest（判据原文 sha256）。A3 四数的门之外，**D 开场另加**「A3 v2 任务完成（A1–A7：最终 `python -m pytest -q` exit 0、`python tools/audit_demo.py` exit 0、允许写集合内）」——不改四数定义，只加 D 的前置；读数表必须附任务完成度、attempted vs landed、受治/非受治比与 block 的 rule_id 分布。裁定与理由见 `readings/2026-10-18-A3-fix-adjudication.md`。
+> **2026-10-18 裁定 A-7/A-12（判据冻结，跑前写死）**：② 的「首次尝试通过」按上表固定口径，四数定义在 A3 v2 前冻结进 run-manifest（判据原文 sha256），读数表必须附任务完成度、attempted vs landed、受治/非受治比与 block 的 rule_id 分布；**D 开场另加**「A3 v2 任务完成（A1–A7：最终 `python -m pytest -q` exit 0、`python tools/audit_demo.py` exit 0、允许写集合内）」前置。裁定见 `readings/2026-10-18-A3-fix-adjudication.md`。
 
 ---
 
@@ -269,11 +265,8 @@
 2. 每次执行（一次任务、一次探针、一次 run）的记录写进 06-plan-progress.md，格式由该文件规定。
 3. 阶段 B 及之后的每一项，提交时必须同时给出：R-d 差集、负例、回退方式、对应的 04-open-work 编号更新。
 4. 新增数据文件（覆盖表、批次台账）一律自带 schema_version，按第 55 条登记。
-5. **2026-10-18 阶段 A 执行记录（裁定：执行会话代记，待使用者复核）**：§4 A2 行的门原文只列「能力边界 / 假阳性」两种结论，A2 探针读数落在第三态「真阳性」——5.71 那一枪的命令在非 git 仓库里真实退出 1，事后核对判 repair_required 正确（见 06 P-A2-001 与 testing/ab/gui-runs/2026-10-18-A2-delegated-post-evidence.md）。因此 A2 门按「能定性且带读数」执行，并把 §4 A2 行的门措辞扩为三态（2026-10-18 使用者指示继续执行后，由执行会话代定，可复核/可回退）。这不是放宽判据：读数带证据、结论可复核，A2 状态不变。
-6. **2026-10-18 A1 门判据表述（裁定：执行会话代记，待使用者复核）**：§4 A1 门的「删一行变异必红」在 §3.4 已钉死的**工具级**红键（`tool_with_hits_without_row`）下按字面不成立——真实表同一工具按治理阶段有多行，删掉其中一行仍被同工具其它行覆盖；可证明的是「删掉某工具的最后一行 / 全部行必红」（见 `validation/channel-coverage.yaml` 的红条件节与 `tests/unit/test_control_plane_facts.py` 的两条变异用例）。执行按 §3.4 的工具级判据进行，未改表结构、未改红键名；2026-10-18 使用者指示继续执行后，执行会话代定取「工具级解释」并把 §4 A1 行门措辞改成「删掉某工具的最后一行 / 全部行变异必红」；(channel, tool, mode) 粒度作为后续候选保留，如不同意可回退本行与 §4 A1 行。
-7. **2026-10-18 A3 干跑修复裁定（三派评审 + Lead 裁决；使用者 2026-10-18 指示「内部多方研讨后自行裁决」）**：F-2 保留 F2 族与 demo 交付物、v2 基线预置 `tools/audit_demo.py`（A7 改为运行已有脚本）；F-3 先修构造（F-1）、不改熔断口径并更正 v1 读数「窗口 60s」误读；F-4 修 `.tmp` 装配器谓词并用其复算 run-01（② 仍 1/2）；F-5 启动受治 dsh 用一次性 `danger-full-access` 授权 + 跑后哈希复核；F-6/F-7 记录卫生。完整裁定见 `readings/2026-10-18-A3-fix-adjudication.md`。
-8. **2026-10-18 B1 依赖改为条件依赖（裁定 A-5）**：§4 D 行原文「D 依赖……B1」改为：D 校准门不依赖 B1；A/B/C 构造门依赖 B1（或经裁定的替代 treatment）+ 用户签 1.3 条子。理由：A3 v1 六次 pwsh 全两参、0 漂移，且首消息钉死两参；B1 4 人日且需人工签条子，不适合与 A3 v2 同批混跑。威胁与触发：v2/D 任一次 pwsh 因「注册表声明为可选、带默认值的参数」得 `approval_invalid` 且挡住必需命令 → B1 立即升为前置，当轮读数作废。
-9. **2026-10-18 D 开场拆两门（裁定 A-6/A-12）**：门 1 = D 校准（P+ 被拦且 P− 放行，真 Hook，无模型）；门 2 = A/B/C 构造（A3 v2 4/4 + 任务完成 + treatment 已定义且 activation 证明两臂决策不同 + 任务包/判据/仪器/评分器冻结）。本次只到门 1；门 2 未满足（B1 未落地、C 臂与评分器未冻结）。
+5. **2026-10-18 阶段 A 门措辞（现行措辞见 §4 A1/A2 行）**：A2 门取三态（能力边界 / 假阳性 / 真阳性），三种结论都要带读数；A1 门的「删一行变异必红」按**工具级**红键执行——可证明的是「删掉某工具的最后一行 / 全部行变异必红」，删单个阶段行不改变红格，(channel, tool, mode) 粒度留作后续候选。
+6. **2026-10-18 A3 修复裁定（F-2..F-7）与 D 前置（裁定 A-5/A-6/A-7/A-12；现行判据见 §4 D 行、§5.1、§5.6）**：F-2 保留 F2 族与 demo 交付物（v2 基线预置 `tools/audit_demo.py`，A7 改为运行已有脚本）；F-3 先修构造、不改熔断口径（`breaker_seconds`=300s）；F-4 修 `.tmp` 装配器谓词并用其复算 run-01（② 仍 1/2）；F-5 启动受治 dsh 用一次性 `danger-full-access` 授权 + 跑后哈希复核；F-6/F-7 记录卫生。B1 是**条件前置**：D 校准门不依赖 B1，A/B/C 构造门依赖 B1（或经裁定的替代 treatment）+ 用户签 1.3 条子；触发：任一次 pwsh 因「注册表声明为可选、带默认值的参数」得 `approval_invalid` 且挡住必需命令 ⇒ B1 升为前置、当轮读数作废。D 拆两门（校准门 / 构造门）；② 判据冻结。裁定见 `readings/2026-10-18-A3-fix-adjudication.md`。
 
 ---
 

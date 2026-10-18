@@ -10,7 +10,7 @@
 | [03-technology-and-layout.md](03-technology-and-layout.md) | 技术选型与目标目录 |
 | [04-open-work.md](04-open-work.md) | **未完成工作与复审清单**：还没做完 / 还没核实 / 到期要复看的事项、已知边界、复审日历 |
 | [05-implementation-plan.md](05-implementation-plan.md) | **实施计划**：从「动作判定」到「产物判定」的四阶段路线、每阶段的门与判据、对比实验方案 |
-| [06-plan-progress.md](06-plan-progress.md) | **计划进度**：只规定执行记录的格式与空模板，其余为空；记录按格式追加 |
+| [06-plan-progress.md](06-plan-progress.md) | **计划进度**：记录格式 + 执行记录（只收录技术读数与关键决策记录；纯文档 / 措辞 / 行政性变更不记录） |
 | [07-status-brief.md](07-status-brief.md) | **进度简报（给非技术读者）**：在做什么、做到哪了、接下来做什么、你需要做什么；不含命令与内部编号 |
 | [testing/test-strategy.md](testing/test-strategy.md) | 测试策略 |
 | [testing/acceptance-matrix.md](testing/acceptance-matrix.md) | 阶段验收矩阵 |
