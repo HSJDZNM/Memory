@@ -9,6 +9,8 @@
 | [02-repository-data-sources.md](02-repository-data-sources.md) | 仓库数据源与规范转化方法 |
 | [03-technology-and-layout.md](03-technology-and-layout.md) | 技术选型与目标目录 |
 | [04-open-work.md](04-open-work.md) | **未完成工作与复审清单**：还没做完 / 还没核实 / 到期要复看的事项、已知边界、复审日历 |
+| [05-implementation-plan.md](05-implementation-plan.md) | **实施计划**：从「动作判定」到「产物判定」的四阶段路线、每阶段的门与判据、对比实验方案 |
+| [06-plan-progress.md](06-plan-progress.md) | **计划进度**：只规定执行记录的格式与空模板，其余为空；记录按格式追加 |
 | [testing/test-strategy.md](testing/test-strategy.md) | 测试策略 |
 | [testing/acceptance-matrix.md](testing/acceptance-matrix.md) | 阶段验收矩阵 |
 | [designs/README.md](designs/README.md) | 设计提案状态表（提案 / 状态 / 影响面 / 下一步） |
