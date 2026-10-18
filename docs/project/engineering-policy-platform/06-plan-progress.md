@@ -116,10 +116,46 @@
 
 ## 7 其余内容（空）
 
-以下小节在本文件里保持为空，只在对应记录产生时按第 6 节模板追加：
+以下小节按第 6 节模板追加；未产生记录的阶段保持为空。
 
-- 阶段 A 执行情况：空
+- 阶段 A 执行情况：见 §7.1–§7.4（2026-10-18）。
 - 阶段 B 执行情况：空
 - 阶段 C 执行情况：空
 - 阶段 D 执行情况：空
 - 汇总与复审：空
+
+### 7.1 阶段 A · 进度记录
+
+| id | 时间 | 阶段/任务 | 执行者 | 起点锁 | 做了什么 | 结果 | 证据指针 | 判据 | 偏差 | 下一步 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| P-A1-001 | 2026-10-18T09:35:00+08:00 | A1 | a1-coverage（子会话） | HEAD 6167fad；CONTROL_PLANE_FACTS_SCHEMA_VERSION 1.0→1.1；facts 13→14 行 | 新建通道覆盖表并接入 C4 只报告读数；桌面通道 out_of_scope→in_scope；用例含删行变异 | 符合 | validation/channel-coverage.yaml#L1-L266；python tools/control_plane_facts.py --audit <external> → exit 0（CONTROL_PLANE_FACTS 四红 0）；pytest -q -n0 tests/unit/test_control_plane_facts.py tests/contract/test_wiring_inventory.py tests/unit/test_provenance_wiring_scope.py → 77 passed | 05 §4 A1 + §3.4 | 三处设计取值（见 C-20261018-02）；desktop 归因初稿「审计目标不存在」经 04 5.72 更正为「解析错位」 | 升格未做（ci_local 无稳定 --audit 来源）；最终树门禁属阶段 C3 |
+| P-A2-001 | 2026-10-18T09:10:00+08:00 | A2 | a2-delegated-probe（子会话） | HEAD 6167fad；audit 1.3（只读）；ledger 1.0；approval 1.2（副本仅延期） | 复算 L4 三份记录 + 真实桥接五格 + 执行器 D1/D2，定性 5.71 | 符合 | docs/project/engineering-policy-platform/testing/ab/gui-runs/2026-10-18-A2-delegated-post-evidence.md；src/adapters/dsh/enforcement.py#L432-L527；src/enforcement/postcheck.py#L326-L337 与 #L484-L494 | 05 §4 A2 + 04 5.71 | 门原文只列两态，实际落第三态（D-20261018-01） | 04 5.71 已更新；解释性证据缺口列为 Phase B 候选（未裁定） |
+| P-A3-001 | 2026-10-18T09:20:00+08:00 | A3 | a3-dryrun-recon（子会话；session 98ecab06…） | HEAD 6167fad；audit 15,014→15,421 条；approval 3/3 过期（2026-10-17T23:38Z 与 23:59Z） | 判定干跑四数可行性、代理读数与阻断条件；确认当前会话 out_of_scope | 跑不成 | docs/project/engineering-policy-platform/testing/ab/gui-runs/2026-10-18-A3-dryrun-feasibility.md；python -m adapters.cli wiring → exit 0 与 --check → exit 1；.policy/approval.json 三条均过期 | 05 §4 A3 + §5.6 | 无 A3 任务包；代理读数不构成 A3（见 D-20261018-02） | 按解冻清单 B-1..B-6 补齐构造；阶段 D 不开跑 |
+
+### 7.2 阶段 A · 变更记录
+
+| id | 时间 | 提交/变更摘要 | 改动面（文件） | 关联任务 | 是否改判定（R-d 指针） | 复核人 | 证据指针 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| C-20261018-01 | 2026-10-18T08:50:00+08:00 | docs(plan)：05/06 与 README 目录项入库（6167fad） | docs/project/engineering-policy-platform/{05,06,README}.md | 计划建立 | 否（纯文档） | 使用者（待复核） | git show --stat 6167fad |
+| C-20261018-02 | 2026-10-18T09:38:00+08:00 | feat(control-plane)：通道覆盖表与 C4 只报告读数（0610cd5） | channel-coverage.yaml、tools/control_plane_facts.py、validation/{control-plane-facts,instrument-checks}.yaml、wiring-scope.yaml、tests/unit/{test_control_plane_facts,test_provenance_wiring_scope}.py、AGENTS.md、tools/README.md（9 文件） | A1 | 否（只报告；wiring 读数 in_scope_not_wired 4→5、out_of_scope_active 1→0；不改 allow/block、不改退出码） | 独立复核子会话 + Lead（待使用者复核） | git show --stat 0610cd5 |
+| C-20261018-03 | 2026-10-18T09:40:00+08:00 | docs(ab)：阶段 A 读数（A2 真阳性、A3 跑不成 + 04 5.72）（8d6d133） | 04-open-work.md、gui-runs/2026-10-11-L4.md、gui-runs/2026-10-18-A2-delegated-post-evidence.md、gui-runs/2026-10-18-A3-dryrun-feasibility.md（4 文件） | A2/A3 | 否（纯文档） | Lead（待使用者复核） | git show --stat 8d6d133 |
+| C-20261018-04 | 2026-10-18T09:45:00+08:00 | docs(plan)：阶段 A 记录入库 + 05 §8 变更控制第 5 条 | 06-plan-progress.md、05-implementation-plan.md（2 文件，本次提交） | A1/A2/A3 | 否 | Lead | 本次提交 |
+
+### 7.3 阶段 A · 读数记录
+
+| id | 时间 | 臂/任务 | 读数名称 | 分母/口径 | 值 | 三态 | 证据指针 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| R-A-A1-01 | 2026-10-18T09:36:00+08:00 | A1 | 覆盖四红 × 真实审计 | 13 行覆盖声明；审计 16,354 条中 governed=true 的 PreToolUse 127 条（edit 23 / write 4 / run_code 93 / pwsh 7） | row_without_mode=0；mode_without_check=0；tool_with_hits_without_row=0；registry_digest_drift=0；references=0；enforced=8；declared_uncovered=5 | 符合 | python tools/control_plane_facts.py --json --audit C:/Users/ZNM/Downloads/Comparison-test/Governance/.policy/audit.jsonl → exit 0 | 不给 --audit 时 hit 格为 not_applicable（不是 0）；路径只以 <outside-workspace>/audit.jsonl 呈现 |
+| R-A-A1-02 | 2026-10-18T09:36:00+08:00 | A1 | 定向用例 | 3 个必跑文件；另 5 个受影响文件 | 77 passed；136 passed | 符合 | .venv/Scripts/python.exe -m pytest -q -n0 … → exit 0 | test_control_plane_facts.py 约 107s（evaluate 为纯函数但用例多） |
+| R-A-A1-03 | 2026-10-18T09:37:00+08:00 | A1 | 仪器自证 | objects=65 declared=65 | 四格红条件 0 | 符合 | python tools/instrument_self_proof.py → exit 0 | gate_steps=43 与文档 42 的差异是 HEAD 存量，非本任务引入 |
+| R-A-A1-04 | 2026-10-18T09:37:00+08:00 | A1 | 接线读数 | 7 个发现通道 / 6 条声明 | in_scope_not_wired=5；out_of_scope_active=0；dsh:desktop 接线=wired、留痕=never_written | 符合 | python -m adapters.cli wiring → exit 0；--check → exit 1 | 留痕报错的根因是 04 5.72（审计目标解析错位），不是「从未留痕」 |
+| R-A-A2-01 | 2026-10-18T09:08:00+08:00 | A2 | L4 三份记录复算 | 1 个 action_id（…:call_00_hbf6dmXCWlNvctJUaSvh3440:ptc:2） | process.exit_code=1；validators=exit_code_zero failed「退出码 1」；台账 execution delegated/ok=false/无 exit_code；PostToolUse exit=2 / executed=false | 符合 | A2 归档报告 §1；源码 postcheck.py#L484-L494 | 三个字段属于三层对象，不是矛盾；定性真阳性 |
+| R-A-A2-02 | 2026-10-18T09:09:00+08:00 | A2 | 桥接五格 + 执行器两格 | C1–C5（干净/脏 × 空/非空 × exit 0/1/无退出码）；D1/D2 | C1/C2 validated；C3/C4 repair_required（exit 1）；C5 repair_required（命令没有退出码）；D1 repair_required；D2 validated | 符合 | A2 归档报告 §3 | 空输出不参与判定；通用 DelegatingDriver × exit_code_zero 是另一条能力边界（D1） |
+| R-A-A3-01 | 2026-10-18T09:18:00+08:00 | A3 | 干跑四数 | 4 项（写动作治理覆盖率 / 命令族成功率 / 路径族声明 / 上下文触顶） | A3 跑不成（构造阻断 B-1..B-6）；仅代理读数（旧受治会话）：① 1/1 窄口径 ② 0/7 族、2/11 次 ③ 1/2 族 ④ 未触发（峰值 4.70%/11.38%/22.38%，阈值随窗口变） | 跑不成 | A3 归档报告（阻断条件与最小解冻清单） | 代理读数不构成 A3，不占绿不占红 |
+
+### 7.4 阶段 A · 偏离/作废记录
+
+| id | 时间 | 事件 | 命中条件（05 第 5.4 节哪一条 / 构造失败编号） | 影响范围 | 处置 | 证据指针 |
+| --- | --- | --- | --- | --- | --- | --- |
+| D-20261018-01 | 2026-10-18T09:45:00+08:00 | A2 门原文未覆盖第三态 | 05 §4 A2 门只列「能力边界 / 假阳性」；读数落「真阳性」 | A2 判据按「能定性且带读数」执行；原文保留可证伪记录 | 05 §8 追加变更控制第 5 条：门措辞扩三态待使用者复核；A2 状态不变 | A2 归档报告 §0/§4 |
+| D-20261018-02 | 2026-10-18T09:45:00+08:00 | A3 干跑构造不成立 | 构造失败 B-1..B-6：受治臂缺失（当前会话 out_of_scope）、审批 3/3 过期、无 A3 任务包、受治树非基线且部分不可枚举、①装配/口径缺口、②族定义缺口 | 阶段 A 第三项未满足；阶段 D 不开跑 | 改构造不改判据：按最小解冻清单执行；本轮不记通过 | A3 归档报告；04 5.72（R-1 审计目标解析错位） |
