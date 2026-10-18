@@ -118,11 +118,11 @@
 
 以下小节按第 6 节模板追加；未产生记录的阶段保持为空。
 
-- 阶段 A 执行情况：见 §7.1–§7.4（2026-10-18）。
-- 阶段 B 执行情况：见 §7.5（仅 B2 解冻中）
-- 阶段 C 执行情况：空
-- 阶段 D 执行情况：空
-- 汇总与复审：空
+- 阶段 A 执行情况：见 §7.1–§7.4（2026-10-18；A1/A2 已落地，A3 v2 4/4 + 任务完成）。
+- 阶段 B 执行情况：见 §7.5（B2 已落地；B1/B3 未解冻）。
+- 阶段 C 执行情况：空（未开跑）。
+- 阶段 D 执行情况：见 §7.6（仅校准门通过；A/B/C 主实验未开跑）。
+- 汇总与复审：见 §7.7（2026-10-18 汇总）。
 
 ### 7.1 阶段 A · 进度记录
 
@@ -168,6 +168,7 @@
 | C-20261018-18 | 2026-10-18T21:45:00+08:00 | docs(ab)：A3 干跑四数读数与状态（本次提交） | readings/2026-10-18-A3-dryrun.md（新增）、06-plan-progress.md、04-open-work.md（5.73 状态）、05-implementation-plan.md（§4 A3 状态列） | A3 | 否（纯文档；未改产品代码/allow/block/退出码） | Lead（待使用者复核） | 本次提交；git show --stat HEAD |
 | C-20261018-19 | 2026-10-18T22:30:00+08:00 | docs(ab)：A3 修复裁定 + 05/04/06 与 v1 读数更正（本次提交） | readings/2026-10-18-A3-fix-adjudication.md（新增）、readings/2026-10-18-A3-dryrun.md（§12 更正）、05-implementation-plan.md（§4 D 行、§5.1/§5.6/§8）、04-open-work.md（5.73/5.75/5.76/5.77）、06-plan-progress.md（本记录） | A3 / D 前置 | 否（纯文档；未改产品代码/allow-block/退出码；v2 尚未跑） | Lead（待使用者复核） | 本次提交；git show --stat HEAD |
 | C-20261018-20 | 2026-10-18T23:35:00+08:00 | docs(ab)：A3 v2 读数（4/4 + 任务完成）与 D 校准门（本次提交） | readings/2026-10-18-A3-dryrun-v2.md（新增）、06-plan-progress.md、04-open-work.md（5.73/5.78）、05-implementation-plan.md（§4 A3 状态列） | A3 / D 校准 | 否（纯文档；未改产品代码/allow-block/退出码；D 无模型校准） | Lead（待使用者复核） | 本次提交；git show --stat HEAD |
+| C-20261018-21 | 2026-10-18T23:59:00+08:00 | docs(plan)：A3 v2 后的进度文档更新（本次提交） | 06-plan-progress.md（§7 顶部状态、§7.6 D 校准、§7.7 汇总、C-21）、README.md（新计划现状段）、07-status-brief.md（A3 v2/D 校准后的状态） | A3 / D / 进度 | 否（纯文档） | Lead（待使用者复核） | 本次提交；git show --stat HEAD |
 
 ### 7.3 阶段 A · 读数记录
 
@@ -230,3 +231,22 @@
 | R-B2-03 | 2026-10-18T19:38:00+08:00 | B2 | 真实 Hook（pre_evidence） | 1 条 PreToolUse edit conftest.py（第 2 代载荷 + budget 20000+5000<30000） | exit 0；allow / governed=true / layer=test（matched **/conftest.py）/ pre_evidence_status=collected / served 含 failing_tests / pytest ok / violations=[]；Lead 用新 event id 复跑同结果；同 event id 重放 → event_replay exit 2（幂等保护，不是失败） | 符合 | readings/2026-10-18-B2-rd.md §9（探针载荷、命令与审计摘录） | pre_evidence 只在示例部署配置下启用，示例配置本身仍保持注释（未改变例默认行为） |
 | R-B2-04 | 2026-10-18T19:41:00+08:00 | B2 | 定向测试 | 8 文件（validator checkers/registry、control-plane facts、dsh layer、validator protocol、rule combinations、validator pipeline、cli） | **259 passed**（159.01s）；text conventions 692 文件 0 问题；git diff --check 干净 | 符合 | pytest -q -n0 … → exit 0 | 复核时发现并用上修：tests/integration/test_api_http.py 的 pipeline 版本断言仍写死 1.3，已改为从 PIPELINE_SCHEMA_VERSION 取值（B2 同批） |
 | R-B2-05 | 2026-10-18T19:58:00+08:00 | B2 | 本机门禁（B2 提交后） | 干净 worktree .tmp/gate-b2 @ 47fa325；26 正常步骤 + 4 只报告 | **26/26 ok，退出码 0**；总耗时 4m16.4s；全量测试 2m45.0s rc=0；阶段验收证据 7.2s rc=0；只报告 0/0/0/106 | 符合 | docs/project/engineering-policy-platform/readings/2026-10-18-B2-gate.md（命令、26/26、耗时与首次红的上修） | 首次门禁在 aac56f2 上曾红 1 条（test_api_http 的 1.3 断言），修好后 amend 并复跑全绿；amend 后提交 47fa325 |
+
+### 7.6 阶段 D · 校准门记录（2026-10-18）
+
+| id | 时间 | 阶段/任务 | 执行者 | 起点锁 | 做了什么 | 结果 | 证据指针 | 判据 | 偏差 | 下一步 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| P-D-001 | 2026-10-18T23:18:00+08:00 | D（校准门） | Lead | HEAD 98169bf；无模型/无审批；树 = 12 文件 v2 基线 + 同一受治配置 | 真 Hook CLI 喂 P+ / P− / canary：P+ controller 直接 import repository → block（ARCH-001@1 等）；P− repository docstring → allow；canary write tools/audit_demo.py → block（TESTING-002@1，04 5.75 缺口仍在） | 符合（校准门通过；A/B/C 未开跑） | readings/2026-10-18-A3-dryrun-v2.md §5；.tmp/a3b2/d-calibration.json | 05 §5.1 门（通过 = P+ 被拦且 P− 放行；裁定 A-9）+ 裁定 A-6 | 无（校准即记录）；canary 是登记缺口的常红项，不是 D 失败 | 待 treatment 裁定 + 评分器冻结 + C 臂装配后开 A/B/C（04 5.78） |
+
+### 7.7 汇总与复审（2026-10-18）
+
+| 项 | 当前状态 | 门 / 证据 | 下一步 |
+| --- | --- | --- | --- |
+| 阶段 A | A1、A2 已落地；A3 v2 4/4 + 任务完成（A1–A7，隐藏验收 6/6、pytest 10 passed、A8 7/7） | 05 §4 A3、§5.6；readings/2026-10-18-A3-dryrun-v2.md；06 P-A3-011/012、R-A-A3-09..11 | A3 不再重跑；构造若再改必须重新冻结 run-manifest |
+| 阶段 B | B2 已落地（47fa325）；B1/B3 未解冻 | readings/2026-10-18-B2-rd.md、B2-gate.md；05 §4 B | B1 是 A/B/C 的 treatment 候选（4 人日；改注册表要重新审核）；B3 只读族闸门可选 |
+| 阶段 C | 未开跑（C1/C2/C3/C4 待裁定） | 05 §4 C | 按使用者裁定 |
+| 阶段 D | 仅校准门通过；A/B/C 主实验未开跑 | readings/2026-10-18-A3-dryrun-v2.md §5；05 §5.1/§5.6/§8；04 5.78 | ① 裁定 treatment（B1 或替代）；② 冻结评分器（8 规则 + 10 谓词清单与哈希）；③ C 臂装配 + activation 冒烟；④ 若选 B1，用户签 1.3 条子 |
+| 本机门禁 | ci_local 26/26、退出码 0（HEAD 98169bf，4m49.3s；5dd3351 仅文档） | 06 R-A-GATE-03；readings v2 §10 | 产品代码改动后重跑；同一工作树同时只跑一个 |
+| 未修缺口 | 04 5.75（tools 写取证缺口）、5.76（breaker_seconds 两义）、5.77（测量仪器升格触发） | 04-open-work | 按 04 排期；修法需 R-d/重新审核的已在 04 写明 |
+
+**一句话**：阶段 A 的退出条件（A1 变异证明、A2 定性、A3 四数齐备）已满足；D **校准门通过**，但 A/B/C 主实验按裁定未开（B1/treatment、C 臂装配、评分器冻结、以及可能的人工签名是前置）。n=1，本页不写均值/提升/显著，也不把 4/4 当治理价值结论（05 §5.5）。

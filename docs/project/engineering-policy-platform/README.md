@@ -34,10 +34,11 @@
   四条只报告步骤的豁免到期日都是 2026-12-31；义务门禁另有一条**结构问题**（仓库门禁里读不到账本）
   同样留给 12-31。
 - **Phase 9 之后的新计划（2026-10-17 起）**：把「动作判定」推进到「产物判定」的四阶段计划已开跑
-  （[05-implementation-plan.md](05-implementation-plan.md)）：**阶段 A** 覆盖表、5.71 探针、5.72 接线修复已落地，
-  A3 干跑的解冻包与 U2-b 探针已交付（审批已签、待正式干跑）；**阶段 B** 的第一项 B2（测试支撑声明）已落地
-  且门禁二次全绿；B1/B3 待使用者逐项解冻。执行记录在 [06-plan-progress.md](06-plan-progress.md)，
-  非技术读者先看 [07-status-brief.md](07-status-brief.md)。
+  （[05-implementation-plan.md](05-implementation-plan.md)）：**阶段 A** 覆盖表、5.71 探针、5.72 接线修复已落地；
+  A3 干跑两轮：v1 **3/4** 暴露构造/口径问题，经三派评审 + Lead 裁定（[裁定](readings/2026-10-18-A3-fix-adjudication.md)）
+  后 v2 **4/4 + 任务完成**（[读数](readings/2026-10-18-A3-dryrun-v2.md)）；**阶段 B** 的 B2（测试支撑声明）已落地；
+  B1/B3 未解冻（B1 是 D 主实验 treatment 候选）。**阶段 D** 仅**校准门通过**（P+/P−/canary），A/B/C 主实验
+  未开跑（前置见 04 5.78）。执行记录在 [06-plan-progress.md](06-plan-progress.md)，非技术读者先看 [07-status-brief.md](07-status-brief.md)。
 - **剩下的**：剩余缺口 8 条、各处未核实、已知边界与引用纪律，全部收在
   [04-open-work.md](04-open-work.md)——它是"还没做完"的唯一去处。
 
