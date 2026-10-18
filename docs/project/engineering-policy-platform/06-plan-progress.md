@@ -154,7 +154,8 @@
 | C-20261018-09 | 2026-10-18T14:40:00+08:00 | feat(tools)：R-d 字段级差集工具入库（阶段 1）（6fdc04e） | tools/decision_diff.py、tests/unit/test_decision_diff.py、tools/README.md、AGENTS.md（第 55 条）、readings/2026-10-18-rd-tool-demo.md（5 文件） | R-d 阶段 1 | 否（不改判定路径；新 CLI 不参与 allow/block） | Lead（待使用者复核） | git show --stat 6fdc04e |
 | C-20261018-10 | 2026-10-18T15:00:00+08:00 | docs(ab)：A3 单动作探针读数 + 解冻包 §9 更正（9efe107） | readings/2026-10-18-A3-single-action-probe.md、testing/ab/2026-10-18-A3-unblock.md（2 文件） | A3 | 否（纯文档；探针未改产品代码、未签审批） | Lead（待使用者复核） | git show --stat 9efe107 |
 | C-20261018-11 | 2026-10-18T15:10:00+08:00 | docs(plan)：第二次门禁全绿读数 + A3 解冻包行尾修正（f43feb1） | readings/2026-10-18-ci-local-green.md（第 5 节）、06-plan-progress.md（R-A-GATE-02）、testing/ab/2026-10-18-A3-unblock.md（行尾空行） | A3 / 门禁 | 否（纯文档；门禁读数） | Lead | git show --stat f43feb1 |
-| C-20261018-12 | 2026-10-18T15:30:00+08:00 | docs(plan)：A3 交接与 04 进度更新（本次提交） | testing/ab/2026-10-18-A3-handoff.md（新增）、04-open-work.md（5.72 状态、5.73/5.74 新增）、06-plan-progress.md（本记录） | A3 / R-d | 否（纯文档） | Lead | 本次提交 |
+| C-20261018-12 | 2026-10-18T15:30:00+08:00 | docs(plan)：A3 交接与 04 进度更新（a207609） | testing/ab/2026-10-18-A3-handoff.md（新增）、04-open-work.md（5.72 状态、5.73/5.74 新增）、06-plan-progress.md（本记录） | A3 / R-d | 否（纯文档） | Lead | git show --stat a207609 |
+| C-20261018-13 | 2026-10-18T16:00:00+08:00 | docs(ab)：A3 交接补充 .bat 自检/真签入口（本次提交） | testing/ab/2026-10-18-A3-handoff.md（本机 .ps1 关联缺失；check-sign-approval.bat 先 dry-run、sign-approval.bat 真签）、06-plan-progress.md（本记录） | A3 | 否（纯文档；dry-run 不写 approval.json，已实测 exit 0） | Lead | 本次提交 |
 
 ### 7.3 阶段 A · 读数记录
 
