@@ -119,7 +119,7 @@
 以下小节按第 6 节模板追加；未产生记录的阶段保持为空。
 
 - 阶段 A 执行情况：见 §7.1–§7.4（2026-10-18）。
-- 阶段 B 执行情况：空
+- 阶段 B 执行情况：见 §7.5（仅 B2 解冻中）
 - 阶段 C 执行情况：空
 - 阶段 D 执行情况：空
 - 汇总与复审：空
@@ -138,6 +138,7 @@
 | P-A3-003 | 2026-10-18T14:45:00+08:00 | A3 三项裁定（N-7/N-8/N-9） | Lead | HEAD f3d376f | 定案：A3 不以 B1 为前置（② 失败本身是读数，若因 approval_invalid 失败即构造未就绪，先做 B1，阶段 D 仍不开跑）；受治臂必须用与真实入口一致的权限模式并在读数里记 reading_context.host.sandbox，unrestricted 读数须显式标注、不得混作生产读数；三个只读装配器（audit→actions / session 日志解码 / layer 匹配）探针阶段放 .tmp/a3b/，复用则升格 tools/ 并按第 55 条建轴 | 符合 | 05 §4 A3 + §5.6；docs/.../2026-10-18-A3-unblock.md §5/§7（N-7..N-9） | 05 §5.6 的 4/4 门不变 | 无（裁定即记录，可回退） | 跑单动作探针（U1/U2/U3），再物化任务包 |
 | P-RD-001 | 2026-10-18T14:40:00+08:00 | R-d 工具（阶段 1） | a6-rd-diff（子会话） | HEAD c4eaa53；DECISION_DIFF_SCHEMA_VERSION 首次建轴 1.0 | 新增差集工具 + 14 用例 + 演示读数；README/AGENTS 第 55 条登记；数组三级匹配（可识别键/difflib/位置） | 符合 | tools/decision_diff.py；tests/unit/test_decision_diff.py；docs/project/engineering-policy-platform/readings/2026-10-18-rd-tool-demo.md；git show --stat 6fdc04e | 05 §3.5 + §2.3 | 阶段 2（git worktree 双版本采集器）未实现；同一 rule_id 多条 violation 时退化为序列对齐（已知边界，docstring 写明） | 阶段 B 各项提交时用它出差集并附回退面 |
 | P-A3-004 | 2026-10-18T14:55:00+08:00 | A3（单动作探针） | a7-a3-probe（子会话） | HEAD d8e4ced；8 次真实 dsh headless 会话（0.2.1-alpha.2） | 在 .tmp/a3b-probe 的受治项目副本上跑单动作探针，核实 U1 会话 cwd / U2 宿主审批前置 / U3 --patch 插件是否真加载 | 符合 | docs/project/engineering-policy-platform/readings/2026-10-18-A3-single-action-probe.md（sha256 ad8d87a8…，390 行）；8 次会话全部 exit 0 且全部产生真实 Hook 判定记录 | 05 §4 A3 + 解冻包 §3.5.1 | D1：解冻包 U1 原判据读不到，已在解冻包 §9 更正为三件证据；U2-b（放行后宿主审批）未核实 | 物化任务包后正式跑 A3；U2-b 待使用者签条子 |
+| P-A3-005 | 2026-10-18T16:20:00+08:00 | A3（审批签发） | 使用者（签发）、Lead（只读复核） | HEAD ec63759 | 使用者执行签条子脚本；Lead 复核 approval.json：schema 1.2、tool_id exec.pwsh、granted-by dshznm/reviewer、pattern 覆盖 pytest 与项目脚本两族、max_uses 200、expires 2026-10-25T10:45:03Z；sha256 9abd73a3…（临时文件不入库） | 符合 | .tmp/a3b/task-project/.policy/approval.json（sha256 9abd73a3a35b4a19fc43094a4e90c1d4f39bfbf5623f5dfafa122ab375a3473171） | 解冻包 §4.4/§4.6 | 无（代理未签发，仅复核） | U2-b 探针（白名单 pwsh，放行后宿主是否仍要审批）；随后物化任务包并跑 A3 |
 
 ### 7.2 阶段 A · 变更记录
 
@@ -189,3 +190,9 @@
 | D-20261018-04 | 2026-10-18T10:15:00+08:00 | 本机门禁全量 pytest 在本会话沙箱内跑不成 | 构造失败（环境）：.tmp/tmp/pytest-of-ZNM 与显式 --basetemp 目录均出现 WinError 5 拒绝访问；xdist worker 在脚手架阶段 PermissionError；干净 worktree .tmp/verify-head 同样复现 | 门禁 pytest 步骤 exit 3、phase evidence 退回真跑；22 failures 已取证 21 个 unit errors 全部为 .tmp/tmp/pytest-of-ZNM 的 PermissionError（junit .tmp/artifacts/tests-unit-report.xml），1 个 integration 未逐条取证；构造问题不是代码失败 | 不把跑不成记成通过；改用 -n0 单进程 + 干净 worktree 复跑（结果见 R-A-A1-08）；长期修法：沙箱外运行或用 Windows 文件权限修复（本次未做） | .tmp/ci-local-logs/03-…log；.tmp/verify-head 复现日志 |
 | D-20261018-05 | 2026-10-18T11:20:00+08:00 | D-20261018-04 的阻断已解除 | 环境修复：对 .tmp/tmp/pytest-of-ZNM 执行 icacls /reset + takeown（权限，不改文件内容）；删除 121 个陈旧 pytest-cache-files-* | 门禁可全量执行 | 在干净 worktree（HEAD f11e9af）复跑 ci_local：26/26 ok、退出码 0（见 R-A-GATE-01）；同时更正 R-A-A1-07 的证据指针——以 readings/2026-10-18-ci-local-green.md 与本草记录为准，不再引用 .tmp | docs/project/engineering-policy-platform/readings/2026-10-18-ci-local-green.md |
 | D-20261018-06 | 2026-10-18T15:00:00+08:00 | A3 解冻包 U1 判据按原文读不到（探针 D1） | 解冻包 §3.5 要求读 in_scope 的 governed 记录里 session_scope/session_cwd/project_root，但这些键只在 scope fallback 记录里出现 | A3 解冻包 §3.5.1 的 U1 判据 | 解冻包 §9 更正为三件证据（governed=true + 会话日志 cwd + 差分探针）；不改变 U3 结论 | readings/2026-10-18-A3-single-action-probe.md §5.5；A3 解冻包 §9 |
+
+### 7.5 阶段 B · 进度记录
+
+| id | 时间 | 阶段/任务 | 执行者 | 起点锁 | 做了什么 | 结果 | 证据指针 | 判据 | 偏差 | 下一步 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| P-B2-000 | 2026-10-18T16:20:00+08:00 | B2（解冻授权） | 使用者（授权）、Lead（记录） | HEAD ec63759；approval-pwsh-a3 sha256 9abd73a3… | 使用者显式解冻 B2（仅 B2）；A3 审批条子已签并由 Lead 只读复核 | 符合 | 06 §7.1 P-A3-005；docs/project/engineering-policy-platform/testing/ab/2026-10-18-A3-handoff.md §1 | 05 §2.3 冻结令 + §4 B2 | 无 | 实施 B2 并交 R-d 字段级差集 |
