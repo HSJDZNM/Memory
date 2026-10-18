@@ -626,6 +626,61 @@ def test_a_platform_test_path_is_no_longer_guessed_as_a_production_layer(tmp_roo
     assert hook_config.layer_resolution(relative).layer == hook_config.test_layer == "test"
 
 
+def test_a_platform_test_support_path_is_layer_test_on_both_paths(tmp_root: Path) -> None:
+    """B2 / 5.66：conftest.py（测试支撑）在验证器路径与 Hook 路径上必须同层。
+
+    平台数据 test_support_patterns 命中 → `policy.check` 判 test（layer_source=
+    platform_test_layout）；示例 Adapter 配置的 test_paths 也必须把它解析到 test_layer。
+    同一个文件拿两个层正是 AGENTS 第 49 条禁止的形状（P4 的成因）。
+    """
+
+    from adapters.dsh.adapter import load_config as load_dsh_config
+
+    workspace = tmp_root / "ws"
+    (workspace / "tests").mkdir(parents=True)
+    (workspace / "conftest.py").write_text(
+        '"""把 src 加入导入路径。"""' + chr(10), encoding="utf-8", newline=""
+    )
+    implicit = run_cli(
+        "conftest.py",
+        "--workspace",
+        workspace_path(workspace),
+        "--operation",
+        "edit",
+        "--changed",
+        "conftest.py",
+        "--request-id",
+        "req-b2-support-layer",
+        "--json",
+    )
+    explicit = run_cli(
+        "conftest.py",
+        "--workspace",
+        workspace_path(workspace),
+        "--operation",
+        "edit",
+        "--changed",
+        "conftest.py",
+        "--layer",
+        "test",
+        "--request-id",
+        "req-b2-support-layer",
+        "--json",
+    )
+
+    payload = json.loads(implicit.stdout)
+    reference = json.loads(explicit.stdout)
+
+    assert payload["context"]["layer"] == "test"
+    assert payload["layer_source"] == "platform_test_layout"
+    assert reference["layer_source"] == "declared"
+    # 同一次判定：缺 --layer 与显式 --layer test 的结果必须逐字相同
+    assert payload["result"] == reference["result"]
+    # 与受治理 Hook 路径同向：示例 Adapter 配置对同一条路径也解析成它的 test_layer
+    hook_config = load_dsh_config(REPO_ROOT / "examples" / "dsh" / "dsh-adapter.yaml")
+    assert hook_config.layer_resolution("conftest.py").layer == hook_config.test_layer == "test"
+
+
 def test_text_output_names_where_the_layer_came_from(tmp_root: Path) -> None:
     """文本输出按来源改口径：平台数据判定时不许再说"由文件名推断"。"""
 

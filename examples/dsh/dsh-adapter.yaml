@@ -37,13 +37,21 @@ timeout_ms: 5000 # 内部预算：必须严格小于 hooks.json 里的 timeout
 # 于是生产层的规则开始管测试的写法（实测把一份测试从"真实装配对象图"挤成了"手写替身"）。
 # 声明 test_paths / test_layer 之后，加载期会证明每条测试路径都落在 test_layer，
 # 证明不了就拒绝启动（src/adapters/dsh/adapter.py 的 layer_test_conflicts）。
+#
+# 第二行是**测试支撑**文件（B2 / 5.66）：项目根的 conftest.py 不在 tests/** 之下，
+# 只声明 tests/**/*.py 会让它在 Hook 路径上是 module 层、在 policy.check 路径上是 test 层
+# （平台声明 validation/test-layout.yaml 的 test_support_patterns 也认它）——同一个文件
+# 两个层正是 AGENTS 第 49 条禁止的形状。tests/ 下的 conftest / helpers / 夹具已被第一行覆盖。
 test_paths:
   - "tests/**/*.py"
+  - "**/conftest.py"
 test_layer: test
 
 # path → layer：按顺序取第一个命中；不命中则失败关闭（除非显式声明 default_layer）
 layers:
   - pattern: "tests/**/*.py"
+    layer: test
+  - pattern: "**/conftest.py"
     layer: test
   - pattern: "**/*_controller.py"
     layer: controller

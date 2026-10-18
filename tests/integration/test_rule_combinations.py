@@ -11,9 +11,11 @@ tests/fixtures/rules/<RULE-ID>/ 那道语料门禁只回答「**单条**规则�
     validators.pipeline.run_pipeline（真实验证器：真调 Ruff、真跑 pytest）
         → policy.engine.evaluate（唯一判定入口）
 
-条目是**棘轮**：它把当前结论钉住，改结论必须显式改夹具。第一批里 conftest-alone 记录的是
-**已知的死锁**（改测试支撑文件被拦死，5.66），不是「期望的行为」——条目文件的注释写着为什么、
-什么时候该翻面。
+条目是**棘轮**：它把当前结论钉住，改结论必须显式改夹具。第一批里的 conftest-alone 曾经记录
+**已知的死锁**（改测试支撑文件被拦死，5.66）；B2 落地后它已**显式翻面**（block → allow，
+`selection.level` none → support），翻面依据与 R-d 字段级差集在
+`docs/project/engineering-policy-platform/readings/2026-10-18-B2-rd.md`。那是一次可评审的修改，
+不是「为了让门禁变绿」而放宽断言。
 
 **仍不覆盖什么**（照实写，别读成「组合全查过了」）：
 

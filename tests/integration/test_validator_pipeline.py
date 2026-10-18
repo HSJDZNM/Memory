@@ -941,6 +941,179 @@ def test_a_broken_conftest_is_a_real_finding_not_a_crashed_validator(tmp_root: P
     assert "验证器不可用" not in failures[0].message
 
 
+# -------------------------------------------- 支撑文件选择 × 反例（B2 / 5.66）
+
+# B2 之后，只改测试支撑文件（conftest / helpers）也有测试证据了——最多人担心的是
+# "让 support 选择把真失败洗成通过"。这五条把 Q7 的五类反例在**支撑文件形状**下逐一钉住：
+# 第三方包缺失 / 测试模块语法错误 / conftest 导入或收集错误 / 断言失败 / 收集期目标解析不出来。
+# 判据与 Q7 完全一致：真违规（规则自己的 severity）或原来的失败关闭，一条都不放宽。
+
+SUPPORT_TARGET = "conftest.py"
+SUPPORT_TEST = "tests/test_order_service.py"
+
+
+def support_workspace(tmp_root: Path) -> Path:
+    """夹具项目 + 项目根 conftest.py（平台声明的测试支撑路径）。"""
+
+    workspace = copy_validator_project(tmp_root)
+    (workspace / SUPPORT_TARGET).write_text(
+        '"""把 src 加入导入路径。"""' + chr(10), encoding="utf-8", newline=""
+    )
+    return workspace
+
+
+def run_support(workspace: Path) -> object:
+    return run_pipeline(
+        PipelineRequest(
+            target=SUPPORT_TARGET,
+            workspace=workspace,
+            context=make_context(
+                file=SUPPORT_TARGET, language="python", layer="test", operation="edit"
+            ),
+            rules=Q7_RULES,
+            changed_files=(SUPPORT_TARGET,),
+        ),
+        config=CONFIG,
+    )
+
+
+def support_verdict(report) -> str:
+    return evaluate(
+        Q7_RULES,
+        make_context(
+            file=SUPPORT_TARGET, language="python", layer="test", operation="edit"
+        ),
+        evidence=report.bundle,
+    ).decision.value
+
+
+def test_the_support_selection_really_runs_the_tests(tmp_root: Path) -> None:
+    """先证明这一组用例真的走到了 support 选择：否则下面的反例都在空转。"""
+
+    report = run_support(support_workspace(tmp_root))
+
+    assert report.selection["level"] == "support", report.selection
+    assert report.selection["nodeids"] == [SUPPORT_TEST]
+    assert "failing_tests" in report.served_checkers
+    assert support_verdict(report) == "allow"
+
+
+def test_a_third_party_import_in_support_scope_is_still_a_real_finding(tmp_root: Path) -> None:
+    """反例：支撑文件作用域里的测试缺第三方包 → 真违规，仍然阻断。"""
+
+    workspace = support_workspace(tmp_root)
+    (workspace / SUPPORT_TEST).write_text(
+        '"""第三方包缺失。"""' + chr(10) + chr(10)
+        + "import requests_absent_package" + chr(10) + chr(10) + chr(10)
+        + "def test_noop() -> None:" + chr(10)
+        + '    """占位。"""' + chr(10) + chr(10)
+        + "    assert requests_absent_package" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    report = run_support(workspace)
+
+    record = report.record("tool.pytest")
+    assert record is not None
+    assert record.status is ValidatorStatus.FINDINGS, record.reason
+    assert report.pending_implementation == ()
+    assert "failing_tests" in report.served_checkers
+    assert not [item for item in report.blockers if "failing_tests" in item.checkers]
+    assert support_verdict(report) == "block"
+    failures = [item for item in report.evidence if item.checker == "failing_tests"]
+    assert failures and "requests_absent_package" in failures[0].message
+    assert "验证器不可用" not in failures[0].message
+
+
+def test_a_syntax_error_in_support_scope_is_still_a_real_finding(tmp_root: Path) -> None:
+    """反例：支撑文件作用域里的测试模块语法错误 → 真违规。"""
+
+    workspace = support_workspace(tmp_root)
+    (workspace / SUPPORT_TEST).write_text("def broken(:" + chr(10), encoding="utf-8", newline="")
+
+    report = run_support(workspace)
+
+    record = report.record("tool.pytest")
+    assert record is not None
+    assert record.status is ValidatorStatus.FINDINGS, record.reason
+    assert report.pending_implementation == ()
+    assert not [item for item in report.blockers if "failing_tests" in item.checkers]
+    assert support_verdict(report) == "block"
+    failures = [item for item in report.evidence if item.checker == "failing_tests"]
+    assert failures and "SyntaxError" in failures[0].message
+
+
+def test_a_broken_conftest_support_target_is_still_a_real_finding(tmp_root: Path) -> None:
+    """反例：被改的 conftest 自己导入失败（pytest 退出码 4）→ 真违规，不是"待实现"。"""
+
+    workspace = support_workspace(tmp_root)
+    (workspace / SUPPORT_TARGET).write_text(
+        "import requests_absent_package" + chr(10), encoding="utf-8", newline=""
+    )
+
+    report = run_support(workspace)
+
+    record = report.record("tool.pytest")
+    assert record is not None
+    assert record.status is ValidatorStatus.FINDINGS, record.reason
+    assert report.pending_implementation == ()
+    assert not [item for item in report.blockers if "failing_tests" in item.checkers]
+    assert support_verdict(report) == "block"
+    failures = [item for item in report.evidence if item.checker == "failing_tests"]
+    assert failures and "requests_absent_package" in failures[0].message
+    assert "收集失败" in failures[0].message
+    assert "验证器不可用" not in failures[0].message
+
+
+def test_a_failing_assertion_in_support_scope_is_still_a_real_finding(tmp_root: Path) -> None:
+    """反例：支撑文件作用域里的测试断言失败 → 真违规（有执行证据，不是"没查成"）。"""
+
+    workspace = support_workspace(tmp_root)
+    (workspace / SUPPORT_TEST).write_text(
+        '"""必然失败的用例。"""' + chr(10) + chr(10)
+        + "def test_broken() -> None:" + chr(10)
+        + '    """故意失败。"""' + chr(10) + chr(10)
+        + "    assert 1 == 2" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    report = run_support(workspace)
+
+    record = report.record("tool.pytest")
+    assert record is not None
+    assert record.status is ValidatorStatus.FINDINGS, record.reason
+    assert report.pending_implementation == ()
+    assert "failing_tests" in report.served_checkers
+    assert not [item for item in report.blockers if "failing_tests" in item.checkers]
+    assert support_verdict(report) == "block"
+
+
+def test_a_collection_failure_without_a_parseable_target_is_still_a_real_finding(
+    tmp_root: Path,
+) -> None:
+    """反例：收集期失败但读不出"缺哪个项目内目标" → 保持真违规（失败关闭，不判待实现）。"""
+
+    workspace = support_workspace(tmp_root)
+    (workspace / SUPPORT_TEST).write_text(
+        '"""导入期直接抛异常：pytest 记成收集失败，但原文里没有缺失模块/名字。"""'
+        + chr(10) + chr(10)
+        + 'raise RuntimeError("boom at import time")' + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    report = run_support(workspace)
+
+    record = report.record("tool.pytest")
+    assert record is not None
+    assert record.status is ValidatorStatus.FINDINGS, record.reason
+    assert report.pending_implementation == ()
+    assert support_verdict(report) == "block"
+    assert "收集失败" in (record.reason or "")
+
+
 # ------------------------------------------------------------------ CLI 端到端
 
 

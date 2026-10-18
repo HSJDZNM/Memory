@@ -36,9 +36,12 @@ def _test_files(root: Path) -> list[str]:
 def test_the_shipped_example_declares_the_test_layer_first() -> None:
     config = load_config(EXAMPLE)
 
-    assert config.test_paths == ("tests/**/*.py",)
+    # 第一行仍是"整棵 tests/ 树"；第二行是 B2 新加的**测试支撑**声明：项目根的 conftest.py
+    # 不在 tests/** 之下，只声明第一行会让它在两条路径上拿到两个层（见下面那条用例）。
+    assert config.test_paths == ("tests/**/*.py", "**/conftest.py")
     assert config.test_layer == "test"
     assert config.layers[0] == type(config.layers[0])(pattern="tests/**/*.py", layer="test")
+    assert config.layers[1] == type(config.layers[1])(pattern="**/conftest.py", layer="test")
 
 
 def test_the_shipped_example_declares_the_same_agent_version_as_the_manifest() -> None:
@@ -93,12 +96,8 @@ def test_removing_the_test_layer_declaration_from_the_shipped_example_is_rejecte
 # ----------------------------------------------------------------- P4：两条路径共用一份测试路径声明
 
 
-def _witness(pattern: str) -> str:
-    """把一条 glob 变成确定的见证路径（只处理目录段与段内通配）。
-
-    见证路径必须**自证**：调用方随后会用 glob_match(pattern, witness) 复查，
-    生成错了就当场红，而不是悄悄拿一条不匹配的路径去测别的规则。
-    """
+def _witness_segments(pattern: str) -> str:
+    """把一条 glob 的每一段实例化成一个确定的见证路径。"""
 
     segments: list[str] = []
     for segment in pattern.split("/"):
@@ -111,8 +110,25 @@ def _witness(pattern: str) -> str:
     return "/".join(segments)
 
 
-def _uncovered_test_patterns(layout: PlatformTestLayout, config: object) -> dict[str, str]:
-    """平台声明的测试 pattern 里，示例 Adapter 配置没能落到 test_layer 的那些。
+def _witnesses(pattern: str) -> tuple[str, ...]:
+    """把一条 glob 变成确定的见证路径（只处理目录段与段内通配）。
+
+    见证路径必须**自证**：调用方随后会用 glob_match(pattern, path) 复查，
+    生成错了就当场红，而不是悄悄拿一条不匹配的路径去测别的规则。
+
+    开头是 "**/" 的模式多给一条"零个目录"的见证："**/" 的语义是零个或多个目录，
+    项目根的 conftest.py 命中的就是零目录那一种形态。少了它，这类真实路径永远进不了
+    检查——见证路径法**可能漏**，这里把已知会漏的那一形态补上（它不是特例，是语义之一）。
+    """
+
+    candidates = [_witness_segments(pattern)]
+    if pattern.startswith("**/"):
+        candidates.append(_witness_segments(pattern[3:]))
+    return tuple(candidates)
+
+
+def _uncovered_patterns(patterns: tuple[str, ...], config: object) -> dict[str, str]:
+    """平台声明里没能落到示例配置 test_layer 的那些 pattern（test 与 support 共用一份判据）。
 
     返回 {pattern: 原因}；空字典表示"两份声明解得通"。两个失败方向都要查：
 
@@ -123,16 +139,23 @@ def _uncovered_test_patterns(layout: PlatformTestLayout, config: object) -> dict
 
     assert config.test_layer is not None
     uncovered: dict[str, str] = {}
-    for pattern in layout.test_patterns:
-        path = _witness(pattern)
-        assert glob_match(pattern, path), f"见证路径 {path!r} 不匹配平台 pattern {pattern!r}"
-        if not any(glob_match(item, path) for item in config.test_paths):
-            uncovered[pattern] = f"{path}: 不在示例配置的 test_paths 覆盖范围内"
-            continue
-        resolution = config.layer_resolution(path)
-        if resolution.layer != config.test_layer or resolution.defaulted:
-            uncovered[pattern] = f"{path}: 解析成 {resolution.layer}（应为 {config.test_layer}）"
+    for pattern in patterns:
+        problems: list[str] = []
+        for path in _witnesses(pattern):
+            assert glob_match(pattern, path), f"见证路径 {path!r} 不匹配平台 pattern {pattern!r}"
+            if not any(glob_match(item, path) for item in config.test_paths):
+                problems.append(f"{path}: 不在示例配置的 test_paths 覆盖范围内")
+                continue
+            resolution = config.layer_resolution(path)
+            if resolution.layer != config.test_layer or resolution.defaulted:
+                problems.append(f"{path}: 解析成 {resolution.layer}（应为 {config.test_layer}）")
+        if problems:
+            uncovered[pattern] = "；".join(problems)
     return uncovered
+
+
+def _uncovered_test_patterns(layout: PlatformTestLayout, config: object) -> dict[str, str]:
+    return _uncovered_patterns(layout.test_patterns, config)
 
 
 def test_every_platform_test_pattern_lands_on_the_declared_test_layer() -> None:
@@ -184,3 +207,46 @@ def test_dropping_the_example_test_layer_row_is_reported() -> None:
 
     assert set(uncovered) == set(layout.test_patterns)
     assert all("解析成" in reason for reason in uncovered.values())
+
+
+# ---------------------------------------------------- B2：测试支撑路径也共用同一份声明
+
+
+def test_every_platform_test_support_pattern_lands_on_the_declared_test_layer() -> None:
+    """B2 / 5.66：平台声明的**测试支撑**路径也必须落在示例配置的 test_layer。
+
+    同一份声明要同时服务两条路径：验证器层按 test_support_patterns 做 support 选择，
+    policy.check 缺 --layer 时按它定 test 层。示例 Adapter 配置是发给别人的模板——
+    它漏掉一条支撑声明，那个文件就会在 Hook 路径上是生产层、在验证器路径上是 test
+    （AGENTS 第 49 条禁止的"同一个文件两个层"）。
+    """
+
+    layout = load_test_layout(root=REPO_ROOT)
+    config = load_config(EXAMPLE)
+
+    assert layout.test_support_patterns, "v2 必须声明测试支撑路径，否则这条检查空转"
+    assert _uncovered_patterns(layout.test_support_patterns, config) == {}
+
+
+def test_a_root_conftest_is_the_test_layer_in_the_shipped_example() -> None:
+    """具体的那个文件：项目根 conftest.py 必须解析到 test_layer，且不是默认层兜底。
+
+    上一条通用检查按见证路径跑，而 `**/` 的零目录形态（就是项目根的 conftest.py）
+    另有专门的见证（见 `_witnesses`）；这一条把"真文件、真声明"的读数也钉住。
+    """
+
+    config = load_config(EXAMPLE)
+    resolution = config.layer_resolution("conftest.py")
+
+    assert resolution.layer == "test"
+    assert resolution.matched_pattern == "**/conftest.py"
+    assert resolution.defaulted is False
+
+
+def test_a_platform_test_support_pattern_the_example_does_not_cover_is_reported() -> None:
+    """变异：平台数据加一条示例配置覆盖不到的支撑 pattern -> 检查必须报出来。"""
+
+    uncovered = _uncovered_patterns(("spec/**/support_*.py",), load_config(EXAMPLE))
+
+    assert "spec/**/support_*.py" in uncovered
+    assert "不在示例配置的 test_paths 覆盖范围内" in uncovered["spec/**/support_*.py"]

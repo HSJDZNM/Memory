@@ -2,9 +2,17 @@
 #
 # 选择顺序（从窄到宽，相关性不足时升级）：
 #   related（同名测试）→ package（同包测试）→ suite（整个测试套件）
+# 另有一支不由生产文件驱动的选择：变更**只改测试支撑文件**时按支撑文件的作用域选
+#   （support，见 test_support_patterns）。
 # 占位符：{stem} = 生产文件名去掉扩展名；{package} = 生产文件在 python 根下的第一层目录名。
-version: 1
-schema_id: test-layout/1
+#
+# 数据文件自己的版本轴（AGENTS 第 55 条）：
+#   version 1 → 2：新增**可选**字段 test_support_patterns（测试支撑文件的路径声明）。
+#   加载器**同时接受 1 与 2**（加可选字段不制造兼容窗口，与 adapters/wiring-scope.yaml 的
+#   schema_version "1"/"2" 同型）；不认识的版本号、或 schema_id 与 version 对不上 → 加载期报错。
+#   回退：删掉 test_support_patterns、把 version 与 schema_id 改回 1，即恢复 v1 形状。
+version: 2
+schema_id: test-layout/2
 language: python
 
 production_patterns:
@@ -21,6 +29,24 @@ production_patterns:
 test_patterns:
   - "tests/**/test_*.py"
   - "tests/**/*_test.py"
+
+# 测试**支撑**文件（conftest / helpers / 夹具）：改它们不等于改测试本身，但会让它们
+# pytest 作用域内的测试变得相关。值同样是 layer=test——policy.check 缺 --layer 时命中
+# 本清单的路径一律判 test 层，与验证器路径共用这一份声明（AGENTS 第 49 条：
+# 同一个文件不许在两条路径上得到两个层）。
+#
+# 选择语义（validators.selection.select_tests 的 level="support"）：
+#   变更目标命中本清单时，选**该文件所在目录（pytest conftest 的作用域）子树下的全部
+#   测试文件**；项目根的 conftest.py 选全部测试。作用域里一个测试都没有时**失败关闭**
+#   （level="none"、理由写明作用域为空）——不用"它在 tests/ 下就算相关"这种启发式
+#   （第 49 条：口径只有一份声明）。
+#
+# 只放可评审的最小集：每加一条都要在 tests/fixtures/rules/_combinations/ 的条目里体现，
+# 并说明"改了这批文件，为什么这些测试相关"。
+test_support_patterns:
+  - "**/conftest.py"
+  - "tests/**/helpers*.py"
+  - "tests/fixtures/**/*.py"
 
 escalation:
   - level: related

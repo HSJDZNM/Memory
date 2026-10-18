@@ -357,7 +357,13 @@ def test_observed_rows_must_name_the_observer(tmp_root):
 
 
 def test_c1_uses_the_two_existing_implementations(default_payload):
-    """C1 不新写谓词：载荷里的判定就是两侧**现在**的实现算出来的。"""
+    """C1 不新写谓词：载荷里的判定就是两侧**现在**的实现算出来的。
+
+    B2（测试支撑声明）之后 `tests/fixtures/**/*.py` 在两条路径上都是 test 层，
+    原先用来当见证的 `tests/fixtures/validators/project/src/shop/order_controller.py`
+    因此不再对不齐；仍然对不齐的是 `tests/*_support.py`——它们**没有**被
+    `test_support_patterns`（`tests/**/helpers*.py`）声明，平台侧只能按文件名猜。
+    """
 
     payload = default_payload
     test_paths = payload["cross_source"]["test_paths"]
@@ -368,12 +374,17 @@ def test_c1_uses_the_two_existing_implementations(default_payload):
         + test_paths["directions"]["platform_true_adapter_false"]
     )
 
-    witness = "tests/fixtures/validators/project/src/shop/order_controller.py"
+    witness = "tests/api_support.py"
     entry = next(
         item for item in test_paths["layer_disagreement"]["items"] if item["path"] == witness
     )
     assert entry["adapter"] == "test", "Adapter 侧按 tests/**/*.py 判测试层"
-    assert entry["platform"] == "controller", "平台侧按文件名猜成入口层——正是 M1 那条缺陷"
+    assert entry["platform"] == "unknown", "平台侧没有声明这条支撑路径——按文件名猜不出来"
+    # B2 的正面读数：被 test_support_patterns 声明的夹具路径，两条路径已经同层。
+    assert all(
+        item["path"] != "tests/fixtures/validators/project/src/shop/order_controller.py"
+        for item in test_paths["layer_disagreement"]["items"]
+    )
 
 
 def test_c2_marks_the_orchestrator_relation_unavailable(default_payload):

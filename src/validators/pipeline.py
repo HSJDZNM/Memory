@@ -90,7 +90,10 @@ __all__ = [
 #      取值集合是载荷语义的一部分：1.2 的读者只认 related / package / suite / none，
 #      读到 "target" 会把「目标就是要跑的测试」读成「没见过的层级」。这是新增键之外
 #      同样要显式升版的那一类变化（AGENTS 第 55 条）。
-PIPELINE_SCHEMA_VERSION = "1.3"
+# 1.4：selection.level 再多一个取值 "support"（B2 / 5.66：变更里只有声明为测试支撑的文件
+#      conftest / helpers / 夹具时，按 pytest 作用域选该目录子树下的测试）。与 1.3 同型：
+#      1.3 的读者不认识 "support"，会把它读成"没见过的层级"；取值集合变了就必须升版。
+PIPELINE_SCHEMA_VERSION = "1.4"
 
 # checker 的"非判定"口径（PipelineReport.judgements 的 outcome）：
 #   empty      —— 验证器跑成了，但本次一条诊断都没归到任何规则（只计数、不判定）；

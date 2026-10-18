@@ -23,6 +23,8 @@ from policy.models import (
 __all__ = [
     "KNOWN_FACTS",
     "KNOWN_PLACEHOLDERS",
+    "TEST_LAYOUT_SCHEMA_ID_PREFIX",
+    "TEST_LAYOUT_SCHEMA_VERSIONS",
     "ComponentSpec",
     "EscalationLevel",
     "LanguageSpec",
@@ -39,6 +41,13 @@ __all__ = [
 
 # 验证器可以声明提供的"事实"种类（受控枚举：拼错就是配置错误，不是"少提供一点"）。
 KNOWN_FACTS = frozenset({"source", "syntax", "imports", "calls", "dependencies"})
+
+# 测试布局数据文件自己的版本轴（AGENTS 第 55 条）：
+#   1 = 原形状；2 = 新增**可选**字段 test_support_patterns（测试支撑文件的路径声明）。
+# 两个版本都接受——只增可选字段不制造兼容窗口，与 provenance.wiring_scope 的 "1"/"2" 同型；
+# v1 的形状里没有这个字段，写了非空值就是配置错误（不允许同一版本号底下存在两种载荷形状）。
+TEST_LAYOUT_SCHEMA_VERSIONS: Tuple[int, ...] = (1, 2)
+TEST_LAYOUT_SCHEMA_ID_PREFIX = "test-layout/"
 
 # 外部工具命令行里允许出现的占位符。argv 必须与声明逐字一致（占位符除外），
 # 因此"多传一个参数"不是运行时自由，而是加载阶段就失败。
@@ -462,8 +471,73 @@ class TestLayout(StrictModel):
     language: str = Field(min_length=1)
     production_patterns: Tuple[str, ...] = Field(min_length=1)
     test_patterns: Tuple[str, ...] = Field(min_length=1)
+    # v2 新增（可选）：测试**支撑**文件（conftest / helpers / 夹具）的路径声明。
+    # 默认空元组 = v1 形状；消费方（selection 的 level="support"、policy.check 的层推断）
+    # 只在它非空时多出这一支，v1 的逐字节行为因此不变。
+    test_support_patterns: Tuple[str, ...] = ()
     escalation: Tuple[EscalationLevel, ...] = ()
     limits: TestLimits = TestLimits()
+
+    @field_validator("test_support_patterns")
+    @classmethod
+    def _check_support_patterns(cls, values: Tuple[str, ...]) -> Tuple[str, ...]:
+        """支撑路径模式必须是规范的仓库相对 glob：空串 / 反斜杠 / 盘符 / 上跳都在加载期拒绝。
+
+        它们与 test_patterns 一样是"哪些路径算测试支撑"的唯一声明：写错一条不会报错，
+        只会让某个支撑文件永远匹配不到（然后被当成普通文件按文件名猜层）——那正是
+        "看起来声明了、实际什么都没管"的形态。
+        """
+
+        for item in values:
+            token = str(item).strip()
+            if not token or token != str(item):
+                raise ValueError(
+                    "test_support_patterns 里的模式不能为空或带首尾空白，得到 " + repr(item)
+                )
+            if token.startswith("/") or "\\" in token or ":" in token:
+                raise ValueError(
+                    "test_support_patterns 必须是仓库相对 glob（正斜杠、无盘符、无反斜杠），得到 "
+                    + repr(item)
+                )
+            if any(part in ("", ".", "..") for part in token.split("/")):
+                raise ValueError(
+                    "test_support_patterns 含空段 / . / ..，不是规范化的仓库相对 glob："
+                    + repr(item)
+                )
+        return values
+
+    @model_validator(mode="after")
+    def _check_version_shape(self) -> "TestLayout":
+        """版本号、schema_id 与字段形状必须自洽（AGENTS 第 55 条）。
+
+        三种失败都拒绝加载：不认识的版本号（消费方看不懂）、schema_id 与 version 对不上、
+        v1 里写了 v2 才有的 test_support_patterns（同一版本号底下两种载荷形状）。
+        """
+
+        if self.version not in TEST_LAYOUT_SCHEMA_VERSIONS:
+            raise ValueError(
+                "未知的 test-layout version "
+                + repr(self.version)
+                + "：只接受 "
+                + " / ".join(str(item) for item in TEST_LAYOUT_SCHEMA_VERSIONS)
+                + "（消费方看不懂必须拒绝）"
+            )
+        expected = TEST_LAYOUT_SCHEMA_ID_PREFIX + str(self.version)
+        if self.schema_id.strip() != expected:
+            raise ValueError(
+                "schema_id 与 version 不自洽：version="
+                + str(self.version)
+                + " 要求 schema_id="
+                + expected
+                + "，得到 "
+                + repr(self.schema_id)
+            )
+        if self.version == 1 and self.test_support_patterns:
+            raise ValueError(
+                "version=1 的 test-layout 不允许声明 test_support_patterns："
+                "这个字段是 version=2 才有的形状；要声明支撑文件就把 version 与 schema_id 一起改成 2"
+            )
+        return self
 
     def is_production(self, path: str) -> bool:
         from .globs import glob_match
@@ -474,3 +548,10 @@ class TestLayout(StrictModel):
         from .globs import glob_match
 
         return any(glob_match(pattern, path) for pattern in self.test_patterns)
+
+    def is_test_support(self, path: str) -> bool:
+        """这个路径是否被声明为测试支撑文件（v2 字段；v1 的空清单下恒为 False）。"""
+
+        from .globs import glob_match
+
+        return any(glob_match(pattern, path) for pattern in self.test_support_patterns)

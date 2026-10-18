@@ -249,6 +249,13 @@ def load_project(
 def load_test_layout(
     path: Path | str | None = None, *, root: Path | str | None = None
 ) -> TestLayout:
+    """加载测试布局（validation/test-layout.yaml）。
+
+    版本轴同时接受 1 与 2（AGENTS 第 55 条）：2 只多了**可选**字段 test_support_patterns，
+    v1 的文件逐字按原语义读；版本号 / schema_id 不自洽、或 v1 里写了支撑路径，都在
+    模型校验里拒绝加载（见 models.TestLayout._check_version_shape）。
+    """
+
     anchor = Path(root) if root is not None else repo_root()
     target = Path(path) if path is not None else anchor / DEFAULT_TEST_LAYOUT
     document = _read_mapping(target)

@@ -348,16 +348,17 @@ def test_a_test_file_target_that_is_not_in_the_tree_selects_nothing(tmp_root: Pa
     assert selection.nodeids == ()
 
 
-def test_only_the_declared_test_patterns_count_as_tests(tmp_root: Path) -> None:
-    """测试目录下的辅助文件不是"测试文件"：口径只有 validation/test-layout.yaml 一份。
+def test_an_undeclared_helper_is_not_selected_by_heuristics(tmp_root: Path) -> None:
+    """测试目录下的**未声明**辅助文件不是测试、也不是支撑：口径只有 test-layout.yaml 一份。
 
-    这一条守的是"不按文件名/目录猜"：`tests/helpers.py` 既不是生产文件、也没有被
-    test_patterns 声明，于是它仍然落回 level="none"（失败关闭），而不是被顺手放行。
+    这一条守的是"不按文件名/目录猜"：`tests/support_data.py` 既不是生产文件、也没有被
+    test_patterns（不是 test_*.py）或 test_support_patterns（不是 helpers*.py）声明，
+    于是它仍然落回 level="none"（失败关闭），而不是被顺手放行。
     """
 
     workspace = tmp_root / "workspace"
     (workspace / "tests").mkdir(parents=True)
-    (workspace / "tests" / "helpers.py").write_text(
+    (workspace / "tests" / "support_data.py").write_text(
         "VALUE = 1" + chr(10), encoding="utf-8", newline=""
     )
     (workspace / "tests" / "test_order_service.py").write_text(
@@ -367,8 +368,8 @@ def test_only_the_declared_test_patterns_count_as_tests(tmp_root: Path) -> None:
     )
 
     selection = select_tests(
-        target_path="tests/helpers.py",
-        changed_files=("tests/helpers.py",),
+        target_path="tests/support_data.py",
+        changed_files=("tests/support_data.py",),
         layout=CONFIG.layout,
         workspace=workspace,
         max_nodeids=10,
@@ -376,6 +377,155 @@ def test_only_the_declared_test_patterns_count_as_tests(tmp_root: Path) -> None:
 
     assert selection.level == "none"
     assert selection.nodeids == ()
+
+
+def test_a_root_conftest_selects_every_test(tmp_root: Path) -> None:
+    """B2 / 5.66：项目根 conftest.py 的 pytest 作用域是整棵树 → 选全部测试。"""
+
+    workspace = tmp_root / "workspace"
+    for directory in ("tests/a", "tests/b"):
+        (workspace / directory).mkdir(parents=True)
+    (workspace / "conftest.py").write_text(
+        "VALUE = 1" + chr(10), encoding="utf-8", newline=""
+    )
+    for relative in ("tests/a/test_one.py", "tests/b/test_two.py"):
+        (workspace / relative).write_text(
+            "def test_x():" + chr(10) + "    assert True" + chr(10),
+            encoding="utf-8",
+            newline="",
+        )
+
+    selection = select_tests(
+        target_path="conftest.py",
+        changed_files=("conftest.py",),
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=10,
+    )
+
+    assert selection.level == "support", selection.reason
+    assert selection.nodeids == ("tests/a/test_one.py", "tests/b/test_two.py")
+    assert selection.missing == ()
+    # 支撑文件自己不是 node id：跑 conftest.py 没有意义
+    assert "conftest.py" not in selection.nodeids
+    assert "测试支撑文件（conftest/helpers）：按 pytest 作用域选该目录子树" in selection.reason
+
+
+def test_a_nested_conftest_selects_only_its_subtree(tmp_root: Path) -> None:
+    """嵌套 conftest.py 的作用域是它所在目录子树，不是整个测试套件。"""
+
+    workspace = tmp_root / "workspace"
+    (workspace / "tests" / "shop").mkdir(parents=True)
+    (workspace / "tests" / "other").mkdir(parents=True)
+    (workspace / "tests" / "shop" / "conftest.py").write_text(
+        "VALUE = 1" + chr(10), encoding="utf-8", newline=""
+    )
+    for relative in ("tests/shop/test_a.py", "tests/other/test_b.py"):
+        (workspace / relative).write_text(
+            "def test_x():" + chr(10) + "    assert True" + chr(10),
+            encoding="utf-8",
+            newline="",
+        )
+
+    selection = select_tests(
+        target_path="tests/shop/conftest.py",
+        changed_files=("tests/shop/conftest.py",),
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=10,
+    )
+
+    assert selection.level == "support", selection.reason
+    assert selection.nodeids == ("tests/shop/test_a.py",)
+    assert "tests/shop" in selection.reason
+
+
+def test_a_helpers_file_selects_its_directory_subtree(tmp_root: Path) -> None:
+    """tests/helpers.py 的 pytest 作用域是 tests/（它所在目录）→ 选该子树下全部测试。"""
+
+    workspace = tmp_root / "workspace"
+    (workspace / "tests" / "shop").mkdir(parents=True)
+    (workspace / "tests" / "helpers.py").write_text(
+        "VALUE = 1" + chr(10), encoding="utf-8", newline=""
+    )
+    for relative in ("tests/test_a.py", "tests/shop/test_b.py"):
+        (workspace / relative).write_text(
+            "def test_x():" + chr(10) + "    assert True" + chr(10),
+            encoding="utf-8",
+            newline="",
+        )
+
+    selection = select_tests(
+        target_path="tests/helpers.py",
+        changed_files=("tests/helpers.py",),
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=10,
+    )
+
+    assert selection.level == "support", selection.reason
+    assert selection.nodeids == ("tests/shop/test_b.py", "tests/test_a.py")
+
+
+def test_a_support_file_whose_scope_has_no_tests_falls_back_to_none(tmp_root: Path) -> None:
+    """作用域里一个测试都没有 → none（失败关闭），不猜"那就跑整个套件"。"""
+
+    workspace = tmp_root / "workspace"
+    (workspace / "tests" / "fixtures" / "data").mkdir(parents=True)
+    (workspace / "tests" / "fixtures" / "data" / "sample.py").write_text(
+        "VALUE = 1" + chr(10), encoding="utf-8", newline=""
+    )
+    (workspace / "tests" / "test_elsewhere.py").write_text(
+        "def test_x():" + chr(10) + "    assert True" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+
+    selection = select_tests(
+        target_path="tests/fixtures/data/sample.py",
+        changed_files=("tests/fixtures/data/sample.py",),
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=10,
+    )
+
+    assert selection.level == "none"
+    assert selection.nodeids == ()
+    assert "没有任何测试文件" in selection.reason
+
+
+def test_support_selection_is_not_used_when_a_production_file_is_in_the_batch(
+    tmp_root: Path,
+) -> None:
+    """批次里同时有生产变更时仍按生产层级选（5.68 R5 的读数不因 B2 改变）。"""
+
+    workspace = tmp_root / "workspace"
+    (workspace / "src" / "shop").mkdir(parents=True)
+    (workspace / "tests").mkdir(parents=True)
+    (workspace / "src" / "shop" / "order_service.py").write_text(
+        "x = 1" + chr(10), encoding="utf-8", newline=""
+    )
+    (workspace / "tests" / "conftest.py").write_text(
+        "VALUE = 1" + chr(10), encoding="utf-8", newline=""
+    )
+    for relative in ("tests/test_order_service.py", "tests/test_unrelated.py"):
+        (workspace / relative).write_text(
+            "def test_x():" + chr(10) + "    assert True" + chr(10),
+            encoding="utf-8",
+            newline="",
+        )
+
+    selection = select_tests(
+        target_path="tests/conftest.py",
+        changed_files=("tests/conftest.py", "src/shop/order_service.py"),
+        layout=CONFIG.layout,
+        workspace=workspace,
+        max_nodeids=10,
+    )
+
+    assert selection.level == "related", selection.reason
+    assert selection.nodeids == ("tests/test_order_service.py",)
+    assert selection.missing == ()
 
 
 def test_a_changed_test_file_is_kept_alongside_the_production_selection(tmp_root: Path) -> None:

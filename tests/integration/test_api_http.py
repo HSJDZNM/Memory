@@ -28,6 +28,7 @@ from policy.loader import load_rule_set
 from policy_api.config import LoadConfig, RateLimitConfig, load_api_config
 from policy_api.runtime import ApiRuntime
 from policy_api.testing import make_client
+from validators.pipeline import PIPELINE_SCHEMA_VERSION
 from retrieval.corpus import load_corpus
 from retrieval.indexer import ingest
 from retrieval.store import ChunkStore
@@ -950,8 +951,9 @@ def test_validate_runs_the_real_pipeline_and_returns_a_decision(tmp_root: Path) 
     body = response.json()
     report = body["report"]
     # 这一格跟的是 **PipelineReport** 的版本轴（validators.pipeline.PIPELINE_SCHEMA_VERSION），
-    # 不是证据包那条：P4 / 5.58 给 selection.level 加了取值 "target"，那条轴 1.2 → 1.3。
-    assert report["schema_version"] == "1.3"
+    # 不是证据包那条：P4 / 5.58 给 selection.level 加了取值 "target"（1.2 → 1.3）；
+    # B2 又给 selection.level 加了取值 "support"（取值集合变了即协议变化），1.3 → 1.4。
+    assert report["schema_version"] == PIPELINE_SCHEMA_VERSION
     assert report["target"]["file"] == "src/shop/order_controller.py"
     assert report["served_checkers"] == ["forbidden_dependency"]
     # 记录里的身份字段是 `validator`（形如 py.depgraph@1.0）：证据必须能追到"谁产的"。

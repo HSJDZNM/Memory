@@ -44,9 +44,11 @@
 ### 条目是棘轮，不是「期望行为」的许愿池
 
 条目的读数**照实记录**（真跑一遍、把看到的写下来）。其中允许记录**已知是坏的**行为：
-`conftest-alone` 就是一条——它记的是 5.66 的死锁（改测试支撑文件被拦死），文件头写着为什么、
-什么时候该翻面。等 5.68 的方案 C / A 落地，那条条目要**显式改成** `allow` 并重采
-`expected_served_checkers`；那是一次可评审的修改，不是「为了让门禁变绿」而放宽断言。
+`conftest-alone` 曾经就是这样一条——它记录 5.66 的死锁（改测试支撑文件被拦死），文件头写着
+为什么、什么时候该翻面。**B2（2026-10-18）已按它写的翻面条件显式翻面**：条目改成 `allow`
+并照实重采了 `expected_served_checkers`；依据与 R-d 字段级差集在
+`docs/project/engineering-policy-platform/readings/2026-10-18-B2-rd.md`。
+那是一次可评审的修改，不是「为了让门禁变绿」而放宽断言。
 
 `expected_served_checkers` 用**逐字相等**也是这个意思：证据集合变了（哪怕只是多了一条 checker）
 就是一次需要人看一眼的变化。失败信息会把 `selection`、全部 `violations` 与 `skipped_rules`

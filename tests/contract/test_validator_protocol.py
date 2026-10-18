@@ -63,11 +63,15 @@ def test_evidence_schema_version_is_pinned() -> None:
 
 def test_pipeline_schema_version_is_pinned_and_single_sourced() -> None:
     """流水线载荷也变了（validators[] 的键 + language_coverage + pending_implementation
-    + selection.level 的取值集合），版本号同步且只有一份真值。"""
+    + selection.level 的取值集合），版本号同步且只有一份真值。
+
+    1.4（B2 / 5.66）：selection.level 多出取值 "support"——取值集合是载荷语义的一部分，
+    与 1.3 的 "target" 同型（AGENTS 第 55 条：加键与改语义同等对待）。
+    """
 
     import validators
 
-    assert PIPELINE_SCHEMA_VERSION == "1.3"
+    assert PIPELINE_SCHEMA_VERSION == "1.4"
     assert validators.PIPELINE_SCHEMA_VERSION == PIPELINE_SCHEMA_VERSION
 
 
@@ -113,6 +117,7 @@ def test_a_test_file_target_is_reported_as_the_target_level() -> None:
     这一条钉的是**载荷语义**（不是"某个测试跑没跑"）：level 的取值集合属于协议的一部分，
     所以 PIPELINE_SCHEMA_VERSION 跟着进了 1.3（AGENTS 第 55 条：加键与改语义同等对待）。
     它同时是修复前那条失败关闭的可复现读数——修复前这里是 level="none"、nodeids=[]。
+    1.4（B2 / 5.66）再多一个取值 "support"，版本号同批再进一版。
     """
 
     rules = load_rule_set([POLICIES_DIR], repo_root=REPO_ROOT)
@@ -130,8 +135,42 @@ def test_a_test_file_target_is_reported_as_the_target_level() -> None:
         config=CONFIG,
     )
 
-    assert report.schema_version == "1.3"
+    assert report.schema_version == "1.4"
     assert report.selection["level"] == "target", report.selection
+
+
+def test_a_support_file_target_is_reported_as_the_support_level(tmp_root: Path) -> None:
+    """B2：`selection.level` 的另一个新取值 "support" 也必须能从载荷里读到。
+
+    改了项目根的 conftest.py（测试支撑文件）时，pytest 作用域是整棵树，选中全部测试；
+    这条用例钉的是**载荷语义**（level 的取值集合），不是"测试跑没跑"。
+    """
+
+    from conftest import copy_validator_project
+
+    workspace = copy_validator_project(tmp_root)
+    (workspace / "conftest.py").write_text(
+        '"""把 src 加入导入路径。"""' + chr(10), encoding="utf-8", newline=""
+    )
+    rules = load_rule_set([POLICIES_DIR], repo_root=REPO_ROOT)
+    context = make_context(
+        file="conftest.py", language="python", layer="test", operation="edit"
+    )
+    report = run_pipeline(
+        PipelineRequest(
+            target=context.file,
+            workspace=workspace,
+            context=context,
+            rules=rules,
+            changed_files=("conftest.py",),
+        ),
+        config=CONFIG,
+    )
+
+    assert report.schema_version == "1.4"
+    assert report.selection["level"] == "support", report.selection
+    assert report.selection["nodeids"] == ["tests/test_order_service.py"]
+    assert "测试支撑文件（conftest/helpers）：按 pytest 作用域选该目录子树" in report.selection["reason"]
     assert report.selection["nodeids"] == ["tests/test_order_service.py"]
     # 「有没有对应测试」这一侧一个字没放宽：没有生产文件变更就没有 missing。
     assert report.selection["missing"] == []

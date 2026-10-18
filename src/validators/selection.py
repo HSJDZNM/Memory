@@ -9,8 +9,16 @@
 受治工作区**写不了任何测试**；而 TESTING-001 又拦住"只改实现"，两条测试规则合起来是一条
 死路，与第 51 条「先写测试不该被自己的平台拦死」正好相反。
 
+**变更集里只有测试支撑文件时**（B2 / 5.66）：命中 `test_support_patterns` 的 `conftest.py` /
+`helpers*.py` / 夹具不是测试文件（跑它们没有意义），但改它们会让**它们 pytest 作用域内**的
+测试变得相关。这一支因此按"该文件所在目录子树下的全部测试文件"选（项目根的 conftest.py =
+全部测试），`level="support"`。不让生产文件驱动它：生产变更在场时仍按 related → package →
+suite 选（批次语义不改，5.68 的 R5 读数因此保持），支撑作用域**只**在"没有生产文件、也没有
+变更中的测试文件"时生效。作用域里一个测试都没有时落回 `none`（失败关闭）——"它在 tests/
+目录下"不是相关性证据（第 49 条：口径只有一份声明）。
+
 "哪些路径算测试"只有一份声明（AGENTS 第 49 条）：这里只认 `validation/test-layout.yaml` 的
-`test_patterns`——不按文件名猜、也不把"测试目录下的辅助文件"顺手算进来（那会是第二份声明）。
+`test_patterns`——不按文件名猜；支撑文件同样只认同一份文件里的 `test_support_patterns`。
 """
 
 from __future__ import annotations
@@ -51,12 +59,14 @@ class TestSelection:
     | 取值 | 含义 |
     | --- | --- |
     | `target` | 本次变更（含目标本身）里就有声明为测试路径的文件：它们**就是**要跑的测试 |
+    | `support` | 变更里只有声明为**测试支撑**的文件（conftest / helpers / 夹具）：按 pytest 作用域选该目录子树下的测试 |
     | `related` / `package` / `suite` | 由生产文件按 test-layout.yaml 的层级选出来的测试 |
     | `none` | 没有选中任何测试（`missing` 说明哪几条生产变更缺对应测试） |
 
     `target` 只描述"生产文件一个都没有、选中的全是变更里的测试文件"这一种形状；
     生产文件与测试文件同时在变更集里时仍然报 related / package / suite（那些测试文件
-    会以最高相关性并入候选，见 `select_tests`）。
+    会以最高相关性并入候选，见 `select_tests`）。`support` 只在"没有生产文件、也没有
+    变更中的测试文件"时生效；支撑文件自身**不会**成为 node id（跑 conftest.py 没有意义）。
     """
 
     level: str
@@ -182,6 +192,11 @@ def select_tests(
     changed_tests = tuple(
         sorted({item for item in changed if item in on_disk and layout.is_test(item)})
     )
+    # B2 / 5.66：变更集（含目标本身）里被声明为**测试支撑**的文件。它们不成为 node id
+    # （跑 conftest.py 没有意义）；作用是**作用域**：该目录子树下的测试因此相关。
+    # 只认同一份平台声明（validation/test-layout.yaml 的 test_support_patterns）——
+    # "在 tests/ 目录下"不是相关性证据，没声明就落回 none。
+    support = tuple(sorted({item for item in changed if layout.is_test_support(item)}))
     if not production:
         if changed_tests:
             nodeids = changed_tests[:max_nodeids]
@@ -208,6 +223,10 @@ def select_tests(
                 related=changed_tests,
                 reason=reason,
                 truncated=truncated,
+            )
+        if support:
+            return _select_support_scope(
+                tests, support=support, max_nodeids=max_nodeids
             )
         return TestSelection(level="none", reason="变更集里没有生产文件，测试选择不适用")
     if not tests:
@@ -268,6 +287,69 @@ def select_tests(
         related=tuple(unique),
         reason=reason,
         escalated=escalated,
+        truncated=truncated,
+    )
+
+
+def _support_scope_of(path: str) -> str:
+    """支撑文件的作用域前缀："" = 项目根（覆盖整个测试套件）。
+
+    口径直接取 pytest 的 conftest 语义：一个目录下的 conftest.py 对**该目录子树**里的
+    测试生效；项目根的 conftest.py 覆盖整棵树。helpers / 夹具不是 conftest，但它们被哪些
+    测试使用同样只能从"所在目录"回答——所以用同一个前缀，不再发明第二套范围规则。
+    """
+
+    parent, _, _name = path.rpartition("/")
+    return parent
+
+
+def _select_support_scope(
+    tests: Tuple[str, ...], *, support: Tuple[str, ...], max_nodeids: int
+) -> TestSelection:
+    """按 pytest 作用域选**测试支撑文件**所在目录子树下的全部测试。"""
+
+    scopes = tuple(sorted({_support_scope_of(item) for item in support}))
+    # ""（项目根）一旦出现，作用域就是整棵树：项目根的 conftest.py 管全部测试。
+    if not scopes or "" in scopes:
+        selected: Tuple[str, ...] = tests
+    else:
+        selected = tuple(
+            candidate
+            for candidate in tests
+            if any(candidate.startswith(scope + "/") for scope in scopes)
+        )
+    scope_note = "、".join(scope or "." for scope in scopes) if scopes else "."
+    if not selected:
+        return TestSelection(
+            level="none",
+            reason=(
+                "测试支撑文件（conftest/helpers）：按 pytest 作用域选该目录子树"
+                "（作用域：" + scope_note + "），但该作用域里没有任何测试文件；"
+                "失败关闭——不猜更大范围"
+            ),
+        )
+    nodeids = selected[:max_nodeids] if max_nodeids > 0 else ()
+    if not nodeids:
+        # 上限为 0 的退化形状：与 target 那一支同口径，说得出"为什么一个都没选中"。
+        return TestSelection(
+            level="none",
+            related=selected,
+            reason="测试支撑文件（conftest/helpers）：按 pytest 作用域选该目录子树，但候选上限为 0：一个测试都没选中",
+        )
+    truncated = len(selected) > len(nodeids)
+    reason = (
+        "测试支撑文件（conftest/helpers）：按 pytest 作用域选该目录子树"
+        "（作用域：" + scope_note + "）下的 " + str(len(nodeids)) + " 个测试文件"
+    )
+    if truncated:
+        reason += (
+            "（候选 " + str(len(selected)) + " 个，超过上限 " + str(max_nodeids) + "，已截断）"
+        )
+    return TestSelection(
+        level="support",
+        nodeids=nodeids,
+        related=selected,
+        reason=reason,
         truncated=truncated,
     )
 

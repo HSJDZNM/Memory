@@ -363,7 +363,13 @@
     （`validation/test-layout.yaml` 的 `test_patterns`，值 `test`），Adapter 的
     `test_paths` / `test_layer` 与 `policy.check` 的层推断**都**必须以它为准并写出来源
     （`layer_source ∈ {declared, platform_test_layout, filename_guess}`）——同一个测试文件不许在
-    Hook 路径与验证器路径上得到两个层。CLI 还必须答得出"这次到底查了多少"：`check_volume`
+    Hook 路径与验证器路径上得到两个层。**测试支撑文件**（conftest / helpers / 夹具）是同一份
+    声明里的第二类路径（`test_support_patterns`，test-layout v2 起；值同样 `test`）：
+    `policy.check` 命中它同样判 `test`（`layer_source=platform_test_layout`），
+    测试选择多一条 `level="support"`——按 pytest 作用域选该文件所在目录子树下的全部测试
+    （项目根的 conftest.py = 全部测试），作用域里没有测试就落回 `none`（失败关闭）。
+    支撑文件自己**不是**测试文件（跑 conftest.py 没有意义），这一条不许用"在 tests/ 下"的
+    启发式替代声明。CLI 还必须答得出"这次到底查了多少"：`check_volume`
     （`complete` / `missing_dimensions` / `blocking_capable_skipped` / `skipped_by_reason`，
     缺维度按 `rule.scope` 与 context 的结构化比对算出，**不解析 reasons 文本**），
     缺维度时文本输出一行 `INCOMPLETE:`。"缺关键维度"的失败关闭只落在**自相矛盾**的调用上
@@ -430,7 +436,13 @@
     本仓库现有的版本轴（**列举，不是穷尽**——判据是"这个载荷的键集合或语义变没变"，
     不是这张表在不在；各自独立演进，谁也不跟随平台阶段）：
     - 判定与证据：`policy.models.SCHEMA_VERSION`（决策载荷）与世代名 `POLICY_VERSION`（只与它同进同退）；
-      `policy.evidence.EVIDENCE_SCHEMA_VERSION` / `validators.pipeline.PIPELINE_SCHEMA_VERSION`；
+      `policy.evidence.EVIDENCE_SCHEMA_VERSION` / `validators.pipeline.PIPELINE_SCHEMA_VERSION`
+      （**1.4 = B2**：`selection.level` 多出取值 "support"，取值集合变了即协议变化）；
+      `validators.models.TEST_LAYOUT_SCHEMA_VERSIONS`（**数据文件** `validation/test-layout.yaml`
+      自己的轴：1 → **2** = 新增**可选**字段 `test_support_patterns`（测试支撑文件的路径声明，
+      值同样是 layer=test）。加载器**同时接受 1 与 2**——加可选字段不制造兼容窗口，与
+      `provenance.wiring_scope.SCHEMA_VERSION` 的 "1"/"2" 同型；`schema_id` 必须与 `version` 配对，
+      v1 里写 `test_support_patterns` 是配置错误（同一版本号底下不许两种载荷形状））；
       `policy.check.OUTPUT_SCHEMA_VERSION`（`--json` 的**外层包装**，不是决策载荷：1.0 是**追认**的
       ——台阶 3c 之前的形状（那时 `check_volume` 还没有 `obligations_open` / `obligations_note`），
       1.1 = 第 19 轮形状；1.2 = 现形状（台阶 4 第三件：顶层多一份 `reading_context`）。

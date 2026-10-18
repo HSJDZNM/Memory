@@ -48,7 +48,8 @@ result / exit_code。
 两个**只增不改**的读数（07 号报告 P4 / P5）：
 
 - layer_source 说明 layer 是**从哪来的**（declared / platform_test_layout / filename_guess）。
-  缺 --layer 时先查平台数据 validation/test-layout.yaml 的 test_patterns，命中即 layer=test；
+  缺 --layer 时先查平台数据 validation/test-layout.yaml 的 test_patterns（测试文件）与
+  test_support_patterns（测试支撑文件：conftest / helpers / 夹具），命中即 layer=test；
   没命中才按文件名推断。受治理 Hook 路径与验证器路径因此共用同一份"哪些路径算测试"的声明，
   不再对同一个文件给出相反结论。
 - check_volume 把"这次到底查了多少"写成结构化摘要：跳过不等于通过；缺维度（调用方没说
@@ -71,7 +72,7 @@ from typing import Any, Mapping, Sequence
 # 验证器层的配置错误类型。core（models/engine/context/scope/loader）不导入 Adapter，
 # 只有 CLI（应用层）在这里装配验证器流水线；tests/contract 里有守住这条边界的用例。
 # 平台测试路径声明（validation/test-layout.yaml）也由验证器层的 loader 读取，
-# 保证 test_patterns 只有一份解释权。
+# 保证 test_patterns / test_support_patterns 只有一份解释权。
 from validators.registry import RegistryError as ValidatorConfigError  # noqa: E402
 from validators.registry import load_test_layout  # noqa: E402
 
@@ -328,8 +329,8 @@ PLATFORM_TEST_LAYER = "test"
 # 那是猜的层与查出来的层的区别，两者给出相反结论时读数的人得看得出来。
 LAYER_SOURCE_NOTES: dict[str, str] = {
     LAYER_SOURCE_PLATFORM_TEST_LAYOUT: (
-        "  （命中平台测试路径声明 validation/test-layout.yaml 的 test_patterns，"
-        "未显式声明 --layer）"
+        "  （命中平台测试路径声明 validation/test-layout.yaml 的 test_patterns / "
+        "test_support_patterns，未显式声明 --layer）"
     ),
     LAYER_SOURCE_FILENAME_GUESS: "  （由文件名推断，未显式声明）",
 }
@@ -338,9 +339,10 @@ LAYER_SOURCE_NOTES: dict[str, str] = {
 def load_platform_test_layout(args: argparse.Namespace, *, root: Path) -> Any:
     """读取平台级"哪些路径算测试"的声明（validation/test-layout.yaml）。
 
-    刻意复用验证器层的 loader（`validators.registry.load_test_layout`）：test_patterns
-    的解释权只有一份。自己再写一个 YAML 解析器就等于第二套口径，而 P4 的成因正是两套口径
-    ——平台数据说是测试、文件名推断说是生产层，同一个文件于是拿到相反结论。
+    刻意复用验证器层的 loader（`validators.registry.load_test_layout`）：test_patterns /
+    test_support_patterns 的解释权只有一份。自己再写一个 YAML 解析器就等于第二套口径，
+    而 P4 的成因正是两套口径——平台数据说是测试、文件名推断说是生产层，同一个文件于是
+    拿到相反结论。
 
     --config-root 的解析与 collect_evidence 完全同源（锚是**仓库根**，不是 --workspace）：
     配置在哪与目标文件属于哪个工作区是两件事，混用一个锚会让"带 --workspace 跑一次"变成
@@ -357,7 +359,9 @@ def resolve_layer(
     """定层与来源（唯一口径）：declared → platform_test_layout → filename_guess。
 
     - 显式给了 --layer：就是它，来源 declared；
-    - 否则命中平台数据 test_patterns：layer=test，来源 platform_test_layout；
+    - 否则命中平台数据 test_patterns（测试文件）或 test_support_patterns（测试支撑文件：
+      conftest / helpers / 夹具）：layer=test，来源 platform_test_layout——两条路径共用
+      同一份声明，同一个文件不会在 Hook 路径与验证器路径上得到两个层（AGENTS 第 49 条）；
     - 否则维持按文件名推断，来源 filename_guess（推断不出来就是 unknown，不默认）。
 
     anchor 是**工作区**（--workspace），用它算相对路径：命中判定必须发生在上下文里那个
@@ -373,7 +377,9 @@ def resolve_layer(
     # 与 build_context 用同一个规范化器：判定与匹配必须基于同一个字符串。
     relative = repo_relative_path(str(file_path), repo_root=anchor)
     layout = load_platform_test_layout(args, root=root)
-    if layout.is_test(relative):
+    if layout.is_test(relative) or layout.is_test_support(relative):
+        # 测试文件与测试支撑文件是同一份平台声明里的两类路径，在**分层**上都是 test：
+        # 支撑文件若落进生产层，ARCH 类规则会按生产范围参与判定（M1 的同一条教训）。
         return PLATFORM_TEST_LAYER, LAYER_SOURCE_PLATFORM_TEST_LAYOUT
     return infer_layer(args.file), LAYER_SOURCE_FILENAME_GUESS
 

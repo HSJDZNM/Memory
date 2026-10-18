@@ -19,6 +19,7 @@ from validators.registry import (
     load_config,
     load_project,
     load_registry,
+    load_test_layout,
 )
 
 
@@ -414,6 +415,109 @@ def test_duplicate_escalation_level_is_rejected(tmp_root: Path) -> None:
         load_config(root=tmp_root, registry=VALIDATION_DIR / "validators.yaml")
 
     assert "重复 ID" in str(error.value)
+
+
+# ------------------------------- test-layout 的版本轴（B2：v1 / v2 都接受）
+
+
+def test_the_repository_test_layout_is_v2_and_declares_support_patterns() -> None:
+    """平台级"哪些路径算测试支撑"只有一份声明：validation/test-layout.yaml 的 v2 字段。"""
+
+    layout = load_test_layout(root=REPO_ROOT)
+
+    assert layout.version == 2
+    assert layout.schema_id == "test-layout/2"
+    assert layout.test_support_patterns == (
+        "**/conftest.py",
+        "tests/**/helpers*.py",
+        "tests/fixtures/**/*.py",
+    )
+    assert layout.is_test_support("conftest.py") is True
+    assert layout.is_test_support("tests/helpers.py") is True
+    assert layout.is_test_support("src/shop/order_service.py") is False
+    # 支撑声明不把文件算成"测试文件"：跑 conftest.py 没有意义（选择走 level="support"）
+    assert layout.is_test("tests/helpers.py") is False
+
+
+def layout_document() -> dict:
+    return yaml.safe_load((VALIDATION_DIR / "test-layout.yaml").read_text(encoding="utf-8"))
+
+
+def load_layout_document(tmp_root: Path, document: dict):
+    write_validation_config(tmp_root, test_layout=document)
+    return load_test_layout(root=tmp_root)
+
+
+def test_a_v1_test_layout_still_loads_with_unchanged_semantics(tmp_root: Path) -> None:
+    """v1 的文件逐字按原语义读：没有 test_support_patterns 这一支。"""
+
+    document = layout_document()
+    document["version"] = 1
+    document["schema_id"] = "test-layout/1"
+    document.pop("test_support_patterns", None)
+
+    layout = load_layout_document(tmp_root, document)
+
+    assert layout.version == 1
+    assert layout.test_support_patterns == ()
+    assert layout.is_test_support("conftest.py") is False
+    assert layout.is_test("tests/test_order_service.py") is True
+
+
+def test_a_v2_test_layout_without_support_patterns_is_backward_compatible(tmp_root: Path) -> None:
+    """v2 的新字段是**可选**的：省略它 = 没有声明任何支撑文件，加载不报错。"""
+
+    document = layout_document()
+    document.pop("test_support_patterns", None)
+
+    layout = load_layout_document(tmp_root, document)
+
+    assert layout.version == 2
+    assert layout.test_support_patterns == ()
+
+
+def test_an_unknown_test_layout_version_is_rejected(tmp_root: Path) -> None:
+    document = layout_document()
+    document["version"] = 3
+    document["schema_id"] = "test-layout/3"
+
+    with pytest.raises(RegistryError) as error:
+        load_layout_document(tmp_root, document)
+
+    assert "version" in str(error.value)
+
+
+def test_a_schema_id_that_does_not_match_the_version_is_rejected(tmp_root: Path) -> None:
+    document = layout_document()
+    document["schema_id"] = "test-layout/1"
+
+    with pytest.raises(RegistryError) as error:
+        load_layout_document(tmp_root, document)
+
+    assert "schema_id" in str(error.value)
+
+
+def test_v1_may_not_declare_test_support_patterns(tmp_root: Path) -> None:
+    """同一版本号底下不许有两种载荷形状：v1 里写 v2 的字段是配置错误。"""
+
+    document = layout_document()
+    document["version"] = 1
+    document["schema_id"] = "test-layout/1"
+
+    with pytest.raises(RegistryError) as error:
+        load_layout_document(tmp_root, document)
+
+    assert "test_support_patterns" in str(error.value)
+
+
+def test_a_non_canonical_support_pattern_is_rejected(tmp_root: Path) -> None:
+    document = layout_document()
+    document["test_support_patterns"] = ["..\\outside\\*.py"]
+
+    with pytest.raises(RegistryError) as error:
+        load_layout_document(tmp_root, document)
+
+    assert "test_support_patterns" in str(error.value)
 
 
 def test_unknown_field_in_registry_is_rejected(tmp_root: Path) -> None:
