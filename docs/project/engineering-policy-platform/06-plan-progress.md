@@ -198,6 +198,7 @@
 | R-A-A3-09 | 2026-10-18T23:15:00+08:00 | A3 v2 | 干跑四数 | 分母：① 实际任务文件变化 7；② 预注册族 2；③ 实际被写路径 7；④ 会话日志 | ① 7/7=**100%**（unmeasured 0、blocked-not-landed 0）② **2/2=100%**（F1 首试 M1 预期红但放行+真执行 exit 1；F2 首试 demo exit 0；族内 0 approval_invalid）③ 7/7=**100%**（unmapped 0；审计交叉 8/8）④ 未触发（compaction 0；峰值 22,390/1,000,000=2.239%） | 符合 | readings/2026-10-18-A3-dryrun-v2.md §4；.tmp/a3b2/readings/run-02-*.json | 判据冻结见裁定 A-7；审批累计 10/200；两次非族命令被拒不计 ② |
 | R-A-A3-10 | 2026-10-18T23:18:00+08:00 | D 校准门（无模型） | P+ / P− / canary | 真 Hook CLI；树=12 文件 v2 基线 + 同一受治配置 | P+（controller 直接 import repository）exit 2 / block / violations [ARCH-001@1, STYLE-002@1, STYLE-018@1]；P−（repository docstring 编辑）exit 0 / allow / violations []；canary（write tools/audit_demo.py）exit 2 / block / violations [TESTING-002@1] | 符合（校准通过；canary 如预期仍红） | readings/2026-10-18-A3-dryrun-v2.md §5；.tmp/a3b2/d-calibration.json | 裁定 A-6/A-9；缺口 04 5.75 未消失 |
 | R-A-A3-11 | 2026-10-18T23:12:00+08:00 | A3 v2 | 任务完成（A1–A7） | 最终树；隐藏验收 6 条 + 树执行 2 条 + A8 diff | 隐藏验收 A1/A2/A3/A4/A5/A7 **6/6 passed**；`python -m pytest -q` = 10 passed / exit 0；`python tools/audit_demo.py` = exit 0 + 合法 JSON；树 diff 恰 7 个允许写、0 unexpected | 符合 | .tmp/a3b2/hidden/test_acceptance.py；readings/2026-10-18-A3-dryrun-v2.md §3/§4 | 裁定 A-12（D 开场附加条件） |
+| R-A-GATE-03 | 2026-10-18T23:55:00+08:00 | A3 v2 收口 | 本机门禁 ci_local | HEAD 98169bf；干净工作树；26 正常步骤 + 4 只报告 | **26/26 ok，退出码 0**；总耗时 4m49.3s；只报告 4 步（非零退出不计入失败） | 符合 | readings/2026-10-18-A3-dryrun-v2.md §10；.tmp/a3b2/ci-local-v2.log | 改动为文档 + examples 任务包，无产品代码改动；门禁执行 26 步全绿 |
 
 ### 7.4 阶段 A · 偏离/作废记录
 
