@@ -508,11 +508,24 @@
       `tools.control_plane_facts.CONTROL_PLANE_FACTS_SCHEMA_VERSION`（控制面事实表 × 跨源互证
       的只报告载荷——**1.0 = 首次建轴**：facts 表 + 连接键双向必查 + C1/C2/C3 三组读数，
       四格红条件 `fact_without_check` / `check_covers_unknown_fact` / `test_path_declaration` /
-      `budget_inequality` 与 `wiring` / R-h **同形**；它**只报告、退出码恒 0**，已接为本机门禁的只报告步骤
+      `budget_inequality` 与 `wiring` / R-h **同形**；**1.1 = 阶段 A1 的 C4 通道覆盖账**
+      （2026-10-18）：顶层多一份 `coverage` 块 + 四个新红键 `row_without_mode` /
+      `mode_without_check` / `tool_with_hits_without_row` / `registry_digest_drift`，
+      外加**独立**的引用完整性读数（channel / tool / check_id / covers_facts）与
+      `--coverage` / `--audit` 参数；不给 `--audit` 时那一格是 `not_applicable`（不是 0）；
+      `HITS:` 行的**合计仍是既有四格之和**（跨文件契约的既有含义不变），C4 四格作为逐项追加；
+      它**只报告、退出码恒 0**，已接为本机门禁的只报告步骤
       （非零退出不计入门禁失败）、**升格未做**；交接见 `docs/project/engineering-policy-platform/04-open-work.md`）
       与 `tools.control_plane_facts.FACTS_TABLE_SCHEMA_VERSION`
-      （**数据文件** `validation/control-plane-facts.yaml` 自己的轴，从 "1" 起——13 行最小集，
-      只放指针，读不出来只在只报告工具内部降级）。
+      （**数据文件** `validation/control-plane-facts.yaml` 自己的轴，从 "1" 起——现 14 行最小集，
+      只放指针，读不出来只在只报告工具内部降级）；
+      `tools.control_plane_facts.CHANNEL_COVERAGE_SCHEMA_VERSION`（**数据文件**
+      `validation/channel-coverage.yaml` 自己的轴——**"1" = 首次出现就带轴**（阶段 A1）：
+      行 = channel × tool × mode × coverage × check_id，三态 coverage
+      `enforced` / `declared_uncovered` / `not_applicable`，mode 闭集
+      `policy` / `pre_evidence` / `enforcement` / `delegated` / `post_check` 与四个红条件
+      都写死在文件头；加载器只接受认识的版本号，读不出来只在只报告工具内部降级为
+      `unavailable` + reason——**不新增加载期 FATAL**，与上面那条载荷轴各走各的）。
     - 规范治理价值评测（W1 保真度）：`tools.eval_corpus.ANNOTATION_SCHEMA_VERSION`（语料注解记录的形状轴，
       现为 "1"——`Annotation` 的键集合、`annotation_scopes` 的取值语义，含 `line == 0` 的文件级哨兵）与
       `tools.eval_corpus.LOCK_SCHEMA_VERSION`（`evaluation/corpora/<id>.lock.json` 的轴，现为 "1"）；

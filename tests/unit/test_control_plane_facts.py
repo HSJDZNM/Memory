@@ -7,7 +7,10 @@
 - **跨文件契约**（硬约束 C）：默认输出的 HITS: 行必须能被**真的**
   ci_local.report_only_reading() 读出——读取器一个字都不改，本工具才算"接得上"；
 - **R8**：同一棵树两次运行，剥掉归属读数后逐字节相同（剥离项见
-  test_two_runs_on_the_same_tree_are_byte_identical）。
+  test_two_runs_on_the_same_tree_are_byte_identical）；
+- **C4 通道覆盖账（阶段 A1）**：覆盖表（validation/channel-coverage.yaml）可加载、引用完整性
+  独立于四个红键、**删一行变异必红**、不给 --audit 是 not_applicable 不是 0、注册表摘要漂移
+  可红——判据与数据分工见文件头与 tools/control_plane_facts.py 的模块 docstring。
 
 **为什么不断言 101 / 100 这些数**：那是"这一棵树今天的读数"，会随仓库内容变（本提交就把它从
 202 个文件带到 203 个）。把存量读数写成断言等于给门禁加了一条新的阻断条件，与"不新增阻断步骤"
@@ -20,6 +23,7 @@ import argparse
 import copy
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -30,6 +34,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TOOL_PATH = REPO_ROOT / "tools" / "control_plane_facts.py"
 FACTS_PATH = REPO_ROOT / "validation" / "control-plane-facts.yaml"
 CHECKS_PATH = REPO_ROOT / "validation" / "instrument-checks.yaml"
+COVERAGE_PATH = REPO_ROOT / "validation" / "channel-coverage.yaml"
+WIRING_SCOPE_PATH = REPO_ROOT / "adapters" / "wiring-scope.yaml"
 EXAMPLE_CONFIG = REPO_ROOT / "examples" / "dsh" / "dsh-adapter.yaml"
 EXAMPLE_HOOKS = REPO_ROOT / "examples" / "dsh" / "hooks.json"
 
@@ -45,11 +51,21 @@ RED_KEYS = (
     "test_path_declaration",
     "budget_inequality",
 )
+COVERAGE_RED_KEYS = (
+    "row_without_mode",
+    "mode_without_check",
+    "tool_with_hits_without_row",
+    "registry_digest_drift",
+)
+CONTROL_PLANE_FACTS_CHECK_ID = "report-only:Control plane facts (report only)"
+# 2026-10-18 真实审计读数里的四个工具：governed=true 的 PreToolUse 命中过它们。
+# 覆盖表必须给它们每一条都留行（用例用**夹具审计**复现，不依赖外部 Governance 目录）。
+AUDIT_TOOLS = ("edit", "write", "run_code", "pwsh")
 CHECK_ROW = {
     "check_id": "report-only:Control plane facts (report only)",
     "owner": "control-plane",
     "command": "python tools/control_plane_facts.py",
-    "covers": "控制面事实表 × 跨源互证（连接键双向必查 + C1/C2/C3 读数；只报告）",
+    "covers": "控制面事实表 × 跨源互证（连接键双向必查 + C1/C2/C3 读数 + 通道覆盖表；只报告）",
     "evidence_level": "report",
     "mutation_id": None,
     "gap_note": "存量检查，未做变异自证",
@@ -138,10 +154,12 @@ def default_payload() -> dict:
 def test_the_payload_carries_its_own_axis_and_never_blocks(default_payload):
     payload = default_payload
 
-    assert payload["schema_version"] == "1.0"
+    # 版本轴：1.0 -> 1.1 是阶段 A1 的 C4 覆盖账（加键就是改协议，AGENTS 第 55 条）。
+    assert payload["schema_version"] == "1.1"
     assert payload["mode"] == "report-only"
     assert sorted(payload) == [
         "checks_table",
+        "coverage",
         "cross_source",
         "facts",
         "headline",
@@ -154,6 +172,14 @@ def test_the_payload_carries_its_own_axis_and_never_blocks(default_payload):
     ]
     for key in RED_KEYS:
         cell = payload["red_conditions"][key]
+        assert cell["enforced"] is False
+        assert cell["would_exit_code"] == 1
+        assert cell["promote_when"]
+        assert isinstance(cell["is_red"], bool)
+    # C4 的四格是**另立的块**（与顶层四格并列，不混用）；形状与上面同形。
+    assert set(payload["coverage"]["red_conditions"]) == set(COVERAGE_RED_KEYS)
+    for key in COVERAGE_RED_KEYS:
+        cell = payload["coverage"]["red_conditions"][key]
         assert cell["enforced"] is False
         assert cell["would_exit_code"] == 1
         assert cell["promote_when"]
@@ -250,15 +276,12 @@ def test_the_link_key_is_checked_in_both_directions(tmp_root, capsys):
     assert back["links"]["check_covers_unknown_fact"]["count"] == 0
 
 
-CONTROL_PLANE_FACTS_CHECK_ID = "report-only:Control plane facts (report only)"
-
-
 def test_the_link_counts_agree_with_the_real_checks_table(default_payload):
     """真表上的连接计数是不变式，不是快照：载荷里的三个数必须与真表逐行数出来的一致。
 
     不写死"有几行带 covers_facts"：那是登记表的内容，随登记变化；这里钉的是
     "载荷如实反映登记表"这件事本身。另外钉住一条：本工具自己作为只报告步骤登记的那一行
-    （CI 线接线时同提交加的）必须存在、并且声明了 covers_facts——它是 facts 表那 13 个 key
+    （CI 线接线时同提交加的）必须存在、并且声明了 covers_facts——它是 facts 表那 14 个 key
     今天唯一的覆盖来源，丢了它 fact_without_check 会悄悄回到 13。
     """
 
@@ -503,3 +526,390 @@ def test_unavailable_cells_do_not_print_as_ok(tmp_root, capsys):
         else:
             assert "[未评] " + key not in out, "已评的格子不该印 [未评]：" + key
     assert unavailable, "这条用例的前提：facts 表读不到时至少有一格未评"
+
+def test_deleting_a_row_makes_tool_with_hits_without_row_red(tmp_root):
+    """**删一行变异必红**（A1 的完成判据；AGENTS 第 45 条：自己的仪器也要能失败）。
+
+    为什么在影子表上压成「每个工具只留一行」：真实表里每个工具都登记了多个治理阶段
+    （edit 有 policy / pre_evidence / enforcement 三行），删掉其中一行**不会**让任何工具
+    失去全部行——那说明表是冗余的，红格也就数不到东西。把冗余压到最小之后，「删一行」
+    与「某个工具没有行」等价；判据本身与行数无关：有治理命中、表里没有这个工具的行 → 红。
+    真实表上的等价变异是「删掉某个工具的全部行」，两种都证明同一条判据。
+    """
+
+    module = _load_tool()
+    audit = _write_audit(tmp_root, AUDIT_TOOLS)
+    document = _coverage_document()
+    first_by_tool: dict = {}
+    for row in document["rows"]:
+        first_by_tool.setdefault(row["tool"], row)
+    minimal = copy.deepcopy(document)
+    minimal["rows"] = [copy.deepcopy(first_by_tool[tool]) for tool in AUDIT_TOOLS]
+
+    base_path = _shadow_coverage(tmp_root, minimal, name="minimal.yaml")
+    base = _evaluate_coverage(module, coverage=base_path, audit=audit)
+    assert base["coverage"]["red_conditions"]["tool_with_hits_without_row"]["count"] == 0
+
+    deleted = copy.deepcopy(minimal)
+    deleted["rows"] = [row for row in deleted["rows"] if row["tool"] != "pwsh"]
+    mutant = _evaluate_coverage(
+        module,
+        coverage=_shadow_coverage(tmp_root, deleted, name="deleted.yaml"),
+        audit=audit,
+    )
+    cell = mutant["coverage"]["red_conditions"]["tool_with_hits_without_row"]
+    assert cell["status"] == "available"
+    assert cell["count"] == 1
+    assert cell["is_red"] is True
+    assert cell["items"][0]["tool"] == "pwsh"
+    assert cell["items"][0]["governed_pre_tool_use"] == 1
+
+    # 撤回变异 -> 回 0（"能红"与"能收回来"是两件事）。
+    back = _evaluate_coverage(module, coverage=base_path, audit=audit)
+    assert back["coverage"]["red_conditions"]["tool_with_hits_without_row"]["count"] == 0
+
+
+def test_without_audit_the_hit_check_is_not_applicable_not_zero(default_payload):
+    """不给 --audit = 不适用（count 是 null，**不是 0**）；机器行照这个口径写。"""
+
+    cell = default_payload["coverage"]["red_conditions"]["tool_with_hits_without_row"]
+    assert cell["status"] == "not_applicable"
+    assert cell["count"] is None
+    assert cell["is_red"] is False
+    assert "不是 0" in cell["reason"]
+    machine = default_payload["headline"]["machine_line"]
+    assert "tool_with_hits_without_row=not_applicable" in machine
+    assert "audit=not_applicable" in machine
+
+
+def test_unreadable_audit_is_unavailable_not_zero(tmp_root):
+    module = _load_tool()
+    payload = _evaluate_coverage(module, audit=tmp_root / "missing-audit.jsonl")
+
+    cell = payload["coverage"]["red_conditions"]["tool_with_hits_without_row"]
+    assert cell["status"] == "unavailable"
+    assert cell["count"] is None
+    assert "审计读不出来" in cell["reason"]
+    assert payload["coverage"]["audit"]["status"] == "unavailable"
+
+
+def test_a_truncated_tail_line_does_not_hide_governed_hits(tmp_root):
+    """正在追加的末行（没有换行、解析不了）不算不可解析行，也不据此声称「没有漏」。"""
+
+    module = _load_tool()
+    path = tmp_root / "audit.jsonl"
+    good = json.dumps({"governed": True, "hook_event": "PreToolUse", "tool": "edit"})
+    path.write_text(good + "\n" + '{"governed": true, "hook_event": "PreTo', encoding="utf-8")
+    payload = _evaluate_coverage(module, audit=path)
+
+    audit = payload["coverage"]["audit"]
+    assert audit["status"] == "available"
+    assert audit["governed_pre_tool_use"] == 1
+    assert audit["tail_in_progress"] is True
+
+
+def test_registry_digest_drift_is_red_when_the_approved_digest_differs(monkeypatch):
+    """注册表摘要漂移：monkeypatch 掉加载 API 的返回值（真实哈希规则不重写）。"""
+
+    module = _load_tool()
+
+    class _Registry:
+        version = 7
+        identity = "sha256:" + "0" * 64
+
+        def registry_drift_reason(self):
+            return ""
+
+    class _Loaded:
+        registry = _Registry()
+        approved_document = {
+            "approved_schema_version": "1.1",
+            "registry_digest": "sha256:" + "1" * 64,
+            "governance_digest": "sha256:" + "2" * 64,
+            "reviewed_by": "tester",
+            "approved_at": "2026-10-18T00:00:00Z",
+        }
+
+    monkeypatch.setattr(module, "load_registry", lambda *args, **kwargs: _Loaded())
+    payload = module.evaluate()
+
+    cell = payload["coverage"]["red_conditions"]["registry_digest_drift"]
+    assert cell["status"] == "available"
+    assert cell["count"] == 1
+    assert cell["is_red"] is True
+    item = cell["items"][0]
+    assert item["current_digest"] != item["approved_digest"]
+    assert "重新审核" in item["remedy"]
+
+
+def test_reference_breaks_are_a_separate_reading_not_a_red_key(tmp_root):
+    """引用断开数另立 references 块：**不许**混进四个红键冒充覆盖缺口。"""
+
+    module = _load_tool()
+    rows = [
+        {
+            "channel": "no-such-channel",
+            "tool": "edit",
+            "mode": "policy",
+            "coverage": "enforced",
+            "check_id": CONTROL_PLANE_FACTS_CHECK_ID,
+            "owner": "platform",
+            "reason": "夹具：channel 引用断开",
+            "expires_at": None,
+        },
+        {
+            "channel": "governed-session-hook",
+            "tool": "no-such-tool",
+            "mode": "policy",
+            "coverage": "enforced",
+            "check_id": CONTROL_PLANE_FACTS_CHECK_ID,
+            "owner": "platform",
+            "reason": "夹具：tool 引用断开",
+            "expires_at": None,
+        },
+        {
+            "channel": "governed-session-hook",
+            "tool": "write",
+            "mode": "enforcement",
+            "coverage": "enforced",
+            "check_id": "probe:does-not-exist",
+            "owner": "platform",
+            "reason": "夹具：check_id 引用断开",
+            "expires_at": None,
+        },
+        {
+            "channel": "governed-session-hook",
+            "tool": "read",
+            "mode": "policy",
+            "coverage": "declared_uncovered",
+            "check_id": None,
+            "owner": "platform",
+            "reason": "夹具：covers_facts 引用断开",
+            "expires_at": "2026-12-31",
+            "covers_facts": ["no.such.fact"],
+        },
+    ]
+    broken = {"schema_version": "1", "rows": rows}
+    payload = _evaluate_coverage(
+        module, coverage=_shadow_coverage(tmp_root, broken, name="broken-refs.yaml")
+    )
+
+    references = payload["coverage"]["references"]
+    assert references["channel"]["count"] == 1
+    assert references["tool"]["count"] == 1
+    assert references["check_id"]["count"] == 1
+    assert references["covers_facts"]["count"] == 1
+    assert references["total"] == 4
+    assert references["is_red"] is True
+    # 四个红键的键集合**没有**被引用读数扩出一个位：两者是不同的读数。
+    assert set(payload["coverage"]["red_conditions"]) == set(COVERAGE_RED_KEYS)
+    # 引用断开不影响红键自己的判据：check_id 断开那条同时进 mode_without_check（它的定义如此）。
+    assert payload["coverage"]["red_conditions"]["mode_without_check"]["count"] == 1
+
+
+def test_the_machine_lines_carry_the_c4_counts(default_payload):
+    module = _load_tool()
+    machine = default_payload["headline"]["machine_line"]
+    hits = module.hits_line(default_payload)
+
+    for key in COVERAGE_RED_KEYS:
+        assert key + "=" in machine, machine
+        assert key + "=" in hits, hits
+    assert "coverage_rows=" + str(default_payload["coverage"]["table"]["rows"]) in machine
+    assert "references=" in machine and "audit=" in machine
+    # HITS 的合计**仍是既有四格之和**（跨文件契约的既有含义不变）：行首仍是整数。
+    assert re.match(r"^HITS: \d+ / ", hits), hits
+    assert "checks=" in hits and hits.rstrip().endswith(
+        "checks=" + str(default_payload["checks_table"]["table"]["rows"])
+    )
+
+
+def test_the_cli_prints_the_c4_cells_and_keeps_exit_zero(capsys):
+    module = _load_tool()
+    assert module.run([]) == 0
+    out = capsys.readouterr().out
+
+    assert "C4 覆盖表:" in out
+    assert "CONTROL_PLANE_FACTS: " in out
+    for key in COVERAGE_RED_KEYS:
+        assert key in out
+    assert "[不适用] tool_with_hits_without_row: not_applicable" in out
+
+
+def test_the_c4_axis_is_registered_and_pinned():
+    """版本轴：载荷 1.1、覆盖表 "1"（AGENTS 第 55 条：加键就是改协议）。"""
+
+    module = _load_tool()
+    assert module.CONTROL_PLANE_FACTS_SCHEMA_VERSION == "1.1"
+    assert module.CHANNEL_COVERAGE_SCHEMA_VERSION == "1"
+    table = module.load_coverage(COVERAGE_PATH)
+    assert table.schema_version == "1"
+
+
+# --------------------------------------------------------------------------- C4 通道覆盖账（阶段 A1）
+
+
+def _coverage_document() -> dict:
+    return yaml.safe_load(COVERAGE_PATH.read_text(encoding="utf-8"))
+
+
+def _shadow_coverage(tmp_root: Path, document: dict, *, name: str = "coverage.yaml") -> Path:
+    path = tmp_root / name
+    path.write_text(
+        yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return path
+
+
+def _write_audit(tmp_root: Path, tools, *, name: str = "audit.jsonl") -> Path:
+    """夹具审计：只放 governed=true 的 PreToolUse 记录（与真实 JSONL 同一形态）。"""
+
+    records = [
+        json.dumps({"governed": True, "hook_event": "PreToolUse", "tool": tool})
+        for tool in tools
+    ]
+    path = tmp_root / name
+    path.write_text("\n".join(records) + "\n", encoding="utf-8", newline="\n")
+    return path
+
+
+def _evaluate_coverage(module, *, coverage: Path = COVERAGE_PATH, audit=None) -> dict:
+    kwargs = {"coverage_path": Path(coverage)}
+    if audit is not None:
+        kwargs["audit_path"] = Path(audit)
+    return module.evaluate(**kwargs)
+
+
+def test_a_valid_coverage_table_has_all_four_cells_green(tmp_root):
+    """合法表可加载且四红 0（审计用**夹具**注入：不依赖外部 Governance 目录）。"""
+
+    module = _load_tool()
+    audit = _write_audit(tmp_root, AUDIT_TOOLS)
+    payload = _evaluate_coverage(module, audit=audit)
+
+    table = payload["coverage"]["table"]
+    assert table["status"] == "available"
+    assert table["schema_version"] == module.CHANNEL_COVERAGE_SCHEMA_VERSION == "1"
+    assert table["rows"] == len(_coverage_document()["rows"])
+    for key in COVERAGE_RED_KEYS:
+        cell = payload["coverage"]["red_conditions"][key]
+        assert cell["status"] == "available", (key, cell)
+        assert cell["count"] == 0, (key, cell)
+        assert cell["is_red"] is False, (key, cell)
+    assert payload["coverage"]["references"]["total"] == 0
+    assert payload["coverage"]["references"]["is_red"] is False
+    assert payload["coverage"]["audit"]["status"] == "available"
+    assert payload["coverage"]["audit"]["governed_pre_tool_use"] == len(AUDIT_TOOLS)
+    assert sorted(payload["coverage"]["audit"]["by_tool"]) == sorted(AUDIT_TOOLS)
+
+
+def test_real_rows_cover_the_tools_with_governed_hits():
+    """数据验收（A1 的完成口径）：审计里出现过的每个工具，真实覆盖表都有行。
+
+    另外钉住两条**已知洞**不许被写成已覆盖：run_code 必须有显式 declared_uncovered
+    （代码/命令里的文件写入不受 path_scope 约束）、desktop-entry-points 四行都必须是
+    declared_uncovered + 到期日（接线成立但从未留痕）。
+    """
+
+    module = _load_tool()
+    document = _coverage_document()
+    row_tools = {row["tool"] for row in document["rows"]}
+    assert set(AUDIT_TOOLS) <= row_tools, row_tools
+
+    holes = [
+        row
+        for row in document["rows"]
+        if row["tool"] == "run_code" and row["coverage"] == "declared_uncovered"
+    ]
+    assert holes, "run_code 必须有一行 declared_uncovered（别把 allow_delegated 读成已覆盖）"
+    assert "path_scope" in holes[0]["reason"]
+
+    desktop = [row for row in document["rows"] if row["channel"] == "desktop-entry-points"]
+    assert {row["tool"] for row in desktop} == {"edit", "write", "run_code", "pwsh"}
+    assert all(row["coverage"] == "declared_uncovered" for row in desktop)
+    assert all(row["expires_at"] for row in desktop)
+
+    for row in document["rows"]:
+        assert row["mode"] in module.COVERAGE_MODES, row
+        assert row["channel"] and row["tool"] and row["owner"] and row["reason"], row
+        if row["coverage"] == "enforced":
+            assert row["check_id"] == CONTROL_PLANE_FACTS_CHECK_ID, row
+        else:
+            assert row["check_id"] is None, row
+
+
+def test_a_malformed_coverage_table_degrades_without_blocking(tmp_root, capsys):
+    """结构坏 -> 该节 unavailable + reason（不抛异常、退出码仍是 0）。"""
+
+    module = _load_tool()
+    document = _coverage_document()
+
+    pointer_only = copy.deepcopy(document)
+    pointer_only["rows"][0]["status"] = "passed"
+    payload = _evaluate_coverage(
+        module, coverage=_shadow_coverage(tmp_root, pointer_only, name="pointer.yaml")
+    )
+    assert payload["coverage"]["table"]["status"] == "unavailable"
+    assert "只放指针" in payload["coverage"]["table"]["reason"]
+    for key in COVERAGE_RED_KEYS:
+        assert payload["coverage"]["red_conditions"][key]["count"] is None
+    assert payload["coverage"]["references"]["total"] is None
+    # 只报告：结构坏不掉退出码（用法错误除外）。
+    assert module.run(["--json", "--coverage", str(tmp_root / "pointer.yaml")]) == 0
+    capsys.readouterr()
+
+    no_expiry = copy.deepcopy(document)
+    hole = next(row for row in no_expiry["rows"] if row["coverage"] == "declared_uncovered")
+    hole["expires_at"] = None
+    payload = _evaluate_coverage(
+        module, coverage=_shadow_coverage(tmp_root, no_expiry, name="expiry.yaml")
+    )
+    assert payload["coverage"]["table"]["status"] == "unavailable"
+    assert "expires_at" in payload["coverage"]["table"]["reason"]
+
+    unknown_version = copy.deepcopy(document)
+    unknown_version["schema_version"] = "2"
+    payload = _evaluate_coverage(
+        module, coverage=_shadow_coverage(tmp_root, unknown_version, name="version.yaml")
+    )
+    assert payload["coverage"]["table"]["status"] == "unavailable"
+    assert "schema_version" in payload["coverage"]["table"]["reason"]
+
+
+def test_a_missing_mode_is_red_row_without_mode(tmp_root):
+    """缺 mode -> row_without_mode 红（**语义坏是红计数**，不是结构错误）。"""
+
+    module = _load_tool()
+    document = _coverage_document()
+    enforced = next(row for row in document["rows"] if row["coverage"] == "enforced")
+    enforced.pop("mode")
+
+    payload = _evaluate_coverage(
+        module, coverage=_shadow_coverage(tmp_root, document, name="no-mode.yaml")
+    )
+    assert payload["coverage"]["table"]["status"] == "available", "缺 mode 不许把整节打成不可用"
+    cell = payload["coverage"]["red_conditions"]["row_without_mode"]
+    assert cell["status"] == "available"
+    assert cell["count"] == 1
+    assert cell["is_red"] is True
+    assert cell["items"][0]["channel"] == enforced["channel"]
+    assert cell["items"][0]["tool"] == enforced["tool"]
+
+
+def test_an_enforced_row_without_check_id_is_red_mode_without_check(tmp_root):
+    module = _load_tool()
+    document = _coverage_document()
+    enforced = next(row for row in document["rows"] if row["coverage"] == "enforced")
+    enforced["check_id"] = None
+
+    payload = _evaluate_coverage(
+        module, coverage=_shadow_coverage(tmp_root, document, name="no-check.yaml")
+    )
+    cell = payload["coverage"]["red_conditions"]["mode_without_check"]
+    assert cell["status"] == "available"
+    assert cell["count"] == 1
+    assert cell["is_red"] is True
+    assert cell["items"][0]["channel"] == enforced["channel"]
+    assert cell["items"][0]["tool"] == enforced["tool"]

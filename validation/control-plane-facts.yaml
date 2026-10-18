@@ -36,7 +36,7 @@
 # 行清单的口径（2026-10-03 裁定③）
 # ================================
 #
-# **最小集 = 13 行**（A 测试路径 2 + B 工具表 7 + C 预算 4）。方案 §3.1 里那一组
+# **最小集 = 14 行**（A 测试路径 2 + B 工具表 7 + C 预算 4 + D 连接键 1）。方案 §3.1 里那一组
 # "D 版本轴候选"（axes.*）**不进本表**：版本轴清单的权威是 AGENTS.md 第 55 条，
 # 在这里再立一份真源就是同名两义。
 #
@@ -189,5 +189,25 @@ facts:
     predicate: "adapters.dsh.hooks.budget_inequality_facts + adapters.wiring._probe_channel"
     severity: advisory
     remedy: "两处口径必须**并列**读：wiring 的 timeout_budget 看不到 pre_evidence，它的 ok=true 不许当三段结论用；要合成一份就得动 wiring.py 的通道事实（另开一轮）"
+    on_unprovable: unavailable
+    expires: null
+
+  # ------------------------------------------------------------------ D 连接键（1 行）
+  #
+  # 2026-10-18 阶段 A1（05 号 §3.4 / §4 A1）：通道覆盖表 validation/channel-coverage.yaml
+  # 自己的版本轴作为一条事实登记进来——「覆盖表存在且可加载」是这条事实，「谁在判定它」是
+  # tools.control_plane_facts.load_coverage。它同时是连接键的另一半：
+  # validation/instrument-checks.yaml 的 "report-only:Control plane facts (report only)"
+  # 行用 covers_facts 引用本 key（13 → 14），两个方向因此仍然都咬住（0 / 0）。
+  #
+  # 只放指针：覆盖表的行数 / 红格读数都在**运行时载荷**里，不写进这张表。
+
+  - key: "coverage.declaration"
+    authority: canonical
+    canonical_ref: "validation/channel-coverage.yaml#schema_version"
+    consumers: ["tools.control_plane_facts"]
+    predicate: "tools.control_plane_facts.load_coverage"
+    severity: advisory
+    remedy: "改表之前先读 validation/channel-coverage.yaml 的文件头（三态 / mode 闭集 / 四个红条件）；加载器只接受 schema_version 「1」，读不出来只在只报告工具内部降级为 unavailable + reason（不新增加载期 FATAL）"
     on_unprovable: unavailable
     expires: null

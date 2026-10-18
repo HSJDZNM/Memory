@@ -46,9 +46,13 @@ def test_the_repository_declaration_is_valid() -> None:
 
     assert summary["schema_version"] == "2"
     assert summary["declared"] == 6
+    # 2026-10-18 阶段 A1（05 号 §4 A1）：desktop-entry-points 由 out_of_scope 改判 in_scope
+    # ——桌面 profile 的接线事实成立（wired）但留痕 never_written，覆盖尚未建立；改判是**声明**
+    # 层面的，不改任何运行时 allow / block（同批把缺口登记进 validation/channel-coverage.yaml）。
+    # in_scope 声明**不许**带 expires_at（加载器 _consistent 校验），所以那条声明的到期字段被移除。
     assert summary["by_decision"] == {
-        "in_scope": 1,
-        "out_of_scope": 4,
+        "in_scope": 2,
+        "out_of_scope": 3,
         "expected_absent": 1,
     }
     # schema "2" 的数据侧：发现侧 kind → 声明侧 kind 的映射（24 号 §2.1 规则 2）。
@@ -70,7 +74,19 @@ def test_the_repository_declaration_is_valid() -> None:
         "dsh-headless-channel": ["dsh:headless"],
     }
     # governs_tree 只列**写了**的那些（裁定④：没写 = 读取侧的 unknown，不进摘要）。
-    assert summary["governs_tree"] == {"governed-session-hook": "other"}
+    # desktop-entry-points 改判时同批补上 other + tree_ref（桌面 profile 的家目录在宿主侧）。
+    assert summary["governs_tree"] == {
+        "governed-session-hook": "other",
+        "desktop-entry-points": "other",
+    }
+    # 05 号 §4 A1 的改判断言（读的是**真实文件**，不是夹具）：桌面通道从 out_of_scope 改成
+    # in_scope，且 in_scope 声明不带到期日（加载器 _consistent 校验），指针仍是哨兵值。
+    entries = {entry.id: entry for entry in scope.scope}
+    desktop = entries["desktop-entry-points"]
+    assert desktop.decision == "in_scope"
+    assert desktop.expires_at is None
+    assert desktop.governs_tree == "other"
+    assert desktop.tree_ref == "<outside-workspace>"
 
 
 def test_two_decisions_load_and_are_counted(tmp_root: Path) -> None:
