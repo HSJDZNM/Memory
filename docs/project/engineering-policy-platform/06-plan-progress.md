@@ -210,6 +210,7 @@
 | R-A-D2-07 | 2026-10-19T21:47:00+08:00 | D 门 2 | run-record 样例 + Lead 原生复跑 | 参考树 16 文件；10 条子命令（T+A+8×C） | collect exit 0；T 40/40、C 24/24（8/8 allow、layer_source=declared、check_volume.complete=true）、A 10/10；载荷 sha256 40f55c46…（三次相同）；danger-full-access 无垫片复跑：dimensions/summary/commands 与样例逐项相等（仅 tree 标签不同） | 符合 | readings/2026-10-19-D-gate2-run-record.md §1/§5/§10 | 无时戳/无绝对路径；C 只覆盖规则分 24，不含 frozen_untouched/bypass 6 分 |
 | R-A-D2-08 | 2026-10-19T21:45:00+08:00 | D 门 2 | run-manifest 真实生成与校验 | A 臂开跑前；HEAD c44f9db | --arm A → recorded 10 / pending 7；--check → 0；--check --strict → 1（human_items_unrecorded + incomplete_freeze）；补 reference-tree / arm-facts / run-record / human-items 后 recorded 16 / pending 0 / not_applicable 1（H4）、--strict → 0 | 符合 | run-manifest/README.md §3；tests/unit/test_dgate2_run_manifest.py（13 passed，覆盖删字段/摘要漂移/strict） | 就绪判据 = --check --strict 0；开跑前清单允许 pending；现场载荷在 .tmp（不提交） |
 | R-A-GATE-05 | 2026-10-19T12:50:00+08:00 | D 门 2 前置包收口 | 本机门禁 ci_local（danger-full-access；**收口提交后的干净树**） | 代码面 = HEAD 99fd894 + 本行所在提交的文档改动，工作树干净；26 正常步骤 + 4 只报告 | **26/26 ok，退出码 0**；总耗时 4m34.8s；只报告 4 步（0/0/0/113） | 符合 | readings/2026-10-19-gate-dgate2.md | 与 R-A-GATE-04（沙箱内 pytest 跑不成）的差别在沙箱形态，不追认成通过；12:10 那次在未提交的同一批文档上先跑过一次（26/26、5m04.6s），以本行为准 |
+| R-A-GATE-06 | 2026-10-19T21:58:00+08:00 | D 门 2 开跑前置收口 | 本机门禁 ci_local --full（danger-full-access；**收口提交后的干净树**） | HEAD 473ff91；工作树干净；30 正常步骤 + 4 只报告；改动文件 142 | **30/30 ok，退出码 0**；总耗时 **6m08.5s**（368.474s）；全量测试 3m04.0s rc=0；只报告 4 步（0/0/0/113）；34 条 entries 全部 returncode 0 | 符合 | readings/2026-10-19-gate-run-ready.md；.tmp/ci-local-timings.json（现场，cleanup 会删） | 步骤 26 → 30 是 --full 把 4 个完整模式步骤算了进来，不是新增门禁步骤；与 R-A-GATE-04 的差别在沙箱形态，不追认成通过 |
 
 ### 7.4 阶段 A · 偏离/作废记录
 
@@ -255,7 +256,7 @@
 | 阶段 B | B2 已落地（47fa325）；B1/B3 未解冻 | readings/2026-10-18-B2-rd.md、B2-gate.md；05 §4 B | B1 是 A/B/C 的 treatment 候选（4 人日；改注册表要重新审核）；B3 只读族闸门可选 |
 | 阶段 C | 未开跑（C1/C2/C3/C4 待裁定） | 05 §4 C | 按使用者裁定 |
 | 阶段 D | 仅校准门通过；**门 2 前置包已交付并冻结**（treatment e341c08 / 任务包 v3 6f88e59 / 隐藏 6f22cee / A 维度工具 2a2cb21 / 评分器冻结 be63670 / C 臂 99fd894）；**开跑前置 ①② 已于 10-19 工具化并复核**（f614cea：17 字段 run-manifest + T/C/A run-record；冻结复核 PASS、参考树 10/10·24/24·40/40）；A/B/C 主实验未开跑 | readings/2026-10-19-D-gate2-treatment.md §4/§8；dgate2/{scorer,run-manifest,run-record}/README.md；06 R-A-D2-01..08 | **只剩使用者确认**（开跑即按臂生成 run-manifest、跑后 collect + 人工四项） |
-| 本机门禁 | ci_local 26/26、退出码 0（HEAD 98169bf，4m49.3s；5dd3351 仅文档） | 06 R-A-GATE-03；readings v2 §10 | 产品代码改动后重跑；同一工作树同时只跑一个 |
+| 本机门禁 | ci_local **30/30、退出码 0**（HEAD 473ff91，6m08.5s；30 正常 + 4 只报告） | 06 R-A-GATE-06；readings/2026-10-19-gate-run-ready.md | 产品代码改动后重跑；同一工作树同时只跑一个 |
 | 未修缺口 | 04 5.76（breaker_seconds 两义）、5.77（A3 测量仪器升格触发）、5.81（开跑执行事实三条）；5.75 已修（e341c08） | 04-open-work | 按 04 排期；5.75 的回退面见 readings/2026-10-19-treatment-tools-pattern.md |
 
 **一句话**：阶段 A 的退出条件（A1 变异证明、A2 定性、A3 四数齐备）已满足；D **校准门通过**，**门 2 前置包已交付并冻结**，且**开跑前置 ①② 已工具化并复核**（17 字段 run-manifest 生成/校验 + T/C/A run-record 采集器；冻结复核 PASS；参考树 A 10/10、C 24/24、T 40/40）。A/B/C 主实验仍未开跑——**只剩使用者确认**。n=1，本页不写均值/提升/显著，也不把 4/4 当治理价值结论（05 §5.5）。
