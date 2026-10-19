@@ -1,0 +1,270 @@
+# 通道覆盖表（阶段 A1，**只报告**）：哪个通道 × 哪个工具 × 哪种治理 × 哪条检查。
+#
+# 它是什么
+# ========
+#
+# 每一行是一条**覆盖声明**：某个通道（adapters/wiring-scope.yaml 里的声明 id）上的某个
+# 工具（src/adapters/dsh/adapter.py 的 TOOL_TABLE 键），在某种治理阶段（mode），今天
+# 是「真的在治理」还是「声明了但没建立」，以及「哪条检查在看着它」（check_id）。
+# 它回答的是**覆盖是否存在**，不是「某次调用判了什么」——判定的读数在审计与台账里。
+#
+# 它不是什么
+# ==========
+#
+# **不放读数**：last_run / status / passed / observed_* 一律是禁键（与
+# validation/control-plane-facts.yaml、validation/instrument-checks.yaml 同一条纪律）；
+# coverage 是**声明**，不是「最近一次跑出来的结果」。**不判罚**：本表不进
+# policy.engine.evaluate 的任何输入，不改任何 allow / block，也不接退出码；读它的是
+# tools/control_plane_facts.py 的 C4 块（只报告，退出码恒 0）。
+#
+# 三态 coverage（闭集，别的取值加载期报错）
+# ======================================
+#
+#   enforced            这条治理阶段在真实链路上真的生效（有审计 / 台账 / 接线事实为证）
+#   declared_uncovered  声明了缺口：某条通道 × 工具上这个阶段**尚未建立**（不是没声明）
+#   not_applicable      这条通道上这个阶段按设计不存在（写了就必须在 reason 里说清依据）
+#
+# 「declared_uncovered」必须带 expires_at（YYYY-MM-DD）：没有到期日的缺口是一张永久空白
+# 支票（与 adapters/wiring-scope.yaml 的 out_of_scope 同一条纪律）。enforced 行写 null。
+#
+# 行字段（9 个；未知字段 / 坏日期 / 重复 (channel, tool, mode) 一律加载期报错）
+# ==========================================================================
+#
+#   channel      声明侧通道 id：必须是 adapters/wiring-scope.yaml 的 scope[].id
+#   tool         工具名：必须是 src/adapters/dsh/adapter.py 的 TOOL_TABLE 键
+#   mode         治理阶段：上面的闭集；coverage=enforced 时缺了 / 不在闭集 → row_without_mode
+#   coverage     三态：enforced / declared_uncovered / not_applicable
+#   check_id     coverage=enforced 时必填，且必须存在于 validation/instrument-checks.yaml；
+#                其它取值必须写 null（挂了检查的"未覆盖"是自相矛盾，加载期报错）
+#   owner        谁负责补上这个缺口，闭集 platform / host（加载期校验；不是"谁观测到"）
+#   reason       可评审的理由；enforced 行写证据（审计 reason_code 家族），缺口行写缺什么
+#   expires_at   YYYY-MM-DD 或 null；declared_uncovered **必须**写（没有到期日的缺口是
+#                空白支票），enforced / not_applicable **必须**为 null（加载期校验）
+#   covers_facts 可选：本行依赖的 validation/control-plane-facts.yaml key（形态检查 + 引用检查）
+#
+# mode 闭集与语义（写死在这里；四个红键之一专门数「enforced 行缺 mode / mode 不在闭集」）
+# =================================================================================
+#
+#   policy        Phase 1 规则引擎：对动作的路径 / 操作 / 变更文本跑上下文与证据类 checker，
+#                 产出 allow / allow_with_warnings / policy_block。
+#   pre_evidence  动手前取证：Adapter 配置声明 pre_evidence.enabled 后，写类动作在影子副本上
+#                 跑真实验证器，EvidenceBundle 参与判定（审计里 pre_evidence_status=collected）。
+#   enforcement   Phase 4 受控执行 pre-check：注册表 / 权限 / 参数白名单 / 审批 / 代码结构预检
+#                 （审计里 reason_code=enforcement_allow）。
+#   delegated     Phase 4 判定「高权限动作放行、由 Agent 运行时执行」（reason_code=allow_delegated）。
+#                 **委派是受控的放行，不是对动作内部副作用的路径约束**——把 delegated 当
+#                 「文件写入已被覆盖」读，就是这张表要挡的那种误读。
+#   post_check    PostToolUse 事后核对：前后哈希 / diff / 退出码 / 回滚声明。今天受治 profile 的
+#                 hooks.json 只注册 PreToolUse，所以本表**没有 post_check 行**（缺口由
+#                 tools/governance_gap_probe.py 的 G02 另测）；它仍是合法取值，接线后按行登记。
+#
+# 四个红条件（全部只报告：enforced=false / would_exit_code=1，预注册，不是承诺）
+# ==========================================================================
+#
+#   row_without_mode           coverage=enforced 的行缺 mode 或 mode 不在上面的闭集里
+#   mode_without_check         coverage=enforced 的行 check_id 为空或不在
+#                              validation/instrument-checks.yaml 的 check_id 里
+#   tool_with_hits_without_row 审计里 governed=true 的 PreToolUse 命中某个工具，而本表
+#                              **没有任何一行**覆盖它。判据是**工具级**（审计没有通道字段）：
+#                              删掉某工具的**最后一行（或唯一一行）**必红；同一工具按治理阶段
+#                              登记了多行时，删单个阶段行不改变工具级红格——这是本格已知的
+#                              表达力边界（真实表上的证明是「删掉某工具的全部行必红」）。
+#                              审计末行被截断时，这一格会写明「可能少命中」（只漏不多）。
+#   registry_digest_drift      当前注册表 identity 与 registry/tool-registry.approved.json
+#                              的 registry_digest 不一致（摘要由 enforcement.registry 的
+#                              加载 API 算，不在这里重写哈希规则）。本格**独立于覆盖表**：
+#                              覆盖表结构坏不影响它（它读的是 registry/ 下两份文件）。
+#
+# 引用完整性（channel / tool / check_id / covers_facts）是**另立的读数**，不混进上面四格
+# 冒充红条件：拆成四红会让人分不清「覆盖缺口」与「指针写错」。四项都断开 0 才算引用干净。
+#
+# 连接键
+# ======
+#
+#   channel       → adapters/wiring-scope.yaml 的 scope[].id         （声明 id，不是发现侧 channel_id）
+#   tool          → src/adapters/dsh/adapter.py 的 TOOL_TABLE         （代码工具表；未知工具失败关闭）
+#   check_id      → validation/instrument-checks.yaml 的 checks[].check_id
+#   covers_facts  → validation/control-plane-facts.yaml 的 facts[].key（可选）
+#   反向          → control-plane-facts.yaml 的 coverage.declaration 行经 instrument-checks 的
+#                   covers_facts 指向本表的 schema_version（两张表互相咬住）
+#   审计输入      → tools/control_plane_facts.py --audit <受治理 PreToolUse JSONL>；不给 = 不适用，
+#                   不是 0 命中（「不知道哪些工具有命中」与「没有命中」必须分开读）
+#
+# checked-in 的 check_id 只有一条：本工具自己的只报告登记行
+# （report-only:Control plane facts (report only)）。它今天**只是计数器**：本表的
+# enforced 说的是「链路上真的在治理（有审计命中为证）」，**不是**「有一条门禁在证明它」——
+# 后者还没有（升格未做）。不新开 instrument-checks 行：那会让 R-h 的
+# check_id_without_object 变红，且没有对应的可枚举对象。
+#
+# 版本轴：只有这一个（新文件第一次出现就带轴）。形状变了（加字段 / 改语义 / 改闭集）就递增它；
+# 加载器只接受它认识的版本号，读到别的版本 / 未知字段 / 未知 coverage 取值 / 坏日期 /
+# 未知 owner / expires_at 与 coverage 自相矛盾 / 重复（channel, tool, mode），一律在
+# **只报告工具内部**降级为 unavailable + reason，**不抛给任何判定路径**（阶段 A 的冻结令：
+# 不新增加载期 FATAL；连值类型错的输入也只降级、不 traceback）。
+schema_version: "1"
+
+rows:
+
+  # ---------------------------------------------------------------- 受控会话（governed-session-hook）
+  #
+  # 2026-10-18 审计读数（Comparison-test/Governance/.policy/audit.jsonl，只读）：
+  # governed=true 的 PreToolUse 127 条：edit 23 / write 4 / run_code 93 / pwsh 7；
+  # pre_evidence_status：edit 23/23 collected、write 4/4 collected、run_code 93/93 与
+  # pwsh 7/7 not_applicable。下面每一条 enforced 行都对应其中的一个 reason_code 家族。
+
+  - channel: governed-session-hook
+    tool: edit
+    mode: policy
+    coverage: enforced
+    check_id: "report-only:Control plane facts (report only)"
+    owner: platform
+    reason: >-
+      Phase 1 规则引擎对 edit 的 file_path + new_string 参与判定：审计里 edit 的
+      reason_code 覆盖 allow / allow_with_warnings / policy_block 三族（governed 记录 23 条）。
+    expires_at: null
+
+  - channel: governed-session-hook
+    tool: edit
+    mode: pre_evidence
+    coverage: enforced
+    check_id: "report-only:Control plane facts (report only)"
+    owner: platform
+    reason: >-
+      受治 profile 的 dsh-adapter.yaml 声明 pre_evidence.enabled=true，审计里 edit 的
+      pre_evidence_status 23/23 = collected：动手前取证这一段真的在链路上跑。
+    expires_at: null
+
+  - channel: governed-session-hook
+    tool: edit
+    mode: enforcement
+    coverage: enforced
+    check_id: "report-only:Control plane facts (report only)"
+    owner: platform
+    reason: >-
+      Phase 4 受控执行 pre-check 对写类动作跑注册表 / 权限 / 审批：审计里 edit 的
+      reason_code=enforcement_allow 8 条（另有 allow 4 / policy_block 7 / allow_with_warnings 4）。
+    expires_at: null
+
+  - channel: governed-session-hook
+    tool: write
+    mode: policy
+    coverage: enforced
+    check_id: "report-only:Control plane facts (report only)"
+    owner: platform
+    reason: >-
+      Phase 1 规则引擎对 write 的 file_path + content 参与判定：审计里 write 的
+      reason_code=policy_block 2 / allow 1（governed 记录 4 条）。
+    expires_at: null
+
+  - channel: governed-session-hook
+    tool: write
+    mode: pre_evidence
+    coverage: enforced
+    check_id: "report-only:Control plane facts (report only)"
+    owner: platform
+    reason: >-
+      与 edit 同一个受治 profile 的 pre_evidence 声明：审计里 write 的
+      pre_evidence_status 4/4 = collected。
+    expires_at: null
+
+  - channel: governed-session-hook
+    tool: write
+    mode: enforcement
+    coverage: enforced
+    check_id: "report-only:Control plane facts (report only)"
+    owner: platform
+    reason: >-
+      Phase 4 受控执行 pre-check 对写类动作跑注册表 / 权限 / 审批：审计里 write 的
+      reason_code=enforcement_allow 1 条。
+    expires_at: null
+
+  - channel: governed-session-hook
+    tool: run_code
+    mode: delegated
+    coverage: enforced
+    check_id: "report-only:Control plane facts (report only)"
+    owner: platform
+    reason: >-
+      Phase 4 对 run_code 走 allow_delegated：注册表 / 代码结构预检 / 审批在 pre-check 里，
+      审计 93 条 allow_delegated 证明这条**放行**链路真的在跑。delegated 只说明平台把执行
+      委派给 Agent 运行时，**不**说明写入路径受 path_scope 约束——那一段是下面 policy 行的洞。
+    expires_at: null
+
+  - channel: governed-session-hook
+    tool: run_code
+    mode: policy
+    coverage: declared_uncovered
+    check_id: null
+    owner: platform
+    reason: >-
+      **已知洞，不是已覆盖**：run_code 的写入发生在被执行的代码里，Phase 1 规则引擎没有文件维度
+      （审计逐条写明「该动作没有文件维度」），path_scope 只约束 edit / write 的路径字段；Phase 4
+      也只做注册表 / 审批 / 代码结构预检，不检查代码最终写哪些路径。真正的覆盖要等最终树门禁
+      （阶段 C 的 C3）；在那之前以 declared_uncovered 记账，防止把 93 条 allow_delegated 读成
+      「文件写入已被治理」。
+    expires_at: "2026-12-31"
+
+  - channel: governed-session-hook
+    tool: pwsh
+    mode: delegated
+    coverage: enforced
+    check_id: "report-only:Control plane facts (report only)"
+    owner: platform
+    reason: >-
+      Phase 4 对 pwsh 走 allow_delegated：命令白名单 / 命令组合与片段的结构性阻断 / 审批在
+      pre-check 里（审计 7 条 allow_delegated）。命令形态受约束不等于命令最终写的路径受
+      path_scope 约束——本行只声明 delegated 这一段，不声称路径覆盖。
+    expires_at: null
+  # ---------------------------------------------------------------- 桌面通道（desktop-entry-points）
+  #
+  # 2026-10-18 接线 / 留痕读数（python -m adapters.cli wiring）：dsh:desktop 的
+  # wiring_status=wired（策略桥挂在 profile 的 cordis.patch.yml 里）；审计目标解析修好
+  # 之后（04 号 5.72）freshness_status=fresh——wiring 与运行期同口径：运行时 audit_log 按
+  # **配置文件所在目录**解析，实际账本是 <受治项目>/.policy/audit.jsonl（2026-10-18 读数
+  # 17,674 条时间戳记录，最后一条 2026-10-18T05:40:08Z；另有 202 条 Phase 4 执行链记录没有
+  # timestamp 字段，wiring 按既有口径记为 bad_lines——结论按其余记录算）。
+  # 修前 wiring 把同一个 audit_log 按 bridge.projectDir/profile 目录解析、找
+  # <受治项目>/audit.jsonl（不存在）⇒ 系统性报 never_written；那是**解析 bug**，不是
+  # 「从未留痕」。
+  # **这四行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理
+  # 判定——governed=true 记录 127 条且**截止 2026-10-11T18:53:33Z**；当前桌面入口会话的
+  # cwd 不在受治项目内，判定记录为 reason_code=session_out_of_scope（8,496 条）——那是
+  # 「没管」，不是受治理判定。「桥装上了、账本也读到了」不等于「已经管住」。到期日与
+  # adapters/wiring-scope.yaml 的声明同一天（2026-12-31），到时必须续期或改判。mode 取该
+  # 工具在受控通道里的主治理阶段（edit / write: policy；run_code / pwsh: delegated）。
+
+  - channel: desktop-entry-points
+    tool: edit
+    mode: policy
+    coverage: declared_uncovered
+    check_id: null
+    owner: host
+    reason: 接线成立（wiring_status=wired）；审计目标解析修好后留痕也读得到（freshness_status=fresh：<受治项目>/.policy/audit.jsonl，2026-10-18 读数 17,674 条 / 最后一条 2026-10-18T05:40:08Z）。**本行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理判定——governed=true 记录 127 条且截止 2026-10-11T18:53:33Z（edit 23 / write 4 / run_code 93 / pwsh 7）；当前桌面入口会话的 cwd 不在受治项目内，判定记为 reason_code=session_out_of_scope（8,496 条）——那是「没管」，不是受治理判定。没有任何一条受治理判定可证明 Phase 1 规则引擎在桌面通道上跑过（覆盖尚未建立）。
+    expires_at: "2026-12-31"
+
+  - channel: desktop-entry-points
+    tool: write
+    mode: policy
+    coverage: declared_uncovered
+    check_id: null
+    owner: host
+    reason: 接线成立（wiring_status=wired）；审计目标解析修好后留痕也读得到（freshness_status=fresh：<受治项目>/.policy/audit.jsonl，2026-10-18 读数 17,674 条 / 最后一条 2026-10-18T05:40:08Z）。**本行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理判定——governed=true 记录 127 条且截止 2026-10-11T18:53:33Z（edit 23 / write 4 / run_code 93 / pwsh 7）；当前桌面入口会话的 cwd 不在受治项目内，判定记为 reason_code=session_out_of_scope（8,496 条）——那是「没管」，不是受治理判定。没有任何一条受治理判定可证明 Phase 1 规则引擎在桌面通道上跑过（覆盖尚未建立）。
+    expires_at: "2026-12-31"
+
+  - channel: desktop-entry-points
+    tool: run_code
+    mode: delegated
+    coverage: declared_uncovered
+    check_id: null
+    owner: host
+    reason: 接线成立（wiring_status=wired）；审计目标解析修好后留痕也读得到（freshness_status=fresh：<受治项目>/.policy/audit.jsonl，2026-10-18 读数 17,674 条 / 最后一条 2026-10-18T05:40:08Z）。**本行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理判定——governed=true 记录 127 条且截止 2026-10-11T18:53:33Z（edit 23 / write 4 / run_code 93 / pwsh 7）；当前桌面入口会话的 cwd 不在受治项目内，判定记为 reason_code=session_out_of_scope（8,496 条）——那是「没管」，不是受治理判定。没有一条 allow_delegated 记录可证明 Phase 4 的委派 pre-check 在桌面通道上跑过（覆盖尚未建立），别把「桥装上了」读成「已经管住了 run_code」。
+    expires_at: "2026-12-31"
+
+  - channel: desktop-entry-points
+    tool: pwsh
+    mode: delegated
+    coverage: declared_uncovered
+    check_id: null
+    owner: host
+    reason: 接线成立（wiring_status=wired）；审计目标解析修好后留痕也读得到（freshness_status=fresh：<受治项目>/.policy/audit.jsonl，2026-10-18 读数 17,674 条 / 最后一条 2026-10-18T05:40:08Z）。**本行仍按 declared_uncovered 记账**：账本里没有可归因到本通道、覆盖当前会话的受治理判定——governed=true 记录 127 条且截止 2026-10-11T18:53:33Z（edit 23 / write 4 / run_code 93 / pwsh 7）；当前桌面入口会话的 cwd 不在受治项目内，判定记为 reason_code=session_out_of_scope（8,496 条）——那是「没管」，不是受治理判定。没有一条 allow_delegated 记录可证明 Phase 4 的委派 pre-check 在桌面通道上跑过（覆盖尚未建立）。
+    expires_at: "2026-12-31"

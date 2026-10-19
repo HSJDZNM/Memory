@@ -1,0 +1,80 @@
+# 生产文件 ↔ 测试文件的对应关系，以及测试进程的硬限制。
+#
+# 选择顺序（从窄到宽，相关性不足时升级）：
+#   related（同名测试）→ package（同包测试）→ suite（整个测试套件）
+# 另有一支不由生产文件驱动的选择：变更**只改测试支撑文件**时按支撑文件的作用域选
+#   （support，见 test_support_patterns）。
+# 占位符：{stem} = 生产文件名去掉扩展名；{package} = 生产文件在 python 根下的第一层目录名。
+#
+# 数据文件自己的版本轴（AGENTS 第 55 条）：
+#   version 1 → 2：新增**可选**字段 test_support_patterns（测试支撑文件的路径声明）。
+#   加载器**同时接受 1 与 2**（加可选字段不制造兼容窗口，与 adapters/wiring-scope.yaml 的
+#   schema_version "1"/"2" 同型）；不认识的版本号、或 schema_id 与 version 对不上 → 加载期报错。
+#   回退：删掉 test_support_patterns、把 version 与 schema_id 改回 1，即恢复 v1 形状。
+version: 2
+schema_id: test-layout/2
+language: python
+
+# 生产文件的取值（**不是**版本轴）：2026-10-19 D 门 2 treatment 起把 tools/**/*.py 也算生产文件。
+# 为什么：04 5.75——pre_evidence 下写 tools/ 的 python 拿不到测试证据（TESTING-002
+# uncovered_checker critical），A3 v2 只能用「预置 demo、只运行」绕开；声明成生产文件后
+# 测试选择（related → package → suite）才有依据。
+# 回退：删掉 production_patterns 里的 "tools/**/*.py" 这一行即可（版本轴不动，仍是 v2）。
+production_patterns:
+  - "src/**/*.py"
+  - "tools/**/*.py"
+
+# 这两条是**平台级**的"哪些路径算测试"声明，两条判定路径共用它（口径只有一份）：
+#   - 验证器路径按它做测试选择（validators.selection.list_test_files）；
+#   - policy.check 缺 --layer 时按它定 layer=test（layer_source=platform_test_layout），
+#     不再按文件名猜层——否则 tests/test_x_controller.py 会在 Hook 路径上 allow、
+#     在验证器路径上被 ARCH-001 block（07 号报告 P4）。
+# examples/dsh/dsh-adapter.yaml 的 test_paths / test_layer 必须与它解得通：
+# 每条 test_patterns 的见证路径都要落到声明的 test_layer，
+# 由 tests/contract/test_dsh_layer_declaration.py 钉住（声明漂移即红）。
+test_patterns:
+  - "tests/**/test_*.py"
+  - "tests/**/*_test.py"
+
+# 测试**支撑**文件（conftest / helpers / 夹具）：改它们不等于改测试本身，但会让它们
+# pytest 作用域内的测试变得相关。值同样是 layer=test——policy.check 缺 --layer 时命中
+# 本清单的路径一律判 test 层，与验证器路径共用这一份声明（AGENTS 第 49 条：
+# 同一个文件不许在两条路径上得到两个层）。
+#
+# 选择语义（validators.selection.select_tests 的 level="support"）：
+#   变更目标命中本清单时，选**该文件所在目录（pytest conftest 的作用域）子树下的全部
+#   测试文件**；项目根的 conftest.py 选全部测试。作用域里一个测试都没有时**失败关闭**
+#   （level="none"、理由写明作用域为空）——不用"它在 tests/ 下就算相关"这种启发式
+#   （第 49 条：口径只有一份声明）。
+#
+# 只放可评审的最小集：每加一条都要在 tests/fixtures/rules/_combinations/ 的条目里体现，
+# 并说明"改了这批文件，为什么这些测试相关"。
+test_support_patterns:
+  - "**/conftest.py"
+  - "tests/**/helpers*.py"
+  - "tests/fixtures/**/*.py"
+
+escalation:
+  - level: related
+    description: 与生产文件同名的测试文件
+    match:
+      - "tests/**/test_{stem}.py"
+      - "tests/**/{stem}_test.py"
+  # 每一级都要覆盖 test_patterns 声明的**两种**约定（test_*.py 与 *_test.py）：
+  # 只写前缀约定时，tests/shop/order_repository_test.py 这类文件在任何一级都选不中——
+  # "整个测试套件"其实漏了半个套件，而同包测试存在却被报成"没有相关测试"（复核发现）。
+  - level: package
+    description: 生产文件所在包对应的测试目录
+    match:
+      - "tests/**/{package}/**/test_*.py"
+      - "tests/**/{package}/**/*_test.py"
+  - level: suite
+    description: 整个测试套件（相关性不足时的最后一级）
+    match:
+      - "tests/**/test_*.py"
+      - "tests/**/*_test.py"
+
+limits:
+  max_nodeids: 40
+  timeout_ms: 120000
+  max_output_bytes: 262144

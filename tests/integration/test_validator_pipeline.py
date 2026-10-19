@@ -1114,6 +1114,86 @@ def test_a_collection_failure_without_a_parseable_target_is_still_a_real_finding
     assert "收集失败" in (record.reason or "")
 
 
+# ------------------------------------------------- tools/** 的 python 写（04 5.75 / D 门 2）
+
+# treatment 之后 tools/**/*.py 是**生产文件**：同一批测试证据链路上，它按 related 级选到自己的
+# 测试并真的跑。修复前（production_patterns 只有 src/**/*.py）这一支是 selection.level="none"、
+# failing_tests 拿不到证据 → TESTING-002 以 uncovered_checker/critical 阻断（A3 的 canary 读数）。
+# 规则集收窄到 missing_tests + failing_tests：这条用例只回答"测试证据链有没有被接通"，
+# 不让本机 PATH 里有没有 ruff 决定它的红绿（与上面 Q7/H4 同一手法）。
+TOOLS_TARGET = "tools/audit_demo.py"
+TOOLS_TEST = "tests/test_audit_demo.py"
+TOOLS_RULES = RuleSet(
+    rules=(
+        make_checker_rule("TESTING-001", checker="missing_tests"),
+        make_checker_rule("TESTING-002", checker="failing_tests"),
+    ),
+    source_paths=(),
+)
+
+
+def tools_workspace(tmp_root: Path) -> Path:
+    """夹具项目 + 一个 tools/ 脚本与它的同名测试。"""
+
+    workspace = copy_validator_project(tmp_root)
+    (workspace / "tools").mkdir()
+    (workspace / TOOLS_TARGET).write_text(
+        '"""演示脚本（treatment 之后它是生产文件）。"""' + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+    (workspace / TOOLS_TEST).write_text(
+        '"""演示脚本的测试。"""' + chr(10) + chr(10)
+        + "def test_noop() -> None:" + chr(10)
+        + '    """占位。"""' + chr(10) + chr(10)
+        + "    assert True" + chr(10),
+        encoding="utf-8",
+        newline="",
+    )
+    return workspace
+
+
+def run_tools(workspace: Path) -> object:
+    return run_pipeline(
+        PipelineRequest(
+            target=TOOLS_TARGET,
+            workspace=workspace,
+            context=make_context(
+                file=TOOLS_TARGET, language="python", layer="module", operation="create"
+            ),
+            rules=TOOLS_RULES,
+            changed_files=(TOOLS_TARGET,),
+        ),
+        config=CONFIG,
+    )
+
+
+def tools_verdict(report) -> str:
+    return evaluate(
+        TOOLS_RULES,
+        make_context(
+            file=TOOLS_TARGET, language="python", layer="module", operation="create"
+        ),
+        evidence=report.bundle,
+    ).decision.value
+
+
+def test_a_tools_script_is_a_production_file_with_a_real_test_selection(tmp_root: Path) -> None:
+    """treatment 的核心可证伪读数：tools/**/*.py 从 level="none" 变成 related 且有执行证据。
+
+    修复前这一支的读数（同一棵树、同一批输入）：selection.level="none"、nodeids=[]、
+    served_checkers 不含 failing_tests、decision=block（TESTING-002 uncovered_checker）。
+    """
+
+    report = run_tools(tools_workspace(tmp_root))
+
+    assert report.selection["level"] == "related", report.selection
+    assert report.selection["nodeids"] == [TOOLS_TEST]
+    assert report.selection["missing"] == []
+    assert "failing_tests" in report.served_checkers
+    assert tools_verdict(report) == "allow"
+
+
 # ------------------------------------------------------------------ CLI 端到端
 
 

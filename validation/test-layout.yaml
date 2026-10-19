@@ -15,8 +15,14 @@ version: 2
 schema_id: test-layout/2
 language: python
 
+# 生产文件的取值（**不是**版本轴）：2026-10-19 D 门 2 treatment 起把 tools/**/*.py 也算生产文件。
+# 为什么：04 5.75——pre_evidence 下写 tools/ 的 python 拿不到测试证据（TESTING-002
+# uncovered_checker critical），A3 v2 只能用「预置 demo、只运行」绕开；声明成生产文件后
+# 测试选择（related → package → suite）才有依据。
+# 回退：删掉 production_patterns 里的 "tools/**/*.py" 这一行即可（版本轴不动，仍是 v2）。
 production_patterns:
   - "src/**/*.py"
+  - "tools/**/*.py"
 
 # 这两条是**平台级**的"哪些路径算测试"声明，两条判定路径共用它（口径只有一份）：
 #   - 验证器路径按它做测试选择（validators.selection.list_test_files）；

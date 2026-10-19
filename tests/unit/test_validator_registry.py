@@ -439,6 +439,35 @@ def test_the_repository_test_layout_is_v2_and_declares_support_patterns() -> Non
     assert layout.is_test("tests/helpers.py") is False
 
 
+def test_the_repository_test_layout_declares_tools_as_production() -> None:
+    """04 5.75 的 treatment（D 门 2）：tools/**/*.py 是生产文件，测试选择才有依据。
+
+    这是**取值**变化，不是 schema 变化：version / schema_id 一个字不动（仍是 v2），
+    回退就是删掉 production_patterns 里的那一行。用例钉住三件事：tools 下的脚本是生产文件、
+    测试/支撑路径**没有**被顺带算成生产文件、以及"哪些路径算测试"这份声明没被这次改动动到。
+    """
+
+    layout = load_test_layout(root=REPO_ROOT)
+
+    assert layout.production_patterns == ("src/**/*.py", "tools/**/*.py")
+    assert layout.version == 2
+    assert layout.schema_id == "test-layout/2"
+
+    assert layout.is_production("tools/audit_demo.py") is True
+    assert layout.is_production("tools/nested/helper.py") is True
+    assert layout.is_production("tests/test_audit_demo.py") is False
+    assert layout.is_production("conftest.py") is False
+    assert layout.is_production("README.md") is False
+
+    # 只动生产声明的取值：测试与支撑两类声明逐字不变。
+    assert layout.test_patterns == ("tests/**/test_*.py", "tests/**/*_test.py")
+    assert layout.test_support_patterns == (
+        "**/conftest.py",
+        "tests/**/helpers*.py",
+        "tests/fixtures/**/*.py",
+    )
+
+
 def layout_document() -> dict:
     return yaml.safe_load((VALIDATION_DIR / "test-layout.yaml").read_text(encoding="utf-8"))
 
