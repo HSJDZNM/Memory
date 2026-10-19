@@ -121,7 +121,7 @@
 - 阶段 A 执行情况：见 §7.1–§7.4（2026-10-18；A1/A2 已落地，A3 v2 4/4 + 任务完成）。
 - 阶段 B 执行情况：见 §7.5（B2 已落地；B1/B3 未解冻）。
 - 阶段 C 执行情况：空（未开跑）。
-- 阶段 D 执行情况：见 §7.6（校准门通过 + 门 2 前置包已交付并冻结；A/B/C 主实验未开跑）。
+- 阶段 D 执行情况：见 §7.6（校准门通过 + 门 2 前置包已交付并冻结 + **开跑前置已工具化**；A/B/C 主实验未开跑，只剩使用者确认）。
 - 汇总与复审：见 §7.7（2026-10-18 汇总）。
 
 ### 7.1 阶段 A · 进度记录
@@ -162,6 +162,8 @@
 | C-20261019-04 | 2026-10-19T09:35:00+08:00 | feat(examples)：任务包 v3（6f88e59） | examples/dsh/b-plan/a3-task-v3/**（9 文件） | D 门 2 treatment 激活点 | 否（任务构造；任务包 manifest 5/5） | Lead | git show --stat 6f88e59 |
 | C-20261019-05 | 2026-10-19T10:40:00+08:00 | feat(dgate2)：评分器骨架 c4d77e3 + 冻结 be63670 | dgate2/scorer/{scorer.yaml,layers.yaml,interfaces.yaml,make_manifest.py,manifest.sha256,README.md} | D 门 2 评分器 | 否（判据数据；version 1 → 2 = 冻结新增三块） | Lead（代行，使用者授权自行决策） | git show --stat c4d77e3；be63670 |
 | C-20261019-06 | 2026-10-19T11:15:00+08:00 | feat(dgate2)：C 臂装配器 + 真实冒烟（99fd894） | dgate2/c-arm/{assemble.py,README.md} | D 门 2 C 臂 | 否（对照组装配；冒烟 n=1，不打分） | Lead | git show --stat 99fd894 |
+| C-20261019-07 | 2026-10-19T21:49:00+08:00 | feat(dgate2)：D 门 2 开跑前置工具化（f614cea） | dgate2/run-manifest/**、dgate2/run-record/**、tests/unit/test_dgate2_{run_manifest,run_record}.py、readings/2026-10-19-D-gate2-{run-ready-verify,run-record}.md、AGENTS.md（9 文件） | D 门 2 开跑前置 ② | 否（只读工具；不改 allow/block、不改退出码、不改冻结判据） | 三个独立子会话交付 + Lead 复核（23 passed、冻结 PASS） | git show --stat f614cea |
+| C-20261019-08 | 2026-10-19T21:55:00+08:00 | docs(plan)：D 门 2 开跑前置工具化——状态同步 + 04 5.81 登记 | 04-open-work.md、05-implementation-plan.md、07-status-brief.md、docs README、06-plan-progress.md | D 门 2 / 04 5.78 | 否（纯文档） | Lead | git show --stat HEAD（本行所在提交） |
 
 ### 7.3 读数记录
 
@@ -204,6 +206,9 @@
 | R-A-D2-03 | 2026-10-19T09:55:00+08:00 | D 门 2 T 维度 | 30 条隐藏验收 + 入口/接口 | 参考树；POLICY_TREE 传树根 | **40/40 pass、exit 0**；两次 stdout 逐字节相同（sha 65317892…）；4 类变异各至少红一条（复制语义⇒T12/13/14+I2；直连 repository⇒T18+I5；不记审计⇒T03/04/06/07+T11；demo 少一条⇒T27） | 符合 | dgate2/hidden/README.md；runner 载荷 | 11 条规格含糊已写进 README，冻结前对齐 |
 | R-A-D2-04 | 2026-10-19T10:40:00+08:00 | D 门 2 评分器 | 冻结清单与 C 维度自证 | scorer/manifest.sha256 的 7 组输入 25 文件 | 组合摘要 sha256:e3ef9e91…；`--check --strict` PASS、pending 0；C 维度 8 条规则各一处变异均命中（ARCH / TESTING-1/2 / STYLE-002/018/001/010 / DOC-001）；C 参考树 24/24、T 40/40、A 10/10 | 符合 | dgate2/scorer/README.md §11；scorer.yaml freeze | 文件集=改动面 8 个 .py；--changed 9 条 |
 | R-A-D2-05 | 2026-10-19T11:15:00+08:00 | D 门 2 C 臂 | 不治理的冒烟 | dsh 0.2.1-alpha.2 headless，无 --patch；树=12 文件基线（4e7c4073…） | exit 0、10.2s、3 次工具调用含 1 write、产物落盘；**本 session 在治理账本 0 条**（总 Δ+53 全是并发会话 out_of_scope）；插件未加载 5 条证据（dump-config / profile patch=[] / session log / argv / 树无 .policy） | 符合（n=1 冒烟，不打分） | dgate2/c-arm/README.md | score_eligible=no（冒烟）；正式 run 用冻结首消息 123c938c… |
+| R-A-D2-06 | 2026-10-19T21:44:00+08:00 | D 门 2 | 冻结包复核 | 25 文件（scorer 清单）+ 任务包 5 + 两臂各 9 + 参考树 16 | make_manifest --check --strict → PASS（25 逐字节一致、0 pending）；组合摘要 sha256:e3ef9e91e8cd…dd649a；任务包 manifest 44d85e7e…、首消息 123c938c…；before/after 各 9/9、只差 test-layout.yaml；参考树 files_digest 7ea8d5e5…、A 10/10、C 24/24、T 40/40 | 符合 | readings/2026-10-19-D-gate2-run-ready-verify.md §1–§3 | 两次运行逐字节相同；T 在旧沙箱首次 30/40（04 5.81②） |
+| R-A-D2-07 | 2026-10-19T21:47:00+08:00 | D 门 2 | run-record 样例 + Lead 原生复跑 | 参考树 16 文件；10 条子命令（T+A+8×C） | collect exit 0；T 40/40、C 24/24（8/8 allow、layer_source=declared、check_volume.complete=true）、A 10/10；载荷 sha256 40f55c46…（三次相同）；danger-full-access 无垫片复跑：dimensions/summary/commands 与样例逐项相等（仅 tree 标签不同） | 符合 | readings/2026-10-19-D-gate2-run-record.md §1/§5/§10 | 无时戳/无绝对路径；C 只覆盖规则分 24，不含 frozen_untouched/bypass 6 分 |
+| R-A-D2-08 | 2026-10-19T21:45:00+08:00 | D 门 2 | run-manifest 真实生成与校验 | A 臂开跑前；HEAD c44f9db | --arm A → recorded 10 / pending 7；--check → 0；--check --strict → 1（human_items_unrecorded + incomplete_freeze）；补 reference-tree / arm-facts / run-record / human-items 后 recorded 16 / pending 0 / not_applicable 1（H4）、--strict → 0 | 符合 | run-manifest/README.md §3；tests/unit/test_dgate2_run_manifest.py（13 passed，覆盖删字段/摘要漂移/strict） | 就绪判据 = --check --strict 0；开跑前清单允许 pending；现场载荷在 .tmp（不提交） |
 | R-A-GATE-05 | 2026-10-19T12:50:00+08:00 | D 门 2 前置包收口 | 本机门禁 ci_local（danger-full-access；**收口提交后的干净树**） | 代码面 = HEAD 99fd894 + 本行所在提交的文档改动，工作树干净；26 正常步骤 + 4 只报告 | **26/26 ok，退出码 0**；总耗时 4m34.8s；只报告 4 步（0/0/0/113） | 符合 | readings/2026-10-19-gate-dgate2.md | 与 R-A-GATE-04（沙箱内 pytest 跑不成）的差别在沙箱形态，不追认成通过；12:10 那次在未提交的同一批文档上先跑过一次（26/26、5m04.6s），以本行为准 |
 
 ### 7.4 阶段 A · 偏离/作废记录
@@ -223,6 +228,7 @@
 | D-20261019-01 | 2026-10-19T09:10:00+08:00 | A4 判据「实例化只出现在 composition 文件」与本题接口契约冲突 | 参考树（.tmp/lead-v3/ref）上 A4 fail 2 条，而这两处是 interfaces.md 要求的构造器默认装配（`service or OrderService()` / `repository or OrderRepository()`） | A 维度 10 条里 1 条对所有合法解恒红（区分力 0） | 修订为「业务方法（`__init__` 以外）不得实例化另一模块具象类」；structure_metrics 1.0→1.1；参考树改后 10/10；记录在 memo §9 第 2 条 | tools/structure_metrics.py；dgate2/scorer/README.md §11；memo §9 |
 | D-20261019-02 | 2026-10-19T10:20:00+08:00 | C 维度「整棵树 13 个 .py」口径制造测量假象 | 实测：整树口径下 `src/shop/__init__.py` 与 `tools/__init__.py` 各报 1 条 TESTING-001（「有变更但找不到对应测试」，而它们一字节未改）⇒ rules 21/24，任何合法解丢 3 分 | 与 §4.1「参考解 C 30/30」的天花板冲突 | 冻结为**改动面 8 个 .py**（README §3 记录两条候选集的实测对比）；被排除项没有漏判：8 + README（非 .py）+ 7 冻结核 = 16 | dgate2/scorer/scorer.yaml measurement.file_set；README §3/§10 |
 | D-20261019-03 | 2026-10-19T10:25:00+08:00 | 评分器 config-root 草案要求自带副本 | 草案 §4.0 写 `scorer/config-root/validation/`，落地时 treatment 已建 `dgate2/configs/after/` | 会多出第三份要维护、要钉哈希的配置副本 | 改为引用 `configs/after` 并在 scorer/manifest.sha256 里钉住逐文件哈希；记录在 memo §9 第 1 条 | memo §9；dgate2/scorer/manifest.sha256 |
+| D-20261019-04 | 2026-10-19T21:44:00+08:00 | 派发文本的两处口径与实测不符：① activation 用 9 条 `--changed` 测不出翻面；② hidden runner 在 `workspace-write`（partial）沙箱下 30/40 | ① 口径：v3 README §3 与 memo §2.3.5 都用单路径 `--changed tools/audit_demo.py`；9 条形态两臂都 allow；② 环境：`tempfile.mkdtemp(0700)` 在旧沙箱下不可写（WinError 5） | 不影响判据；影响「activation 怎么记录」与「T 读数在哪个沙箱取得」 | 登记 04 5.81；读数按实测形态记录（单路径 activation；launcher/session 两种沙箱分别记） | readings/2026-10-19-D-gate2-run-ready-verify.md §1.4/§3；readings/2026-10-19-D-gate2-run-record.md §6/§10 |
 
 ### 7.5 阶段 B · 进度记录
 
@@ -237,6 +243,9 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | P-D-001 | 2026-10-18T23:18:00+08:00 | D（校准门） | Lead | HEAD 98169bf；无模型/无审批；树 = 12 文件 v2 基线 + 同一受治配置 | 真 Hook CLI 喂 P+ / P− / canary：P+ controller 直接 import repository → block（ARCH-001@1 等）；P− repository docstring → allow；canary write tools/audit_demo.py → block（TESTING-002@1，04 5.75 缺口仍在） | 符合（校准门通过；A/B/C 未开跑） | readings/2026-10-18-A3-dryrun-v2.md §5；.tmp/a3b2/d-calibration.json | 05 §5.1 门（通过 = P+ 被拦且 P− 放行；裁定 A-9）+ 裁定 A-6 | 无（校准即记录）；canary 是登记缺口的常红项，不是 D 失败 | 待 treatment 裁定 + 评分器冻结 + C 臂装配后开 A/B/C（04 5.78） |
 | P-D-002 | 2026-10-19T11:30:00+08:00 | D（门 2 前置包） | Lead（多个子会话交付） | HEAD be63670；冻结输入 = 任务包 v3 + configs/after + scorer + hidden + tools 两份 | treatment（e341c08）、任务包 v3（6f88e59）、隐藏验收 30 条 + runner（6f22cee）、A 维度工具（2a2cb21）、评分器骨架 + 冻结（c4d77e3/be63670，组合摘要 e3ef9e91…）、C 臂装配 + n=1 冒烟（99fd894）；每件都有变异/能红证明与读数 | 符合（前置包就绪；A/B/C 未开跑） | 06 R-A-D2-01..05；dgate2/{scorer,hidden,c-arm}/README.md | 05 §4 D 行 + memo §8 | D-20261019-01..03（三处口径修订） | 开跑前：`make_manifest.py --check --strict` + 17 个 run-manifest 字段 + 使用者确认 |
+| P-D-003 | 2026-10-19T21:40:00+08:00 | D（run-manifest 工具，task-1） | run-manifest（子会话） | HEAD c44f9db；冻结包组合摘要 e3ef9e91…；RUN_MANIFEST_SCHEMA_VERSION 首次建轴 1.0 | 新增 17 字段生成/校验器 + README + 13 用例；字段 id 与 scorer.yaml 逐字一致，三态 + 冻结类摘要现场重算 | 符合 | docs/project/engineering-policy-platform/testing/ab/dgate2/run-manifest/{run_manifest.py,README.md}；tests/unit/test_dgate2_run_manifest.py（13 passed，6.10s）；--arm A → exit 0（recorded 10/pending 7）、--check → 0、--check --strict → 1（human_items_unrecorded + incomplete_freeze）；make_manifest --check --strict → 0 | 04 5.78 ②；scorer.yaml run_manifest_fields | 工作树脏使 worktree_clean=false（如实记录；正式清单应在干净 HEAD 生成） | 使用者确认后按臂生成正式清单 |
+| P-D-004 | 2026-10-19T21:42:00+08:00 | D（run-record 采集器，task-3） | run-record（子会话）+ Lead 原生复跑 | HEAD c44f9db；RUN_RECORD_SCHEMA_VERSION 首次建轴 1.0 | 新增 T/C/A 三维读数采集器 + README + 10 用例（可注入 runner）；参考树真跑样例 | 符合 | docs/project/engineering-policy-platform/testing/ab/dgate2/run-record/{collect.py,README.md}；tests/unit/test_dgate2_run_record.py（10 passed，0.78s）；样例 collect exit 0（T 40/40、C 24/24、A 10/10；载荷 sha256 40f55c46…，三次逐字节相同）；Lead 在 danger-full-access 无垫片复跑同值 | 04 5.78 ②；scorer.yaml measurement | 子会话在 workspace-write 下 T 无垫片 30/40（换垫片 40/40）；原生复跑 40/40（R-A-D2-07、04 5.81②） | 无 |
+| P-D-005 | 2026-10-19T21:44:00+08:00 | D（冻结包复核与评分链干跑，task-2） | chain-verify（子会话）+ Lead 复核 | HEAD c44f9db；冻结包 25 文件；任务包 v3 5/5 | 只读复核六组：冻结清单、任务包、两臂配置、参考树 A/C/T、M5b activation、判据哈希 | 符合（T 的旧沙箱形态另记） | readings/2026-10-19-D-gate2-run-ready-verify.md（302 行，sha256 e838539e…）；make_manifest --check --strict → 0；A 10/10 ×2、C 24/24 ×2、T 40/40 ×2（danger-full-access）；M5b 单路径 before block / after allow | 04 5.78 ①②；05 §5.6 | activation 只在单路径 --changed 复现（9 条形态两臂都 allow）；T 在旧 workspace-write 下 30/40——均登记 04 5.81 | 无 |
 
 ### 7.7 汇总与复审（2026-10-18）
 
@@ -245,8 +254,8 @@
 | 阶段 A | A1、A2 已落地；A3 v2 4/4 + 任务完成（A1–A7，隐藏验收 6/6、pytest 10 passed、A8 7/7） | 05 §4 A3、§5.6；readings/2026-10-18-A3-dryrun-v2.md；06 P-A3-011/012、R-A-A3-09..11 | A3 不再重跑；构造若再改必须重新冻结 run-manifest |
 | 阶段 B | B2 已落地（47fa325）；B1/B3 未解冻 | readings/2026-10-18-B2-rd.md、B2-gate.md；05 §4 B | B1 是 A/B/C 的 treatment 候选（4 人日；改注册表要重新审核）；B3 只读族闸门可选 |
 | 阶段 C | 未开跑（C1/C2/C3/C4 待裁定） | 05 §4 C | 按使用者裁定 |
-| 阶段 D | 仅校准门通过；**门 2 前置包已交付并冻结**（treatment e341c08 / 任务包 v3 6f88e59 / 隐藏 6f22cee / A 维度工具 2a2cb21 / 评分器冻结 be63670 / C 臂 99fd894）；A/B/C 主实验未开跑 | readings/2026-10-19-D-gate2-treatment.md §4/§8；dgate2/scorer/README.md；06 R-A-D2-01..05 | 开跑前：① `make_manifest.py --check --strict` 通过并记组合摘要；② 17 个 run-manifest 字段写全；③ 使用者确认（A/B/C 开跑与是否签字） |
+| 阶段 D | 仅校准门通过；**门 2 前置包已交付并冻结**（treatment e341c08 / 任务包 v3 6f88e59 / 隐藏 6f22cee / A 维度工具 2a2cb21 / 评分器冻结 be63670 / C 臂 99fd894）；**开跑前置 ①② 已于 10-19 工具化并复核**（f614cea：17 字段 run-manifest + T/C/A run-record；冻结复核 PASS、参考树 10/10·24/24·40/40）；A/B/C 主实验未开跑 | readings/2026-10-19-D-gate2-treatment.md §4/§8；dgate2/{scorer,run-manifest,run-record}/README.md；06 R-A-D2-01..08 | **只剩使用者确认**（开跑即按臂生成 run-manifest、跑后 collect + 人工四项） |
 | 本机门禁 | ci_local 26/26、退出码 0（HEAD 98169bf，4m49.3s；5dd3351 仅文档） | 06 R-A-GATE-03；readings v2 §10 | 产品代码改动后重跑；同一工作树同时只跑一个 |
-| 未修缺口 | 04 5.76（breaker_seconds 两义）、5.77（A3 测量仪器升格触发）；5.75 已修（e341c08） | 04-open-work | 按 04 排期；5.75 的回退面见 readings/2026-10-19-treatment-tools-pattern.md |
+| 未修缺口 | 04 5.76（breaker_seconds 两义）、5.77（A3 测量仪器升格触发）、5.81（开跑执行事实三条）；5.75 已修（e341c08） | 04-open-work | 按 04 排期；5.75 的回退面见 readings/2026-10-19-treatment-tools-pattern.md |
 
-**一句话**：阶段 A 的退出条件（A1 变异证明、A2 定性、A3 四数齐备）已满足；D **校准门通过**，**门 2 前置包已交付并冻结**（treatment / 任务包 v3 / 隐藏验收 / 评分器 / C 臂，各有能红证明与读数），但 A/B/C 主实验仍未开跑：开跑前必须 `make_manifest.py --check --strict` 通过、17 个 run-manifest 字段写全，并取得使用者确认。n=1，本页不写均值/提升/显著，也不把 4/4 当治理价值结论（05 §5.5）。
+**一句话**：阶段 A 的退出条件（A1 变异证明、A2 定性、A3 四数齐备）已满足；D **校准门通过**，**门 2 前置包已交付并冻结**，且**开跑前置 ①② 已工具化并复核**（17 字段 run-manifest 生成/校验 + T/C/A run-record 采集器；冻结复核 PASS；参考树 A 10/10、C 24/24、T 40/40）。A/B/C 主实验仍未开跑——**只剩使用者确认**。n=1，本页不写均值/提升/显著，也不把 4/4 当治理价值结论（05 §5.5）。
