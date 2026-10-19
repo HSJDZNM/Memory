@@ -553,7 +553,9 @@
       加键或改语义须递增并同批改 `tools/README.md` 与 `tests/unit/test_structure_metrics.py`；
     - D 门 2（dgate2）评测件：`dgate2/scorer/scorer.yaml` 自己的轴（`schema_id: dgate2-scorer/1`；
       `version` "1" 骨架 → **"2" 冻结**（新增 criterion_sources / run_manifest_fields / self_proof）；
-      `dgate2/hidden/runner.py` 的 `RUNNER_SCHEMA_VERSION = "1.0"`（T 读数载荷）；layers/interfaces
+      `dgate2/hidden/runner.py` 的 `RUNNER_SCHEMA_VERSION = "1.0"`（T 读数载荷）；
+      `dgate2/run-manifest/run_manifest.py` 的 `RUN_MANIFEST_SCHEMA_VERSION` 与 `dgate2/run-record/collect.py`
+      的 `RUN_RECORD_SCHEMA_VERSION` 均 "1.0"（首次建轴：17 字段三态清单 / T·C·A 三维读数）；layers/interfaces
       是随 scorer.yaml 的声明数据、不单设轴；`scorer/manifest.sha256` 是组合摘要、不是载荷轴。
     - 规范治理价值评测（W1 保真度）：`tools.eval_corpus.ANNOTATION_SCHEMA_VERSION`（语料注解记录的形状轴，
       现为 "1"——`Annotation` 的键集合、`annotation_scopes` 的取值语义，含 `line == 0` 的文件级哨兵）与
