@@ -793,3 +793,22 @@ unreconstructible 那条 reason = "old_string 出现 0 次（必须恰好一次�
   而"不可读目录"这类环境状态会随时改变同一棵树的读数。⇒ 一句"没有差异"若不带出处，
   读者无法判断它出自**哪个版本的仪器、哪棵树、哪个权限上下文**，也就无法判断它还成不成立。
   这条与 AGENTS 的 G14（引用读数必须带时间戳 + 大小 + sha256）同源，只是把"引用"扩到了"**否定结论**"。
+
+---
+
+## 附：与 D 门 2 评分器的关系（2026-10-19）
+
+本文的六个量是 **AB 实验的分析层读数**（扫描/安全/反事实等，口径在本文件冻结）。
+2026-10-19 另起了一套**更窄、更硬**的仪器，用来给 D 门 2 的 `T / C / A` 三维打 0–100：
+
+| 维度 | 仪器 | 位置 | 读数形状 |
+| --- | --- | --- | --- |
+| T（任务完成 40） | 30 条隐藏验收 + 入口/接口各 5 条 | `testing/ab/dgate2/hidden/` | `RUNNER_SCHEMA_VERSION 1.0`：`cases[]` + `summary`；`POLICY_TREE` 传树根 |
+| C（规则遵守 30） | `policy.check` × 8 条冻结规则（+ 冻结文件未改 + 无旁路） | `testing/ab/dgate2/scorer/` | 逐文件 `--json`；必须显式 `--layer`、必须 `--config-root ../configs/after` |
+| A（架构合理 30） | 10 条结构谓词 | `tools/structure_metrics.py`（`--layers` / `--interfaces`） | `STRUCTURE_METRICS_SCHEMA_VERSION 1.1`：`predicates[]` + `summary` |
+
+关系与边界：
+
+- **互不替代**：AB 的六个量回答「被对照的两棵树差多少」，dgate2 的三维回答「一道题的分是多少」；两套载荷各有自己的版本轴；
+- dgate2 的判据是**冻结**的（`scorer/manifest.sha256` 组合摘要 `e3ef9e91…`）：任务包 / 配置快照 / 隐藏验收 / 两份工具任一字节变化，该轮 run 作废；
+- dgate2 的**区分力只在 T**（C 与 A 对合法解已接近满分），引用时必须带上这一句（`scorer/README.md` §10/§11）。

@@ -15,6 +15,11 @@
 >
 > **写域**：本文件。`docs/project/engineering-policy-platform/testing/ab/` 下的其他文件
 > （`measurement-instruments.md` / `redteam-and-pilot.md`）各有其主，本协议只引用不改写。
+>
+> **臂协议的当前口径（2026-10-19）**：本文件的 `off` / `advisory` / `enforced` 三臂是 **W7（价值 A/B）的**
+> 历史载体；当前正在执行的 **D 门 2 对比实验以 [05 §5.1](../../05-implementation-plan.md) 的四臂（A 现方案 / B 改后方案 /
+> C 无治理 / D 机械补丁）为准**（裁定 A-8），任务包、评分器与 C 臂装配在 `dgate2/` 下。两者不混用：
+> 本文件的预注册与功效口径属于 W7，D 门 2 的读数不引用它；反过来也一样。
 
 ---
 

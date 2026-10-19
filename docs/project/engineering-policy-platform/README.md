@@ -37,9 +37,14 @@
   （[05-implementation-plan.md](05-implementation-plan.md)）：**阶段 A** 覆盖表、5.71 探针、5.72 接线修复已落地；
   A3 干跑两轮：v1 **3/4** 暴露构造/口径问题，经三派评审 + Lead 裁定（[裁定](readings/2026-10-18-A3-fix-adjudication.md)）
   后 v2 **4/4 + 任务完成**（[读数](readings/2026-10-18-A3-dryrun-v2.md)）；**阶段 B** 的 B2（测试支撑声明）已落地；
-  B1/B3 未解冻（B1 是 D 主实验 treatment 候选）。**阶段 D** 仅**校准门通过**（P+/P−/canary），A/B/C 主实验
-  未开跑（前置见 04 5.78）。执行记录在 [06-plan-progress.md](06-plan-progress.md)，非技术读者先看 [07-status-brief.md](07-status-brief.md)。
-- **剩下的**：剩余缺口 8 条、各处未核实、已知边界与引用纪律，全部收在
+  B1/B3 未解冻（B1 保留为 5.69 的独立修）。**阶段 D** 的**校准门**通过（P+/P−/canary）；2026-10-19 交付并**冻结**了
+  门 2 前置包：treatment（`tools/**` 纳入生产文件，[读数](readings/2026-10-19-treatment-tools-pattern.md)）、任务包 v3
+  （`examples/dsh/b-plan/a3-task-v3/`）、隐藏验收 30 条 + runner（`testing/ab/dgate2/hidden/`）、评分器
+  （`testing/ab/dgate2/scorer/`，`freeze.status=frozen`，清单组合摘要 `e3ef9e91…`）、C 臂（不治理）装配与 n=1 冒烟
+  （`testing/ab/dgate2/c-arm/`）。**A/B/C 主实验未开跑**：开跑前需 `make_manifest.py --check --strict` 通过、
+  17 个 run-manifest 字段写全，并由使用者确认（04 5.78）。执行记录在 [06-plan-progress.md](06-plan-progress.md)，
+  非技术读者先看 [07-status-brief.md](07-status-brief.md)。
+- **剩下的**：剩余缺口与未核实项（2026-10-19 新增评分器已知边界、AGENTS 指令预算两条）、各处未核实、已知边界与引用纪律，全部收在
   [04-open-work.md](04-open-work.md)——它是"还没做完"的唯一去处。
 
 ## 文档约定

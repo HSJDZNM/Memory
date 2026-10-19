@@ -43,7 +43,7 @@ docs/
 | 目录 | 内容 | 入口 |
 | --- | --- | --- |
 | project/architecture/ | 技术架构说明三件套（术语与口径 / 功能清单 / 使用说明）+ 规则文档转化为规则 + 规则转化覆盖报告 + tech-detail 十份可执行讲解 | [README.md](project/architecture/README.md) |
-| project/engineering-policy-platform/ | **平台现状**（00–03 愿景 / 架构 / 数据源 / 技术选型）、**未完成工作与复审清单**（`04-open-work.md`）、测试策略与验收矩阵；设计提案见 [设计提案索引](project/engineering-policy-platform/designs/README.md) | [README.md](project/engineering-policy-platform/README.md) |
+| project/engineering-policy-platform/ | **平台现状**（00–03 愿景 / 架构 / 数据源 / 技术选型）、**未完成工作与复审清单**（`04-open-work.md`）、**实施计划**（`05`）、**执行记录**（`06`）、**给非技术读者的进度简报**（`07`）、测试策略与验收矩阵；设计提案见 [设计提案索引](project/engineering-policy-platform/designs/README.md) | [README.md](project/engineering-policy-platform/README.md) |
 | project/rule-effects/ | 规则效果演示与多违规案例检测报告（本地产出，非镜像） | — |
 | project/reviews/ | 与外部同类项目的对比复核记录（带证据等级与降级清单）。**已纳入版本库跟踪** | [open-code-review-对比报告.md](project/reviews/open-code-review-对比报告.md) |
 

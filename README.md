@@ -19,6 +19,10 @@
 > Phase 2 的 dsh Adapter 与 pre-execute Hook、Phase 3 的离线检索、Phase 4 的受控执行、
 > Phase 5 的代码验证器仍然有效，并被后续阶段的测试继续覆盖。
 > 阶段计划见 [Engineering Policy Platform 文档集](docs/project/engineering-policy-platform/README.md)。
+> 当前停点（2026-10-19）：**D 门 2 的冻结包已就绪**（treatment、任务包 v3、评分器、隐藏验收、不治理对照组），
+> **A/B/C 主实验未开跑**——进度见该文档集的 [05](docs/project/engineering-policy-platform/05-implementation-plan.md) /
+> [06](docs/project/engineering-policy-platform/06-plan-progress.md)，非技术读者看
+> [07](docs/project/engineering-policy-platform/07-status-brief.md)。
 
 ## 快速开始
 
