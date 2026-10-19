@@ -8,8 +8,9 @@ C 走既有的 `policy.check`，A 走 `tools/structure_metrics.py`，T 走 `../h
 （`layers.yaml` / `interfaces.yaml`，以及冻结的 `../configs/after`）、**什么算无效读数**
 （`scorer.yaml` 的 `invalidation` + `manifest.sha256`）。
 
-**它现在不是已冻结的判据**：§4 原文写明「草案，未冻结；冻结需使用者签字」。
-签字前改它属于草案修订；签字后改它 = 换判据，该 run 作废（见 `scorer.yaml` 的 `freeze` 段）。
+**冻结状态**：`scorer.yaml` 的 `freeze.status = frozen`（2026-10-19，version 1 → 2；
+冻结人 = Lead，使用者当日授权「各决策点自行研讨决策」，可复核 / 可回退）。
+冻结后改任何输入 = 换判据，该 run 作废（见 `scorer.yaml` 的 `invalidation` 与 §11）。
 
 ## 1 这里有什么
 
@@ -230,3 +231,38 @@ POSIX 上清单就是 `sha256sum -c` 的格式（`<sha256>  <path>`、LF、单�
 | 基线收集数 | 12 文件基线树上 `pytest --collect-only -q` | `3 tests collected`（EN5 阈值 = 3 + 3 = 6） |
 
 这些是**冒烟读数**，不是冻结读数：参考树在 `.tmp/` 下、不是受评对象；正式读数要在冻结包上重跑并记进 run-record。
+
+## 11 冻结记录（2026-10-19）与 C 维度的变异自证
+
+### 11.1 冻结了什么
+
+| 项 | 值 |
+| --- | --- |
+| 判据版本 | `schema_id: dgate2-scorer/1`、`version: "2"`（v1 → v2 新增 `criterion_sources` / `run_manifest_fields` / `self_proof`，并把 `freeze.status` 翻成 `frozen`） |
+| 冻结人 | Lead（使用者 2026-10-19 授权自行决策，可复核/可回退） |
+| 冻结输入 | `manifest.sha256` 覆盖的 7 组输入（任务包整目录、configs/after 整目录、本目录整目录、hidden 两文件、tools 两文件） |
+| 组合摘要 | **不嵌在本文件**（本文件在清单里，自指哈希会变）：以 `make_manifest.py --check --strict` 的 exit 0 与冻结提交正文里记的 `manifest.sha256` sha256 为准，run-manifest 必记同一份 |
+| 判据来源 | memo `readings/2026-10-19-D-gate2-treatment.md` = `37861959ce34…fba68b6`（冻结，改它即换判据）；04 / 05 是活文档（冻结时 `3542d0f4…` / `cd12251f…`），哈希**按 run 时计算**并记进 run-manifest |
+| 前提 | hidden 两文件已落盘、`--check --strict` 通过、使用者授权（见 `scorer.yaml` 的 `freeze.prerequisites`） |
+
+### 11.2 C 维度 8 条规则的「会红」证明（AGENTS 第 45 条）
+
+做法：把参考树（`.tmp/lead-v3/ref`）复制成 8 份变异体，各施加**一处**显式缺陷，用 §2 的 C 模板跑真实 `policy.check`（`--config-root configs/after`、显式 `--layer`、固定 `--request-id`）。
+
+| # | 规则 | 变异（文件） | 判定 | 命中的规则 |
+| --- | --- | --- | --- | --- |
+| 1 | ARCH-001 | controller 里 `import shop.order_repository` 并在 `__init__` 实例化 `OrderRepository()` | `block` | `ARCH-001@1/error` |
+| 2 | TESTING-001 | 删掉 `tests/test_order_audit.py`（新生产文件没有对应测试） | `block` | `TESTING-001@1/error` |
+| 3 | TESTING-002 | 把 `tests/test_order_audit.py` 的断言改成失败 | `block` | `TESTING-002@1/error` |
+| 4 | STYLE-002 | 在 `order_audit.py` 顶部加未使用的 `import os` | `block` | `STYLE-002@1/error` |
+| 5 | STYLE-018 | 在 `order_service.py` 的 third-party 段后插 `import os`（顺序错） | `block` | `STYLE-018@1/warning`（同批还有 STYLE-002） |
+| 6 | DOC-001 | 删掉 `OrderService` 的**类** docstring | `allow_with_warnings` | `DOC-001@1/warning` |
+| 7 | STYLE-001 | 在 `order_service.py` 末尾加一行 120 列的注释 | `allow_with_warnings` | `STYLE-001@1/warning` |
+| 8 | STYLE-010 | 在 `order_repository.py` 加一个 `except:` 裸捕获 | `block` | `STYLE-010@1/error`（同时 `SEC-015@1/error`） |
+
+**口径**：
+
+- 每条都给出「变异体红 / 撤回后参考树 8/8 allow」——不是只跑一次绿；
+- 第 5、8 条顺带触发了别的规则（STYLE-002 / SEC-015），判定按「命中集合包含目标规则」判，不假装它是唯一命中；
+- **DOC-001 的 targets 是 module / class / function**（方法级刻意不在范围，见 `policies/coding/DOC-001.yaml`）：所以第 6 条的变异对象是类 docstring，删方法 docstring 不会红——这一点在 A7（`structure_metrics`，含方法）与 DOC-001 之间是**有意不同**，不是缺口；
+- 这 8 条只证明「C 的仪器能红」，不证明「C 能区分好解法与坏解法」——C 对合法解仍是 30/30（§10 天花板）。

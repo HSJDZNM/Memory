@@ -2,7 +2,7 @@
 # 判据原文见 docs/project/engineering-policy-platform/readings/2026-10-19-D-gate2-treatment.md §4。
 # 不加时戳、不加 run id、不写绝对路径：相同输入两次读取逐字节相同。
 schema_id: dgate2-scorer/1
-version: "1"
+version: "2"
 
 purpose: >-
   2026-10-19 D 门 2 的评分器机读规格：把 readings/2026-10-19-D-gate2-treatment.md §4 的
@@ -24,16 +24,28 @@ source:
   configs: docs/project/engineering-policy-platform/testing/ab/dgate2/configs
 
 freeze:
-  status: pending_signature
-  note: >-
-    §4 的原文是「草案，未冻结；冻结需使用者签字。签字对象是本节 + 落成后的 scorer/manifest.sha256」。
-    因此本文件现在可机读、可执行，但**不是已冻结的判据**：签字前改它属于草案修订；签字后改它 = 换判据
-    （按 invalidation 的 hash_mismatch 作废该 run）。
+  status: frozen
+  frozen_by: >-
+    Lead（使用者 2026-10-19 授权「各决策点自行研讨决策」，可复核/可回退）。冻结对象 = 本文件 +
+    README 的冻结记录 + 当时的 manifest.sha256；签字后改任何输入 = 换判据（invalidation.hash_mismatch 作废该 run）。
+  frozen_note: >-
+    version 1 → 2：本次冻结新增了 criterion_sources / run_manifest_fields / self_proof 三块（键集合变了，
+    按 AGENTS 第 55 条显式递增），并把 status 从 pending_signature 改为 frozen。
+  criterion_sources:
+    - path: docs/project/engineering-policy-platform/readings/2026-10-19-D-gate2-treatment.md
+      sha256: 37861959ce345a1177aac5cab053a0b159e92f46b298ef0e2bc2bc096fba68b6
+      usage: 判据原文（§4）的来源；**整文件哈希**在冻结时钉住，run-manifest 必记；改它 = 换判据
+    - path: docs/project/engineering-policy-platform/04-open-work.md
+      sha256_at_freeze: 3542d0f4c0010cd3e8166b3aec8bae96978d7ad9da69260ad863d8049b294cfa
+      usage: 活文档（5.78 会被后续状态更新改写）：哈希**在 run 时计算**并记进 run-manifest，不钉死
+    - path: docs/project/engineering-policy-platform/05-implementation-plan.md
+      sha256_at_freeze: cd12251ffcced1902792e86199e1da3d35673e8ce2ccfc4a0e4933f2d9318e2e
+      usage: 活文档（§5.3/§5.4/§5.6 是判据来源）：同 04，run 时计算并记录
   prerequisites:
-    - docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/test_acceptance_dgate2.py 已落盘
-    - docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/runner.py 已落盘
-    - manifest.sha256 在全部输入存在后生成一次，且 make_manifest.py --check --strict 通过
-    - 使用者签字（§7 第 4 问：评分器是否按 §4 冻结）
+    - docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/test_acceptance_dgate2.py 已落盘（是）
+    - docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/runner.py 已落盘（是）
+    - manifest.sha256 在全部输入存在后生成一次，且 make_manifest.py --check --strict 通过（冻结时通过）
+    - 使用者签字（§7 第 4 问）——2026-10-19 授权自行决策，由 Lead 代行并记录在此
 
 invariants:
   - 本文件不含时戳、不含 run id、不含绝对路径、不含耗时。
@@ -494,12 +506,11 @@ invalidation:
       handling: 不许开跑——pending 不是通过（与 AGENTS 第 51 条同一条纪律）
     - id: spec_text_drift
       condition: >-
-        判据原文被改：readings/2026-10-19-D-gate2-treatment.md §4（以及它引用的 04 5.78 / 05 §5.3、§5.4、§5.6）
-        的 sha256 与冻结时记录的不同
+        判据原文被改：readings/2026-10-19-D-gate2-treatment.md 的 sha256 与 freeze.criterion_sources 记录的不同；
+        或 04 5.78 / 05 §5.3、§5.4、§5.6 所在文件在 run 期间发生变化（与 run-manifest 记录的哈希不符）
       handling: >-
-        run 作废（§4.4 的「判据原文」一行）。它们的 sha256 记在 run-manifest，**不在** manifest.sha256 的输入里：
-        清单钉的是评分器的输入（本文件 + 声明 + 隐藏验收 + 被引用的工具），判据原文是这些输入的**来源**——
-        要不要把它一起冻进清单，是签字时要拍的一板（README §9）。
+        run 作废（§4.4 的「判据原文」一行）。已裁定（冻结时）：memo 钉整文件哈希（freeze.criterion_sources），
+        04/05 是活文档，哈希**按 run 时计算**并记进 run-manifest——不把活文档钉死在冻结里，也不让 run 期间的改写逃掉。
     - id: human_items_unrecorded
       condition: human_items 的 4 项没有写进 run-record（尤其作者独立性）
       handling: run 作废；补记后才能判 T 的独立性结论
@@ -569,3 +580,44 @@ manifest:
     任务包目录与 configs/after 整目录入清单（文件集合由目录决定，不手抄文件名）；scorer/ 整目录入清单但排除自身。
     tools/structure_metrics.py（A 维度工具）与 tools/decision_diff.py（R-d 字段级差集，treatment 侧比较用）
     只钉字节哈希，**不复制实现**。configs/before 是 A 臂的输入快照，由它自己的 sha256.txt 冻结，不在本清单里。
+
+self_proof:
+  note: >-
+    AGENTS 第 45 条：仪器要说得出「修复前会红」。本节记录冻结前三件仪器的能红证明；
+    命令与逐条读数在 README 的「自证」一节，这里只登记**哪些对象被证明过**。
+  dimension_c:
+    tool: policy.check（8 条规则走同一条判定入口）
+    method: 参考树副本上各做一次显式变异 → 该规则出现在 violations → 撤回即恢复；一次运行一条，固定 --request-id
+    rules_proven: [ARCH-001, TESTING-001, TESTING-002, STYLE-002, STYLE-018, DOC-001, STYLE-001, STYLE-010]
+    caveats:
+      - DOC-001 的 targets 是 module/class/function（方法级刻意不在范围），所以变异对象必须是类或模块 docstring
+      - STYLE-018 的变异同时会触发 STYLE-002（未使用 import），读数按「命中集合包含它」判
+  dimension_a:
+    tool: tools/structure_metrics.py 1.1
+    method: 4 条变异自证（环 ⇒ A2、59 行函数 ⇒ A6、缺 docstring ⇒ A7、动态 import ⇒ A10）写在该工具的 27 条用例里；A4 另有专项两条
+  dimension_t:
+    tool: hidden/runner.py
+    method: 4 类变异（复制语义破坏 / controller 直连 repository / create 不记审计 / demo 少一条）各至少红一条，读数在 hidden/README.md
+
+run_manifest_fields:
+  note: >-
+    每次 run 必须记进 run-manifest 的字段（§4.4 的哈希范围 + §4.5 人工项 + 本次冻结新增的两条判据原文规则）。
+    缺任一字段 = human_items_unrecorded / incomplete_freeze，run 作废。
+  items:
+    - {id: head, value: 开跑前的 git HEAD（与冻结记录一致；不一致 = dirty_start）}
+    - {id: worktree_clean, value: run 前的 git status 是否为空}
+    - {id: scorer_manifest_sha256, value: scorer/manifest.sha256 文件的 sha256（即组合摘要）}
+    - {id: manifest_check, value: make_manifest.py --check --strict 的退出码与输出摘要}
+    - {id: task_package_manifest_sha256, value: examples/dsh/b-plan/a3-task-v3/task-package/manifest.sha256 的 sha256}
+    - {id: first_message_sha256, value: 首消息文件 sha256（v3 manifest 里已有，这里记实际喂进去的那一份）}
+    - {id: configs_after_sha256_txt, value: configs/after/sha256.txt 的 sha256（与 manifest 里的逐文件值交叉）}
+    - {id: criterion_sources, value: 三条判据来源的 sha256（memo 用冻结值；04/05 用 run 时值）}
+    - {id: rule_set_identity, value: load_rule_set 的 identity 与 8 条规则的 version}
+    - {id: hidden_digests, value: hidden 两个文件的 sha256（与 manifest 相符）}
+    - {id: reference_tree, value: 参考树的 files_digest / layers digest / interfaces digest（读数对象，不冻结）}
+    - {id: arms, value: 每臂的树摘要、session id、启动方式（patch / 无 patch）、launcher 沙箱形态}
+    - {id: readings, value: T/C/A 三维读数与逐 case 载荷摘要（含 --request-id）}
+    - {id: hidden_author, value: H1 作者标识 + 是否看过实施 diff}
+    - {id: bypass_sampling, value: H2 抽样文件 + 结论 + 抽样人}
+    - {id: a4_review, value: H3 人看的位置 + 结论}
+    - {id: nondeterminism_ruling, value: H4 若两次读数不同：差异指针 + 裁定 + 依据}

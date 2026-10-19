@@ -482,3 +482,21 @@
 7. 冻结后开 A/B/C；任一前置未冻结则 D 不开跑。
 
 **回退**：treatment 回退 = 删 `tools/**/*.py` 一行并把 canary 期望改回常红；任务包 v3 回退 = 用 v2（但 treatment 在 v2 上不激活 ⇒ D 不开跑）；评分器回退 = 作废该 run（冻结清单哈希不符即作废，05 §5.4）。
+
+---
+
+## 9 落地调整（2026-10-19 执行期，Lead 记录）
+
+> 执行 §8 时暴露了 4 处「草案与可执行口径」的差；只改落地方式，不改 §8 的裁定。每条都带触发它的读数。
+
+| # | 草案写法 | 落地口径 | 触发它的读数 |
+| --- | --- | --- | --- |
+| 1 | 评分器自带 `scorer/config-root/validation/` 副本 | 评分器**引用** `testing/ab/dgate2/configs/after/validation/`（不复制第二份），在 `scorer/manifest.sha256` 里钉住它的逐文件哈希 | 同一份配置被 A/B 臂与评分器三处使用；复制会多一份要维护、要钉哈希的副本（treatment 落地读数 §3 已建好这两份快照） |
+| 2 | A4「实例化只出现在 composition 文件」 | 改为「**业务方法（`__init__` 以外）**不得实例化另一模块的具象类；`__init__` 内的默认装配（`x or ConcreteX()`）不计违规」 | 参考树（`.tmp/lead-v3/ref`）上 A4 fail 2 条，而这两处是 `interfaces.md` 明确要求的构造器默认参数 ⇒ 原口径会让任何合法解恒红、A 维度 10 条里 1 条无区分力 |
+| 3 | A 维度只给 `--workspace/--layers` | 增 `--interfaces`（路径→公开定义上限），评分器冻结包里带一份 `scorer/interfaces.yaml` | 任务不要求模型写 `__all__`；不给 caps 时 A3 对所有臂恒红（tools/structure_metrics.py 的两种 basis：declared_caps / module_all） |
+| 4 | layers 取值按任务树 `.policy` 的 `module/docs` | 用 `tools.structure_metrics` 的闭集 `composition / controller / service / repository / model / test / other / skip`；`order_audit` = `model`、`tools/audit_demo.py` = `composition`、文档与配置 = `skip` | 实测：`module`/`docs` 触发 `--layers` 声明错误（exit 2）；闭集是测量器的接口，不是任务树的层名 |
+
+另记两条**参考解读数**（`.tmp/lead-v3/ref`，16 文件）：
+
+- A 维度（layers/caps 见 `scorer/layers.yaml` 与 `scorer/interfaces.yaml`）：**9/10 pass**（A4 是上表第 2 条的修订对象；修订后应为 10/10）；
+- C 维度：10 个文件逐个 `policy.check --config-root configs/after` → 全部 `allow`、0 violation（与 §4.1 的「参考解 30/30」天花板一致）。
