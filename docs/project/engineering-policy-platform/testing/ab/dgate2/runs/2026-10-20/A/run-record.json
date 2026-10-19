@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "arm": "A",
+  "tree": ".tmp/dgate2-arms/A/task-project",
+  "dimensions": {
+    "T": {
+      "status": "recorded",
+      "summary": {
+        "passed": 30,
+        "total": 40
+      },
+      "failed_ids": [
+        "T22",
+        "T23",
+        "T25",
+        "T26",
+        "T27",
+        "T30",
+        "EN1",
+        "EN2",
+        "EN3",
+        "EN5"
+      ],
+      "note": "run-record 采集器拒收：树里缺 tools/audit_demo.py；T 由 hidden/runner.py 单独跑出"
+    },
+    "C": {
+      "status": "partial",
+      "measured_files": 7,
+      "of": 8,
+      "rules_points": 24,
+      "frozen_untouched": 3,
+      "bypass": 2,
+      "missing": [
+        "tools/audit_demo.py"
+      ],
+      "note": "改动面 8 个 .py 中 1 个不存在；B2 因 pytest 收集错误失分"
+    },
+    "A": {
+      "status": "recorded",
+      "summary": {
+        "passed": 6,
+        "failed": 4
+      },
+      "failed_ids": [
+        "A1",
+        "A2",
+        "A8",
+        "A9"
+      ]
+    }
+  }
+}

@@ -1,0 +1,356 @@
+{
+  "arm": "A",
+  "fields": {
+    "a4_review": {
+      "reason": "human-items 未提供 a4_review（H3：人看的位置 + 结论，只能人看）",
+      "source": "--human-items（docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/human-items.json）：人工项原样记录，不代填",
+      "status": "pending",
+      "value": null
+    },
+    "arms": {
+      "source": "--arm-facts（兼容 C 臂完整 run-manifest）：抽取 tree_digest / session_id / launch.patch / launcher_sandbox，并记原始 JSON 的 sha256",
+      "status": "recorded",
+      "value": {
+        "arm": "A",
+        "launch": {
+          "patch": ".policy/patch.yml"
+        },
+        "launcher_sandbox": "danger-full-access",
+        "problems": [],
+        "session_id": "session-f86a7d1f-abd4-4dd2-b2ef-a1d1284e2736",
+        "source": "docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/A/arm-facts.json",
+        "source_sha256": "762b4e2a4167037f25698384436cdcc3394edefbeb1b0828c522c6cf9ccdc373",
+        "tree_digest": "sha256:b340b820142f043ca313c92a1bd0202c689eae8fc8bcd253a41ba1d927b0a343"
+      }
+    },
+    "bypass_sampling": {
+      "reason": "human-items 未提供 bypass_sampling（H2：被抽文件 + 结论 + 抽样人，只能人记）",
+      "source": "--human-items（docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/human-items.json）：人工项原样记录，不代填",
+      "status": "pending",
+      "value": null
+    },
+    "configs_after_sha256_txt": {
+      "source": "sha256(configs/after/sha256.txt) + 逐行核对它声明的 9 个文件",
+      "status": "recorded",
+      "value": {
+        "declared_count": 9,
+        "files_bad": [],
+        "files_ok": [
+          "validation/channel-coverage.yaml",
+          "validation/control-plane-facts.yaml",
+          "validation/instrument-checks.yaml",
+          "validation/mypy.ini",
+          "validation/project.yaml",
+          "validation/pytest.ini",
+          "validation/ruff.toml",
+          "validation/test-layout.yaml",
+          "validation/validators.yaml"
+        ],
+        "sha256": "3fea3de0a16ccfa244615c5e1d6a840ad62bc758d6a9f5f652257ac5725f0fee"
+      }
+    },
+    "criterion_sources": {
+      "source": "scorer.yaml freeze.criterion_sources 的三条来源；memo 用冻结值，04/05 记 run 时值",
+      "status": "recorded",
+      "value": {
+        "implementation_plan": {
+          "path": "docs/project/engineering-policy-platform/05-implementation-plan.md",
+          "sha256": "3dc20beed543aa07b3a19e69423bc51a44b4d30ac3041d8b6d4354dea2e43652"
+        },
+        "open_work": {
+          "path": "docs/project/engineering-policy-platform/04-open-work.md",
+          "sha256": "09aebe342f8ff673ea61388bd7d37583c9b6982a094e14dfaf497587f6e50154"
+        },
+        "treatment": {
+          "frozen_sha256": "37861959ce345a1177aac5cab053a0b159e92f46b298ef0e2bc2bc096fba68b6",
+          "matches_frozen": true,
+          "path": "docs/project/engineering-policy-platform/readings/2026-10-19-D-gate2-treatment.md",
+          "sha256": "37861959ce345a1177aac5cab053a0b159e92f46b298ef0e2bc2bc096fba68b6"
+        }
+      }
+    },
+    "first_message_sha256": {
+      "source": "sha256(task-package/first-message.txt) 与任务包清单的 first-message.txt 行比对",
+      "status": "recorded",
+      "value": {
+        "manifest_sha256": "123c938c28a176ede6e2d888bea83b21e4a32684e5c4824283eeb376ee92625c",
+        "matches_manifest": true,
+        "sha256": "123c938c28a176ede6e2d888bea83b21e4a32684e5c4824283eeb376ee92625c"
+      }
+    },
+    "head": {
+      "source": "git rev-parse HEAD（仓库根由脚本位置推出）",
+      "status": "recorded",
+      "value": "889c97cd24f147bfc6e593e20bf856b877e51097"
+    },
+    "hidden_author": {
+      "source": "--human-items（docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/human-items.json）：人工项原样记录，不代填",
+      "status": "recorded",
+      "value": {
+        "author": "独立子会话 hidden-author（C-20261019-03）",
+        "saw_impl_diff": false
+      }
+    },
+    "hidden_digests": {
+      "source": "sha256(hidden/test_acceptance_dgate2.py, hidden/runner.py) 与 scorer/manifest.sha256 两行比对",
+      "status": "recorded",
+      "value": {
+        "runner.py": {
+          "manifest_sha256": "340e9c431e8fd5f800a9b18d0915b078e272d7edc639976734baa05f3f9bd794",
+          "matches_manifest": true,
+          "path": "docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/runner.py",
+          "sha256": "340e9c431e8fd5f800a9b18d0915b078e272d7edc639976734baa05f3f9bd794"
+        },
+        "test_acceptance_dgate2.py": {
+          "manifest_sha256": "9ccdb2e263647bf5c3ad579b4980e4fbc979422f5be64fd49bdf387dac91d23c",
+          "matches_manifest": true,
+          "path": "docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/test_acceptance_dgate2.py",
+          "sha256": "9ccdb2e263647bf5c3ad579b4980e4fbc979422f5be64fd49bdf387dac91d23c"
+        }
+      }
+    },
+    "manifest_check": {
+      "source": "实时跑 scorer/make_manifest.py --check --strict，记退出码与最后一行 RESULT",
+      "status": "recorded",
+      "value": {
+        "exit_code": 0,
+        "result_line": "RESULT: PASS（25 个文件逐字节一致，0 条 pending）",
+        "strict": true
+      }
+    },
+    "nondeterminism_ruling": {
+      "reason": "H4 人工裁定不适用：每臂只有一次有效 run（A 的首跑为构造失败，已作废）",
+      "source": "--human-items（docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/human-items.json）：人工项原样记录，不代填",
+      "status": "not_applicable",
+      "value": {
+        "applicable": false,
+        "reason": "每臂只有一次有效 run（A 的首跑为构造失败，已作废）"
+      }
+    },
+    "readings": {
+      "source": "--run-record 的身份键与 dimensions{T,C,A}（按 T、C、A 固定顺序记录，原样保存读数）",
+      "status": "recorded",
+      "value": {
+        "dimensions": [
+          {
+            "failed_ids": [
+              "T22",
+              "T23",
+              "T25",
+              "T26",
+              "T27",
+              "T30",
+              "EN1",
+              "EN2",
+              "EN3",
+              "EN5"
+            ],
+            "note": "run-record 采集器拒收：树里缺 tools/audit_demo.py；T 由 hidden/runner.py 单独跑出",
+            "status": "recorded",
+            "summary": {
+              "passed": 30,
+              "total": 40
+            }
+          },
+          {
+            "bypass": 2,
+            "frozen_untouched": 3,
+            "measured_files": 7,
+            "missing": [
+              "tools/audit_demo.py"
+            ],
+            "note": "改动面 8 个 .py 中 1 个不存在；B2 因 pytest 收集错误失分",
+            "of": 8,
+            "rules_points": 24,
+            "status": "partial"
+          },
+          {
+            "failed_ids": [
+              "A1",
+              "A2",
+              "A8",
+              "A9"
+            ],
+            "status": "recorded",
+            "summary": {
+              "failed": 4,
+              "passed": 6
+            }
+          }
+        ],
+        "sha256": "fa653fc887327244da92515e34c98525715fbc680e08c2309a6a285729b108e9",
+        "summary": {
+          "arm": "A",
+          "schema_version": "1.0"
+        }
+      }
+    },
+    "reference_tree": {
+      "source": "参考树的「<sha256>  <relpath>」排序文本再 sha256；跳 __pycache__/.pytest_cache/*.pyc；layers/interfaces 取 scorer/ 的两份声明",
+      "status": "recorded",
+      "value": {
+        "file_count": 16,
+        "files": [
+          {
+            "path": "AGENTS.md",
+            "sha256": "ef20cdca0d6c43dbb5038449c90a972d44837e4b9ddc17e074f994d5eed669a3"
+          },
+          {
+            "path": "README.md",
+            "sha256": "36f06bceab3cc7edef1cef169cedd8254e1181b85a84eb9c7de47375e0ee31aa"
+          },
+          {
+            "path": "conftest.py",
+            "sha256": "edd7cea37c657fb322cdee3038ca9aed35f40c7657a0faacb6640d6de9b050e7"
+          },
+          {
+            "path": "pytest.ini",
+            "sha256": "fd1c0f9fadf99a0af117f9f17fd7276f06d577e80fd530652978a1ff54aa71cc"
+          },
+          {
+            "path": "src/shop/__init__.py",
+            "sha256": "d7eef7b6e4db6622675782550c664ef2ef3c2ff9e8de8845cc0e9f4af4b44ad1"
+          },
+          {
+            "path": "src/shop/order_audit.py",
+            "sha256": "65c12fa2c71e2fcc045f4cdad75189c969f5afaea38690f88972cfdd9f005849"
+          },
+          {
+            "path": "src/shop/order_controller.py",
+            "sha256": "47a3a3f1ab635d6f9372c6999d320d220807e2c9b960c94fd7e10719be1254c2"
+          },
+          {
+            "path": "src/shop/order_repository.py",
+            "sha256": "4d4b685f7ce3bbd729a9004b5f20ce0e77701d1be3d514788272398b4b90f054"
+          },
+          {
+            "path": "src/shop/order_service.py",
+            "sha256": "adeea366bd714affb129e9076a72e93bd0f846539f04c5bff79476287c7bb71f"
+          },
+          {
+            "path": "tests/test_audit_demo.py",
+            "sha256": "84ca8cf706069d3bd6ea7902ad71f009e08149e23aa7522780cfb829f50fb999"
+          },
+          {
+            "path": "tests/test_order_audit.py",
+            "sha256": "69be7d5f6146f566070c5c1a252a8e7b6e80d8e1652af7e439dc61d9a61fcb99"
+          },
+          {
+            "path": "tests/test_order_controller.py",
+            "sha256": "a4d388dc0de7ff4fc50b351a8b34cf1a871cc4b0c02545f7085a224cb0296d8a"
+          },
+          {
+            "path": "tests/test_order_repository.py",
+            "sha256": "61e6c0d31b70c3d93b4848e7352816ce2a8ff71a07e509dd9afd0376f977f20c"
+          },
+          {
+            "path": "tests/test_order_service.py",
+            "sha256": "df842592bbd0ece6bc80819ba65324dfa7505dc2d1764bafda3c0f3eaead441f"
+          },
+          {
+            "path": "tools/__init__.py",
+            "sha256": "f66ec0041ebb636c9fdee98ff706cda2ef04ca40474f79b84027e1e0cb3618eb"
+          },
+          {
+            "path": "tools/audit_demo.py",
+            "sha256": "f11e85991ee144416d1a825c51d058c43027a9cf61a6d9d89d989f068f6cbc58"
+          }
+        ],
+        "files_digest": "7ea8d5e53c893e3e0310ec94b03b52e44d11e25abbd28edb624817c554a6f361",
+        "interfaces_sha256": "dda6fb855d545e3e31b6795688abe22efb4a4ad8dfb26e8db3d033e536898ab9",
+        "layers_sha256": "8baa7039354c66597bc803e9d24cc9f12d6eea2844c24f02a546964bd4e5c10c",
+        "root": ".tmp/lead-v3/ref"
+      }
+    },
+    "rule_set_identity": {
+      "source": "policy.loader.load_rule_set([仓库根/policies], repo_root=仓库根)；8 条规则的 version 与 scorer.yaml rules.items 核对",
+      "status": "recorded",
+      "value": {
+        "identity": "sha256:73845ef515236940266b682631c02dec84c06886fa27a1e99f57e66284fae7d4",
+        "rules": [
+          {
+            "expected_version": 1,
+            "rule_id": "ARCH-001",
+            "version": 1,
+            "version_ok": true
+          },
+          {
+            "expected_version": 1,
+            "rule_id": "DOC-001",
+            "version": 1,
+            "version_ok": true
+          },
+          {
+            "expected_version": 1,
+            "rule_id": "STYLE-001",
+            "version": 1,
+            "version_ok": true
+          },
+          {
+            "expected_version": 1,
+            "rule_id": "STYLE-002",
+            "version": 1,
+            "version_ok": true
+          },
+          {
+            "expected_version": 1,
+            "rule_id": "STYLE-010",
+            "version": 1,
+            "version_ok": true
+          },
+          {
+            "expected_version": 1,
+            "rule_id": "STYLE-018",
+            "version": 1,
+            "version_ok": true
+          },
+          {
+            "expected_version": 1,
+            "rule_id": "TESTING-001",
+            "version": 1,
+            "version_ok": true
+          },
+          {
+            "expected_version": 1,
+            "rule_id": "TESTING-002",
+            "version": 1,
+            "version_ok": true
+          }
+        ]
+      }
+    },
+    "scorer_manifest_sha256": {
+      "source": "sha256(scorer/manifest.sha256 原始字节)；即 scorer/README.md §4 的组合摘要",
+      "status": "recorded",
+      "value": "e3ef9e91e8cdd6d8347f8e72eb429faca7156a924c85ca75f1d416302edd649a"
+    },
+    "task_package_manifest_sha256": {
+      "source": "sha256(task-package/manifest.sha256) + 逐行核对清单里的文件",
+      "status": "recorded",
+      "value": {
+        "declared_count": 5,
+        "files_bad": [],
+        "files_ok": [
+          "acceptance.md",
+          "allowed-writes.txt",
+          "first-message.txt",
+          "interfaces.md",
+          "milestones.md"
+        ],
+        "sha256": "44d85e7e3bfc58ccfc6deb4bf39e19d056b7e89792c4113e00fd324c86c19217"
+      }
+    },
+    "worktree_clean": {
+      "source": "git status --porcelain；--out 自身条目先排除再判 clean",
+      "status": "recorded",
+      "value": {
+        "clean": false,
+        "entries": [
+          "?? docs/project/engineering-policy-platform/testing/ab/dgate2/runs/"
+        ],
+        "self_output_excluded": "docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/A/run-manifest.json"
+      }
+    }
+  },
+  "schema_version": "1.0"
+}

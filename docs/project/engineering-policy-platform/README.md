@@ -45,7 +45,9 @@
   17 个 run-manifest 字段写全，并由使用者确认（04 5.78）。**2026-10-19 已把前两件工具化**：
   `testing/ab/dgate2/run-manifest/`（17 字段生成/校验，`RUN_MANIFEST_SCHEMA_VERSION` 1.0）与
   `testing/ab/dgate2/run-record/`（T/C/A 三维读数，`RUN_RECORD_SCHEMA_VERSION` 1.0），读数见
-  [冻结包复核](readings/2026-10-19-D-gate2-run-ready-verify.md) 与 [run-record 样例](readings/2026-10-19-D-gate2-run-record.md)；**只剩使用者确认**。
+  [冻结包复核](readings/2026-10-19-D-gate2-run-ready-verify.md) 与 [run-record 样例](readings/2026-10-19-D-gate2-run-record.md)；**A/B/C 已于 2026-10-20 各跑一次（n=1）**：现状治理臂未完成、treatment 臂与不治理臂完成；案例读数见
+  [10-20 run 读数](readings/2026-10-20-D-gate2-ab-c-runs.md)，run-manifest 在
+  `testing/ab/dgate2/runs/2026-10-20/`；H2/H3 人工项待复核。
   执行记录在 [06-plan-progress.md](06-plan-progress.md)，
   非技术读者先看 [07-status-brief.md](07-status-brief.md)。
 - **剩下的**：剩余缺口与未核实项（2026-10-19 新增评分器已知边界、AGENTS 指令预算、D 开跑执行事实三条）、各处未核实、已知边界与引用纪律，全部收在

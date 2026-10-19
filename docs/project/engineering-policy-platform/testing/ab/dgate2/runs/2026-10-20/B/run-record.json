@@ -1,0 +1,737 @@
+{
+  "arm": "B",
+  "commands": [
+    {
+      "argv": [
+        ".venv/Scripts/python.exe",
+        "docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/runner.py",
+        "--json"
+      ],
+      "exit_code": 0,
+      "id": "T"
+    },
+    {
+      "argv": [
+        ".venv/Scripts/python.exe",
+        "tools/structure_metrics.py",
+        "--workspace",
+        ".tmp/dgate2-arms/B/task-project",
+        "--layers",
+        "docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/layers.yaml",
+        "--interfaces",
+        "docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/interfaces.yaml",
+        "--json"
+      ],
+      "exit_code": 1,
+      "id": "A"
+    },
+    {
+      "argv": [
+        ".venv/Scripts/python.exe",
+        "-m",
+        "policy.check",
+        "src/shop/order_audit.py",
+        "--workspace",
+        ".tmp/dgate2-arms/B/task-project",
+        "--config-root",
+        "docs/project/engineering-policy-platform/testing/ab/dgate2/configs/after",
+        "--layer",
+        "model",
+        "--operation",
+        "edit",
+        "--request-id",
+        "dgate2-B-src-shop-order-audit-py",
+        "--json",
+        "--changed",
+        "README.md",
+        "--changed",
+        "src/shop/order_audit.py",
+        "--changed",
+        "src/shop/order_controller.py",
+        "--changed",
+        "src/shop/order_service.py",
+        "--changed",
+        "tests/test_audit_demo.py",
+        "--changed",
+        "tests/test_order_audit.py",
+        "--changed",
+        "tests/test_order_controller.py",
+        "--changed",
+        "tests/test_order_service.py",
+        "--changed",
+        "tools/audit_demo.py"
+      ],
+      "exit_code": 0,
+      "id": "C:src/shop/order_audit.py"
+    },
+    {
+      "argv": [
+        ".venv/Scripts/python.exe",
+        "-m",
+        "policy.check",
+        "src/shop/order_controller.py",
+        "--workspace",
+        ".tmp/dgate2-arms/B/task-project",
+        "--config-root",
+        "docs/project/engineering-policy-platform/testing/ab/dgate2/configs/after",
+        "--layer",
+        "controller",
+        "--operation",
+        "edit",
+        "--request-id",
+        "dgate2-B-src-shop-order-controller-py",
+        "--json",
+        "--changed",
+        "README.md",
+        "--changed",
+        "src/shop/order_audit.py",
+        "--changed",
+        "src/shop/order_controller.py",
+        "--changed",
+        "src/shop/order_service.py",
+        "--changed",
+        "tests/test_audit_demo.py",
+        "--changed",
+        "tests/test_order_audit.py",
+        "--changed",
+        "tests/test_order_controller.py",
+        "--changed",
+        "tests/test_order_service.py",
+        "--changed",
+        "tools/audit_demo.py"
+      ],
+      "exit_code": 0,
+      "id": "C:src/shop/order_controller.py"
+    },
+    {
+      "argv": [
+        ".venv/Scripts/python.exe",
+        "-m",
+        "policy.check",
+        "src/shop/order_service.py",
+        "--workspace",
+        ".tmp/dgate2-arms/B/task-project",
+        "--config-root",
+        "docs/project/engineering-policy-platform/testing/ab/dgate2/configs/after",
+        "--layer",
+        "service",
+        "--operation",
+        "edit",
+        "--request-id",
+        "dgate2-B-src-shop-order-service-py",
+        "--json",
+        "--changed",
+        "README.md",
+        "--changed",
+        "src/shop/order_audit.py",
+        "--changed",
+        "src/shop/order_controller.py",
+        "--changed",
+        "src/shop/order_service.py",
+        "--changed",
+        "tests/test_audit_demo.py",
+        "--changed",
+        "tests/test_order_audit.py",
+        "--changed",
+        "tests/test_order_controller.py",
+        "--changed",
+        "tests/test_order_service.py",
+        "--changed",
+        "tools/audit_demo.py"
+      ],
+      "exit_code": 0,
+      "id": "C:src/shop/order_service.py"
+    },
+    {
+      "argv": [
+        ".venv/Scripts/python.exe",
+        "-m",
+        "policy.check",
+        "tests/test_audit_demo.py",
+        "--workspace",
+        ".tmp/dgate2-arms/B/task-project",
+        "--config-root",
+        "docs/project/engineering-policy-platform/testing/ab/dgate2/configs/after",
+        "--layer",
+        "test",
+        "--operation",
+        "edit",
+        "--request-id",
+        "dgate2-B-tests-test-audit-demo-py",
+        "--json",
+        "--changed",
+        "README.md",
+        "--changed",
+        "src/shop/order_audit.py",
+        "--changed",
+        "src/shop/order_controller.py",
+        "--changed",
+        "src/shop/order_service.py",
+        "--changed",
+        "tests/test_audit_demo.py",
+        "--changed",
+        "tests/test_order_audit.py",
+        "--changed",
+        "tests/test_order_controller.py",
+        "--changed",
+        "tests/test_order_service.py",
+        "--changed",
+        "tools/audit_demo.py"
+      ],
+      "exit_code": 1,
+      "id": "C:tests/test_audit_demo.py"
+    },
+    {
+      "argv": [
+        ".venv/Scripts/python.exe",
+        "-m",
+        "policy.check",
+        "tests/test_order_audit.py",
+        "--workspace",
+        ".tmp/dgate2-arms/B/task-project",
+        "--config-root",
+        "docs/project/engineering-policy-platform/testing/ab/dgate2/configs/after",
+        "--layer",
+        "test",
+        "--operation",
+        "edit",
+        "--request-id",
+        "dgate2-B-tests-test-order-audit-py",
+        "--json",
+        "--changed",
+        "README.md",
+        "--changed",
+        "src/shop/order_audit.py",
+        "--changed",
+        "src/shop/order_controller.py",
+        "--changed",
+        "src/shop/order_service.py",
+        "--changed",
+        "tests/test_audit_demo.py",
+        "--changed",
+        "tests/test_order_audit.py",
+        "--changed",
+        "tests/test_order_controller.py",
+        "--changed",
+        "tests/test_order_service.py",
+        "--changed",
+        "tools/audit_demo.py"
+      ],
+      "exit_code": 0,
+      "id": "C:tests/test_order_audit.py"
+    },
+    {
+      "argv": [
+        ".venv/Scripts/python.exe",
+        "-m",
+        "policy.check",
+        "tests/test_order_controller.py",
+        "--workspace",
+        ".tmp/dgate2-arms/B/task-project",
+        "--config-root",
+        "docs/project/engineering-policy-platform/testing/ab/dgate2/configs/after",
+        "--layer",
+        "test",
+        "--operation",
+        "edit",
+        "--request-id",
+        "dgate2-B-tests-test-order-controller-py",
+        "--json",
+        "--changed",
+        "README.md",
+        "--changed",
+        "src/shop/order_audit.py",
+        "--changed",
+        "src/shop/order_controller.py",
+        "--changed",
+        "src/shop/order_service.py",
+        "--changed",
+        "tests/test_audit_demo.py",
+        "--changed",
+        "tests/test_order_audit.py",
+        "--changed",
+        "tests/test_order_controller.py",
+        "--changed",
+        "tests/test_order_service.py",
+        "--changed",
+        "tools/audit_demo.py"
+      ],
+      "exit_code": 0,
+      "id": "C:tests/test_order_controller.py"
+    },
+    {
+      "argv": [
+        ".venv/Scripts/python.exe",
+        "-m",
+        "policy.check",
+        "tests/test_order_service.py",
+        "--workspace",
+        ".tmp/dgate2-arms/B/task-project",
+        "--config-root",
+        "docs/project/engineering-policy-platform/testing/ab/dgate2/configs/after",
+        "--layer",
+        "test",
+        "--operation",
+        "edit",
+        "--request-id",
+        "dgate2-B-tests-test-order-service-py",
+        "--json",
+        "--changed",
+        "README.md",
+        "--changed",
+        "src/shop/order_audit.py",
+        "--changed",
+        "src/shop/order_controller.py",
+        "--changed",
+        "src/shop/order_service.py",
+        "--changed",
+        "tests/test_audit_demo.py",
+        "--changed",
+        "tests/test_order_audit.py",
+        "--changed",
+        "tests/test_order_controller.py",
+        "--changed",
+        "tests/test_order_service.py",
+        "--changed",
+        "tools/audit_demo.py"
+      ],
+      "exit_code": 0,
+      "id": "C:tests/test_order_service.py"
+    },
+    {
+      "argv": [
+        ".venv/Scripts/python.exe",
+        "-m",
+        "policy.check",
+        "tools/audit_demo.py",
+        "--workspace",
+        ".tmp/dgate2-arms/B/task-project",
+        "--config-root",
+        "docs/project/engineering-policy-platform/testing/ab/dgate2/configs/after",
+        "--layer",
+        "composition",
+        "--operation",
+        "edit",
+        "--request-id",
+        "dgate2-B-tools-audit-demo-py",
+        "--json",
+        "--changed",
+        "README.md",
+        "--changed",
+        "src/shop/order_audit.py",
+        "--changed",
+        "src/shop/order_controller.py",
+        "--changed",
+        "src/shop/order_service.py",
+        "--changed",
+        "tests/test_audit_demo.py",
+        "--changed",
+        "tests/test_order_audit.py",
+        "--changed",
+        "tests/test_order_controller.py",
+        "--changed",
+        "tests/test_order_service.py",
+        "--changed",
+        "tools/audit_demo.py"
+      ],
+      "exit_code": 0,
+      "id": "C:tools/audit_demo.py"
+    }
+  ],
+  "dimensions": {
+    "A": {
+      "a3_basis": "declared_caps",
+      "exit_code": 1,
+      "points": 27,
+      "predicates": {
+        "failed": 1,
+        "failed_ids": [
+          "A7"
+        ],
+        "passed": 9,
+        "statuses": {
+          "A1": "pass",
+          "A10": "pass",
+          "A2": "pass",
+          "A3": "pass",
+          "A4": "pass",
+          "A5": "pass",
+          "A6": "pass",
+          "A7": "fail",
+          "A8": "pass",
+          "A9": "pass"
+        }
+      },
+      "schema_version": "1.1",
+      "status": "recorded",
+      "summary": {
+        "failed": 1,
+        "passed": 9
+      }
+    },
+    "C": {
+      "exit_code": 1,
+      "files": [
+        {
+          "check_volume": {
+            "blocking_capable_skipped": 1,
+            "complete": true,
+            "missing_dimensions": []
+          },
+          "decision": "allow",
+          "exit_code": 0,
+          "file": "src/shop/order_audit.py",
+          "hits": [],
+          "layer": "model",
+          "layer_source": "declared",
+          "matched": 42,
+          "output_schema_version": "1.2",
+          "request_id": "dgate2-B-src-shop-order-audit-py",
+          "rule_set_hash": "sha256:73845ef515236940266b682631c02dec84c06886fa27a1e99f57e66284fae7d4",
+          "served": [
+            "failing_tests",
+            "missing_docstring",
+            "missing_tests",
+            "style_lint"
+          ],
+          "skipped": 1,
+          "skipped_rule_ids": [
+            "ARCH-001@1"
+          ],
+          "status": "recorded",
+          "violations": 0
+        },
+        {
+          "check_volume": {
+            "blocking_capable_skipped": 0,
+            "complete": true,
+            "missing_dimensions": []
+          },
+          "decision": "allow",
+          "exit_code": 0,
+          "file": "src/shop/order_controller.py",
+          "hits": [],
+          "layer": "controller",
+          "layer_source": "declared",
+          "matched": 43,
+          "output_schema_version": "1.2",
+          "request_id": "dgate2-B-src-shop-order-controller-py",
+          "rule_set_hash": "sha256:73845ef515236940266b682631c02dec84c06886fa27a1e99f57e66284fae7d4",
+          "served": [
+            "failing_tests",
+            "forbidden_dependency",
+            "missing_docstring",
+            "missing_tests",
+            "style_lint"
+          ],
+          "skipped": 0,
+          "skipped_rule_ids": [],
+          "status": "recorded",
+          "violations": 0
+        },
+        {
+          "check_volume": {
+            "blocking_capable_skipped": 1,
+            "complete": true,
+            "missing_dimensions": []
+          },
+          "decision": "allow",
+          "exit_code": 0,
+          "file": "src/shop/order_service.py",
+          "hits": [],
+          "layer": "service",
+          "layer_source": "declared",
+          "matched": 42,
+          "output_schema_version": "1.2",
+          "request_id": "dgate2-B-src-shop-order-service-py",
+          "rule_set_hash": "sha256:73845ef515236940266b682631c02dec84c06886fa27a1e99f57e66284fae7d4",
+          "served": [
+            "failing_tests",
+            "missing_docstring",
+            "missing_tests",
+            "style_lint"
+          ],
+          "skipped": 1,
+          "skipped_rule_ids": [
+            "ARCH-001@1"
+          ],
+          "status": "recorded",
+          "violations": 0
+        },
+        {
+          "check_volume": {
+            "blocking_capable_skipped": 1,
+            "complete": true,
+            "missing_dimensions": []
+          },
+          "decision": "allow_with_warnings",
+          "exit_code": 1,
+          "file": "tests/test_audit_demo.py",
+          "hits": [
+            {
+              "file": "tests/test_audit_demo.py",
+              "line": 1,
+              "message": "公开对象必须有 docstring，说明它的职责与副作用。",
+              "rule": "DOC-001@1",
+              "severity": "warning"
+            }
+          ],
+          "layer": "test",
+          "layer_source": "declared",
+          "matched": 42,
+          "output_schema_version": "1.2",
+          "request_id": "dgate2-B-tests-test-audit-demo-py",
+          "rule_set_hash": "sha256:73845ef515236940266b682631c02dec84c06886fa27a1e99f57e66284fae7d4",
+          "served": [
+            "failing_tests",
+            "missing_docstring",
+            "missing_tests",
+            "style_lint"
+          ],
+          "skipped": 1,
+          "skipped_rule_ids": [
+            "ARCH-001@1"
+          ],
+          "status": "recorded",
+          "violations": 1
+        },
+        {
+          "check_volume": {
+            "blocking_capable_skipped": 1,
+            "complete": true,
+            "missing_dimensions": []
+          },
+          "decision": "allow",
+          "exit_code": 0,
+          "file": "tests/test_order_audit.py",
+          "hits": [],
+          "layer": "test",
+          "layer_source": "declared",
+          "matched": 42,
+          "output_schema_version": "1.2",
+          "request_id": "dgate2-B-tests-test-order-audit-py",
+          "rule_set_hash": "sha256:73845ef515236940266b682631c02dec84c06886fa27a1e99f57e66284fae7d4",
+          "served": [
+            "failing_tests",
+            "missing_docstring",
+            "missing_tests",
+            "style_lint"
+          ],
+          "skipped": 1,
+          "skipped_rule_ids": [
+            "ARCH-001@1"
+          ],
+          "status": "recorded",
+          "violations": 0
+        },
+        {
+          "check_volume": {
+            "blocking_capable_skipped": 1,
+            "complete": true,
+            "missing_dimensions": []
+          },
+          "decision": "allow",
+          "exit_code": 0,
+          "file": "tests/test_order_controller.py",
+          "hits": [],
+          "layer": "test",
+          "layer_source": "declared",
+          "matched": 42,
+          "output_schema_version": "1.2",
+          "request_id": "dgate2-B-tests-test-order-controller-py",
+          "rule_set_hash": "sha256:73845ef515236940266b682631c02dec84c06886fa27a1e99f57e66284fae7d4",
+          "served": [
+            "failing_tests",
+            "missing_docstring",
+            "missing_tests",
+            "style_lint"
+          ],
+          "skipped": 1,
+          "skipped_rule_ids": [
+            "ARCH-001@1"
+          ],
+          "status": "recorded",
+          "violations": 0
+        },
+        {
+          "check_volume": {
+            "blocking_capable_skipped": 1,
+            "complete": true,
+            "missing_dimensions": []
+          },
+          "decision": "allow",
+          "exit_code": 0,
+          "file": "tests/test_order_service.py",
+          "hits": [],
+          "layer": "test",
+          "layer_source": "declared",
+          "matched": 42,
+          "output_schema_version": "1.2",
+          "request_id": "dgate2-B-tests-test-order-service-py",
+          "rule_set_hash": "sha256:73845ef515236940266b682631c02dec84c06886fa27a1e99f57e66284fae7d4",
+          "served": [
+            "failing_tests",
+            "missing_docstring",
+            "missing_tests",
+            "style_lint"
+          ],
+          "skipped": 1,
+          "skipped_rule_ids": [
+            "ARCH-001@1"
+          ],
+          "status": "recorded",
+          "violations": 0
+        },
+        {
+          "check_volume": {
+            "blocking_capable_skipped": 1,
+            "complete": true,
+            "missing_dimensions": []
+          },
+          "decision": "allow",
+          "exit_code": 0,
+          "file": "tools/audit_demo.py",
+          "hits": [],
+          "layer": "composition",
+          "layer_source": "declared",
+          "matched": 42,
+          "output_schema_version": "1.2",
+          "request_id": "dgate2-B-tools-audit-demo-py",
+          "rule_set_hash": "sha256:73845ef515236940266b682631c02dec84c06886fa27a1e99f57e66284fae7d4",
+          "served": [
+            "failing_tests",
+            "missing_docstring",
+            "missing_tests",
+            "style_lint"
+          ],
+          "skipped": 1,
+          "skipped_rule_ids": [
+            "ARCH-001@1"
+          ],
+          "status": "recorded",
+          "violations": 0
+        }
+      ],
+      "payloads": {
+        "decisions": {
+          "allow": 7,
+          "allow_with_warnings": 1
+        },
+        "output_schema_versions": [
+          "1.2"
+        ],
+        "rule_set_hashes": [
+          "sha256:73845ef515236940266b682631c02dec84c06886fa27a1e99f57e66284fae7d4"
+        ],
+        "served_checkers": [
+          "failing_tests",
+          "forbidden_dependency",
+          "missing_docstring",
+          "missing_tests",
+          "style_lint"
+        ]
+      },
+      "rules": [
+        {
+          "hit_severities": [],
+          "hits": 0,
+          "measured": true,
+          "points": 3,
+          "rule_id": "ARCH-001",
+          "rule_version": 1,
+          "severity": "error"
+        },
+        {
+          "hit_severities": [],
+          "hits": 0,
+          "measured": true,
+          "points": 3,
+          "rule_id": "TESTING-001",
+          "rule_version": 1,
+          "severity": "error"
+        },
+        {
+          "hit_severities": [],
+          "hits": 0,
+          "measured": true,
+          "points": 3,
+          "rule_id": "TESTING-002",
+          "rule_version": 1,
+          "severity": "error"
+        },
+        {
+          "hit_severities": [],
+          "hits": 0,
+          "measured": true,
+          "points": 3,
+          "rule_id": "STYLE-002",
+          "rule_version": 1,
+          "severity": "error"
+        },
+        {
+          "hit_severities": [],
+          "hits": 0,
+          "measured": true,
+          "points": 3,
+          "rule_id": "STYLE-018",
+          "rule_version": 1,
+          "severity": "warning"
+        },
+        {
+          "hit_severities": [
+            "warning"
+          ],
+          "hits": 1,
+          "measured": true,
+          "points": 2,
+          "rule_id": "DOC-001",
+          "rule_version": 1,
+          "severity": "warning"
+        },
+        {
+          "hit_severities": [],
+          "hits": 0,
+          "measured": true,
+          "points": 3,
+          "rule_id": "STYLE-001",
+          "rule_version": 1,
+          "severity": "warning"
+        },
+        {
+          "hit_severities": [],
+          "hits": 0,
+          "measured": true,
+          "points": 3,
+          "rule_id": "STYLE-010",
+          "rule_version": 1,
+          "severity": "error"
+        }
+      ],
+      "score": {
+        "max": 24,
+        "not_measured": [],
+        "points": 23,
+        "rules_scored": 8
+      },
+      "status": "recorded"
+    },
+    "T": {
+      "exit_code": 0,
+      "failed_ids": [],
+      "points": 40,
+      "schema_version": "1.0",
+      "status": "recorded",
+      "summary": {
+        "passed": 40,
+        "total": 40
+      }
+    }
+  },
+  "schema_version": "1.0",
+  "summary": {
+    "a_predicates_passed": 9,
+    "c_rules_scored": 8,
+    "t_passed": 40
+  },
+  "tree": ".tmp/dgate2-arms/B/task-project"
+}

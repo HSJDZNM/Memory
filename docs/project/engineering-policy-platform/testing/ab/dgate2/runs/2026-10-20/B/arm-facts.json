@@ -1,0 +1,11 @@
+{
+  "tree_digest": "sha256:48e700a10b10f75454cc9b7e842724422b700c2a4ca04a0fa5c886d6e755a931",
+  "session_id": "session-ca40d4cf-ad12-41c8-8c63-20ac2d89733e",
+  "launch": {
+    "patch": ".policy/patch.yml"
+  },
+  "launcher_sandbox": "danger-full-access",
+  "session_sandbox": "workspace-write",
+  "run_seconds": 195.1,
+  "exit_code": 0
+}

@@ -1,0 +1,10 @@
+{
+  "hidden_author": {
+    "author": "独立子会话 hidden-author（C-20261019-03）",
+    "saw_impl_diff": false
+  },
+  "nondeterminism_ruling": {
+    "applicable": false,
+    "reason": "每臂只有一次有效 run（A 的首跑为构造失败，已作废）"
+  }
+}
