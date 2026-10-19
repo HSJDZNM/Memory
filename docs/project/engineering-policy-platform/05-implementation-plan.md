@@ -173,7 +173,7 @@
 
 ### 阶段 D · 对比实验
 
-见第 5 节。D 拆两门：D 校准门（P+/P−，无模型）不依赖 A3 四数，也不依赖 B1；A/B/C 构造门依赖 A3 v2 4/4 + 任务完成，以及 treatment 已定义（B1 或经裁定的替代）+ 用户签 1.3 条子（2026-10-18 裁定 A-5/A-6，见 readings/2026-10-18-A3-fix-adjudication.md）。treatment 选项事实、评分器冻结草案与待拍板项见 `readings/2026-10-19-D-gate2-treatment.md`：B1 在 A3 v2 冻结包上不激活，推荐 04 5.75② + 任务包 v3，treatment 与 canary 二选一。
+见第 5 节。D 拆两门：D 校准门（P+/P−，无模型）不依赖 A3 四数，也不依赖 B1；A/B/C 构造门依赖 A3 v2 4/4 + 任务完成，以及 treatment 已定义（B1 或经裁定的替代）+ 用户签 1.3 条子（2026-10-18 裁定 A-5/A-6，见 readings/2026-10-18-A3-fix-adjudication.md）。treatment 选项事实、评分器冻结与待拍板项见 `readings/2026-10-19-D-gate2-treatment.md`：B1 在 A3 v2 冻结包上不激活，推荐 04 5.75② + 任务包 v3，treatment 与 canary 二选一。**2026-10-19 落地**：treatment `e341c08`、任务包 v3 `6f88e59`、隐藏验收 30 条 + runner `6f22cee`（参考树 40/40）、A 维度工具 `2a2cb21`（参考树 10/10）、评分器冻结 `be63670`（`scorer/manifest.sha256` 组合摘要 `e3ef9e91…`，`--check --strict` PASS）、C 臂装配与冒烟见 `testing/ab/dgate2/c-arm/`。**A/B/C 未开跑**：开跑前必须 `make_manifest.py --check --strict` 通过并把组合摘要与 17 个 run-manifest 字段写全。
 
 ---
 
