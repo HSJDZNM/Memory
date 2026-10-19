@@ -545,6 +545,19 @@
       `policy.check.OUTPUT_SCHEMA_VERSION` 1.2 的同一条纪律：包装层不带 run）；
       退出码 `0` / `1` / `2` 是 **CLI 语义**、不是本载荷的键（见 tools/README.md 的
       「门禁退出码」表），它**不是恒 0 的只报告读数**——差集非空就是 1）；
+    - 结构谓词读数：`tools.structure_metrics.STRUCTURE_METRICS_SCHEMA_VERSION`（A 维度 10 条结构谓词
+      （A1–A10）的 `--json` 载荷——**1.0 = 首次建轴**（2026-10-19，D 门 2 评分器的
+      metrics 件，判据原文 = `readings/2026-10-19-D-gate2-treatment.md` §4.2；
+      **1.1 = A4 口径修订**（2026-10-19 Lead 裁定）：本题接口契约要求 `__init__` 里的默认装配，
+      `x or ConcreteX()` 不再算违规；A4 的 `items` 多 `enclosing` / `reason`、counts 多 `default_wiring_instantiations`——
+      键集合与判定语义同时变了，所以升版，不做「同一版本号底下两种形状」）：顶层
+      `schema_version` / `workspace_scope` / `predicates[]`（每条 `{id,name,status,detail}`）/ `summary`；
+      `detail` 的固定形状是 `counts`（全量计数）+ `items`（超阈值项，上限 100，`items_truncated`
+      标记）+ `note`（该谓词的口径与边界），A2/A8 另有 `unresolved`、A3/A9 另有 `basis`；
+      **载荷里没有时戳、没有 run 标识、没有绝对路径、没有耗时**，两次运行逐字节相同（与
+      `policy.check.OUTPUT_SCHEMA_VERSION` 1.2 的同一条纪律：包装层不带 run）；
+      加键或改语义必须按本条显式递增，并同批改掉写死版本号的引用点（`tools/README.md`、
+      `tests/unit/test_structure_metrics.py`）；
     - 规范治理价值评测（W1 保真度）：`tools.eval_corpus.ANNOTATION_SCHEMA_VERSION`（语料注解记录的形状轴，
       现为 "1"——`Annotation` 的键集合、`annotation_scopes` 的取值语义，含 `line == 0` 的文件级哨兵）与
       `tools.eval_corpus.LOCK_SCHEMA_VERSION`（`evaluation/corpora/<id>.lock.json` 的轴，现为 "1"）；

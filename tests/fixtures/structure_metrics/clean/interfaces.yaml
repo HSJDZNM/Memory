@@ -1,0 +1,9 @@
+# 夹具：每个模块允许的公开定义上限（A3 的「声明接口数」来源之一）。
+#
+# 计数口径与 readings/2026-10-19-D-gate2-treatment.md §4.2 的 A3 一致：
+# DefinitionFact.private=false 的定义（含方法的类 + 方法各算一个）。
+src/shop/models.py: 2
+src/shop/order_repository.py: 2
+src/shop/order_service.py: 2
+src/shop/order_controller.py: 2
+src/shop/composition.py: 1

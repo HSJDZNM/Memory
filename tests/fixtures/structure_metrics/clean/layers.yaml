@@ -1,0 +1,10 @@
+# 夹具：仓库相对 POSIX 路径 → layer（A 维度 10 条谓词共用的唯一层声明）。
+#
+# 仓库一致性：这个文件是 tools/structure_metrics.py 的 --layers 输入；改它等于改测量口径。
+src/shop/__init__.py: other
+src/shop/models.py: model
+src/shop/order_repository.py: repository
+src/shop/order_service.py: service
+src/shop/order_controller.py: controller
+src/shop/composition.py: composition
+tests/checks_order_flow.py: test
