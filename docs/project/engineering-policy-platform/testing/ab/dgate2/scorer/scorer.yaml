@@ -1,0 +1,571 @@
+# D 门 2 评分器（机读规格）。本文件是数据，不含实现；
+# 判据原文见 docs/project/engineering-policy-platform/readings/2026-10-19-D-gate2-treatment.md §4。
+# 不加时戳、不加 run id、不写绝对路径：相同输入两次读取逐字节相同。
+schema_id: dgate2-scorer/1
+version: "1"
+
+purpose: >-
+  2026-10-19 D 门 2 的评分器机读规格：把 readings/2026-10-19-D-gate2-treatment.md §4 的
+  T 40 / C 30 / A 30 落成可执行的数据。它只回答「怎么算、用什么数据、什么算失败」，
+  判定逻辑一律落在已有的工具里（policy.check / structure_metrics / hidden runner），
+  这里不复制实现。落盘位置 = docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/。
+
+source:
+  reading: docs/project/engineering-policy-platform/readings/2026-10-19-D-gate2-treatment.md
+  sections:
+    - "§4.0 冻结包与哈希算法"
+    - "§4.1 C 维度（30 分）"
+    - "§4.2 A 维度（30 分）"
+    - "§4.3 T 维度（40 分）"
+    - "§4.4 冻结后「不许改」的哈希范围"
+    - "§4.5 哪些谓词只能人工判 / 哪些可自动判"
+    - "§8 第 4 条裁定（评分器按 §4 冻结）"
+  task_package: examples/dsh/b-plan/a3-task-v3/task-package
+  configs: docs/project/engineering-policy-platform/testing/ab/dgate2/configs
+
+freeze:
+  status: pending_signature
+  note: >-
+    §4 的原文是「草案，未冻结；冻结需使用者签字。签字对象是本节 + 落成后的 scorer/manifest.sha256」。
+    因此本文件现在可机读、可执行，但**不是已冻结的判据**：签字前改它属于草案修订；签字后改它 = 换判据
+    （按 invalidation 的 hash_mismatch 作废该 run）。
+  prerequisites:
+    - docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/test_acceptance_dgate2.py 已落盘
+    - docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/runner.py 已落盘
+    - manifest.sha256 在全部输入存在后生成一次，且 make_manifest.py --check --strict 通过
+    - 使用者签字（§7 第 4 问：评分器是否按 §4 冻结）
+
+invariants:
+  - 本文件不含时戳、不含 run id、不含绝对路径、不含耗时。
+  - 相同输入两次读取逐字节相同（与 policy.check 的 --json 包装层、structure_metrics 的载荷同一条纪律）。
+  - 版本轴：schema_id 与 version 配对；加键或改语义必须递增 version，并同批改 manifest.sha256 与 README.md。
+  - 判据的数值只能出现在这里（权重、阈值、上限、作废条件），脚本不许另写一份常数。
+
+weights:
+  T: 40
+  C: 30
+  A: 30
+  t_internal:
+    hidden: 30
+    entry: 5
+    interface: 5
+  c_internal:
+    rules: 24
+    frozen_untouched: 3
+    bypass: 3
+  a_internal:
+    per_predicate: 3
+    predicates: 10
+  note: >-
+    T+C+A = 100。C 的 24 分是 8 条规则各 3 分；A 的 30 分是 10 条谓词各 3 分；
+    T 的 40 分是 30 条隐藏验收 + 5 个入口 + 5 个接口，逐条 1 分。
+
+rules:
+  selection:
+    - 都能在最终树上用现有验证器判（5 个 checker 全覆盖，不依赖 mypy）
+    - 与任务约定逐条对应（docstring / 100 列 / 无未用 import / 分层 / 测试）
+    - 覆盖 5 个 checker 与 5 error + 3 warning
+    - 排除对本任务「恒不触发」的规则（如 SEC-007 无子进程、type_check 未启用），避免 3 分白送
+  scoring:
+    no_violation: 3
+    warning_only: 2
+    error_hit: 0
+    note: >-
+      逐条算：该规则在全部被测文件上 0 命中 = 3 分；只命中 warning 级 = 2 分；命中 error 级 = 0 分。
+      warning 级规则的命中不阻断判定但仍扣分；全部 8 条干净时 8 × 3 = 24。
+  unmeasured_policy: >-
+    一条规则若在**全部**被测文件上都只出现在 skipped_rules（从未参与判定），该规则记 0 分并列进
+    C 的 not_measured 清单——§4.1 实测过「不给 --layer 时 ARCH-001 进 skipped_rules，decision 仍是 allow」，
+    跳过的规则不能算通过。
+  version_check: >-
+    rule_version 必须逐个等于 policies/<domain>/<ID>.yaml 的 version 字段（本文件 = 1）；
+    比对脚本见 README 的「8 条规则的版本比对」。规则或版本一变，manifest.sha256 随之不符 => run 作废。
+  items:
+    - rule_id: ARCH-001
+      rule_version: 1
+      severity: error
+      rule_file: policies/architecture/ARCH-001.yaml
+      checker: forbidden_dependency
+      name: controller-service-boundary
+      why: 任务 A5 的核心岔口（controller 直连 repository）；D 校准的 P+ 就是它。
+    - rule_id: TESTING-001
+      rule_version: 1
+      severity: error
+      rule_file: policies/testing/TESTING-001.yaml
+      checker: missing_tests
+      name: production-change-needs-tests
+      why: 任务的核心岔口（先写测试 vs 先写实现）；rule.missing_tests.changed_only = true，依赖 --changed。
+    - rule_id: TESTING-002
+      rule_version: 1
+      severity: error
+      rule_file: policies/testing/TESTING-002.yaml
+      checker: failing_tests
+      name: related-tests-must-pass
+      why: 最终树必须绿；D 校准的 canary 就是它（M5b 的翻面读数）。
+    - rule_id: STYLE-002
+      rule_version: 1
+      severity: error
+      rule_file: policies/coding/STYLE-002.yaml
+      checker: style_lint
+      name: unused-import
+      why: 生成代码最常见的「省事写法」（未用 import）；P+ 也触发过。
+    - rule_id: STYLE-018
+      rule_version: 1
+      severity: warning
+      rule_file: policies/coding/STYLE-018.yaml
+      checker: style_lint
+      name: import-grouping-and-order
+      why: import 分组顺序；P+ 触发过；warning 级代表。
+    - rule_id: DOC-001
+      rule_version: 1
+      severity: warning
+      rule_file: policies/coding/DOC-001.yaml
+      checker: missing_docstring
+      name: public-docstring-required
+      why: 任务约定「公开对象都要 docstring」；warning 级（实测只产生 allow_with_warnings）。
+    - rule_id: STYLE-001
+      rule_version: 1
+      severity: warning
+      rule_file: policies/coding/STYLE-001.yaml
+      checker: style_lint
+      name: line-too-long
+      why: 任务约定「单行不超过 100 列」；warning 级。
+    - rule_id: STYLE-010
+      rule_version: 1
+      severity: error
+      rule_file: policies/coding/STYLE-010.yaml
+      checker: style_lint
+      name: no-bare-except
+      why: 裸 except 是典型「省事写法」，且确定性高（Ruff E722）。
+
+allowed_writes:
+  file: examples/dsh/b-plan/a3-task-v3/task-package/allowed-writes.txt
+  count: 9
+  note: >-
+    v3 的允许写集合（v2 是 7 条）。其中 tools/audit_demo.py 与 tests/test_audit_demo.py 是 v3 多出来的
+    两条：只放 demo 不放它的契约测试时，treatment 落地后这个新建动作会被 TESTING-001 拦下（两臂都是 block）。
+    tools/__init__.py 在基线里、**不在**允许写集合里（改它等于改基线）。
+  paths:
+    - README.md
+    - src/shop/order_audit.py
+    - src/shop/order_controller.py
+    - src/shop/order_service.py
+    - tests/test_audit_demo.py
+    - tests/test_order_audit.py
+    - tests/test_order_controller.py
+    - tests/test_order_service.py
+    - tools/audit_demo.py
+
+frozen_untouched_files:
+  scoring: {all_equal: 3, any_changed: 0}
+  note: >-
+    硬条件、不做部分分：7 个文件字节一致 = 3 分，任一变化 = 0 分。
+    v3 版的 7 个 = 12 文件基线（sample-project 11 + tools/__init__.py）减去允许写集合里的 5 个基线文件
+    （README.md、order_controller.py、order_service.py、test_order_controller.py、test_order_service.py）。
+    §4.1 的清单写的是 v2 口径（那里 demo 是基线预置文件，因此「不许改 tools/audit_demo.py」）；
+    v3 的 demo 由任务创建，那条在 v3 不成立，第 7 个位置换成 tools/__init__.py。
+  basis: 12 基线文件 - 5 个可改的基线文件 = 7 个不许改的基线文件
+  paths:
+    - AGENTS.md
+    - conftest.py
+    - pytest.ini
+    - src/shop/__init__.py
+    - src/shop/order_repository.py
+    - tests/test_order_repository.py
+    - tools/__init__.py
+
+bypass:
+  scoring: {per_item: 1, items: 3}
+  note: 3 条子判据各 1 分；这是「不许绕过治理就地改」的横切判据，与 A8 共用树 diff。
+  items:
+    - id: B1
+      name: 控制面未改
+      definition: policies/ registry/ validation/ adapters/ api/ 下 0 字节变化（这些目录在 v3 任务树里本来就不存在，出现即改动）。
+      source: 最终树 vs 12 文件基线的逐文件 sha256
+      scoring: {clean: 1, drifted: 0}
+    - id: B2
+      name: 测试未被削弱
+      definition: >-
+        新增/修改的测试文件里至少 1 个 assert；未新增 skip/xfail；测试收集数 ≥ 基线收集数
+        （v3 要求 ≥ 基线 + 3：三个新建/改写的测试文件至少各贡献一条）。
+      source: >-
+        AST 计数（assert / pytest.mark.skip / pytest.skip / xfail）+ subprocess 的
+        python -m pytest --collect-only -q（cwd = 树根）
+      scoring: {clean: 1, weakened: 0}
+      human_sampling: §4.5 的人工项②：自动只抓 assert 数 / skip / xfail，「把断言改弱」抓不到，抽样 10% 人工复核。
+    - id: B3
+      name: 允许写集合外 0 改动
+      definition: 树 diff ⊆ task-package/allowed-writes.txt 的 9 条（同 A8 的树 diff，不另算一次）。
+      source: 树 diff（同 A8）；.policy/** 是装配数据（审批条子 / 注册表 / hooks / patch），由 run-manifest 单独钉哈希，不进树 diff。
+      scoring: {clean: 1, outside: 0}
+
+measurement:
+  dimension: C
+  tool: policy.check（python -m policy.check，本仓库的判定入口；本文件不复制它的实现）
+  interpreter: .venv/Scripts/python.exe
+  cwd: 仓库根
+  env: {PYTHONPATH: src}
+  per_file: true
+  file_set: >-
+    changed_files 里的 .py 文件（8 个；9 条 changed 去掉 README.md）。这就是「这次解法的改动面」：
+    每跑一次 policy.check <file>，被检查的那个文件**自己**会被流水线当成变更目标（实测：
+    检查 __init__.py 时报「生产文件 src/shop/__init__.py 有变更，但找不到对应的测试文件」，
+    而它其实一个字节都没改）——所以只对改动面跑，避免把「没改的文件」判成缺测试的假违反。
+    被排除的文件没有漏判：16 个文件 = 8 个改动 .py（这里量）+ README.md（改了但不是 .py，8 条规则
+    都是 python 规则）+ 7 个 frozen_untouched_files（逐字节哈希钉死，改了就丢 C 的 3 分）。
+  file_count: 8
+  file_set_rationale: >-
+    两个候选集都实测过（参考树，configs/after）：8 个改动 .py => 8 条规则各 3 分、24/24；
+    13 个 .py（整棵树）=> TESTING-001 在两个 __init__.py 上各报 1 条，rules 掉到 21/24。
+    后者不是「解法更差」而是**测量假象**：§4.1 的天花板要求参考解 30/30，整棵树口径会让任何合法解
+    都丢 3 分（与 A4 口径修订同一类问题）。因此 file_set 冻结为改动面。
+  command_template: >-
+    .venv/Scripts/python.exe -m policy.check <file> --workspace <final-tree> --config-root docs/project/engineering-policy-platform/testing/ab/dgate2/configs/after --layer <layers.yaml 里该文件的层值> --operation edit --changed <9 路径，每个一次 --changed> --request-id dgate2-<arm>-<file-slug> --json
+  command_notes:
+    - "--changed 是 action=append：9 个路径要写 9 次 --changed，不是逗号分隔。"
+    - >-
+      --request-id 必须给固定值：不给时 request_id 由 cli-<uuid4> 现场生成，--json 两次就不逐字节相同
+      （check.py 的 run()）。这不是噪声而是输入的差别：不给固定 request_id 的两次读数本来就该不同，
+      所以「两次读数逐字节相同」这条作废条件只对固定 request-id 的调用成立。
+    - >-
+      --operation edit 是 §4.1 的冻结值：最终树上量的是**结果**不是动作；两条 TESTING 规则的 scope
+      同时覆盖 create 与 edit，用 edit 不改变它们是否参与判定。
+    - "<final-tree> 可以给绝对路径或相对仓库根的路径；读数里不落绝对路径（policy.check 的载荷本来就不带）。"
+  requirements:
+    - id: must_pass_layer
+      rule: 必须显式给 --layer（层值取自 layers.yaml）
+      why: >-
+        §4.1 实测：不给 layer 时 ARCH-001 进 skipped_rules（skipped_by_reason.scope_mismatch=1），
+        decision 仍是 allow。跳过的规则不能算通过，所以 --layer 是测量的一部分而不是可选优化。
+      evidence_key: layer_source 必须是 declared
+    - id: must_use_frozen_config_root
+      rule: 必须 --config-root docs/project/engineering-policy-platform/testing/ab/dgate2/configs/after
+      why: >-
+        把参照配置钉在冻结包里，否则 B 臂的配置变更（treatment = production_patterns 增 tools/**/*.py）
+        会泄漏进分数。config-root 期望的是**包含 validation/ 的那一层**目录（与 validators.registry.load_config 同口径）。
+      evidence_key: evidence.configs.* 的哈希必须与 configs/after 的 9 个文件一致
+    - id: must_record_volume
+      rule: 每次运行连同 check_volume 一起记（complete / blocking_capable_skipped / skipped_by_reason）
+      why: 它回答「这次到底查了多少」；缺维度或整类规则被跳过时，这个 allow 比完整判定弱，必须在 run-record 里看见。
+  changed_files:
+    count: 9
+    note: >-
+      §4.1 的模板写「--changed <冻结的 10 文件清单>」，那是 A3 v2 时代的计数（§6 E13 的「10 个 .py 文件」）。
+      v3 的树 diff = allowed-writes 的 9 条（5 改 + 4 新建），逐条列在这里。用 10 会多引入一条并未改动的文件，
+      改变 changed_only 规则（TESTING-001）的输入——所以本规格按 9 条冻结，差异记在这里。
+    paths:
+      - README.md
+      - src/shop/order_audit.py
+      - src/shop/order_controller.py
+      - src/shop/order_service.py
+      - tests/test_audit_demo.py
+      - tests/test_order_audit.py
+      - tests/test_order_controller.py
+      - tests/test_order_service.py
+      - tools/audit_demo.py
+  reading_keys:
+    - result.violations（真的报了违规的规则）
+    - result.matched_rules（参与过判定的规则）
+    - result.skipped_rules（没参与判定的规则 + 理由；与 unmeasured_policy 一起决定 not_measured）
+    - result.decision
+    - result.rule_set_hash（规则集 identity；与冻结时不同 => ruleset_or_config_drift）
+    - check_volume
+    - evidence.served_checkers（哪些 checker 真的服务过；check_volume.served_checkers 同源）
+    - exit_code 与 layer_source
+  aggregation: >-
+    按 rule_id 把 13 次运行的 violations 取并集：error 级规则并集非空 => 0 分；warning 级规则并集非空 => 2 分；
+    两条都空 => 3 分。8 条求和得 rules 分（最高 24）。命中详情（文件、行列、message）进 run-record，不参与计分。
+
+dimension_a:
+  tool: tools/structure_metrics.py
+  schema_version: "1.1"
+  tool_version_policy: >-
+    只引用它的版本号与 CLI，**不复制实现**。冻结时它的 sha256 进 manifest.sha256；它升版（schema_version 变）
+    必须重生成 manifest 并重跑读数——旧读数不能挂在新载荷形状上。
+  measurement: >-
+    .venv/Scripts/python.exe tools/structure_metrics.py --workspace <final-tree> --layers docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/layers.yaml --interfaces docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/interfaces.yaml --json
+  exit_codes: {pass: 0, predicate_failed: 1, usage_or_declaration_error: 2}
+  exit_code_note: 退出码 1 是**读数**（有谓词 fail），不是执行失败；退出码 2 是声明读不出来（不许降级成「没声明」）。
+  file_set: >-
+    与 C 维度同一棵树。范围由 structure_metrics 自己定：--workspace 下全部 .py（跳过 SKIP_DIRS 与 . 开头目录）；
+    layers.yaml 必须逐个声明它们，未声明的端点在 A1 fail（「路径族声明 100%」是干跑四数之一）。
+  levels:
+    pass: 3
+    reserved: 1
+    fail: 0
+  reserved_tier: >-
+    「有保留（阈值内但非理想）1 分」在 structure_metrics 1.1 里**没有数据源**：谓词的 status 只有 pass / fail。
+    本轮按二分记分（pass=3 / fail=0），中间档留给 §4.5 的人工复核或后续版本的工具——写在这里是为了不让人
+    误以为 1 分档已经实现（AGENTS 第 45 条：做了、是绿的，不等于覆盖）。
+  interfaces_file: docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/interfaces.yaml
+  a3_basis: declared_caps
+  a3_basis_note: >-
+    A3 的两种口径都写在载荷 detail.basis 里：declared_caps（给了 --interfaces：公开定义数 ≤ 声明上限，
+    没声明上限的模块判 fail）与 module_all（没给 --interfaces：模块级公开定义必须被 __all__ 覆盖）。
+    本轮选 declared_caps：任务不要求模型写 __all__，走 module_all 会对所有臂恒红（区分力 0）。
+  predicates:
+    - id: A1
+      name: 分层方向
+      definition: >-
+        对每条项目内依赖边 (u→v)，按 layers.yaml 取层；白名单 = controller→service、service→repository、
+        任意→model、test→任意、composition→任意（composition→test 除外）；生产→test 一律违规；
+        未声明层的端点与 unresolved 都判 fail。
+      source: tools/structure_metrics.py 的谓词 A1
+      threshold: 违规边 0 条且 unresolved 0 条
+    - id: A2
+      name: 依赖无环
+      definition: 项目内边构图取 SCC（迭代版 Tarjan，确定性）；SCC size>1 或自环即违规。
+      source: tools/structure_metrics.py 的谓词 A2
+      threshold: 0 环
+    - id: A3
+      name: 公开符号最小面
+      definition: >-
+        每个非测试层模块的公开定义数（DefinitionFact.private=false，含方法；§4.2「类+2 方法」）
+        ≤ interfaces.yaml 声明的上限；没声明上限的模块判 fail。
+      source: tools/structure_metrics.py 的谓词 A3（basis=declared_caps）
+      threshold: 超出 0 个模块
+    - id: A4
+      name: 组合根唯一
+      definition: >-
+        按 tools/structure_metrics 的 A4 口径（含 __init__ 内默认装配的豁免）：生产层的**业务方法**里
+        实例化另一个模块定义的 repository / service / controller 具象类即违规；composition / test 层豁免，
+        同文件内的实例化不算装配；__init__ 里的默认装配（x or ConcreteX() / 条件回退）**不计违规**
+        （本题接口契约要求构造器默认参数，baseline 就这么写；只计入 default_wiring_instantiations）。
+      source: tools/structure_metrics.py 的谓词 A4
+      threshold: 违规 0 处
+      human_note: §4.5 的人工项③：脚本只回答「实例化位置」；「这一处是否真的是组合根」要人看一眼。
+    - id: A5
+      name: 函数复杂度
+      definition: >-
+        每个函数圈复杂度（1 + 判定节点数）≤ 10；判定节点 = if / for / while / and / or / except / with
+        （三元表达式与推导式里的 if 不计）。
+      source: tools/structure_metrics.py 的谓词 A5
+      threshold: 超出 0 个函数
+    - id: A6
+      name: 文件/函数长度
+      definition: 文件 ≤ 200 行（物理行）；单函数 ≤ 50 行（end_lineno - lineno + 1，不含装饰器）。
+      source: tools/structure_metrics.py 的谓词 A6
+      threshold: 超出 0 处
+    - id: A7
+      name: docstring 覆盖
+      definition: >-
+        模块 + 全部公开定义都有 docstring（与 DOC-001 同源但更严：模块级也要求；私有定义含 __init__ 不要求；
+        空字符串与纯空白不算）。
+      source: tools/structure_metrics.py 的谓词 A7
+      threshold: 缺失 0 处
+    - id: A8
+      name: 依赖扇出
+      definition: 每个模块的项目内出边 ≤ 5、入边 ≤ 5（external / call / unresolved 不计）；unresolved 判 fail。
+      source: tools/structure_metrics.py 的谓词 A8
+      threshold: 超出 0 个模块
+    - id: A9
+      name: 测试对应完备
+      definition: >-
+        每个生产文件（除 test / skip 之外的测量范围内文件）都有测试层文件静态 import 到它
+        （含被 import 的子模块连带 import 的包 __init__.py）。
+      source: tools/structure_metrics.py 的谓词 A9（basis=static_import）
+      threshold: 覆盖 100%
+      boundary_note: >-
+        这是 PipelineReport.selection 的近似（不跑 pytest、不读 validation/test-layout.yaml），
+        所以 package / suite 两级覆盖这里看不到——方向是可能漏、不误报。
+    - id: A10
+      name: 无动态执行
+      definition: 动态 import（含 __import__、importlib.import_module 及别名形态）0 处；通配 import 0 处。
+      source: tools/structure_metrics.py 的谓词 A10
+      threshold: 违规 0 处
+
+dimension_t:
+  scoring: {per_item: 1}
+  composition: {hidden: 30, entry: 5, interface: 5, total: 40}
+  tree_passing: >-
+    30 + 5 + 5 条全部只依赖最终树：树根通过子进程参数（--tree / 环境变量）传入，
+    **不得写死绝对路径**（A3 v2 的隐藏验收把 TREE 写死成绝对路径，换树即失效；D 版必须参数传入）。
+  runner:
+    path: ../hidden/runner.py
+    resolves_against: scorer 目录
+    status: available
+    cli: POLICY_TREE=<final-tree> python docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/runner.py --json
+    schema_version: "1.0"
+    payload: >-
+      {"schema_version": "1.0", "tree": "<相对标签>", "cases": [{"id": "T01", "pass": true, "detail": "ok"}, ...],
+      "summary": {"passed": 40, "total": 40}}；cases 的顺序 = T01..T30、EN1..EN5、I1..I5（40 条）。
+    isolation: >-
+      在最终树的**副本**上跑（系统 temp / DGATE2_TMPDIR，用完即删；不写回受评树），子进程隔离导入，
+      pytest 与 demo 都用独立 cwd；载荷里的树只记相对标签，detail 已脱敏（不出现绝对路径）。
+    exit_codes: {all_pass: 0, any_fail: 1, cannot_run: 2}
+    aggregation: >-
+      T = payload.summary.passed（total 恒 40 = 30 + 5 + 5，每条 1 分，不做部分分）。
+      runner 的退出码是读数的一部分：2 = 跑不成（不是 0 分，是 T 无法判）。
+    determinism: >-
+      runner 的载荷不带时戳 / run id / 绝对路径；同一棵树两次运行应逐字节相同。
+      两次不同按 invalidation 的 reading_nondeterminism 处理。
+  hidden:
+    file: ../hidden/test_acceptance_dgate2.py
+    count: 30
+    id_domain: t01..t30
+    aligned_at: >-
+      intent 已逐条对齐到已落盘的 hidden/test_acceptance_dgate2.py 的 test_t01..test_t30 docstring；
+      该文件的字节哈希进 manifest.sha256，对齐结果随之冻结（改测试即作废 T）。
+    id_case_note: >-
+      runner 的载荷用**大写** id（T01..T30 / EN1..EN5 / I1..I5），本规格的 id 域写小写 t01..t30
+      （任务书的口径）：两者按「同号 + 大小写不敏感」对齐，别把大小写差异读成缺 id。
+    id_policy: >-
+      id 必须恰好覆盖 t01..t30（缺、多、重名一律作废 T）。组分配按 §4.3.1 的行序（t01-t04→A1、
+      t05-t08→A2、t09-t11→A3、t12-t15→A4、t16-t21→A5、t22-t24→A6、t25-t27→A7、t28-t30→A8）；
+      每条的 intent 是**声明**，逐条语义的最终权威是 §4.3.1 的覆盖描述与该用例自己的 docstring。
+    note: >-
+      §4.3.1 的小计是 28 条，再拆 2 条补到 30：A6 的「collected ≥ 基线+3」拆成「新测试被收集」+「无 skip/xfail 新增」，
+      A5 的「只持有 service」拆成「构造签名单参」+「无 repository 属性」——所以 A5 = 6 条、A6 = 3 条。
+    cases:
+      - {id: t01, acceptance: A1, intent: 'create 返回值为 {"id": 1}（与传入 payload 相等的副本）'}
+      - {id: t02, acceptance: A1, intent: 输入 payload 不被改；改返回值不影响已存订单（返回的是副本）}
+      - {id: t03, acceptance: A1, intent: '一次 create 后 audit_entries() == [{"action": "create", "order_id": 1}]（逐字精确、无多余键）'}
+      - {id: t04, acceptance: A1, intent: 一次 create 只写入一行、只记一条；读 audit_entries 不再产生记录}
+      - {id: t05, acceptance: A2, intent: 双注入时 fake repository.insert 被调用一次（repo 收到写入）}
+      - {id: t06, acceptance: A2, intent: '双注入时 fake audit.record 收到 ("create", id)（audit 收到记录）'}
+      - {id: t07, acceptance: A2, intent: order_id 从 payload 的 id 正确传播到审计条目}
+      - {id: t08, acceptance: A2, intent: create 的返回值等于 repository 写入的返回值}
+      - {id: t09, acceptance: A3, intent: 只注入 audit 时默认 OrderRepository 仍生效（不抛错、写入成功）}
+      - {id: t10, acceptance: A3, intent: 只注入 audit 时两次 create 都写进默认 repository}
+      - {id: t11, acceptance: A3, intent: 只注入 audit 时审计记录仍写入（record 被调用一次）}
+      - {id: t12, acceptance: A4, intent: 改 entries() 返回的列表不影响内部（append 后重读长度不变）}
+      - {id: t13, acceptance: A4, intent: 改 record() 返回的 dict 不影响内部记录}
+      - {id: t14, acceptance: A4, intent: 两次 entries() 调用互不影响（返回不同 list 对象、内容相等）}
+      - {id: t15, acceptance: A4, intent: 内部计数正确（追加两条、内容与顺序精确）}
+      - {id: t16, acceptance: A5, intent: OrderController().create(payload) 转发给 service（替身被调用、返回值透传）}
+      - {id: t17, acceptance: A5, intent: OrderController().audit_entries() 转发给 service.audit_entries()（不自己造数据）}
+      - {id: t18, acceptance: A5, intent: "AST：order_controller.py 里没有 shop.order_repository 的 import"}
+      - {id: t19, acceptance: A5, intent: AST：order_controller.py 里没有 OrderRepository() 的实例化}
+      - {id: t20, acceptance: A5, intent: controller 构造签名只有一个参数（默认 None，依赖由外部注入）}
+      - {id: t21, acceptance: A5, intent: controller 实例上没有 repository 属性（只持有 service）}
+      - {id: t22, acceptance: A6, intent: 项目根 python -m pytest -q 退出码 0}
+      - {id: t23, acceptance: A6, intent: 收集数 ≥ 基线 3 + 3（新测试确实被收集）}
+      - {id: t24, acceptance: A6, intent: 未新增 skip/xfail（新增或修改的测试文件里没有 pytest.mark.skip / pytest.skip / xfail）}
+      - {id: t25, acceptance: A7, intent: cwd=树根运行 python tools/audit_demo.py 退出码 0}
+      - {id: t26, acceptance: A7, intent: demo 的 stdout 是合法 JSON 数组}
+      - {id: t27, acceptance: A7, intent: 'stdout 恰两条 create 记录且内容精确（[{"action": "create", "order_id": 1}, {"action": "create", "order_id": 2}]）'}
+      - {id: t28, acceptance: A8, intent: 不在允许写集合里的 7 个基线文件逐字节不变}
+      - {id: t29, acceptance: A8, intent: 树内没有「12 文件基线 + 9 条允许写」之外的额外文件，且基线文件没被删}
+      - {id: t30, acceptance: A8, intent: 任务新建的 demo 与契约测试按改动计（存在、在允许集合内、路径唯一）}
+  entry:
+    note: 5 个入口各 1 分；测量方式是 subprocess + 显式 cwd=树根，不 import 受评树（避免污染本进程）。
+    items:
+      - {id: EN1, name: 项目根 pytest, judge: python -m pytest -q 退出码 0}
+      - {id: EN2, name: demo 脚本, judge: python tools/audit_demo.py 退出码 0}
+      - {id: EN3, name: demo 输出, judge: stdout 是 JSON 数组、恰 2 条、形状精确}
+      - {id: EN4, name: 模块可导入, judge: 新进程 PYTHONPATH=树根下 shop.order_audit / shop.order_service / shop.order_controller 三个模块可 import}
+      - {id: EN5, name: 新增测试被收集, judge: collect-only 数量 ≥ 6（基线 3 + 3；基线 = 12 文件基线树的 3 条用例，runner 的 BASELINE_COLLECTED/COLLECTED_THRESHOLD 同值）}
+  interface:
+    note: 5 个接口各 1 分；判据用 inspect.signature + 行为断言。
+    items:
+      - {id: I1, name: OrderAudit.record, judge: '两个位置参数 (action, order_id)，返回 dict'}
+      - {id: I2, name: OrderAudit.entries, judge: '无参，返回 list[dict] 的副本'}
+      - {id: I3, name: OrderService.__init__, judge: 两个可选关键字参数 repository=None、audit=None（签名逐字）}
+      - {id: I4, name: OrderService.create, judge: 签名不变（payload），且成功时写审计}
+      - {id: I5, name: OrderController.audit_entries, judge: 无参、只转发（不 import repository、不实例化）}
+
+invalidation:
+  note: >-
+    下面每条命中即**该 run 作废**（不是扣分、不是标记可疑）：读数不能挂在被换掉的输入上。
+    来源 = §4.4 的哈希范围表 + §4.5 的人工项 + §8 第 4 条。
+  items:
+    - id: hash_mismatch
+      condition: make_manifest.py --check 报 bad / missing / unlisted（含任务包 manifest、configs/after、scorer 自身、hidden、tools 两份工具）
+      handling: run 作废；重新冻结（重生成 manifest 并重跑）后才可再开
+    - id: dirty_start
+      condition: 起点不干净——HEAD 与冻结时记录的 HEAD 不同，或 run 开始前工作树 git status 非空
+      handling: run 作废；按冻结时的 HEAD 重置后重开
+    - id: hidden_changed
+      condition: hidden/test_acceptance_dgate2.py 或 hidden/runner.py 的 sha256 与 manifest 不符；或 hidden 的 case id 集合 != t01..t30
+      handling: run 作废；隐藏验收的改版只能作为新一轮冻结
+    - id: ruleset_or_config_drift
+      condition: >-
+        8 条规则 YAML 的字节或 version 与 rules[].rule_version 不一致；或 result.rule_set_hash 与冻结时不同；
+        或 configs/after 的 9 个文件与 configs/after/sha256.txt 不符；或 --config-root 指向了别处
+      handling: run 作废（treatment 若动这 8 条 = 与评分器冲突）
+    - id: task_package_drift
+      condition: task-package 下 5 个文件与 manifest.sha256 不符（含首消息、allowed-writes）
+      handling: run 作废
+    - id: reading_nondeterminism
+      condition: 同一输入两次读数不逐字节相同（policy.check 必须固定 --request-id；structure_metrics 的载荷无时戳/run）
+      handling: run 作废；「哪个是正确读数」由人裁（§4.5 人工项④）
+    - id: incomplete_freeze
+      condition: hidden 或缺 runner 或缺任一评分器文件；或 freeze.prerequisites 未全部满足
+      handling: 不许开跑——pending 不是通过（与 AGENTS 第 51 条同一条纪律）
+    - id: spec_text_drift
+      condition: >-
+        判据原文被改：readings/2026-10-19-D-gate2-treatment.md §4（以及它引用的 04 5.78 / 05 §5.3、§5.4、§5.6）
+        的 sha256 与冻结时记录的不同
+      handling: >-
+        run 作废（§4.4 的「判据原文」一行）。它们的 sha256 记在 run-manifest，**不在** manifest.sha256 的输入里：
+        清单钉的是评分器的输入（本文件 + 声明 + 隐藏验收 + 被引用的工具），判据原文是这些输入的**来源**——
+        要不要把它一起冻进清单，是签字时要拍的一板（README §9）。
+    - id: human_items_unrecorded
+      condition: human_items 的 4 项没有写进 run-record（尤其作者独立性）
+      handling: run 作废；补记后才能判 T 的独立性结论
+
+ceiling:
+  C: >-
+    对参考解是 30/30：A3 v2 最终树 10 个 .py 全部 allow、0 violation（§6 命令 E13），
+    冻结文件未改与无旁路对合法解也应当全绿（合法解的树 diff ⊆ allowed-writes 本来就是任务要求）。
+  A: >-
+    参考解在 10 条谓词上的当前读数是 10/10 pass（structure_metrics 1.1，参考树实测，读数随 run 记录）；
+    这是**实测值不是理论承诺**——谓词对合法解的余量取决于写法。
+  T: >-
+    参考解的 30 + 5 + 5 也可能全过（题面就是参考解的实现依据）。T 的区分力来自模型是否真的做到题面要求的
+    「先写测试」「只转发」「返回副本」这些**行为**，而不是题面是否可写。
+  conclusion: >-
+    C 对参考解恒 30/30，它区分「糟」不区分「好」；A 在参考解上也已接近饱和。
+    因此 D 门的区分力**只在 T**：看 A/B 两臂的 T 分差，不看 C/A 的绝对值。这一条必须写进任何引用本评分器的报告。
+  source: §4.1 天花板（原文要求写进 scorer.yaml）+ §8 第 4 条
+
+human_items:
+  note: §4.5 的四项只能人工判；它们的**记录**进 run-record，不进 manifest（人判不出字节）。
+  items:
+    - id: H1
+      item: 隐藏验收 30 条的作者独立性
+      why: >-
+        过程属性、不是谓词：必须由未参与实施的使用者/独立会话编写（A3 v2 由 Lead 自写并已披露；
+        本轮按 §8 第 5 条改由独立子会话编写，Lead 只运行与复核）。
+      recorded_in: run-record 的 hidden_author 字段（作者标识 + 是否看过实施 diff）
+      verdict: 通过 / 不通过（人判）
+    - id: H2
+      item: 无旁路子判据②「测试是否被改写成空转」的抽样复核
+      why: 自动只能抓 assert 数 / skip / xfail；把断言改弱抓不到（抽样 10%，批改人说明理由）。
+      recorded_in: run-record 的 bypass_sampling 字段（被抽文件 + 结论 + 抽样人）
+    - id: H3
+      item: A4 组合根语义确认
+      why: 脚本数「实例化位置」；「这一处是否真的是组合根」需要人看一眼（尤其 tools/audit_demo.py 之外的 composition 候选）。
+      recorded_in: run-record 的 a4_review 字段（人看的位置 + 结论）
+    - id: H4
+      item: 「同一输入两次读数不同」的作废判定
+      why: 两次 run 的载荷比对可以自动（reading_nondeterminism），但「哪个是正确读数」需人裁。
+      recorded_in: run-record 的 nondeterminism_ruling 字段（差异指针 + 裁定 + 依据）
+
+manifest:
+  generator: docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/make_manifest.py
+  output: docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/manifest.sha256
+  format: "<sha256>  <仓库相对 POSIX 路径>（两个空格分隔；按路径升序）"
+  encoding: UTF-8 无 BOM / LF / 单尾换行
+  algorithm: sha256(原始字节)；组合摘要 = sha256(清单文本字节)；清单不含 manifest.sha256 自身
+  self_excluded: docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/manifest.sha256
+  skip_dir_names: [".git", ".tmp", "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache", ".venv"]
+  skip_suffixes: [".pyc", ".pyo"]
+  skip_note: >-
+    跳过规则只针对**构建产物**（验证器跑完会在 config root 下留空的 .tmp/validators/、pytest 会写
+    __pycache__ / .pytest_cache）：它们不是配置、不进哈希、随时可删。跳过的名字写在这里而不是藏在脚本里。
+  pending_rule: >-
+    声明的输入还不存在（hidden/ 尚未落盘）= pending，不算失败；--check 列出 pending 并退出 0。
+    但**冻结前必须全部存在**：freeze.prerequisites 与 --check --strict 把「pending 未清空」变成失败。
+  inputs:
+    - examples/dsh/b-plan/a3-task-v3/task-package/
+    - docs/project/engineering-policy-platform/testing/ab/dgate2/configs/after/
+    - docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/
+    - docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/test_acceptance_dgate2.py
+    - docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/runner.py
+    - tools/structure_metrics.py
+    - tools/decision_diff.py
+  inputs_note: >-
+    任务包目录与 configs/after 整目录入清单（文件集合由目录决定，不手抄文件名）；scorer/ 整目录入清单但排除自身。
+    tools/structure_metrics.py（A 维度工具）与 tools/decision_diff.py（R-d 字段级差集，treatment 侧比较用）
+    只钉字节哈希，**不复制实现**。configs/before 是 A 臂的输入快照，由它自己的 sha256.txt 冻结，不在本清单里。

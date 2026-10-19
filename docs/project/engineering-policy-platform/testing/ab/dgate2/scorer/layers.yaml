@@ -1,0 +1,49 @@
+# D 门 2 评分器：v3 最终树的文件 → 层映射（A/B/C 三臂共用的**唯一**分层声明）。
+#
+# 消费者与口径
+# ============
+# - A 维度：`python tools/structure_metrics.py --workspace <final-tree> --layers <本文件> [--interfaces interfaces.yaml] --json`
+#   （层值闭集 = 该工具的 LAYER_VALUES；未知层值 = 加载期报错、退出 2，不静默当成 other）。
+# - C 维度：`python -m policy.check <file> --layer <本文件里该文件的层值> ...`（显式给层，否则
+#   ARCH-001 会进 skipped_rules——「跳过的规则」不能算通过，见 readings/2026-10-19-D-gate2-treatment.md §4.1）。
+#
+# 为什么层值是 structure_metrics 的 8 值词汇，而不是任务树 .policy/dsh-adapter.yaml 的 module/docs
+# ============================================================================================
+# 两个消费者问的不是同一个问题：dsh-adapter 的 layers 只服务 Hook 路径的 scope 匹配（module/docs 是
+# 「没有分层角色的生产代码 / 文档」），A 维度的谓词需要 composition（组合根）与 model 这两个**结构角色**
+# ——dsh-adapter 词汇里没有它们，硬套会让 A1/A4 判不出东西。两份声明因此**故意不同名**：同一棵树在两个
+# 消费者上得到两种层名不是缺陷，是两次不同的提问（AGENTS 第 50 条：同名两义要改名，两义不同名要写清）。
+# 值域对照：tests/**→test、*_controller.py→controller、*_service.py→service、*_repository.py→repository、
+# 其余 .py→module（这里写 other）、**/*.md→docs（这里写 skip，文档不在测量范围）。
+# 唯一的语义差别：v3 的 tools/audit_demo.py 是组合根（它 new OrderService），记 composition 而**不是** module。
+#
+# 16 个文件 = 12 文件基线（sample-project 11 + tools/__init__.py）+ 任务要创建的 4 个文件
+# （src/shop/order_audit.py、tests/test_order_audit.py、tools/audit_demo.py、tests/test_audit_demo.py）。
+# 少一个多一个都让 A 维度的「路径族声明 100%」变成假的：未声明层的 .py 会被 A1 判 fail。
+#
+# 取值说明（structure_metrics 的 note 同口径）
+# ==========================================
+# - test：测试文件与**测试支撑文件**（conftest.py 命中 validation/test-layout.yaml 的
+#   test_support_patterns，平台口径的层就是 test；同一个文件不许在两条路径上得到两个层，AGENTS 第 49 条）。
+# - skip：声明了但**移出测量范围**（README.md / AGENTS.md / pytest.ini 都不是 Python 模块）。
+#   它们仍要出现在这里，否则 workspace_scope 会把它们记成「未声明」而不是「非 Python」。
+# - other：生产代码但没有分层角色（两个 __init__.py）；A1 不判它的方向，但生产→test 仍判。
+# - model：order_audit 是纯数据/状态模块（service→model 是 A1 白名单允许的方向）。
+# - composition：audit_demo 是组合根（唯一允许 new 具体协作者的地方）。
+
+AGENTS.md: skip
+README.md: skip
+conftest.py: test
+pytest.ini: skip
+src/shop/__init__.py: other
+src/shop/order_audit.py: model
+src/shop/order_controller.py: controller
+src/shop/order_repository.py: repository
+src/shop/order_service.py: service
+tests/test_audit_demo.py: test
+tests/test_order_audit.py: test
+tests/test_order_controller.py: test
+tests/test_order_repository.py: test
+tests/test_order_service.py: test
+tools/__init__.py: other
+tools/audit_demo.py: composition
