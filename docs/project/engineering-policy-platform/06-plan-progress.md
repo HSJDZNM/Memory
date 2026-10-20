@@ -177,6 +177,7 @@
 | C-20261021-04 | 2026-10-21T04:50:00+08:00 | feat(enforcement)：执行面受保护前缀（45d6168） | registry/tool-registry.yaml + approved.json、src/enforcement/models.py、tests/security/test_control_plane_write_guard.py、tests/contract/test_registry_control_plane_guard.py、tests/contract/test_enforcement_protocol.py、tests/unit/test_enforcement_approvals.py、readings/2026-10-21-C3-git-surface-guard.md | 04 5.87 | **是**（新增阻断：`.git`、`.github/workflows` 写入 → path_out_of_scope；27 条矩阵 7 条翻面、20 条相等） | Lead（使用者授权；registry 重审为单人仓库自审） | git show --stat 45d6168 |
 | C-20261021-05 | 2026-10-21T04:55:00+08:00 | feat(dsh)：C1-a 批次台账只报告通道（05a05d5） | src/adapters/dsh/{batch_ledger,hooks,adapter}.py、examples/dsh/dsh-adapter.yaml、tests/integration/test_dsh_batch_ledger.py、tests/unit/test_hook_{skip_visibility,audit_reading_context}.py、readings/2026-10-21-C1-a-batch-ledger.md | C1-a | **是（只加键）**：审计新增 batch_ref + batch 四态块，AUDIT 1.3→1.4；**不改判定**（开/关 decision 逐字节相等；R-d 指针读数 §4） | Lead（使用者授权） | git show --stat 05a05d5 |
 | C-20261021-06 | 2026-10-21T05:10:00+08:00 | docs(plan)：5.87/5.88 收口、05 C1/C3 状态、06 记录（本行所在提交） | 04-open-work.md、05-implementation-plan.md、06-plan-progress.md、AGENTS.md | C1-a / 5.87 | 否（纯文档；AGENTS 登记 BATCH_LEDGER 轴） | Lead | git show --stat HEAD（本行所在提交） |
+| C-20261021-07 | 2026-10-21T06:10:00+08:00 | docs(plan)：进度简报、文档索引与新会话交接提示词（本行所在提交） | 07-status-brief.md、README.md、2026-10-21-new-session-prompt.md、06-plan-progress.md | — | 否（纯文档；面向非技术读者与下一会话，不改判定） | Lead | git show --stat HEAD（本行所在提交） |
 
 ### 7.3 读数记录
 

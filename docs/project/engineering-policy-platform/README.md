@@ -12,6 +12,7 @@
 | [05-implementation-plan.md](05-implementation-plan.md) | **实施计划**：从「动作判定」到「产物判定」的四阶段路线、每阶段的门与判据、对比实验方案 |
 | [06-plan-progress.md](06-plan-progress.md) | **计划进度**：记录格式 + 执行记录（只收录技术读数与关键决策记录；纯文档 / 措辞 / 行政性变更不记录） |
 | [07-status-brief.md](07-status-brief.md) | **进度简报（给非技术读者）**：在做什么、做到哪了、接下来做什么、你需要做什么；不含命令与内部编号 |
+| [2026-10-21-new-session-prompt.md](2026-10-21-new-session-prompt.md) | **新会话交接提示词**：给下一个 agent 会话的完整任务书（现状、剩余任务、验收、纪律） |
 | [testing/test-strategy.md](testing/test-strategy.md) | 测试策略 |
 | [testing/acceptance-matrix.md](testing/acceptance-matrix.md) | 阶段验收矩阵 |
 | [designs/README.md](designs/README.md) | 设计提案状态表（提案 / 状态 / 影响面 / 下一步） |
@@ -36,8 +37,9 @@
 - **Phase 9 之后的新计划（2026-10-17 起）**：把「动作判定」推进到「产物判定」的四阶段计划已开跑
   （[05-implementation-plan.md](05-implementation-plan.md)）：**阶段 A** 覆盖表、5.71 探针、5.72 接线修复已落地；
   A3 干跑两轮：v1 **3/4** 暴露构造/口径问题，经三派评审 + Lead 裁定（[裁定](readings/2026-10-18-A3-fix-adjudication.md)）
-  后 v2 **4/4 + 任务完成**（[读数](readings/2026-10-18-A3-dryrun-v2.md)）；**阶段 B** 的 B2（测试支撑声明）已落地；
-  B1/B3 未解冻（B1 保留为 5.69 的独立修）。**阶段 D** 的**校准门**通过（P+/P−/canary）；2026-10-19 交付并**冻结**了
+  后 v2 **4/4 + 任务完成**（[读数](readings/2026-10-18-A3-dryrun-v2.md)）；**阶段 B** 的 B2（测试支撑声明）与 B1（审批 1.3「参数域」，`fe292b9`）、B3（只读族读面闸门，`9a88112`）均已落地；
+  B1 的真实受治会话仍需使用者签 1.3 条子。**阶段 C**：C3 三段（整树门禁 `aca9491`、控制面 `.policy` 写面 `8e6a3cb`、执行面 `.git`/CI `45d6168`）与 C1-a（批次台账只报告，`05a05d5`）已落地；
+  C1-b/C2/C4 的裁定草案见 [2026-10-21 草案](readings/2026-10-21-C1C2C4-adjudication-draft.md)；新会话交接提示词见 [2026-10-21-new-session-prompt.md](2026-10-21-new-session-prompt.md)。**阶段 D** 的**校准门**通过（P+/P−/canary）；2026-10-19 交付并**冻结**了
   门 2 前置包：treatment（`tools/**` 纳入生产文件，[读数](readings/2026-10-19-treatment-tools-pattern.md)）、任务包 v3
   （`examples/dsh/b-plan/a3-task-v3/`）、隐藏验收 30 条 + runner（`testing/ab/dgate2/hidden/`）、评分器
   （`testing/ab/dgate2/scorer/`，`freeze.status=frozen`，清单组合摘要 `e3ef9e91…`）、C 臂（不治理）装配与 n=1 冒烟
@@ -50,7 +52,7 @@
   `testing/ab/dgate2/runs/2026-10-20/`；H2/H3 已复核（[H2](readings/2026-10-20-H2-bypass-sampling.md) / [H3](readings/2026-10-20-H3-a4-review.md)）。
   执行记录在 [06-plan-progress.md](06-plan-progress.md)，
   非技术读者先看 [07-status-brief.md](07-status-brief.md)。
-- **剩下的**：剩余缺口与未核实项（2026-10-19 新增评分器已知边界、AGENTS 指令预算、D 开跑执行事实三条）、各处未核实、已知边界与引用纪律，全部收在
+- **剩下的**：受治侧同步（注册表 1.4 + read_guard + `.policy`/`.git` 前缀）并重审、C4 验证探针、C1-b 裁定、间接执行面（`tools/**` 经 CI、`.gitattributes`）、D 实验每臂 k≥3、评分器已知边界、**AGENTS 指令预算**（已到 65.6 KB，建议拆出第 55 条轴表）、各处未核实与引用纪律，全部收在
   [04-open-work.md](04-open-work.md)——它是"还没做完"的唯一去处。
 
 ## 文档约定
