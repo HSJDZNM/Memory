@@ -12,8 +12,8 @@
 2. **延迟硬约束的结构化版本**：把 `provenance.reading_context.workspace_tree_digest` 换成
    "一调就炸"，一次真 Hook 调用仍然成功——"每次调用不许计算整棵树的摘要"因此是一条
    **会失败的检查**（谁把 `tree_block` 接回来，这条用例就红）；
-3. **兼容**：已有 `audit.jsonl` 里的 1.2 记录**一个字节都不改写**；1.2 与 1.3 混排之后
-   审计链校验（`enforcement.audit.FileAuditSink.verify`）仍然通过。
+3. **兼容**：已有 `audit.jsonl` 里的 1.2 记录**一个字节都不改写**；1.2 与当前版本（C1-a
+   起是 1.4）混排之后审计链校验（`enforcement.audit.FileAuditSink.verify`）仍然通过。
 
 第 4 条口径写在用例里而不是文档里：`host.sandbox` 恒为 `unknown`——Hook 不探测沙箱
 （探测要有副作用），"不知道"就写"不知道"（21 号 §9.2 裁定④的同一条口径）。
@@ -133,7 +133,7 @@ def test_reading_context_names_the_evidence_tree_and_the_registry(tmp_root: Path
     assert outcome.exit_code == EXIT_BLOCK  # DOC-900 命中：取证真的发生了
 
     record = decision_record(audit)
-    assert record["audit_schema_version"] == AUDIT_SCHEMA_VERSION == "1.3"
+    assert record["audit_schema_version"] == AUDIT_SCHEMA_VERSION == "1.4"
     assert record["pre_evidence_status"] == "collected"
 
     context = record["reading_context"]
@@ -312,7 +312,7 @@ def test_no_evidence_declaration_means_no_tree_to_reference(tmp_root: Path) -> N
 
 
 def test_a_1_2_record_is_not_rewritten_and_a_mixed_chain_still_verifies(tmp_root: Path) -> None:
-    """兼容：1.2 记录不回写；1.2 与 1.3 混排的链必须仍然通过审计链校验。"""
+    """兼容：1.2 记录不回写；1.2 与当前版本混排的链必须仍然通过审计链校验。"""
 
     project, config = evidence_config(tmp_root)
     audit = tmp_root / "audit.jsonl"
@@ -346,11 +346,13 @@ def test_a_1_2_record_is_not_rewritten_and_a_mixed_chain_still_verifies(tmp_root
     assert audit.read_bytes().startswith(before_bytes)
     assert lines[0] == legacy_line
     assert json.loads(lines[0])["audit_schema_version"] == "1.2"
-    # ② 新记录是 1.3，且带 reading_context
+    # ② 新记录是当前版本（C1-a 起 1.4），且带 reading_context
     appended = [json.loads(line) for line in lines[1:] if "audit_schema_version" in line]
-    assert appended and all(item["audit_schema_version"] == "1.3" for item in appended)
+    assert appended and all(
+        item["audit_schema_version"] == AUDIT_SCHEMA_VERSION for item in appended
+    )
     assert all("reading_context" in item for item in appended)
-    # ③ 混排之后审计链校验仍然通过；1.2/1.3 两种外来行都被计数（不静默收编）
+    # ③ 混排之后审计链校验仍然通过；1.2 / 当前版本两种外来行都被计数（不静默收编）
     sink = FileAuditSink(audit)
     assert sink.verify() == ()
     assert sink.foreign_records() == len(lines) - len(sink.chain_records())

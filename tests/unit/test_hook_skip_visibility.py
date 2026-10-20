@@ -309,7 +309,9 @@ def test_existing_audit_fields_are_kept_unchanged(tmp_root, dsh_project):
     # 台阶 3a（H1）：判定记录新增受控 decision_reason → 审计协议按自己的规则递增。
     # 台阶 3b：审计记录新增 pending_findings 通道 → 1.1 → 1.2（协议自己的规则）。
     # 台阶 4：新增 reading_context 与 pre_evidence.registry → 1.2 → 1.3（协议自己的规则）。
-    assert record["audit_schema_version"] == AUDIT_SCHEMA_VERSION == "1.3"
+    # C1-a：新增 batch_ref 与 batch 块 → 1.3 → 1.4（同一条规则；本用例没有声明 batch_ledger，
+    # 因此除版本号外记录形状与 1.3 时逐字相同）。
+    assert record["audit_schema_version"] == AUDIT_SCHEMA_VERSION == "1.4"
     assert record["agent"] == "dsh"
     assert record["rule_set_hash"].startswith("sha256:")
     assert record["payload_digest"].startswith("sha256:")

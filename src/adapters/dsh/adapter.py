@@ -141,6 +141,8 @@ _CONFIG_FIELDS: Tuple[str, ...] = (
     "audit_log",
     "pre_evidence",
     "obligations_ledger",
+    # C1-a：批次台账（可选；默认关闭 = 不声明这一项时行为与现在逐字相同）
+    "batch_ledger",
 )
 
 
@@ -567,6 +569,26 @@ def _test_path_witnesses(test_pattern: str, other_pattern: str) -> tuple[str, ..
 
 
 @dataclass(frozen=True)
+class BatchLedgerConfig:
+    """批次台账的声明（C1-a，只报告）。
+
+    **只写事实、不改判定**：账本里记的是"这个会话提议过哪些目标文件"，Hook 只把摘要与
+    状态写进审计；它不进 `policy.engine.evaluate` 的任何输入。声明这一项才启用，且本节
+    可以写 `enabled: false` 显式关掉（与"没有声明"是**两个**读法：前者会在审计里写
+    `batch.status=disabled`，后者一个 batch 键都不加）。
+
+    `root` 省略时取 `project_root/.policy/pre-evidence-batches`（**不**相对配置文件目录，
+    避免把配置复制进 `<project>/.policy/` 之后变成 `.policy/.policy/...`）；显式声明时与
+    本文件其他路径同一口径，相对配置文件所在目录。`ttl_hours` 只服务 TTL 清理（维护动作），
+    不参与 batch_ref 计算——按时间过滤会让"同一批目标"在不同时刻得到两个摘要。
+    """
+
+    enabled: bool
+    root: Path
+    ttl_hours: int = 24
+
+
+@dataclass(frozen=True)
 class PreEvidenceConfig:
     """动手前取证的声明（G3）：在影子工作区上跑 Phase 5 流水线，把证据交给引擎。
 
@@ -622,6 +644,10 @@ class AdapterConfig:
     # 记账失败不改判定、不阻断（L5 warn 期），但会显式打一行 stderr；
     # 没有声明 = 不记账（不是「没有义务」）。
     obligations_ledger: Optional[Path] = None
+    # C1-a：批次台账（只报告）。None = 没有声明这一段：不写账本、审计里也不出现 batch 键
+    # （"未声明时行为与现在逐字相同"）。声明后即使写不进去也只改审计里的 batch 状态，
+    # 判定 / 退出码 / 理由一个字都不变。
+    batch_ledger: Optional[BatchLedgerConfig] = None
 
     @property
     def rule_anchor(self) -> Path:
@@ -845,6 +871,47 @@ def _pre_evidence_config(value: Any, *, base_dir: Path, project_root: Path) -> P
     )
 
 
+_BATCH_LEDGER_FIELDS: Tuple[str, ...] = ("enabled", "root", "ttl_hours")
+
+
+def _batch_ledger_config(
+    value: Any, *, base_dir: Path, project_root: Path
+) -> BatchLedgerConfig:
+    """解析 batch_ledger 段：未知字段、类型错误、危险落点一律报错（声明即契约）。
+
+    落点安全边界与 `pre_evidence.shadow_root` 同型：批次目录会被**追加写 + TTL 清理**，
+    声明成项目根本身（或项目根的祖先）会让清理面覆盖整个项目——这种声明是配置错误，
+    不是"运行时降级"，因此在加载期就拒绝。
+    """
+
+    from .batch_ledger import BATCH_DIRNAME
+
+    if not isinstance(value, Mapping):
+        raise DshEventError("batch_ledger 必须是映射")
+    unknown = sorted(set(value) - set(_BATCH_LEDGER_FIELDS))
+    if unknown:
+        raise DshEventError(
+            f"batch_ledger 出现未知字段 {unknown}；允许的字段为 {sorted(_BATCH_LEDGER_FIELDS)}"
+        )
+    enabled = value.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise DshEventError(f"batch_ledger.enabled 必须是布尔值，得到 {enabled!r}")
+    root = (
+        project_root / ".policy" / BATCH_DIRNAME
+        if value.get("root") is None
+        else _as_path(value["root"], base_dir=base_dir, where="batch_ledger.root")
+    )
+    if root == project_root or project_root.is_relative_to(root):
+        raise DshEventError(
+            "batch_ledger.root 不能等于受治项目根、也不能是它的祖先："
+            "批次台账会被追加写并按 TTL 清理，这样的落点会把项目文件卷进来"
+        )
+    ttl_hours = value.get("ttl_hours", 24)
+    if not isinstance(ttl_hours, int) or isinstance(ttl_hours, bool) or ttl_hours <= 0:
+        raise DshEventError(f"batch_ledger.ttl_hours 必须是正整数小时，得到 {ttl_hours!r}")
+    return BatchLedgerConfig(enabled=enabled, root=root, ttl_hours=ttl_hours)
+
+
 def config_from_mapping(document: Mapping[str, Any], *, base_dir: Path) -> AdapterConfig:
     """从显式映射构造 Adapter 配置；未知键、类型错误、缺必需项一律报错。"""
 
@@ -903,6 +970,14 @@ def config_from_mapping(document: Mapping[str, Any], *, base_dir: Path) -> Adapt
             document["pre_evidence"], base_dir=base_dir, project_root=project_root
         )
     )
+    # C1-a：批次台账（可选）。None = 没有声明：不写账本，审计记录里不出现 batch 键。
+    batch_ledger = (
+        None
+        if document.get("batch_ledger") is None
+        else _batch_ledger_config(
+            document["batch_ledger"], base_dir=base_dir, project_root=project_root
+        )
+    )
 
     principal: Optional[Principal] = None
     raw_principal = document.get("principal")
@@ -948,6 +1023,7 @@ def config_from_mapping(document: Mapping[str, Any], *, base_dir: Path) -> Adapt
         test_paths=test_paths,
         test_layer=test_layer,
         pre_evidence=pre_evidence,
+        batch_ledger=batch_ledger,
         languages=languages,
         default_language=optional_identifier("default_language"),
         principal=principal,

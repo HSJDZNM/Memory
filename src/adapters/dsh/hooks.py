@@ -79,6 +79,13 @@ from .adapter import (
     to_policy_context,
     to_policy_event,
 )
+from .batch_ledger import (
+    BATCH_LEDGER_SCHEMA_VERSION,
+    append_target,
+    batch_ref,
+    prune_expired,
+    targets_digest,
+)
 from .enforcement import EnforcementBridge, EnforcementUnavailable, bridge_from_config
 from .pre_evidence import PreEvidenceError, PreEvidenceResult, build_pre_evidence
 
@@ -86,6 +93,7 @@ __all__ = [
     "EXIT_ALLOW",
     "EXIT_BLOCK",
     "AUDIT_SCHEMA_VERSION",
+    "BATCH_LEDGER_SCHEMA_VERSION",
     "HOOK_PAYLOAD_SCHEMA_VERSION",
     "HOOK_PAYLOAD_VERSION_KEY",
     "OUT_OF_SCOPE_NOTE",
@@ -149,7 +157,14 @@ EXIT_BLOCK = 2
 # validation/validators.yaml；18 号 §2 的 R4：没有它，同一条 tool.pytest@1.0 在账本里
 # 对应三种行为）。两条都是"加键"，所以按本协议自己的规则递增（第 55 条）；
 # 决策协议、证据协议、VERDICT 行都不动——它们是**另外几套**协议。
-AUDIT_SCHEMA_VERSION = "1.3"
+#
+# 1.4（C1-a / 2026-10-21）：判定记录新增批次台账的只报告字段——顶层 `batch_ref` 与
+# `batch` 块（状态 / 目标数 / 目标摘要 / 落点）。为什么必须升版：1.3 已经发布，加了键
+# 却不升版会让同一个版本号底下存在两种载荷形状（第 55 条 / 第 50 条同名两义）。
+# 这些字段**不进** `policy.engine.evaluate`：decision / violations / reason_code 一个字都不变；
+# 未声明 `batch_ledger` 的部署不会得到任何 batch 键（行为与 1.3 时逐字相同，只有这一行的
+# 协议版本号跟着走）。批次账本自己的轴是 `batch_ledger.BATCH_LEDGER_SCHEMA_VERSION`。
+AUDIT_SCHEMA_VERSION = "1.4"
 
 # 插件→Hook 的 stdin 载荷自己的版本轴（AGENTS 第 55 条：加键就是改协议）。
 #
@@ -259,6 +274,18 @@ VIOLATIONS_NOTE = (
     "那种记录说的是「这次放行了、但有东西没能查成」，不是「什么都没发生」。"
     "没有 violations 键的记录（context_error / evidence_unavailable / event_replay 等）"
     "表示本次没有做出判定——「没判定」与「判定了、没违规」必须能分开读"
+)
+
+# C1-a：批次台账的**只报告**口径。写死在这里，读账本的人不必去代码里猜
+# "batch 改了判定吗"。它与 obligations 那一条同族（只记账、不判罚），但比它更窄：
+# 批次连"判罚"的入口都没有——它不进 policy.engine.evaluate 的任何输入。
+BATCH_LEDGER_NOTE = (
+    "batch / batch_ref 是 C1-a 的**只报告**通道：记下本会话提议过的目标文件与它们的稳定摘要，"
+    "供后续台阶（C1-b）决定是否把同批文件放进取证树；它**不进** policy.engine.evaluate，"
+    "decision / violations / reason_code 一个字都由判定本身决定。"
+    "batch.recorded=false 表示这次**没有记上**（原因在 reason；stderr 另有一行 "
+    "BATCH LEDGER UNAVAILABLE），它同样不改变这次调用的放行或阻断。"
+    "同一 batch_ref 的记录属于同一批目标（按会话折叠；session_id 也是摘要输入）"
 )
 
 # 绝对路径的识别必须带**边界**：没有边界的 "/" 会把普通仓库相对路径
@@ -1391,6 +1418,105 @@ class DshPreExecuteHook:
                 file=sys.stderr,
             )
 
+    def book_batch(self, *, event: PolicyEvent) -> dict[str, Any]:
+        """C1-a：把本次事件的目标记进批次台账（**只报告**，绝不改判定）。
+
+        三条边界（每条都对应本台阶的验收读数）：
+
+        - **不改判定**：返回值只进审计记录；decision / violations / reason_code / 退出码
+          全都不读它。账本不可写时只打一行 stderr 并继续，审计里写
+          `batch.recorded=false` + reason——"没记上"与"记上了一批空目标"必须能分开读；
+        - **不进 evaluate**：这里只在判定之前落一份"本会话提议过哪些文件"的事实，
+          `policy.engine.evaluate` 的输入一个字段都不加（C1-b 才讨论放进取证树）；
+        - **同一 event_id 不重复记账**：调用点在重放/认领之后，重放不会往账本里追加
+          第二条同事件记录（重放记录也不带 batch 键——它没有新的提议）。
+
+        为什么在判定**之前**记账：block 与 allow 的记录都要能回答"这个文件对这个会话来说
+        是不是已提议过"；把记账放在 allow 分支里会让被拦下的提议从批次里消失，而那正是
+        后续台阶要看的东西。
+        """
+
+        declaration = self.config.batch_ledger
+        if declaration is None:
+            # 没有声明这一项 = 行为与 C1-a 之前逐字相同：不写账本，审计里连 batch 键都没有。
+            return {}
+        base: dict[str, Any] = {
+            "schema_version": BATCH_LEDGER_SCHEMA_VERSION,
+            "declared_in": "batch_ledger",
+        }
+        if not declaration.enabled:
+            return {
+                "batch": {
+                    **base,
+                    "status": "disabled",
+                    "recorded": False,
+                    "reason": "batch_ledger.enabled=false：声明了批次台账但被显式关闭",
+                    "note": BATCH_LEDGER_NOTE,
+                }
+            }
+        if not event.file:
+            return {
+                "batch": {
+                    **base,
+                    "status": "not_applicable",
+                    "recorded": False,
+                    "reason": "该动作没有文件维度：没有目标可以记进批次台账",
+                    "note": BATCH_LEDGER_NOTE,
+                }
+            }
+
+        try:
+            path, targets, skipped = append_target(
+                root=declaration.root,
+                session_id=event.session_id,
+                event_id=event.event_id,
+                tool=event.tool,
+                target=event.file,
+                recorded_at=_utc_now(),
+            )
+        except Exception as error:  # noqa: BLE001 - 只报告通道：任何失败都必须降级，不许改判定
+            reason = sanitize(str(error), project_root=self.config.project_root)
+            print(
+                "[policy] BATCH LEDGER UNAVAILABLE " + reason,
+                file=sys.stderr,
+            )
+            return {
+                "batch": {
+                    **base,
+                    "status": "unavailable",
+                    "recorded": False,
+                    "target": event.file,
+                    "reason": reason,
+                    "note": BATCH_LEDGER_NOTE,
+                }
+            }
+
+        # TTL 清理是维护动作：删不掉只是磁盘占用，不是证据，也绝不改变这一次的记录状态。
+        pruned = 0
+        try:
+            pruned = prune_expired(
+                declaration.root, ttl_hours=declaration.ttl_hours, keep_path=path
+            )
+        except Exception:  # noqa: BLE001 - 维护动作失败不改判定
+            pruned = 0
+
+        unique = sorted(set(targets))
+        return {
+            "batch_ref": batch_ref(event.session_id, unique),
+            "batch": {
+                **base,
+                "status": "recorded",
+                "recorded": True,
+                "target": event.file,
+                "target_count": len(unique),
+                "targets_digest": targets_digest(unique),
+                "path": display_path(path, project_root=self.config.project_root),
+                "pruned": pruned,
+                "skipped_lines": skipped,
+                "note": BATCH_LEDGER_NOTE,
+            },
+        }
+
     def rule_visibility_not_applicable(self) -> dict[str, Any]:
         """没有文件维度的动作（Phase 4 执行类）：Phase 1 规则引擎完全不适用。
 
@@ -1689,6 +1815,12 @@ class DshPreExecuteHook:
                     started=started,
                     base_record=record,
                 )
+
+        # C1-a：批次台账（只报告）。放在重放/认领之后——同一 event_id 的重放不重复记账；
+        # 放在判定之前——无论这次判 block 还是 allow，账本都记下「本会话提议过这个文件」。
+        # 它只往 record 里加审计键：book_batch 的失败已在该方法里降级成 batch 状态与一行
+        # stderr，decision / violations / reason_code / 退出码一个都不读它。
+        record.update(self.book_batch(event=event))
 
         context = to_policy_context(event, config=self.config)
         # G3/M2：动手前取证。声明的形状决定这一段是否存在——没有声明时连提供者都不问，
