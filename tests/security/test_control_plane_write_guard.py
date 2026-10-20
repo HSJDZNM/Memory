@@ -5,13 +5,15 @@
 | 路径 | 修前 |
 | --- | --- |
 | 写类工具到 `policies/` `registry/` `adapters/` `api/` `validation/` | 已前置阻断（`blocked_prefixes`） |
-| 写类工具到 `<受控项目>/.policy/` | **没有阻断**——读面从 B3 起已封住它，写面却没封 |
+| 写类工具到 `<受控项目>/.policy/` | **没有阻断**——读面从 B3 起已封住它，写面却没封（注册表 1.3 已补） |
+| 写类工具到 `.git/` 与 `.github/workflows/` | **没有阻断**——改 hook / CI = 改执行面（注册表 1.4 已补，04 5.87） |
 | 删除 | dsh 工具表没有 delete 操作；`Remove-Item` 不在命令白名单 → `command_not_allowlisted` |
 | 执行 | `run_code` 的结构化静态检查 → `code_blocked` |
 
 本文件把三条路径钉在**同一份固定请求集**上（与读数 §3 的前后矩阵同一组用例）：
-写面只翻 `.policy` 那一格、近似前缀 `.policyx/` 不误伤、`policies/` 仍被拦，
-删除与执行两条路径的**既有 reason code 一个字不变**。
+写面只翻 `.policy`、`.git`、`.github/workflows` 这三组目标；近似前缀（`.policyx/`、
+`.gitignore`、`.github/ISSUE_TEMPLATE/`、`.github/workflowsx/`）不误伤；`policies/`、
+`registry/` 仍被拦；删除与执行两条路径的**既有 reason code 一个字不变**。
 
 另外两条纪律也在这里钉住：
 
@@ -164,6 +166,94 @@ def test_the_rule_directory_is_still_blocked(tmp_root: Path) -> None:
         "fs.write",
         {"file_path": "policies/security/SEC-001.yaml", "content": "id: SEC-001\n"},
         action_id="cp-policies-regression",
+    )
+
+    assert outcome.decision.decision is Decision.BLOCK
+    assert outcome.decision.reason_code is ReasonCode.PATH_OUT_OF_SCOPE
+
+
+# ----------------------------------------------------- 路径 1b：执行面（注册表 1.4）
+
+# 判据：改了就改变"谁能被执行 / 哪些检查会跑"。`.git/hooks/*` 下一次 `git commit` 就执行；
+# `.git/config` 能把 hook 路径（core.hooksPath）或 alias 指到别处；`.github/workflows/*`
+# 决定 CI 还跑不跑。这三类因此和信任根同级保护，而不是"扩宽一点顺手封上"。
+
+
+@pytest.mark.parametrize(
+    "tool_id, case_id, params, needle",
+    [
+        ("fs.write", "git-hook",
+         {"file_path": ".git/hooks/pre-commit", "content": "#!/bin/sh\nexit 0\n"},
+         ".git"),
+        ("fs.edit", "git-config",
+         {"file_path": ".git/config", "old_string": "hooksPath = x", "new_string": "hooksPath = y"},
+         ".git"),
+        ("fs.write", "workflow-ci",
+         {"file_path": ".github/workflows/ci.yml", "content": "on: push\n"},
+         ".github/workflows"),
+        # 编排层同样不许写执行面：两个 Agent 的边界必须一致。
+        ("orc.fs.write", "orc-git-hook",
+         {"file_path": ".git/hooks/pre-commit", "content": "#!/bin/sh\nexit 0\n"},
+         ".git"),
+        # 拼写归一化：大小写（Windows 上同一个目标）与 "./" 都必须命中。
+        ("fs.write", "git-upper",
+         {"file_path": ".GIT/hooks/pre-commit", "content": "#!/bin/sh\nexit 0\n"},
+         ".git"),
+        ("fs.write", "workflow-dot",
+         {"file_path": "./.github/workflows/ci.yml", "content": "on: push\n"},
+         ".github/workflows"),
+    ],
+)
+def test_the_execution_surface_write_is_blocked(
+    tmp_root: Path, tool_id: str, case_id: str, params: dict, needle: str
+) -> None:
+    """写 git hook / `.git/config` / workflow 被 `path_prefixes` 拦下（注册表 1.4 的数据）。"""
+
+    outcome = _precheck(
+        tmp_root, tool_id, params, action_id=f"git-surface-{case_id}"
+    )
+
+    assert outcome.decision.decision is Decision.BLOCK
+    assert outcome.decision.reason_code is ReasonCode.PATH_OUT_OF_SCOPE
+    check = _check(outcome, "path_prefixes")
+    assert check is not None and check.status is CheckStatus.FAILED
+    assert "受保护前缀" in check.detail
+    assert needle in check.detail
+
+
+@pytest.mark.parametrize(
+    "file_path, note",
+    [
+        (".gitignore", ".gitignore 不是 .git 之下（路径分段边界，不是字符串前缀）"),
+        (".github/ISSUE_TEMPLATE/bug.md", "只封 workflows：.github 其余部分照常放行"),
+        (".github/workflowsx/ci.yml", "workflowsx 不是 workflows 之下（精度探针）"),
+    ],
+)
+def test_the_execution_surface_lookalikes_are_not_harmed(
+    tmp_root: Path, file_path: str, note: str
+) -> None:
+    """精度：执行面前缀按**路径分段边界**匹配，日常改 .gitignore / 模板不会被误伤。"""
+
+    outcome = _precheck(
+        tmp_root,
+        "fs.write",
+        {"file_path": file_path, "content": "placeholder\n"},
+        action_id="git-surface-precision-" + file_path.replace("/", "-").replace(".", "d"),
+    )
+
+    check = _check(outcome, "path_prefixes")
+    assert check is not None and check.status is CheckStatus.PASSED, note
+    assert outcome.decision.decision is not Decision.BLOCK
+
+
+def test_the_registry_directory_is_still_blocked(tmp_root: Path) -> None:
+    """回归：补执行面前缀之后，`registry/`（授权表本身）仍被拦。"""
+
+    outcome = _precheck(
+        tmp_root,
+        "fs.edit",
+        {"file_path": "registry/tool-registry.yaml", "old_string": "a", "new_string": "b"},
+        action_id="git-surface-regression",
     )
 
     assert outcome.decision.decision is Decision.BLOCK

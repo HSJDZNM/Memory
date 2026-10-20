@@ -433,16 +433,16 @@ def test_family_data_enters_the_reviewed_schema_hash():
     assert base.command_family("nope") is None
 
 
-def test_registry_schema_version_moved_to_1_3_and_old_documents_still_load(tmp_root):
-    """注册表轴：1.1（B1 的族与默认值）→ 1.2（B3 的 read_guard）→ 1.3（C3 的 .policy 前缀），
-    三份旧文档照常加载。"""
+def test_registry_schema_version_moved_to_1_4_and_old_documents_still_load(tmp_root):
+    """注册表轴：1.1（B1 的族与默认值）→ 1.2（B3 的 read_guard）→ 1.3（C3 的 .policy 前缀）
+    → 1.4（C3 前置阻断补齐：.git 与 .github/workflows 执行面），四份旧文档照常加载。"""
 
-    assert REGISTRY_SCHEMA_VERSION == "1.3"
-    assert SUPPORTED_REGISTRY_SCHEMA_VERSIONS == {"1.0", "1.1", "1.2", "1.3"}
+    assert REGISTRY_SCHEMA_VERSION == "1.4"
+    assert SUPPORTED_REGISTRY_SCHEMA_VERSIONS == {"1.0", "1.1", "1.2", "1.3", "1.4"}
 
     import yaml as yaml_module
 
-    for version in ("1.0", "1.1", "1.2"):
+    for version in ("1.0", "1.1", "1.2", "1.3"):
         old = registry_document()
         old["registry_schema_version"] = version
         path = tmp_root / f"old-registry-{version}.yaml"

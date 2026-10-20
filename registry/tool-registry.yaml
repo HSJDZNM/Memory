@@ -31,7 +31,16 @@
 # `read_guard` 封住 `.policy`，写面此前却没封——同一份信任根（审批条子 / 审计账本 /
 # 台账）有两条路，读那条挡着、写那条敞着，等于没挡。按 AGENTS 第 55 条显式升版；
 # 旧注册表（1.0 / 1.1 / 1.2）照常加载，SUPPORTED 保留 1.0 / 1.1 / 1.2 / 1.3。
-registry_schema_version: "1.3"
+#
+# 1.4（C3 前置阻断补齐，2026-10-21，04 5.87）：四个写类工具的 `blocked_prefixes` 再补
+# `.git` 与 `.github/workflows`。同样**键没变、取值列变了**：上一版把"受控项目里的信任根"
+# 收进来，这一版收的是**执行面**——`.git/hooks/*` 下一次 `git commit` 就执行（写 hook 等于
+# 拿到执行权，而执行路径本身是被前置阻断的）；`.git/config` 能改 `core.hooksPath` / alias，
+# 把执行面搬到别处；`.github/workflows/*` 是检查的执行面，改 CI 就能让门禁不再跑。
+# 口径仍是"改了就改变执行面"才做结构性阻断：文档、语料、阈值这些改的是判定依据或读数，
+# 按"规则 + 审批"处理，不在这里封。旧注册表（1.0 / 1.1 / 1.2 / 1.3）照常加载，
+# SUPPORTED 保留 1.0 / 1.1 / 1.2 / 1.3 / 1.4。
+registry_schema_version: "1.4"
 version: 1
 
 defaults:
@@ -85,7 +94,16 @@ tools:
         # audit.jsonl、受控执行台账 enforcement-ledger.jsonl）同样定义治理。读面从 1.2 起
         # 已经挡着它（`read_guard.forbidden_path_prefixes`），写面此前却敞着——受控执行层
         # 自己的账本可以被自动放行的写工具覆盖，"审计链是追加写"就只对不发这条路的调用者成立。
-        blocked_prefixes: [policies, registry, adapters, api, validation, ".policy"]
+        #
+        # 1.4 补 `.git` 与 `.github/workflows`：这两项不是"数据"而是**执行面**。
+        #   .git/hooks/*        下一次 `git commit` 就执行——写 hook 等于间接拿到执行权，
+        #                       而执行路径（run_code / pwsh）本身已被前置阻断；
+        #   .git/config         可改 `core.hooksPath` / alias，把执行面搬到别处；
+        #   .github/workflows/* 是检查的执行面：改 CI 就能让所有门禁不再跑。
+        # 其余 `.github/`（ISSUE_TEMPLATE 等）与 `.gitignore` 不在这些前缀之下（按路径分段
+        # 边界匹配，不是字符串前缀），日常改文档/模板不会被误伤；需要改 hook 或 CI 时走
+        # 人工审批的工具（exec.pwsh 等 approval: required 的动作）。
+        blocked_prefixes: [policies, registry, adapters, api, validation, ".policy", ".git", ".github/workflows"]
         description: 目标文件（仓库相对路径；逃出工作区一律拒绝）
       - name: old_string
         type: string
@@ -118,8 +136,9 @@ tools:
         required: true
         path_scope: workspace
         # 与 fs.edit 同一组受保护前缀（理由见那里）：create-or-overwrite 能覆盖任何路径，
-        # 控制面因此同样不能由自动放行的写工具触达（1.3 起含 `.policy` 信任根）。
-        blocked_prefixes: [policies, registry, adapters, api, validation, ".policy"]
+        # 控制面与执行面因此同样不能由自动放行的写工具触达（1.3 起含 `.policy` 信任根，
+        # 1.4 起含 `.git` 与 `.github/workflows`）。
+        blocked_prefixes: [policies, registry, adapters, api, validation, ".policy", ".git", ".github/workflows"]
       - name: content
         type: string
         required: true
@@ -430,9 +449,10 @@ tools:
         type: path
         required: true
         path_scope: workspace
-        # 与 dsh 的 fs.edit / fs.write 同一组受保护前缀（含 1.3 起补的 `.policy`）：
-        # 编排层的修复节点同样是自动放行的写工具，两个 Agent 的信任根边界必须一致。
-        blocked_prefixes: [policies, registry, adapters, api, validation, ".policy"]
+        # 与 dsh 的 fs.edit / fs.write 同一组受保护前缀（含 1.3 起补的 `.policy`、
+        # 1.4 起补的 `.git` / `.github/workflows`）：编排层的修复节点同样是自动放行的写工具，
+        # 两个 Agent 的信任根边界与执行面边界必须一致。
+        blocked_prefixes: [policies, registry, adapters, api, validation, ".policy", ".git", ".github/workflows"]
         description: 目标文件（工作区相对路径；逃出工作区一律拒绝）
       - name: old_string
         type: string
@@ -464,13 +484,13 @@ tools:
         type: path
         required: true
         path_scope: workspace
-        blocked_prefixes: [policies, registry, adapters, api, validation, ".policy"]
+        blocked_prefixes: [policies, registry, adapters, api, validation, ".policy", ".git", ".github/workflows"]
       - name: content
         type: string
         required: true
         max_chars: 200000
     notes: 与 dsh 的 fs.write 同形，但主体与审计命名空间是编排层自己：两个 Agent 不共用授权；
-      受保护前缀同样含 1.3 起补的 `.policy` 信任根
+      受保护前缀同样含 1.3 起补的 `.policy` 信任根与 1.4 起补的 `.git` / `.github/workflows`
 
   - id: orc.policy.write
     title: 编排层新建规则文件（高风险：必须人工审批）

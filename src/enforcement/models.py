@@ -103,7 +103,7 @@ __all__ = [
 # （先例：`validators.pipeline` 的 `selection.level` 多出 "support" ⇒ 1.3 → 1.4）。
 # 旧消费方看到 `read_guard_blocked` 必须拒绝消费，而不是把它当成一个不认识的"放行"。
 # **1.0 仍然接受**：已经落盘的审计 / 台账 / 决策记录是 1.0 载荷，它们与 1.1 的键集合逐字相同，
-# 拒收只会让历史证据读不出来；这与 `REGISTRY_SCHEMA_VERSION` 的 1.0/1.1/1.2/1.3 同型。
+# 拒收只会让历史证据读不出来；这与 `REGISTRY_SCHEMA_VERSION` 的 1.0/1.1/1.2/1.3/1.4 同型。
 ENFORCEMENT_SCHEMA_VERSION = "1.1"
 SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS = frozenset({"1.0", ENFORCEMENT_SCHEMA_VERSION})
 
@@ -143,9 +143,15 @@ EnforcementVersion = Annotated[str, AfterValidator(_check_protocol_version)]
 # （审批条子 / 审计账本 / 受控执行台账）的读面从 1.2 起由 `read_guard` 封住，写面此前却敞着；
 # 按第 55 条"取值集合/语义变了就要显式升版"（同型先例：ReasonCode 多一个取值 ⇒ ENFORCEMENT
 # 1.0→1.1）。旧注册表 1.0 / 1.1 / 1.2 照常加载，因此 `SUPPORTED` 显式列出全部四个版本。
-REGISTRY_SCHEMA_VERSION = "1.3"
+#
+# 1.4（C3 前置阻断补齐，2026-10-21，04 5.87）：同一条取值列再补 `.git` 与 `.github/workflows`。
+# 1.3 收的是"信任根"（账本与条子），1.4 收的是**执行面**：git hook 在下一次 `git commit` 时执行、
+# `.git/config` 能把 hook 路径改到别处、workflow 文件决定 CI 还跑不跑。判据不变——"改了就改变
+# 了谁能被执行 / 哪些检查会跑"，与文档、语料、阈值（改的是判定依据或读数，按规则 + 审批处理）
+# 分得开。仍按第 55 条显式升版；旧注册表 1.0 / 1.1 / 1.2 / 1.3 照常加载。
+REGISTRY_SCHEMA_VERSION = "1.4"
 SUPPORTED_REGISTRY_SCHEMA_VERSIONS = frozenset(
-    {"1.0", "1.1", "1.2", REGISTRY_SCHEMA_VERSION}
+    {"1.0", "1.1", "1.2", "1.3", REGISTRY_SCHEMA_VERSION}
 )
 
 # 命令文本里出现这些片段就说明它不是一条单语句：分隔、管道、命令替换、重定向、

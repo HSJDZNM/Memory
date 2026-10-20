@@ -399,7 +399,9 @@ def test_orchestrator_tools_match_the_orchestration_layer():
         generic = registry.tool(tool_id)
         assert generic is not None
         # 受保护前缀是**同一组**：控制面目录（规则 / 工具授权 / 适配器声明 / 已审核哈希）+
-        # 受控项目里的信任根 `.policy`（注册表 1.3 起；读面从 1.2 起已同样保护）。
+        # 受控项目里的信任根 `.policy`（注册表 1.3 起；读面从 1.2 起已同样保护）+
+        # 执行面 `.git` / `.github/workflows`（注册表 1.4 起，04 5.87：写 hook 或 CI
+        # 等于改执行链）。编排层与 dsh 侧这两个 Agent 的边界必须逐字相同。
         assert set(generic.parameter("file_path").blocked_prefixes) == {
             "policies",
             "registry",
@@ -407,6 +409,8 @@ def test_orchestrator_tools_match_the_orchestration_layer():
             "api",
             "validation",
             ".policy",
+            ".git",
+            ".github/workflows",
         }
 
 

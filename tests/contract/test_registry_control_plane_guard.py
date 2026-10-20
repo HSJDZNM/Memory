@@ -12,6 +12,13 @@
 而读面从 B3（注册表 1.2 的 `read_guard`）起就已经挡着它——同一条信任根两条路，读挡着、
 写敞着，等于没挡。四个写类工具（dsh 的两个 + 编排层的两个）都必须声明它。
 
+注册表 1.4（2026-10-21，04 5.87）再把 `.git` 与 `.github/workflows` 补进同一份列表：
+它们不是"数据"而是**执行面**——`.git/hooks/*` 在下一次 `git commit` 时执行、
+`.git/config` 能把 hook 路径（core.hooksPath）或 alias 指到别处、workflow 文件决定 CI
+还跑不跑。改它们等于改"谁能被执行 / 哪些检查会跑"，与文档、语料（改的是判定依据或读数）
+分得开。精度由**路径分段边界**保证：`.gitignore`、`.github/ISSUE_TEMPLATE/` 与
+`.github/workflowsx/` 都不在前缀之下。
+
 本文件两组断言缺一不可：
 
 1. **数据面**：注册表里每个"不改就能自动放行"的写工具都必须声明同一组受保护前缀；
@@ -41,7 +48,18 @@ pytestmark = pytest.mark.contract
 # 控制面：这些目录里的数据定义了"什么受治理、授权给谁、按什么口径判"。
 # `.policy` 是受控项目里的**信任根**（审批条子 / 审计账本 / 台账）：它不定义规则，但定义
 # "这次治理发生过什么"，因此与上面五个目录同级保护（读面从注册表 1.2 起已同样保护）。
-CONTROL_PLANE_PREFIXES = {"policies", "registry", "adapters", "api", "validation", ".policy"}
+# `.git` 与 `.github/workflows` 是**执行面**（注册表 1.4）：hook 会被下一次 git 命令执行、
+# `.git/config` 能改 hook 路径、workflow 决定 CI 是否还跑——改它们就是改执行链本身。
+CONTROL_PLANE_PREFIXES = {
+    "policies",
+    "registry",
+    "adapters",
+    "api",
+    "validation",
+    ".policy",
+    ".git",
+    ".github/workflows",
+}
 
 # 四个自动放行的写工具：两个 dsh 侧 + 两个编排层。少一个就是一条无门禁的改写路径。
 AUTO_APPROVED_WRITE_TOOLS = {"fs.edit", "fs.write", "orc.fs.edit", "orc.fs.write"}
@@ -157,6 +175,71 @@ def test_the_guard_blocks_the_trust_root_write(
     assert check is not None and check.status is CheckStatus.FAILED
     assert "受保护前缀" in check.detail
     assert ".policy" in check.detail
+
+
+@pytest.mark.parametrize(
+    "tool_id, case_id, params, needle",
+    [
+        # 执行面：写 hook / 改 .git/config / 写 workflow 与写信任根同级（注册表 1.4）。
+        ("fs.write", "git-hook-write",
+         {"file_path": ".git/hooks/pre-commit", "content": "#!/bin/sh\nexit 0\n"}, ".git"),
+        ("fs.edit", "git-config-edit",
+         {"file_path": ".git/config", "old_string": "hooksPath = x",
+          "new_string": "hooksPath = y"}, ".git"),
+        ("fs.write", "workflow-edited",
+         {"file_path": ".github/workflows/ci.yml", "content": "on: push\n"},
+         ".github/workflows"),
+        # 编排层写工具同样是自动放行：两个 Agent 的执行面边界必须一致。
+        ("orc.fs.write", "orc-git-hook-write",
+         {"file_path": ".git/hooks/pre-commit", "content": "#!/bin/sh\nexit 0\n"}, ".git"),
+        # 拼写归一化：大小写与 "./" 是同一个目标（Windows 文件系统不区分大小写）。
+        ("fs.write", "git-upper-write",
+         {"file_path": ".GIT/hooks/pre-commit", "content": "#!/bin/sh\nexit 0\n"}, ".git"),
+        ("fs.write", "workflow-dot-write",
+         {"file_path": "./.github/workflows/ci.yml", "content": "on: push\n"},
+         ".github/workflows"),
+    ],
+)
+def test_the_guard_blocks_the_execution_surface_write(
+    tmp_root: Path, tool_id: str, case_id: str, params: dict, needle: str
+) -> None:
+    """写 .git/ 与 .github/workflows/ 必须被 path_prefixes 拦下（注册表 1.4 的数据）。"""
+
+    outcome = _precheck(
+        tmp_root, tool_id, params, action_id=f"guard-exec-{case_id}"
+    )
+
+    assert outcome.decision.decision is Decision.BLOCK
+    assert outcome.decision.reason_code is ReasonCode.PATH_OUT_OF_SCOPE
+    check = outcome.decision.check("path_prefixes")
+    assert check is not None and check.status is CheckStatus.FAILED
+    assert "受保护前缀" in check.detail
+    assert needle in check.detail
+
+
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        ".gitignore",  # 不是 .git 之下（分段边界）
+        ".github/ISSUE_TEMPLATE/bug.md",  # 只封 workflows，.github 其余部分放行
+        ".github/workflowsx/ci.yml",  # 近似前缀不是 workflows 之下
+    ],
+)
+def test_the_guard_does_not_block_the_execution_surface_lookalikes(
+    tmp_root: Path, file_path: str
+) -> None:
+    """精度：执行面前缀按路径分段边界匹配，日常改 .gitignore / 模板不误伤。"""
+
+    outcome = _precheck(
+        tmp_root,
+        "fs.write",
+        {"file_path": file_path, "content": "placeholder\n"},
+        action_id="guard-exec-precision-" + file_path.replace("/", "-").replace(".", "d"),
+    )
+
+    check = outcome.decision.check("path_prefixes")
+    assert check is not None and check.status is CheckStatus.PASSED
+    assert outcome.decision.decision is not Decision.BLOCK
 
 
 def test_the_guard_does_not_block_the_lookalike_prefix(tmp_root: Path) -> None:
