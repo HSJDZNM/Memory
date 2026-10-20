@@ -2,7 +2,8 @@
 
 检查顺序固定，每一项都留下结构化结论（checks），因此"为什么被拦"永远可解释：
 
-    registry → action_window → principal → permissions → approval
+    registry → action_window → principal → permissions → path_prefixes
+    → command_*（白名单 / 组合 / 被禁片段 / **读面闸门**）→ approval
     → policy（规则引擎，可显式跳过）→ rate_limit → circuit_breaker
     → ledger（重放 / 复用）→ audit（允许之后才写）
 
@@ -18,6 +19,7 @@
 
 from __future__ import annotations
 
+import posixpath
 import re
 import uuid
 from contextlib import ExitStack
@@ -54,6 +56,7 @@ from .models import (
     PolicySummary,
     PreDecision,
     ReasonCode,
+    ReadGuardSpec,
     ToolSpec,
     utc_now,
 )
@@ -165,6 +168,97 @@ def _declared_alternatives(
     if not clauses:
         return ""
     return "；可用替代：" + "；".join(clauses)
+
+
+# --------------------------------------------------------------------------- 读面闸门（B3）
+
+# 操作数外面常带引号（`git log -p -- "x y/.policy/a"`）；剥掉它们才知道自己看的是什么。
+_OPERAND_QUOTES = "\"'`"
+
+# `<盘符>:<路径>` 是宿主绝对路径，不是 git 的 `<rev>:<path>`：两者在文本上都带冒号，
+# 按前者解释才不会让 `git log -p -- C:/Users/x` 从读面底下溜过去。
+_WINDOWS_ABS_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def read_guard_operands(command: str, path_forms: Sequence[str]) -> list[tuple[str, str]]:
+    """按**声明的形态**从命令文本里取出路径操作数：(形态, 操作数原文)。
+
+    这是结构性提取，不依赖命令白名单正则、也不改写命令文本。只认注册表声明过的形态
+    （`ReadGuardSpec.path_forms`），因为「哪些写法算路径操作数」是一个必须可评审的决定：
+
+      positional     不以 "-" 开头的独立 token（`git log -p -- .policy/audit.jsonl`）
+      revision_path  `<rev>:<path>` 冒号右侧的 path（`git show HEAD:.policy/approval.json`）
+
+    **每个定位 token 都当成路径候选**，而不是先猜「像不像路径」：
+    `git log -p -- registry` 里那个裸目录名没有任何斜杠，靠启发式会从闸门底下溜过去；
+    反过来，谓词本身足够具体（受保护前缀 / 越界 / 绝对路径），`git status` 的两个 token
+    因此不会被误伤。
+
+    **已知缺口**（写进读数，不许当成覆盖）：选项的取值不算操作数（`--output=<路径>` 由
+    `forbidden_command_fragments` 管）；被引号包裹且**含空格**的路径会被空白切成两段；
+    git 的配置 / 别名 / 短名展开不在本函数视野里——结构性检查不是沙箱（AGENTS 第 17 条）。
+    """
+
+    operands: list[tuple[str, str]] = []
+    for raw in command.split():
+        token = raw.strip(_OPERAND_QUOTES)
+        if not token or token.startswith("-"):
+            continue
+        if (
+            "revision_path" in path_forms
+            and ":" in token
+            and _WINDOWS_ABS_RE.match(token) is None
+        ):
+            _, _, path = token.partition(":")
+            if path:
+                operands.append(("revision_path", path))
+            continue
+        if "positional" in path_forms:
+            operands.append(("positional", token))
+    return operands
+
+
+def read_guard_violation(
+    operand: tuple[str, str], guard: ReadGuardSpec
+) -> Optional[tuple[str, str, str]]:
+    """一条路径操作数是否越出读面：命中返回 (形态, 规则, 归一化路径)，否则 None。
+
+    三条谓词各自独立，只对**声明过**的规则生效：
+
+      absolute_path       宿主绝对路径（/x、C:/x、UNC）。**revision_path 形态除外**——
+                          `<rev>:/x` 在 git 里表示「仓库根下的 x」，把它拦下来是误伤。
+      parent_escape       归一化后越出受控项目（`..`、`a/../../x`）。
+      forbidden_path_prefix  <受保护前缀> 或 <受保护前缀>/...（大小写不敏感，按路径分段边界；
+                          Windows 文件系统不区分大小写，`.POLICY/x` 与 `.policy/x` 是同一处）。
+    """
+
+    form, raw = operand
+    text = raw.replace("\\", "/").strip()
+    if not text:
+        return None
+    if form == "revision_path":
+        # git 语义：`HEAD:/x` 指的是树根下的 x，不是宿主根目录。剥掉前导斜杠再判。
+        text = text.lstrip("/")
+        if not text:
+            return None
+    if "absolute_path" in guard.forbidden_forms and form != "revision_path":
+        if text.startswith(("/", "\\")) or _WINDOWS_ABS_RE.match(text):
+            return form, "absolute_path", text
+    normalized = posixpath.normpath(text)
+    if "parent_escape" in guard.forbidden_forms and (
+        normalized == ".." or normalized.startswith("../")
+    ):
+        return form, "parent_escape", normalized
+    candidate = normalized.casefold()
+    for prefix in guard.forbidden_path_prefixes:
+        key = prefix.casefold()
+        if candidate == key or candidate.startswith(key + "/"):
+            return form, f"forbidden_path_prefix:{prefix}", normalized
+    return None
+
+
+def _describe_read_guard_hits(hits: Sequence[tuple[str, str, str]]) -> str:
+    return "; ".join(f"{form} 操作数 {path!r} 命中 {rule}" for form, rule, path in hits)
 
 
 def issue_grant(
@@ -430,7 +524,92 @@ def check_list(
             _check("command_fragments", CheckStatus.SKIPPED, ReasonCode.ALLOW, "该工具不是命令类")
         )
 
-    # 4e) 委派类进程工具的第二道闸（G9）：结构化代码检查，或显式的"不可治理"声明。
+    # 4e) 读面闸门（B3，注册表 1.2 的 read_guard 数据）：只读命令族的**路径操作数**不能落在
+    #     信任根上，也不能越出受控项目。
+    #
+    #     为什么需要它：写类参数走 policy.context.repo_relative_path 的范围校验，命令文本里的
+    #     路径操作数不走那一层——`git show HEAD:.policy/approval.json`、`git log -p -- .policy/
+    #     audit.jsonl` 完整匹配命令白名单，读到的是审批条子与审计账本（04 号 5.70）。
+    #
+    #     为什么放在片段检查**之后**：被禁片段（`../` / `--output` / `--ext-diff` / `--no-index`）
+    #     与组合片段命中的命令，reason_code 一个字不改（先命中者定码）；本检查负责片段清单
+    #     描述不了的那一类——`.policy/approval.json` 里没有任何被禁片段，"这次读的是哪个目标"
+    #     只能由「操作数 + 读面边界数据」回答。两个 reason code 故意分开：
+    #     command_fragment_blocked 说的是"命令里有会改变行为的片段"，read_guard_blocked 说的是
+    #     "这次读取越出了读面"。
+    #
+    #     为什么按**命令族**生效：read_guard.families 点名的那几族（本仓库是只读查看族）才检查，
+    #     pytest / 脚本 / 其它命令的拦截面一个字不动——这是"只拦读面越界形态"的落点。
+    if spec.command_param is not None:
+        raw = request.value_of(spec.command_param)
+        command = raw if isinstance(raw, str) else ""
+        guard = spec.read_guard
+        guarded_families = [] if guard is None else [
+            family
+            for family in spec.command_families
+            if family.id in guard.families
+            and any(
+                re.fullmatch(pattern, command.strip()) is not None for pattern in family.patterns
+            )
+        ]
+        if guard is None:
+            checks.append(
+                _check(
+                    "read_guard",
+                    CheckStatus.SKIPPED,
+                    ReasonCode.ALLOW,
+                    "该工具未声明 read_guard 数据：读面闸门不适用（不假装查过）",
+                )
+            )
+        elif not guarded_families:
+            checks.append(
+                _check(
+                    "read_guard",
+                    CheckStatus.SKIPPED,
+                    ReasonCode.ALLOW,
+                    f"该命令不在 read_guard 声明的只读族 {list(guard.families)} 内："
+                    "读面闸门不适用（其它命令的拦截面不变）",
+                )
+            )
+        else:
+            operands = read_guard_operands(command, guard.path_forms)
+            hits = sorted(
+                {
+                    hit
+                    for operand in operands
+                    if (hit := read_guard_violation(operand, guard)) is not None
+                }
+            )
+            if hits:
+                checks.append(
+                    _check(
+                        "read_guard",
+                        CheckStatus.FAILED,
+                        ReasonCode.READ_GUARD_BLOCKED,
+                        f"命令的读面越界：{_describe_read_guard_hits(hits)}；"
+                        f"受保护前缀为 {list(guard.forbidden_path_prefixes)}"
+                        "（信任根里的审批条子与审计账本不进读面），"
+                        "读面只接受受控项目内的仓库相对路径（范围等于项目根记为 .）；"
+                        "改成受控项目内的相对路径即可通过；要读受保护前缀"
+                        "必须改用该信任根的专用受控工具，并先改注册表数据再重新审核"
+                        + _declared_alternatives(spec, approval),
+                    )
+                )
+            else:
+                checks.append(
+                    _check(
+                        "read_guard",
+                        CheckStatus.PASSED,
+                        ReasonCode.ALLOW,
+                        f"只读族 {[family.id for family in guarded_families]} 的"
+                        f" {len(operands)} 个路径操作数都在读面内",
+                    )
+                )
+    else:
+        checks.append(
+            _check("read_guard", CheckStatus.SKIPPED, ReasonCode.ALLOW, "该工具不是命令类")
+        )
+    # 4f) 委派类进程工具的第二道闸（G9）：结构化代码检查，或显式的"不可治理"声明。
     #     这里刻意不产生"第三种状态"：要么检查跑出结论（通过 / 命中 / 解析失败），
     #     要么把"没有覆盖面"写成显式状态并让它进审计与警告——不允许静默通过。
     if spec.code_check is not None:

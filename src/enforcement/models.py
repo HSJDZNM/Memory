@@ -47,6 +47,9 @@ __all__ = [
     "CodeCheckSpec",
     "CommandFamily",
     "PathKind",
+    "READ_FORBIDDEN_FORMS",
+    "READ_PATH_FORMS",
+    "ReadGuardSpec",
     "SUPPORTED_CODE_CHECKS",
     "UngovernedSpec",
     "AuditError",
@@ -95,8 +98,14 @@ __all__ = [
     "ValidatorOutcome",
 ]
 
-ENFORCEMENT_SCHEMA_VERSION = "1.0"
-SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS = frozenset({ENFORCEMENT_SCHEMA_VERSION})
+# 1.0（首次建轴）→ **1.1（B3，2026-10-20）**：`ReasonCode` 多出取值 `read_guard_blocked`。
+# 键集合一个字没变，变的是**枚举取值集合**——按 AGENTS 第 55 条，取值集合变了同样是协议变化
+# （先例：`validators.pipeline` 的 `selection.level` 多出 "support" ⇒ 1.3 → 1.4）。
+# 旧消费方看到 `read_guard_blocked` 必须拒绝消费，而不是把它当成一个不认识的"放行"。
+# **1.0 仍然接受**：已经落盘的审计 / 台账 / 决策记录是 1.0 载荷，它们与 1.1 的键集合逐字相同，
+# 拒收只会让历史证据读不出来；这与 `REGISTRY_SCHEMA_VERSION` 的 1.0/1.1/1.2 同型。
+ENFORCEMENT_SCHEMA_VERSION = "1.1"
+SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS = frozenset({"1.0", ENFORCEMENT_SCHEMA_VERSION})
 
 
 def _check_protocol_version(value: str) -> str:
@@ -124,8 +133,12 @@ EnforcementVersion = Annotated[str, AfterValidator(_check_protocol_version)]
 # 字段）照常加载**，与 `validators.models.TEST_LAYOUT_SCHEMA_VERSIONS` 的
 # 「加可选字段不制造兼容窗口」同型。两个字段都进 `schema_hash`：它们是授权面数据，
 # 改了就与已审核哈希对不上（必须重新 `registry --approve`）。
-REGISTRY_SCHEMA_VERSION = "1.1"
-SUPPORTED_REGISTRY_SCHEMA_VERSIONS = frozenset({"1.0", REGISTRY_SCHEMA_VERSION})
+#
+# 1.2（B3，2026-10-20）：逐工具新增**可选**字段 `read_guard`（只读命令族的读面闸门数据，
+# 见 `ReadGuardSpec`）。同样按第 55 条显式升版；同样可选，因此 `SUPPORTED` 保留 1.0 / 1.1，
+# 两份旧注册表照常加载。它进 `schema_hash`（授权面数据）：读面的边界改一个字都必须重新审核。
+REGISTRY_SCHEMA_VERSION = "1.2"
+SUPPORTED_REGISTRY_SCHEMA_VERSIONS = frozenset({"1.0", "1.1", REGISTRY_SCHEMA_VERSION})
 
 # 命令文本里出现这些片段就说明它不是一条单语句：分隔、管道、命令替换、重定向、
 # 换行都意味着「白名单匹配的那条命令之外还有别的东西」。这些一律结构性阻断——
@@ -159,6 +172,21 @@ SUPPORTED_POST_CHECKS = (
 # 注册表里出现别的名字一律在加载期报错。"声明了但没人执行"的检查等于没有门禁，
 # 而"声明了但什么都没查"更糟——它把缺口藏进了一份看起来更完整的声明里。
 SUPPORTED_CODE_CHECKS = ("python_forbidden_surface",)
+
+# 读面闸门（read_guard）的两张**闭集**。分开是因为它们回答两个不同的问题，而且都只能由
+# 代码来兑现——注册表能声明"用哪几种"，但不能发明一种没人实现的形态（与 SUPPORTED_CODE_CHECKS
+# 同一口径：声明了却没人执行的检查等于没有门禁）：
+#
+# READ_PATH_FORMS       命令文本里**哪些写法算路径操作数**。认不出来的写法等于没有检查，
+#                       所以这张表必须显式、有限、可评审。
+#   positional          不以 "-" 开头的独立 token（git log -p -- .policy/audit.jsonl）
+#   revision_path       <rev>:<path> 里冒号右侧的 path（git show HEAD:.policy/approval.json）
+# READ_FORBIDDEN_FORMS  **什么样算读面越界**，每条对应 pre-check 里一条结构性谓词。
+#   parent_escape       归一化后越出受控项目（.. / a/../../x）
+#   absolute_path       绝对路径（/x、C:/x、UNC）；revision_path 形态按 git 语义视为树内相对，
+#                       因此 "HEAD:/README.md" 不算绝对路径——误伤合法读法比漏拦更常见。
+READ_PATH_FORMS = ("positional", "revision_path")
+READ_FORBIDDEN_FORMS = ("parent_escape", "absolute_path")
 
 # 检查项名字的字符集：与参数名同一口径（稳定标识符），避免出现无法比较的写法。
 _CODE_CHECK_ENTRY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
@@ -375,6 +403,10 @@ class ReasonCode(str, Enum):
     COMMAND_NOT_ALLOWLISTED = "command_not_allowlisted"
     COMMAND_COMPOSITION_BLOCKED = "command_composition_blocked"
     COMMAND_FRAGMENT_BLOCKED = "command_fragment_blocked"
+    # B3：只读命令族的**读面**越界（受保护前缀 / 越出受控项目）。与 command_fragment_blocked
+    # 是两件事，按 reason_code 聚合的人必须能分开读：片段清单问的是「命令文本里有没有会改变
+    # 行为的片段」（--output / --ext-diff / ../），本码问的是「这次读取的目标落在读面之外吗」。
+    READ_GUARD_BLOCKED = "read_guard_blocked"
     EXECUTION_FAILED = "execution_failed"
     EXECUTION_TIMEOUT = "execution_timeout"
     POST_CHECK_FAILED = "post_check_failed"
@@ -695,18 +727,9 @@ class ParamSpec(StrictModel):
     @field_validator("blocked_prefixes")
     @classmethod
     def _check_blocked_prefixes(cls, value: Tuple[str, ...]) -> Tuple[str, ...]:
-        normalized: list[str] = []
-        for item in value:
-            prefix = item.replace("\\", "/").strip("/")
-            parts = prefix.split("/")
-            if not prefix or any(part in ("", ".", "..") for part in parts):
-                raise ValueError(f"禁止路径前缀必须是规范的工作区相对路径，得到 {item!r}")
-            if re.fullmatch(r"[A-Za-z0-9._/-]+", prefix) is None:
-                raise ValueError(f"禁止路径前缀含不受控字符，得到 {item!r}")
-            normalized.append(prefix)
-        if len({item.casefold() for item in normalized}) != len(normalized):
-            raise ValueError("禁止路径前缀不得重复（忽略大小写）")
-        return tuple(normalized)
+        # 与读面闸门（read_guard.forbidden_path_prefixes）共用同一条规范化口径与同一段实现：
+        # 「受控项目内相对路径」这条规则只能有一个版本，否则两处会各自漂出一个可接受形态。
+        return _normalize_relative_prefixes(value, what="禁止路径前缀")
 
     @model_validator(mode="after")
     def _check_shape(self) -> "ParamSpec":
@@ -788,6 +811,106 @@ class CommandFamily(StrictModel):
         return tuple(cleaned)
 
 
+# 受保护前缀的规范形态只认这一种口径：用 "/" 分隔、不带 "./" 或首尾斜杠、不含 ".." 或空段、
+# 字符集受控。写路径（blocked_prefixes）与读面（read_guard）共用它——两处表达的是同一条
+# 「受控项目内相对路径」的规则，各写一份就会漂。
+_PREFIX_CHARS_RE = re.compile(r"[A-Za-z0-9._/-]+")
+
+
+def _normalize_relative_prefixes(value: Tuple[str, ...], *, what: str) -> Tuple[str, ...]:
+    """把一组「受控项目内相对路径前缀」规范化并校验；不合法一律加载期报错。"""
+
+    normalized: list[str] = []
+    for item in value:
+        text = str(item).replace("\\", "/")
+        if text.startswith("/"):
+            # 前导斜杠有两种读法（"绝对路径" / "写顺手了"），代码不该替作者选一种：
+            # 静默 strip 会让 "/etc" 变成受控项目里的 "etc"——声明说的与执行的不是一件事。
+            raise ValueError(
+                f"{what}必须是受控项目内的相对路径（不要以 / 开头），得到 {item!r}"
+            )
+        prefix = text.strip("/")
+        parts = prefix.split("/")
+        if not prefix or any(part in ("", ".", "..") for part in parts):
+            raise ValueError(f"{what}必须是规范的工作区相对路径，得到 {item!r}")
+        if _PREFIX_CHARS_RE.fullmatch(prefix) is None:
+            raise ValueError(f"{what}含不受控字符，得到 {item!r}")
+        normalized.append(prefix)
+    if len({item.casefold() for item in normalized}) != len(normalized):
+        raise ValueError(f"{what}不得重复（忽略大小写）")
+    return tuple(normalized)
+
+
+class ReadGuardSpec(StrictModel):
+    """只读命令族的**读面**闸门声明（注册表 1.2 起，逐工具可选）。
+
+    存在的理由（04 号 5.70）：写类参数走 `policy.context.repo_relative_path` 的范围校验，
+    **命令文本里的路径操作数不走那一层**——`git show HEAD:.policy/approval.json`、
+    `git log -p -- .policy/audit.jsonl` 完整匹配命令白名单，于是能读到信任根（审批条子与
+    审计账本）。这一个字段把「读面的边界」写成数据：哪些命令族算读面、认哪些操作数形态、
+    哪些前缀受保护、哪些形态算越界。
+
+    **它是结构性检查，不是沙箱**：只认下面声明的操作数形态，选项取值、路径里带空格且被
+    引号包裹、Windows 短名等写法不在承诺范围内；真正的隔离仍属于运行时的文件系统沙箱
+    （AGENTS 第 17 条末句）。
+
+    四个字段都**必填且不得为空集合**：只声明一半的闸门（例如只有前缀、没有越界形态）看起来
+    像门，实际放走的正是另一半——"声明了但什么都没查"比不声明更糟（第 45 条）。
+    """
+
+    families: Tuple[str, ...] = Field(
+        min_length=1,
+        description="这条闸门适用的命令族 ID：必须在本工具的 command_families 里已声明。"
+        "点名一个不存在的族，等于给一份没人读的声明发了一张通行证",
+    )
+    path_forms: Tuple[str, ...] = Field(
+        min_length=1,
+        description=f"命令文本里认哪些路径操作数形态；取值必须在 {list(READ_PATH_FORMS)} 内",
+    )
+    forbidden_path_prefixes: Tuple[str, ...] = Field(
+        min_length=1,
+        description="受保护的受控项目相对路径前缀（信任根，例如 .policy）：归一化后落在其下即阻断",
+    )
+    forbidden_forms: Tuple[str, ...] = Field(
+        min_length=1,
+        description=f"读面越界形态；取值必须在 {list(READ_FORBIDDEN_FORMS)} 内",
+    )
+
+    @field_validator("families")
+    @classmethod
+    def _check_families(cls, value: Tuple[str, ...]) -> Tuple[str, ...]:
+        cleaned: list[str] = []
+        for item in value:
+            normalized = str(item).strip()
+            if _SAFE_ID_RE.match(normalized) is None:
+                raise ValueError(f"read_guard.families 必须是命令族 ID（稳定标识符），得到 {item!r}")
+            if normalized in cleaned:
+                raise ValueError(f"read_guard.families 出现重复族 {normalized!r}")
+            cleaned.append(normalized)
+        return tuple(cleaned)
+
+    @field_validator("path_forms", "forbidden_forms")
+    @classmethod
+    def _check_forms(cls, value: Tuple[str, ...], info) -> Tuple[str, ...]:
+        allowed = READ_PATH_FORMS if info.field_name == "path_forms" else READ_FORBIDDEN_FORMS
+        cleaned: list[str] = []
+        for item in value:
+            normalized = str(item).strip()
+            if normalized not in allowed:
+                raise ValueError(
+                    f"read_guard.{info.field_name} 出现未知形态 {item!r}；"
+                    f"已实现的形态为 {list(allowed)}。换一种形态是代码工作，不是数据改动"
+                )
+            if normalized in cleaned:
+                raise ValueError(f"read_guard.{info.field_name} 出现重复形态 {normalized!r}")
+            cleaned.append(normalized)
+        return tuple(cleaned)
+
+    @field_validator("forbidden_path_prefixes")
+    @classmethod
+    def _check_prefixes(cls, value: Tuple[str, ...]) -> Tuple[str, ...]:
+        return _normalize_relative_prefixes(value, what="read_guard.forbidden_path_prefixes")
+
 class ToolSpec(StrictModel):
     """一个工具的被审核描述。schema_hash 覆盖全部字段，任何改动都会让哈希变化。"""
 
@@ -835,6 +958,13 @@ class ToolSpec(StrictModel):
         "它是**授权面数据**（进 schema_hash）：「approve --family」只从这里取模式，"
         "「approval_allowlist_audit --check」把它与 allowed_commands 双向比对。"
         "省略 = 该工具没有族数据（旧注册表照常加载）。",
+    )
+    read_guard: Optional[ReadGuardSpec] = Field(
+        default=None,
+        description="读面闸门（注册表 1.2 起）：只读命令族的路径操作数边界。"
+        "省略 = 该工具不做读面检查（旧注册表 1.0 / 1.1 照常加载），"
+        "**但一旦声明就必须完整**（四个字段都必填、都不得为空集合）。"
+        "它进 schema_hash：读面边界是被审核数据，改一个字都要重新 approve。",
     )
     audit_failure: AuditFailurePolicy = AuditFailurePolicy.BLOCK
     notes: str = ""
@@ -985,6 +1115,27 @@ class ToolSpec(StrictModel):
                 "而审批一过就是任意代码（G9）。声明不可治理也不是静默通过：pre-check 会输出 "
                 "governance_coverage=ungoverned_declared 并写进审计"
             )
+        if self.read_guard is not None:
+            # 与 command_families 同一套门槛：读面闸门只对「有命令白名单的 shell 命令」有意义。
+            # 声明在没有命令文本的工具上，等于把一条永远不会执行的规则写进授权表。
+            if self.driver is not DriverKind.SHELL_COMMAND:
+                raise ValueError(
+                    f"{self.id}: read_guard 只适用于 shell_command 驱动：别的工具没有命令文本，"
+                    "声明了也永远不会被执行，只会把缺口藏进更完整的声明里"
+                )
+            declared_families = {family.id for family in self.command_families}
+            if not declared_families:
+                raise ValueError(
+                    f"{self.id}: 声明了 read_guard 却没有 command_families——"
+                    "读面闸门按**命令族**生效，没有族就没有可生效的范围"
+                )
+            unknown_families = sorted(set(self.read_guard.families) - declared_families)
+            if unknown_families:
+                raise ValueError(
+                    f"{self.id}: read_guard.families 点名了未声明的命令族 {unknown_families}；"
+                    f"已声明的族为 {sorted(declared_families)}——"
+                    "点名一个不存在的族，等于这道闸门永远不会触发"
+                )
         return self
 
     def parameter(self, name: str) -> Optional[ParamSpec]:

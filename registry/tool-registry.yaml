@@ -20,7 +20,12 @@
 # 它们进 tools/<id> 的 schema_hash，改完必须重新 `registry --approve`；旧注册表（1.0、
 # 不带这两个字段）照常加载。族与白名单的一致性由仪器判（`tools/approval_allowlist_audit.py
 # --check` 双向比对），不在加载期强制——否则那台仪器永远绿（AGENTS 第 45 条）。
-registry_schema_version: "1.1"
+#
+# 1.2（B3，2026-10-20）：逐工具新增可选的 `read_guard`（只读命令族的读面闸门数据）。
+# 它同样是**被审核数据**（进 schema_hash），改读面边界必须重新 approve；旧注册表
+# （1.0 / 1.1、不带这个字段）照常加载，SUPPORTED 保留 1.0 / 1.1 / 1.2。
+# 读面闸门只对 `read_guard.families` 点名的那几族生效，其它命令的拦截面一个字不动。
+registry_schema_version: "1.2"
 version: 1
 
 defaults:
@@ -163,6 +168,22 @@ tools:
     # .gitattributes 的 textconv/filter），就仍可能被改写成执行外部命令；真正的隔离要靠
     # 运行时的文件系统与进程沙箱，不属于本阶段。这里只保证"选常见的写法钻不过去"。
     forbidden_command_fragments: ["../", "..\\", "--output", "--ext-diff", "--no-index"]
+    # 读面闸门（注册表 1.2，B3）：只读命令族的**结构性**读面检查。
+    #   为什么需要它：写类参数的路径走 policy.context.repo_relative_path 的范围校验，而命令文本
+    #   里的路径操作数不走那一层——`git show HEAD:.policy/approval.json`、`git log -p --
+    #   .policy/audit.jsonl` 完整匹配命令白名单，读到的却是信任根（审批条子与审计账本）。
+    #   families               只有这几族的命令被检查（ID 来自上面的 command_families）。
+    #   path_forms             命令文本里认哪些路径操作数形态（闭集，见 models.READ_PATH_FORMS）。
+    #   forbidden_path_prefixes 受保护前缀：归一化后落在其下即阻断（信任根）。
+    #   forbidden_forms        越界形态（闭集）：parent_escape / absolute_path。
+    # **不是沙箱**：选项取值、含空格的引号路径、git 配置与别名展开都不在承诺范围内；
+    # `--output` 这类写文件选项仍由 forbidden_command_fragments 管。含被禁片段的命令仍报
+    # command_fragment_blocked（先命中者定码），本闸门只负责片段清单描述不了的那一类。
+    read_guard:
+      families: [readonly]
+      path_forms: [positional, revision_path]
+      forbidden_path_prefixes: [".policy"]
+      forbidden_forms: [parent_escape, absolute_path]
     parameters:
       - name: command
         type: string
@@ -269,6 +290,12 @@ tools:
     # .gitattributes 的 textconv/filter），就仍可能被改写成执行外部命令；真正的隔离要靠
     # 运行时的文件系统与进程沙箱，不属于本阶段。这里只保证"选常见的写法钻不过去"。
     forbidden_command_fragments: ["../", "..\\", "--output", "--ext-diff", "--no-index"]
+    # 读面闸门（注册表 1.2，B3）：判据与 exec.pwsh 完全一致（同一份数据、同一套谓词）。
+    read_guard:
+      families: [readonly]
+      path_forms: [positional, revision_path]
+      forbidden_path_prefixes: [".policy"]
+      forbidden_forms: [parent_escape, absolute_path]
     parameters:
       - name: command
         type: string

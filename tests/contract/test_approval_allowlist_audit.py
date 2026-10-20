@@ -223,7 +223,11 @@ def test_a_tool_without_families_is_a_data_gap_not_zero_hits(tmp_root: Path) -> 
     """变异③：命令类工具没有族数据 → 单独一格命中（不是"0 命中"，也不是通过）。"""
 
     def mutate(document: dict) -> None:
+        # 注册表 1.2（B3）起 `read_guard` 依赖 `command_families`：读面闸门按**族**生效，
+        # 只摘族会让整份注册表加载失败（仪器只能报 unavailable），那不是这台仪器要看的格。
+        # 所以这条变异必须把两者一起摘掉，被测的才是「命令类工具没有族数据」。
         _tools(document)["exec.bash"].pop("command_families")
+        _tools(document)["exec.bash"].pop("read_guard", None)
 
     report = _run_family_check(registry=_mutated_registry(tmp_root, mutate))
 

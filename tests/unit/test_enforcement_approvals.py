@@ -433,20 +433,25 @@ def test_family_data_enters_the_reviewed_schema_hash():
     assert base.command_family("nope") is None
 
 
-def test_registry_schema_version_moved_to_1_1_and_old_documents_still_load(tmp_root):
-    assert REGISTRY_SCHEMA_VERSION == "1.1"
-    assert SUPPORTED_REGISTRY_SCHEMA_VERSIONS == {"1.0", "1.1"}
+def test_registry_schema_version_moved_to_1_2_and_old_documents_still_load(tmp_root):
+    """注册表轴：1.1（B1 的族与默认值）→ 1.2（B3 的 read_guard），两份旧文档照常加载。"""
 
-    old = registry_document()
-    old["registry_schema_version"] = "1.0"
-    path = tmp_root / "old-registry.yaml"
+    assert REGISTRY_SCHEMA_VERSION == "1.2"
+    assert SUPPORTED_REGISTRY_SCHEMA_VERSIONS == {"1.0", "1.1", "1.2"}
+
     import yaml as yaml_module
 
-    path.write_text(yaml_module.safe_dump(old, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    assert load_registry_document(path)["registry_schema_version"] == "1.0"
-    assert registry_document_from_mapping(
-        {**old, "registry_schema_version": "1.0"}
-    ).version == 1
+    for version in ("1.0", "1.1"):
+        old = registry_document()
+        old["registry_schema_version"] = version
+        path = tmp_root / f"old-registry-{version}.yaml"
+        path.write_text(
+            yaml_module.safe_dump(old, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+        assert load_registry_document(path)["registry_schema_version"] == version
+        assert registry_document_from_mapping(
+            {**old, "registry_schema_version": version}
+        ).version == 1
 
 
 @pytest.mark.parametrize(
