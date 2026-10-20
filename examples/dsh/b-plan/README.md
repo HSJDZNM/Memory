@@ -102,6 +102,25 @@ pwsh 调用；模型若带上 `workdir` / `timeoutMs` / `run_in_background`，�
 > 这条纪律是 1.1 起就有的安全性质（未声明的参数不得跟着条子一起放行），本次没有放宽：
 > 一格不漏才算覆盖，反过来多声明一格也会被拒（"声明的参数不在本次请求里"）。
 
+> **2026-10-20（B1）起的新档口：审批协议 1.3 的「参数域」，只对声明了默认值的注册表生效。**
+> 仓库的 `registry/tool-registry.yaml`（1.1 起）给 `exec.pwsh` / `exec.bash` 的
+> `timeoutMs=60000` / `workdir="."` / `run_in_background=false` 声明了默认值：一张
+> **自述 1.3** 且省略这几格的条子，仍覆盖"不传或恰好等于默认值"的调用；**非默认值照样拒**
+> （理由会写"不等于注册表声明的默认值"）。`sandbox_permissions` / `justification`
+> **故意没有默认值**——要覆盖它们必须显式写模式。
+>
+> 本目录的 `tool-registry.local.yaml` 是**副本、且本次不动**（它是受治项目自己的数据）：
+> 它没有 `command_families`、也没声明默认值，所以上面这条纪律在**这个副本**上仍然逐字成立。
+> 要用新档口：把仓库注册表同步进 `$g/.policy/`，重新 `registry --approve`，再按族签发：
+>
+> ```powershell
+> python -m enforcement.cli approve --registry "$g/.policy/tool-registry.yaml" --approved "$g/.policy/tool-registry.approved.json" --request "$g/.policy/shell-request.json" --out "$g/.policy/approval.json" --granted-by dshznm --roles reviewer --binding pattern --max-uses 1000 --ttl 86400 --family exec.pwsh:tests --param-pattern "description=.*" --approval-id approval-pwsh-tests
+> ```
+>
+> `--family TOOL:FAMILY` 只认**注册表 `command_families` 里声明过的族**（这里是
+> `exec.pwsh:tests` / `readonly` / `scripts`），命令参数不用再写；族与白名单的一致性由
+> `python tools/approval_allowlist_audit.py --check --registry <注册表>` 双向比对（0 命中才算齐）。
+
 `Free` 那个工作区**什么都不用做**——作用域感知保证它**不被判定**（不查、不拦、不警告）。
 
 > **更正（2026-10-11 实测）**：旧说法「受治账本里不会出现它的记录」**是错的**。

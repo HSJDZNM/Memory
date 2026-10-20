@@ -29,7 +29,13 @@ from typing import Any, Mapping, Optional, Sequence
 from policy.models import Decision, RequiredAction, ValidationResult
 
 from .action import blocked_path_prefix, required_permissions_for
-from .approvals import ApprovalBinding, ApprovalError, ApprovalRecord, verify_approval
+from .approvals import (
+    ApprovalBinding,
+    ApprovalError,
+    ApprovalRecord,
+    has_param_domain,
+    verify_approval,
+)
 from .audit import AuditSink
 from .codecheck import check_code
 from .ledger import ApprovalUseClaim, EnforcementLedger
@@ -137,6 +143,18 @@ def _declared_alternatives(
         clauses.append(
             f"已签发审批 {bound.approval_id} 是 binding=action 的单次绑定："
             "只对它签发时的那一次 action_hash 有效（参数、schema、主体任一变化即作废）"
+        )
+    defaults = spec.param_defaults()
+    if (
+        bound is not None
+        and bound.binding is ApprovalBinding.PATTERN
+        and defaults
+        and has_param_domain(bound)
+    ):
+        # 只列**已声明**的数据；这是给模型看的"为什么这一格不算未声明"。
+        clauses.append(
+            "本条审批自述 1.3（参数域）：未逐格声明的可选参数按注册表默认值参与匹配——"
+            + "、".join(f"{name}={value!r}" for name, value in sorted(defaults.items()))
         )
     if bound is None and spec.approval is ApprovalMode.REQUIRED:
         clauses.append(
@@ -460,6 +478,10 @@ def check_list(
                     if approval is None
                     else {item.name: item.value for item in request.params}
                 ),
+                # 审批协议 1.3 的「参数域」：注册表声明的可选参数默认值。**只在记录自述
+                # ≥1.3 时生效**（1.1 / 1.2 的记录行为与修前逐字相同），而且这里传的是
+                # 注册表**数据**（spec.param_defaults()），代码里不硬编码任何参数名。
+                param_defaults=spec.param_defaults(),
                 uses=0
                 if approval is None
                 else ledger.approval_use_count(approval.approval_id, records=ledger_records),
@@ -490,6 +512,10 @@ def check_list(
                     f" used={ledger.approval_use_count(approval.approval_id, records=ledger_records)}"
                     f" patterns={sorted(approval.param_patterns)}"
                 )
+                if spec.param_defaults() and has_param_domain(approval):
+                    # 审计里要能读出"这次判定用参数域补了哪些格"，否则读的人会以为
+                    # 请求真的带了这些参数（AGENTS 第 50 条：口径诚实）。
+                    detail += f" param_domain=defaults:{sorted(spec.param_defaults())}"
             checks.append(_check("approval", CheckStatus.PASSED, ReasonCode.ALLOW, detail))
     else:
         checks.append(

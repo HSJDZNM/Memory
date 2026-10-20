@@ -34,6 +34,7 @@ __all__ = ["enforcement_paths"]
 from enforcement.approvals import (
     APPROVAL_SCHEMA_VERSION,
     APPROVAL_SET_SCHEMA_VERSIONS,
+    SUPPORTED_APPROVAL_SCHEMA_VERSIONS,
     ApprovalError,
     ApprovalRecord,
     approval_payload,
@@ -41,6 +42,7 @@ from enforcement.approvals import (
     load_approval,
     load_approvals,
     select_approval,
+    verify_approval,
 )
 from enforcement.audit import FileAuditSink, NullAuditSink
 from enforcement.ledger import EnforcementLedger
@@ -442,6 +444,7 @@ def record_for(
     subject: str = "local-user",
     expires_in: int = 300,
     max_uses: int = 3,
+    version: str = APPROVAL_SCHEMA_VERSION,
 ) -> ApprovalRecord:
     """造一条记录（不落盘）：协议层用例不依赖注册表，直接用任意 tool_id。"""
 
@@ -452,6 +455,7 @@ def record_for(
     expires_at = now + timedelta(seconds=expires_in)
     if binding == "action":
         return ApprovalRecord(
+            schema_version=version,
             approval_id=approval_id,
             binding="action",
             action_hash=action_hash or "sha256:h",
@@ -464,6 +468,7 @@ def record_for(
             expires_at=expires_at,
         )
     return ApprovalRecord(
+        schema_version=version,
         approval_id=approval_id,
         binding="pattern",
         tool_id=tool_id,
@@ -796,3 +801,120 @@ def test_the_store_round_trips_through_the_written_document(tmp_root):
     assert [approval_payload(item) for item in load_approvals(path)] == [
         approval_payload(item) for item in pair
     ]
+
+
+# --------------------------------------------------------------------------- 协议 1.3：参数域
+#
+# 1.3 没有新增键，改的是 param_patterns 的**覆盖口径**（所以显式升版）：
+# 注册表声明为「可选且有默认值」的参数，条子可以不逐格声明；匹配前按默认值补齐两侧。
+# 三条边界必须同时被钉住：只对自述 1.3 的记录生效、只在拿到注册表默认值时生效、
+# 补出来的是"精确等于默认值"而不是通配。
+
+
+DEFAULTS = {"timeoutMs": 60000, "workdir": ".", "run_in_background": False}
+
+
+def verify_with(
+    record: ApprovalRecord,
+    params: dict[str, object],
+    *,
+    defaults: dict[str, object] | None = DEFAULTS,
+) -> None:
+    verify_approval(
+        record,
+        action_hash="sha256:h",
+        action_id="act-1",
+        tool_id=record.tool_id,
+        subject="local-user",
+        approval_roles=("reviewer", "owner"),
+        used=False,
+        params=params,
+        uses=0,
+        param_defaults=defaults,
+        # 判定时刻取在记录自己的窗口中点：要考的是参数域，不是"签发时间在未来"。
+        now=record.granted_at + (record.expires_at - record.granted_at) / 2,
+    )
+
+
+def test_the_protocol_axis_includes_1_3_and_old_versions_stay_supported():
+    assert APPROVAL_SCHEMA_VERSION == "1.3"
+    assert SUPPORTED_APPROVAL_SCHEMA_VERSIONS == {"1.1", "1.2", "1.3"}
+    # 记录集从 1.2 起才有；1.3 同样认识 records（它只改参数域的语义）。
+    assert APPROVAL_SET_SCHEMA_VERSIONS == {"1.2", "1.3"}
+
+
+def test_a_1_3_ticket_may_omit_defaulted_parameters_but_only_at_the_default(tmp_root):
+    ticket = record_for("exec.pwsh", approval_id="app-domain", patterns={"command": ".*", "description": ".*"})
+    assert ticket.schema_version == "1.3"
+
+    # 缺席、显式默认值、以及两者混合：都是同一件事
+    verify_with(ticket, {"command": "x", "description": "d"})
+    verify_with(ticket, {"command": "x", "description": "d", "timeoutMs": 60000})
+    verify_with(ticket, {"command": "x", "description": "d", "workdir": ".", "run_in_background": False})
+
+    # 非默认值：拒，而且理由要说出"这条模式来自注册表默认值"
+    with pytest.raises(ApprovalError) as error:
+        verify_with(ticket, {"command": "x", "description": "d", "timeoutMs": 30000})
+    message = str(error.value)
+    assert "默认值 60000" in message and "--param-pattern timeoutMs=" in message
+
+
+def test_1_2_records_keep_the_strict_two_way_rule_even_when_defaults_exist(tmp_root):
+    old = record_for(
+        "exec.pwsh",
+        approval_id="app-old",
+        patterns={"command": ".*", "description": ".*"},
+        version="1.2",
+    )
+    verify_with(old, {"command": "x", "description": "d"})
+    with pytest.raises(ApprovalError) as extra:
+        verify_with(old, {"command": "x", "description": "d", "timeoutMs": 60000})
+    assert "没有在审批模式里声明" in str(extra.value)
+
+    declared = record_for(
+        "exec.pwsh",
+        approval_id="app-old-declared",
+        patterns={"command": ".*", "description": ".*", "timeoutMs": "^60000$"},
+        version="1.2",
+    )
+    with pytest.raises(ApprovalError) as missing:
+        verify_with(declared, {"command": "x", "description": "d"})
+    assert "不在本次请求里" in str(missing.value)
+
+
+def test_without_registry_defaults_a_1_3_ticket_reads_like_a_1_2_one(tmp_root):
+    """拿不到注册表默认值就失败关闭：放宽必须显式发生，不能靠数据恰好在场。"""
+
+    ticket = record_for("exec.pwsh", approval_id="app-no-defaults", patterns={"command": ".*"})
+    with pytest.raises(ApprovalError) as error:
+        verify_with(ticket, {"command": "x", "timeoutMs": 60000}, defaults=None)
+    assert "没有在审批模式里声明" in str(error.value)
+
+
+def test_selection_prefers_the_1_3_ticket_whose_domain_covers_the_request(tmp_root):
+    """选择只是"出示哪张"：1.3 记录按生效域排在前面，选中后仍由 verify 逐关校验。"""
+
+    omits = record_for(
+        "exec.pwsh",
+        approval_id="app-a-omits",
+        patterns={"command": "^git diff$", "description": ".*"},
+        expires_in=6000,
+    )
+    declares = record_for(
+        "exec.pwsh",
+        approval_id="app-b-declares",
+        patterns={"command": "^git diff$", "description": ".*", "timeoutMs": "^30000$"},
+        expires_in=6000,
+    )
+    params = {"command": "git diff", "description": "d", "timeoutMs": 60000}
+    picked = select_approval(
+        [declares, omits],
+        tool_id="exec.pwsh",
+        subject="local-user",
+        params=params,
+        param_defaults=DEFAULTS,
+    )
+    assert picked is not None and picked.approval_id == "app-a-omits"
+
+    with pytest.raises(ApprovalError):
+        verify_with(picked, {**params, "timeoutMs": 30000})

@@ -64,10 +64,27 @@ r"""审批条子 × 注册表白名单：跨源互证（**只报告**）。
 必须 0 命中。变异证明写在 `tests/contract/test_approval_allowlist_audit.py` 里（真跑工具、
 读它的 `--json` 载荷），不是"跑过了、是绿的"。
 
+命令族 ↔ 白名单（`--check`，B1 起）
+====================================
+
+`--check` 把 `registry/tool-registry.yaml` 的 `command_families`（注册表 1.1 的**数据**）
+与同一份注册表的 `allowed_commands` 做**双向**比对，四格红条件：
+
+- `family_pattern_outside_the_allowlist`：族的某条模式不在白名单里 ⇒ 族比注册表宽；
+- `allowlisted_pattern_without_a_family`：白名单某条目不属于任何族 ⇒ 按族签发签不到它；
+- `pattern_in_multiple_families`：同一条白名单被两个族同时声明 ⇒ "签的是哪一族"说不清；
+- `command_tool_without_families`：命令类工具有白名单却没有族数据 ⇒ 这一格**没有读数**，
+  不是"0 命中"（旧注册表照常加载，那是设计与兼容，但按族签发在这台工具上不可用）。
+
+判据是**精确成员**（逐字相同的模式字符串），不是正则包含：族本来就被定义为"白名单的
+分组"，用前缀/包含判据去猜会把"族写错了"读成"覆盖到了"（AGENTS 第 45 条：仪器要能红）。
+一致性**不在加载期**强制——加载期强制会让这台仪器永远绿。
+
 载荷自己的版本轴（AGENTS 第 55 条）
 ==================================
 
-`APPROVAL_AUDIT_SCHEMA_VERSION = "1.0"`——本载荷第一次出现就带轴。
+`APPROVAL_AUDIT_SCHEMA_VERSION = "1.1"`：1.0 = 首次建轴（条子 × 白名单五格）；
+1.1 = 新增 `--check` 模式（`mode: families`、四条族相关红条件）——加键即升版。
 
 用法
 ====
@@ -77,10 +94,14 @@ r"""审批条子 × 注册表白名单：跨源互证（**只报告**）。
         --registry ../Comparison-test/Governance/.policy/tool-registry.local.yaml \
         [--approved ...] [--json]
 
+    python tools/approval_allowlist_audit.py --check \
+        --registry registry/tool-registry.yaml [--approved registry/tool-registry.approved.json] [--json]
+
 默认输出两行机器行：
 
-1. `APPROVAL_ALLOWLIST_AUDIT: <四格计数> / tools=<n> patterns=<n>`；
-2. `HITS: <四格合计> / <四格逐项> / tools=<n> patterns=<n>`——跨文件契约（只报告步骤读这一行）。
+1. `APPROVAL_ALLOWLIST_AUDIT: <四格计数> / tools=<n> patterns=<n>`（`--check` 时为族计数）；
+2. `HITS: <四格合计> / <四格逐项> / tools=<n> patterns=<n>`——跨文件契约（只报告步骤读这一行；
+   `--check` 下末段换成 `families=<n>`，并另有一行 `FAMILY-CHECK:` 供人读）。
 """
 
 from __future__ import annotations
@@ -98,7 +119,7 @@ if str(REPO_ROOT / "src") not in sys.path:
 from enforcement.approvals import ApprovalError, load_approvals  # noqa: E402
 from enforcement.registry import load_registry  # noqa: E402
 
-APPROVAL_AUDIT_SCHEMA_VERSION = "1.0"
+APPROVAL_AUDIT_SCHEMA_VERSION = "1.1"
 
 # 一条模式最多允许的分支前缀数：超过就按"取不出"处理（宁可漏，不可猜）。
 _MAX_PREFIXES = 8
@@ -648,6 +669,147 @@ def _analyse(
     }
 
 
+def _analyse_families(
+    registry_path: Path,
+    approved_path: Optional[Path] = None,
+) -> dict[str, Any]:
+    """`--check`：注册表自己的 `command_families` × `allowed_commands` 双向比对。
+
+    它**不读审批文件**：这一格问的是"按族签发能不能覆盖注册表声明的命令面"，
+    与"某个人现在签了哪张条子"是两件事（后者是默认模式回答的）。
+    读不出注册表 → `status = unavailable`（`count: null`），不折叠成 0 命中。
+    """
+
+    try:
+        loaded = load_registry(registry_path, approved_path=approved_path)
+    except Exception as error:  # RegistryError 等：读不出来就没有比对可言
+        return {
+            "status": "unavailable",
+            "reason": f"注册表读不出来：{error}",
+            "count": None,
+            "items": [],
+        }
+    registry = loaded.registry
+    drift = _approval_drift(registry, approved_path is not None)
+
+    outside: list[dict[str, Any]] = []
+    orphan: list[dict[str, Any]] = []
+    shared: list[dict[str, Any]] = []
+    without: list[dict[str, Any]] = []
+    family_count = 0
+    command_tools = 0
+    for spec in registry.tools:
+        if not spec.command_param:
+            continue
+        allowed = [str(item) for item in spec.allowed_commands if str(item).strip()]
+        if not allowed:
+            continue
+        command_tools += 1
+        if not spec.command_families:
+            without.append(
+                {
+                    "tool_id": spec.id,
+                    "detail": (
+                        "命令类工具有 allowed_commands 却没有 command_families："
+                        "按族签发在这个工具上不可用（旧注册表照常加载，这是兼容不是通过）"
+                    ),
+                }
+            )
+            continue
+        family_count += len(spec.command_families)
+        owners: dict[str, list[str]] = {}
+        for family in spec.command_families:
+            for pattern in family.patterns:
+                owners.setdefault(pattern, []).append(family.id)
+                if pattern not in allowed:
+                    outside.append(
+                        {
+                            "tool_id": spec.id,
+                            "family_id": family.id,
+                            "pattern": pattern,
+                            "detail": (
+                                "命令族的这条模式不在 allowed_commands 里："
+                                "族比注册表宽，按它签出来的条子会越过白名单声明的边界"
+                            ),
+                        }
+                    )
+        for pattern, families in sorted(owners.items()):
+            if len(families) > 1:
+                shared.append(
+                    {
+                        "tool_id": spec.id,
+                        "pattern": pattern,
+                        "families": sorted(families),
+                        "detail": (
+                            "同一条白名单被多个命令族同时声明："
+                            "「签的是哪一族」说不清，重签时也说不清取代了谁"
+                        ),
+                    }
+                )
+        for pattern in allowed:
+            if pattern not in owners:
+                orphan.append(
+                    {
+                        "tool_id": spec.id,
+                        "pattern": pattern,
+                        "detail": (
+                            "白名单条目不属于任何命令族："
+                            "按族签发永远签不到它，而拒绝理由看起来会像「命令不合法」"
+                        ),
+                    }
+                )
+
+    red_conditions = {
+        "family_pattern_outside_the_allowlist": _grid(
+            outside,
+            "命令族的每条模式都要逐字出现在 allowed_commands 里",
+            "族比注册表宽：按它签出来的条子越过白名单声明的边界",
+        ),
+        "allowlisted_pattern_without_a_family": _grid(
+            orphan,
+            "allowed_commands 的每条都要恰好属于一个命令族",
+            "族比注册表窄：按族签发签不到这条命令",
+        ),
+        "pattern_in_multiple_families": _grid(
+            shared,
+            "同一条白名单不得被多个族同时声明",
+            "两个族都认同一条命令：签哪一族、重签取代了谁都说不清",
+        ),
+        "command_tool_without_families": _grid(
+            without,
+            "命令类工具要么声明 command_families，要么这一格没有读数",
+            "缺族数据时按族签发不可用；这是数据缺口，不是 0 命中",
+        ),
+        "registry_hash_drift": _grid(
+            drift,
+            "工具描述要与已审核哈希一致（改注册表必须重新审核）；没给 --approved 时本格不适用",
+            "注册表被改过而没重新审核：族与白名单都是**未审核**的数据",
+        ),
+    }
+    hits = sum(
+        int(grid.get("count") or 0)
+        for grid in red_conditions.values()
+        if grid.get("count") is not None
+    )
+    return {
+        "status": "available",
+        "hits": hits,
+        "command_tool_count": command_tools,
+        "family_count": family_count,
+        "red_conditions": red_conditions,
+    }
+
+
+def _family_grid_order() -> tuple[str, ...]:
+    return (
+        "family_pattern_outside_the_allowlist",
+        "allowlisted_pattern_without_a_family",
+        "pattern_in_multiple_families",
+        "command_tool_without_families",
+        "registry_hash_drift",
+    )
+
+
 def _grid(items: list[dict[str, Any]], red_when: str, why: str) -> dict[str, Any]:
     return {
         "status": "available",
@@ -666,25 +828,81 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="approval_allowlist_audit.py",
         description="审批条子 × 注册表白名单：跨源互证（只报告，退出码恒 0）",
     )
-    parser.add_argument("--approval", required=True, help="审批存储（approval.json）路径")
+    parser.add_argument(
+        "--approval", required=False, help="审批存储（approval.json）路径；--check 时不给"
+    )
     parser.add_argument("--registry", required=True, help="工具注册表（tool-registry*.yaml）路径")
     parser.add_argument(
         "--approved",
         default=None,
         help="已审核哈希清单路径（给了就跑 registry_hash_drift 那一格）",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "只比对注册表自己的 command_families × allowed_commands（双向，四格红条件）；"
+            "不读审批文件，与默认的「条子 × 白名单」模式二选一"
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="输出完整机读载荷")
     return parser
 
 
+def _main_families(args: argparse.Namespace) -> int:
+    report = _analyse_families(
+        Path(args.registry),
+        None if args.approved is None else Path(args.approved),
+    )
+    report["schema_version"] = APPROVAL_AUDIT_SCHEMA_VERSION
+    report["mode"] = "families"
+    report["registry"] = str(args.registry)
+    report["approved"] = args.approved
+
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    if report.get("status") != "available":
+        print(f"APPROVAL_ALLOWLIST_AUDIT: unavailable / {report.get('reason')}")
+        print("HITS: unavailable / families=unavailable")
+        return 0
+
+    grids = report["red_conditions"]
+    detail = " / ".join(f"{name}={grids[name]['count']}" for name in _family_grid_order())
+    print(
+        "APPROVAL_ALLOWLIST_AUDIT: "
+        f"family-check {report['hits']} hits / tools={report['command_tool_count']} "
+        f"families={report['family_count']}"
+    )
+    print(
+        f"FAMILY-CHECK: {report['hits']} / {detail} / tools={report['command_tool_count']} "
+        f"families={report['family_count']}"
+    )
+    print(
+        f"HITS: {report['hits']} / {detail} / tools={report['command_tool_count']} "
+        f"families={report['family_count']}"
+    )
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.check:
+        if args.approval is not None:
+            parser.error("--check 与 --approval 二选一：前者只比对注册表自己的命令族，不读审批文件")
+        return _main_families(args)
+    if args.approval is None:
+        parser.error("默认模式需要 --approval（或加 --check 只比对注册表的命令族）")
+
     report = _analyse(
         Path(args.approval),
         Path(args.registry),
         None if args.approved is None else Path(args.approved),
     )
     report["schema_version"] = APPROVAL_AUDIT_SCHEMA_VERSION
+    report["mode"] = "tickets"
     report["approval"] = str(args.approval)
     report["registry"] = str(args.registry)
     report["approved"] = args.approved

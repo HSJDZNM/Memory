@@ -15,7 +15,12 @@
 # `agent: orchestrator` 是编排层那一段（改规则文件需要人工审批）。
 # 两段各自审核：改任一段都要重新生成 registry/tool-registry.approved.json。
 
-registry_schema_version: "1.0"
+# 1.1（B1，2026-10-20）：逐工具新增可选的 `command_families`（命令族数据），逐参数新增
+# 可选的 `default`（审批协议 1.3「参数域」的默认值来源）。两者都是**被审核数据**：
+# 它们进 tools/<id> 的 schema_hash，改完必须重新 `registry --approve`；旧注册表（1.0、
+# 不带这两个字段）照常加载。族与白名单的一致性由仪器判（`tools/approval_allowlist_audit.py
+# --check` 双向比对），不在加载期强制——否则那台仪器永远绿（AGENTS 第 45 条）。
+registry_schema_version: "1.1"
 version: 1
 
 defaults:
@@ -176,6 +181,10 @@ tools:
       #    平台也没有进程树回收与回滚语义；要后台执行必须另立工具并写清事后核对与回滚方式。
       - name: timeoutMs
         type: integer
+        # 可选 + 有默认值 ⇒ 审批协议 1.3 可以**不对它逐格声明**（省略 = 只接受默认值）。
+        # 默认值与驱动层的真实缺省一致：drivers._requested_timeout_ms 在参数缺席时用
+        # spec.timeout_ms（本工具 = 60000）。这是「数据说的」与「代码做的」同口径的证据。
+        default: 60000
         description: 本次调用的超时预算（毫秒）：缺省用注册表 timeout_ms，**超过它一律拒绝**（驱动层消费）
       # path_kind 是**数据**，不是代码里的特判：workdir 指向目录，
       # 因此"工作目录 = 项目根"归一化为 "." 并通过校验（G5）；
@@ -184,10 +193,18 @@ tools:
         type: path
         path_scope: workspace
         path_kind: directory
+        # 默认值 "." = 受控工作区根（action 归一化把范围根记成 "."，驱动层在参数缺席时
+        # 就是拿工作区根作 cwd）。省略这一格与显式传 "." 在审批域里是同一件事。
+        default: "."
         description: 命令的工作目录（受控工作区内、必须是已存在的目录，越界或不存在的目录都拒绝）：驱动层作为进程 cwd 使用
       - name: run_in_background
         type: boolean
+        # 默认 false = 驱动层对"缺席"的读法（_refuse_background 只拒绝 None/False 之外的值）。
+        # 于是 1.3 的条子省略这一格时，只覆盖"不传或 false"；true 仍在审批层就被拒。
+        default: false
         description: 后台执行：true 一律**显式拒绝**（后台进程没有退出码，事后核对会退化成修复，也没有进程树回收与回滚）——不是静默忽略
+      # sandbox_permissions / justification **故意不给默认值**：平台从不把"缺席"当作
+      # workspace-write 或空理由，给默认值会在审批域里写一句不真实的话；要覆盖它们就显式声明。
       - name: sandbox_permissions
         type: string
         enum: [workspace-write, danger-full-access]
@@ -197,6 +214,27 @@ tools:
       - name: justification
         type: string
         max_chars: 1000
+    # 命令族（注册表 1.1）：按**用途**给 allowed_commands 分组。`approve --family` 只从这里
+    # 取模式签发条子；每一族的模式必须与 allowed_commands 的条目**逐字相同**——这是
+    # tools/approval_allowlist_audit.py --check 双向比对的判据（精确成员，不做正则包含猜测）。
+    # 改这里 = 改授权面 ⇒ 必须重新审核（registry --approve）。
+    command_families:
+      - id: tests
+        title: 测试族（本仓库的测试命令）
+        patterns:
+          - "^python -m pytest( .*)?$"
+          - "^uv run python -m pytest( .*)?$"
+      - id: readonly
+        title: 只读查看族
+        patterns:
+          - "^git (status|diff|log|show)( .*)?$"
+          - "^Write-Output( .*)?$"
+          - "^Get-ChildItem( .*)?$"
+      - id: scripts
+        title: 脚本与模块族
+        patterns:
+          - "^python tools/[A-Za-z0-9_./-]+\\.py( .*)?$"
+          - "^python -m (policy\\.check|retrieval\\.cli|enforcement\\.cli|adapters\\.dsh\\.hooks)( .*)?$"
     notes: 白名单只做完整匹配；此外命令里出现分号 / 管道 / 命令替换 / 重定向 / 换行
       一律结构性阻断（command_composition_blocked）——只靠 ( .*)? 的正则会被 " ; 任意命令" 绕过。
       需要组合命令时必须先改这里、重新审核，并说明为什么安全
@@ -243,16 +281,23 @@ tools:
       # 三个参数由驱动层消费：语义与 exec.pwsh 完全一致（预算 / cwd / 后台显式拒绝）。
       - name: timeoutMs
         type: integer
+        # 与驱动层的一致：_requested_timeout_ms 在参数缺席时用 spec.timeout_ms（本工具 = 60000）
+        default: 60000
         description: 本次调用的超时预算（毫秒）：缺省用注册表 timeout_ms，超过它一律拒绝
       # path_kind 是数据，不是代码里的特判（同 exec.pwsh）
       - name: workdir
         type: path
         path_scope: workspace
         path_kind: directory
+        # "." = 工作区根；参数缺席时驱动层的 cwd 正是工作区根（同 exec.pwsh）
+        default: "."
         description: 命令的工作目录（受控工作区内、必须是已存在的目录）：驱动层作为进程 cwd 使用
       - name: run_in_background
         type: boolean
+        # 默认 false = 驱动层对"缺席"的读法（同 exec.pwsh）
+        default: false
         description: 后台执行：true 一律显式拒绝（后台进程没有退出码，事后核对会退化成修复）
+      # sandbox_permissions / justification 故意不给默认值（理由同 exec.pwsh）
       - name: sandbox_permissions
         type: string
         enum: [workspace-write, danger-full-access]
@@ -261,6 +306,22 @@ tools:
       - name: justification
         type: string
         max_chars: 1000
+    # 命令族：与上面 allowed_commands 逐字相同的分组（判据同 exec.pwsh）
+    command_families:
+      - id: tests
+        title: 测试族
+        patterns:
+          - "^python -m pytest( .*)?$"
+          - "^uv run python -m pytest( .*)?$"
+      - id: readonly
+        title: 只读查看族
+        patterns:
+          - "^git (status|diff|log|show)( .*)?$"
+          - "^echo( .*)?$"
+      - id: scripts
+        title: 脚本族
+        patterns:
+          - "^python tools/[A-Za-z0-9_./-]+\\.py( .*)?$"
 
   - id: exec.run_code
     title: 代码运行时

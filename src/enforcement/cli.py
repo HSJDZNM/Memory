@@ -15,6 +15,11 @@
         --granted-by alice --roles reviewer --binding pattern --max-uses 5 \
         --param-pattern "command=^python -m pytest( .*)?$" \
         --param-pattern "description=.*"
+    # 按**命令族**签发（注册表 1.1 的 command_families；族的多条白名单并成一条精确模式）。
+    # 族是数据：改族 = 改注册表 = 必须重新审核。命令参数不用再声明，其余参数照旧要覆盖。
+    python -m enforcement.cli approve  --request <req.json> --out <approval.json> \
+        --granted-by alice --roles reviewer --binding pattern --max-uses 5 \
+        --family exec.pwsh:tests --param-pattern "description=.*"
     # 审批文件可以放**多条记录**（审批协议 1.2）：默认**并入**——再签一条给别的工具，
     # 已有工具的放行原样保留（每个工具各持一份，互不挤占：桌面端 GUI 的 run_code 传输
     # 工具与 exec.pwsh 必须各有一条，否则名额只有一个）。同一个工具重签 = 取代旧的那条；
@@ -38,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 import threading
@@ -55,18 +61,22 @@ from policy.models import Decision, PolicyContext, PolicyContextError, RuleSet, 
 from . import action as action_module
 from .approvals import (
     ApprovalBinding,
+    ApprovalError,
     ApprovalRecord,
     approval_payload,
     approval_store_payload,
     available_tools,
     load_approvals,
     select_approval,
+    union_pattern,
+    verify_approval,
 )
 from .audit import FileAuditSink
 from .drivers import drivers_for
 from .executor import ControlledExecutor, summarise_chain
 from .ledger import EnforcementLedger
 from .models import (
+    REGISTRY_SCHEMA_VERSION,
     ActionRequest,
     AuditStage,
     EnforcementError,
@@ -384,7 +394,9 @@ def _registry(args: argparse.Namespace) -> int:
     ]
     payload = {
         "registry": registry.path,
-        "registry_schema_version": "1.0",
+        # 版本号只有一处来源（AGENTS 第 55 条）：这个载荷里写死 "1.0" 会在注册表升版后
+        # 说一句过期的话（OCR 评审 2026-10-07 已点名这一处）。
+        "registry_schema_version": REGISTRY_SCHEMA_VERSION,
         "version": registry.version,
         "registry_digest": registry.identity,
         "approved_digest": registry.approved_metadata.get("registry_digest"),
@@ -483,6 +495,8 @@ def _prepare(args: argparse.Namespace, repo: Path):
             # 同一个工具可以有多张条子（各管一个命令族）：带上本次规范化参数，
             # 让"形状对得上"的那张排在前面（选择 ≠ 授权，判定仍在 pre-check 里）。
             params={item.name: item.value for item in request.params},
+            # 形状档要知道 1.3 记录可以省略哪些格（注册表默认值）；拿不到就按旧口径排序。
+            param_defaults=spec.param_defaults(),
         )
     return (
         loaded.registry, request, spec, decision, error, detail,
@@ -621,6 +635,49 @@ def parse_param_patterns(values: Optional[Sequence[str]]) -> dict[str, str]:
     return patterns
 
 
+def resolve_family(spec: ToolSpec, value: str) -> tuple[str, tuple[str, ...]]:
+    """把 `--family TOOL:FAMILY` 解析成（族 ID, 族的模式元组）；任何不符都报用法错误。
+
+    四条硬规则（都是"宁可拒绝，也不猜"）：
+
+    1. 形态必须是 `TOOL:FAMILY`——工具名带点（exec.pwsh），只给族名会有歧义；
+    2. 工具名必须与**本次样例请求**的工具一致（签给另一个工具的条子不会覆盖这个请求）；
+    3. 族必须在该工具的 `command_families` 里（族是数据，代码里没有分类表）；
+    4. 族的每条模式必须**逐字**是 `allowed_commands` 的成员——族与白名单的一致性由
+       `tools/approval_allowlist_audit.py --check` 双向比对；这里在签发口再挡一次：
+       签一张比白名单宽的条子等于让授权面说一句平台上执行不了的话。
+    """
+
+    tool_id, _, family_id = str(value).partition(":")
+    tool_id, family_id = tool_id.strip(), family_id.strip()
+    if not tool_id or not family_id:
+        raise CliError(
+            f"--family 必须是 TOOL:FAMILY 形式（例如 exec.pwsh:tests），得到 {value!r}"
+        )
+    if tool_id != spec.id:
+        raise CliError(
+            f"--family 指定的工具 {tool_id!r} 不是本次请求的工具 {spec.id!r}："
+            "条子只对这个工具生效，签给别的工具不会让这个请求通过"
+        )
+    if spec.command_param is None:
+        raise CliError(
+            f"{spec.id} 不是命令类工具（没有 command_param）：按族签发只适用于命令工具"
+        )
+    family = spec.command_family(family_id)
+    if family is None:
+        raise CliError(
+            f"{spec.id} 没有声明命令族 {family_id!r}；已声明的族为 "
+            f"{sorted(item.id for item in spec.command_families) or ['<无>']}"
+        )
+    outside = [pattern for pattern in family.patterns if pattern not in spec.allowed_commands]
+    if outside:
+        raise CliError(
+            f"命令族 {family_id!r} 的模式不在注册表白名单里：{outside}；"
+            "族与白名单必须逐字一致（先修注册表数据并重新审核，再按族签发）"
+        )
+    return family.id, tuple(family.patterns)
+
+
 def _approve(args: argparse.Namespace, repo: Path) -> int:
     loaded = load_registry(args.registry, approved_path=args.approved)
     document = _load_document(args.request, what="请求")
@@ -638,6 +695,23 @@ def _approve(args: argparse.Namespace, repo: Path) -> int:
     assert spec is not None
     binding = ApprovalBinding(args.binding)
     patterns = parse_param_patterns(args.param_pattern)
+    family_id = ""
+    family_patterns: tuple[str, ...] = ()
+    if args.family is not None:
+        if binding is not ApprovalBinding.PATTERN:
+            raise CliError(
+                "--family 只适用于 --binding pattern：按族签发的是「一类调用」，"
+                "单次绑定必须与一次具体调用的 action_hash 绑定"
+            )
+        family_id, family_patterns = resolve_family(spec, args.family)
+        if spec.command_param in patterns:
+            raise CliError(
+                f"--family 已经覆盖命令参数 {spec.command_param!r}，"
+                "不要再同时用 --param-pattern 声明它（两种来源会打架，说不清签的是哪条）"
+            )
+        # 一条记录只能给一个参数一种模式：族的多个白名单在这里并成一条**精确**的
+        # "任一分支整串匹配"（单条模式原样返回，保持可读、可被前缀审计读出）。
+        patterns[spec.command_param] = union_pattern(family_patterns)
     if binding is ApprovalBinding.ACTION:
         if patterns:
             raise CliError(
@@ -668,8 +742,21 @@ def _approve(args: argparse.Namespace, repo: Path) -> int:
                     "模式匹配只支持 string 参数；列表 / 路径类参数请用单次绑定"
                 )
     now = utc_now()
+    # 按族签发时用**确定性**的 approval_id（工具 + 族），重签同一族就是取代同一张条子；
+    # 手写模式仍用随机 id（用户可以不给 --approval-id）。
+    default_id = "approval-" + uuid.uuid4().hex[:12]
+    if family_id:
+        default_id = "approval-" + re.sub(
+            r"[^A-Za-z0-9._:-]+", "-", f"{request.tool_id}-{family_id}"
+        )
+    note = args.note or ""
+    if family_id:
+        note = (note + " " if note else "") + (
+            f"命令族 {request.tool_id}:{family_id}（注册表 command_families 生成；"
+            f"族模式 {list(family_patterns)}）"
+        )
     record = ApprovalRecord(
-        approval_id=args.approval_id or "approval-" + uuid.uuid4().hex[:12],
+        approval_id=args.approval_id or default_id,
         binding=binding,
         action_hash=request.action_hash if binding is ApprovalBinding.ACTION else None,
         action_id=request.action_id if binding is ApprovalBinding.ACTION else None,
@@ -681,8 +768,30 @@ def _approve(args: argparse.Namespace, repo: Path) -> int:
         expires_at=now + timedelta(seconds=args.ttl),
         max_uses=args.max_uses,
         param_patterns=patterns,
-        note=args.note or "",
+        note=note,
     )
+    if family_id:
+        # 签完**自检**一次：这张条子必须能覆盖它自己的样例请求。族并出来的模式一旦
+        # 与请求的形状对不上（例如样例请求带了非默认值却没给 --param-pattern），
+        # 现场报错比"签完才发现条子用不了"好——拒绝理由是平台自己那一句。
+        try:
+            verify_approval(
+                record,
+                action_hash=request.action_hash,
+                action_id=request.action_id,
+                tool_id=request.tool_id,
+                subject=record.subject,
+                approval_roles=loaded.registry.approval_role_members(),
+                used=False,
+                params={item.name: item.value for item in request.params},
+                uses=0,
+                param_defaults=spec.param_defaults(),
+            )
+        except ApprovalError as error:
+            raise CliError(
+                "签出来的条子对不上它自己的样例请求："
+                f"{error}；补一条 --param-pattern 或换一条与目标形状一致的样例请求"
+            ) from error
     target = Path(args.out)
     existing: tuple[ApprovalRecord, ...] = ()
     if not args.replace and target.is_file():
@@ -1007,6 +1116,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         dest="param_pattern",
         help="NAME=REGEX（可重复）：模式化审批的参数模式，整串匹配规范化取值",
+    )
+    approve_parser.add_argument(
+        "--family",
+        default=None,
+        help=(
+            "TOOL:FAMILY（例如 exec.pwsh:tests）：按注册表 command_families 的**命令族**签发"
+            "一类调用（只适用于 --binding pattern）。族里的多条白名单会并成一条精确的整串匹配"
+            "模式；命令参数不用再用 --param-pattern 声明"
+        ),
     )
     approve_parser.add_argument("--approval-id", default=None, help="审批 ID（默认随机）")
     approve_parser.add_argument(

@@ -117,6 +117,148 @@ def test_the_live_comparison_approval_matches_its_registry_shape() -> None:
 
     assert report["status"] == "available"
     assert report["red_conditions"]["pattern_outside_the_allowlist"]["count"] == 0
-    assert report["red_conditions"]["registry_hash_drift"]["count"] == 0
+    # B1（2026-10-20）改了 ToolSpec.approved_payload：新增 command_families 与参数 default，
+    # 逐工具 schema_hash 因此全部变化。受治侧副本的 approved.json 是**旧版产物**，所以
+    # 10 个工具全部 drift——这是**真实读数**，不是测试坏了：本地注册表必须按新格式重新审核，
+    # 这一格才回 0。两种状态都接受（0 = 已重审，10 = 还没重审），其它数字才算问题。
+    assert report["red_conditions"]["registry_hash_drift"]["count"] in (0, 10)
     assert report["red_conditions"]["command_param_not_covered"]["count"] == 0
     assert report["red_conditions"]["allowlisted_prefix_without_a_ticket"]["count"] == 13
+
+
+# --------------------------------------------------------------------------- 命令族 ↔ 白名单（--check）
+#
+# 注册表 1.1 的 \`command_families\` 是**被审核数据**：它决定"按族签发"能覆盖哪些命令。
+# 这里真跑 \`--check\` 并做三处**变异**（AGENTS 第 45 条：仪器必须能红），
+# 而不是只证明"跑过了、是绿的"。
+
+INK = REPO_ROOT / "registry" / "tool-registry.yaml"
+APPROVED = REPO_ROOT / "registry" / "tool-registry.approved.json"
+
+
+def _run_family_check(*, registry: Path, approved: Path | None = None, extra: list[str] | None = None) -> dict:
+    command = [
+        sys.executable,
+        str(REPO_ROOT / "tools" / "approval_allowlist_audit.py"),
+        "--check",
+        "--registry",
+        str(registry),
+        "--json",
+    ]
+    if approved is not None:
+        command += ["--approved", str(approved)]
+    command += extra or []
+    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", check=False)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def _mutated_registry(tmp_root: Path, mutate) -> Path:
+    """把仓库真实注册表读成文档、按 mutate 改一处再写回去（变异证明用）。"""
+
+    import yaml
+
+    document = yaml.safe_load(INK.read_text(encoding="utf-8"))
+    mutate(document)
+    path = tmp_root / "tool-registry.mutated.yaml"
+    path.write_text(
+        yaml.safe_dump(document, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    return path
+
+
+def _tools(document: dict) -> dict[str, dict]:
+    return {item["id"]: item for item in document["tools"]}
+
+
+def test_the_repository_families_are_green_against_its_own_allowlist() -> None:
+    report = _run_family_check(registry=INK, approved=APPROVED)
+
+    assert report["schema_version"] == "1.1"
+    assert report["mode"] == "families"
+    assert report["status"] == "available"
+    assert report["hits"] == 0, report["red_conditions"]
+    for name, grid in report["red_conditions"].items():
+        assert grid["count"] == 0, (name, grid)
+        assert grid["enforced"] is False
+    assert report["command_tool_count"] == 2 and report["family_count"] == 6
+
+
+def test_a_family_pattern_missing_from_the_allowlist_turns_the_forward_grid_red(tmp_root: Path) -> None:
+    """变异①：族的模式不在白名单里 → '族比注册表宽' 那格必须红。"""
+
+    def mutate(document: dict) -> None:
+        _tools(document)["exec.pwsh"]["command_families"][0]["patterns"].append(
+            "^rm -rf( .*)?$"
+        )
+
+    report = _run_family_check(registry=_mutated_registry(tmp_root, mutate))
+
+    grid = report["red_conditions"]["family_pattern_outside_the_allowlist"]
+    assert grid["count"] == 1
+    assert grid["items"][0]["tool_id"] == "exec.pwsh"
+    assert grid["items"][0]["pattern"] == "^rm -rf( .*)?$"
+    assert report["hits"] == 1
+
+
+def test_an_allowlist_entry_without_a_family_turns_the_reverse_grid_red(tmp_root: Path) -> None:
+    """变异②：白名单条目不属于任何族 → '族比注册表窄' 那格必须红（按缺口记账）。"""
+
+    def mutate(document: dict) -> None:
+        # 把 exec.bash 的脚本族删掉一条，留下一条没人认领的白名单
+        _tools(document)["exec.bash"]["command_families"] = [
+            item for item in _tools(document)["exec.bash"]["command_families"] if item["id"] != "scripts"
+        ]
+
+    report = _run_family_check(registry=_mutated_registry(tmp_root, mutate))
+
+    grid = report["red_conditions"]["allowlisted_pattern_without_a_family"]
+    assert grid["count"] == 1
+    assert grid["items"][0]["tool_id"] == "exec.bash"
+    assert grid["items"][0]["pattern"].startswith("^python tools/")
+    assert report["hits"] == 1
+
+
+def test_a_tool_without_families_is_a_data_gap_not_zero_hits(tmp_root: Path) -> None:
+    """变异③：命令类工具没有族数据 → 单独一格命中（不是"0 命中"，也不是通过）。"""
+
+    def mutate(document: dict) -> None:
+        _tools(document)["exec.bash"].pop("command_families")
+
+    report = _run_family_check(registry=_mutated_registry(tmp_root, mutate))
+
+    grid = report["red_conditions"]["command_tool_without_families"]
+    assert grid["count"] == 1
+    assert grid["items"][0]["tool_id"] == "exec.bash"
+    # 这个工具的白名单不再被逐条计入反向那格（否则一个缺口会被数两遍）
+    assert report["red_conditions"]["allowlisted_pattern_without_a_family"]["count"] == 0
+
+
+def test_family_check_does_not_require_or_accept_an_approval_file(tmp_root: Path) -> None:
+    """--check 与 --approval 二选一：混用是用法错误（argparse 退出码 2）。"""
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "tools" / "approval_allowlist_audit.py"),
+            "--check",
+            "--registry",
+            str(INK),
+            "--approval",
+            str(FIXTURES / "ok" / "approval.json"),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "二选一" in result.stderr
+
+
+def test_an_unreadable_registry_is_unavailable_in_family_mode_too(tmp_root: Path) -> None:
+    report = _run_family_check(registry=tmp_root / "missing.yaml")
+
+    assert report["status"] == "unavailable"
+    assert report["count"] is None
+    assert "注册表读不出来" in report["reason"]

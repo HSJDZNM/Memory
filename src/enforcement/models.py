@@ -45,6 +45,7 @@ __all__ = [
     "ActionRequestError",
     "ApprovalMode",
     "CodeCheckSpec",
+    "CommandFamily",
     "PathKind",
     "SUPPORTED_CODE_CHECKS",
     "UngovernedSpec",
@@ -115,8 +116,16 @@ def _check_protocol_version(value: str) -> str:
 #: 载荷于是能从"协议带版本"这条不变式下面溜过去。类型只有一份，就不会再漏。
 EnforcementVersion = Annotated[str, AfterValidator(_check_protocol_version)]
 
-REGISTRY_SCHEMA_VERSION = "1.0"
-SUPPORTED_REGISTRY_SCHEMA_VERSIONS = frozenset({REGISTRY_SCHEMA_VERSION})
+# 工具注册表数据文件自己的协议轴（与受控执行协议各走各的）。
+#
+# 1.1（B1，2026-10-20）：逐工具新增**可选**字段 `command_families`（命令族数据），
+# 逐参数新增**可选**字段 `default`（审批「参数域」的默认值来源）。加键就是改协议
+# （AGENTS 第 55 条），所以显式升版；两者都是可选的，**旧注册表（1.0、不带这两个
+# 字段）照常加载**，与 `validators.models.TEST_LAYOUT_SCHEMA_VERSIONS` 的
+# 「加可选字段不制造兼容窗口」同型。两个字段都进 `schema_hash`：它们是授权面数据，
+# 改了就与已审核哈希对不上（必须重新 `registry --approve`）。
+REGISTRY_SCHEMA_VERSION = "1.1"
+SUPPORTED_REGISTRY_SCHEMA_VERSIONS = frozenset({"1.0", REGISTRY_SCHEMA_VERSION})
 
 # 命令文本里出现这些片段就说明它不是一条单语句：分隔、管道、命令替换、重定向、
 # 换行都意味着「白名单匹配的那条命令之外还有别的东西」。这些一律结构性阻断——
@@ -556,6 +565,66 @@ class UngovernedSpec(StrictModel):
         return normalized
 
 
+def _check_param_default(spec: "ParamSpec") -> None:
+    """校验 `default`：类型必须与参数声明一致，且**已经满足**声明的约束。
+
+    默认值会作为审批「参数域」参与匹配（1.3），所以它必须是**可以拿来比对的规范形态**：
+    类型不符、越界（max_chars / pattern / enum）、路径不是工作区相对路径，一律在加载期拒绝。
+    宁可让注册表加载失败，也不让一个"看起来能用"的默认值悄悄变成匹配依据。
+    """
+
+    name = spec.name
+    value = spec.default
+    if spec.required:
+        raise ValueError(
+            f"{name}: required=True 与 default 自相矛盾——"
+            "有默认值就意味着它可以不出现；要给它默认值请去掉 required"
+        )
+    if spec.type is ParamType.STRING_LIST:
+        raise ValueError(
+            f"{name}: string_list 参数不得声明 default——"
+            "审批模式只支持字符串 / 整数 / 布尔，列表类默认值无法参与整串匹配"
+        )
+    if spec.type is ParamType.STRING:
+        if not isinstance(value, str):
+            raise ValueError(
+                f"{name}: default 必须是字符串，得到 {type(value).__name__}"
+            )
+    elif spec.type is ParamType.PATH:
+        if not isinstance(value, str):
+            raise ValueError(f"{name}: default 必须是路径字符串，得到 {type(value).__name__}")
+        candidate = value.strip()
+        if not candidate:
+            raise ValueError(f"{name}: default 不得为空字符串")
+        if candidate != value:
+            raise ValueError(f"{name}: default 不得带首尾空白（它要参与逐字匹配）")
+        if "\\" in value or "/./" in value or value.startswith("./"):
+            raise ValueError(
+                f"{name}: default 必须是规范形态：用 '/' 分隔、不带 './' 前缀，得到 {value!r}"
+            )
+        if re.match(r"^[A-Za-z]:", value) or value.startswith(("/", "\\")):
+            raise ValueError(f"{name}: default 必须是工作区相对路径，得到绝对路径 {value!r}")
+        if any(part == ".." for part in value.split("/")):
+            raise ValueError(f"{name}: default 不得包含 '..'：默认值不能越出工作区，得到 {value!r}")
+    elif spec.type is ParamType.INTEGER:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{name}: default 必须是整数，得到 {value!r}")
+    elif spec.type is ParamType.BOOLEAN:
+        if not isinstance(value, bool):
+            raise ValueError(f"{name}: default 必须是布尔值，得到 {value!r}")
+    if isinstance(value, str):
+        if spec.max_chars is not None and len(value) > spec.max_chars:
+            raise ValueError(
+                f"{name}: default 长度 {len(value)} 超过声明的 max_chars={spec.max_chars}"
+            )
+        if spec.pattern is not None and re.fullmatch(spec.pattern, value) is None:
+            raise ValueError(
+                f"{name}: default 不匹配声明的 pattern {spec.pattern!r}（整串匹配）"
+            )
+        if spec.enum and value not in spec.enum:
+            raise ValueError(f"{name}: default 取值 {value!r} 不在声明的 enum {list(spec.enum)} 内")
+
+
 class ParamSpec(StrictModel):
     """一个参数的允许形态。未声明的参数一律拒绝（allowlist，不是 denylist）。"""
 
@@ -587,6 +656,15 @@ class ParamSpec(StrictModel):
         default=None, description="出现 escalating_values 时必须具备的额外权限"
     )
     secret: bool = Field(default=False, description="值不进审计，只留摘要")
+    default: Any = Field(
+        default=None,
+        description=(
+            "可选参数的默认值（审批协议 1.3 的「参数域」按它补齐后再匹配）。"
+            "null = 没有默认值：此时审批条子必须逐格声明这个参数。"
+            "**只参与审批匹配，不改变执行**：驱动层读取参数的缺省行为一字未动"
+            "（open-work 5.11「声明了却不执行」仍是未修项，默认值不是它的修复）"
+        ),
+    )
 
     @field_validator("name")
     @classmethod
@@ -632,6 +710,8 @@ class ParamSpec(StrictModel):
 
     @model_validator(mode="after")
     def _check_shape(self) -> "ParamSpec":
+        if self.default is not None:
+            _check_param_default(self)
         if self.type is ParamType.STRING_LIST:
             if self.max_items is None:
                 raise ValueError(f"{self.name}: string_list 必须声明 max_items（否则等于不设上限）")
@@ -665,6 +745,47 @@ class ParamSpec(StrictModel):
         if self.requires_permission and not self.escalating_values:
             raise ValueError(f"{self.name}: requires_permission 只在 escalating_values 出现时生效")
         return self
+
+
+class CommandFamily(StrictModel):
+    """注册表声明的一个「命令族」：一组**同一种用途**的允许命令形态。
+
+    族是**数据**，不是代码里的分类：`approve --family` 只按这里声明的模式签发条子，
+    `tools/approval_allowlist_audit.py --check` 把族与 `allowed_commands` 做双向比对。
+
+    这里**不**强制"族的模式必须落在 allowed_commands 里"：一致性由那台仪器判，
+    在加载期强制只会让它永远绿（AGENTS 第 45 条）。加载期只保证族的形状可读：
+    id 稳定且不重复、至少一条模式、每条模式都是可编译的正则。
+    """
+
+    id: str = Field(min_length=1)
+    title: str = ""
+    patterns: Tuple[str, ...] = Field(min_length=1, description="这一族覆盖的 allowed_commands 模式")
+
+    @field_validator("id")
+    @classmethod
+    def _check_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not _SAFE_ID_RE.match(normalized):
+            raise ValueError(f"命令族 ID 必须是稳定标识符（字母/数字/._:-），得到 {value!r}")
+        return normalized
+
+    @field_validator("patterns")
+    @classmethod
+    def _check_patterns(cls, value: Tuple[str, ...]) -> Tuple[str, ...]:
+        cleaned: list[str] = []
+        for pattern in value:
+            text = str(pattern).strip()
+            if not text:
+                raise ValueError("命令族的模式不能为空")
+            try:
+                re.compile(text)
+            except re.error as error:
+                raise ValueError(f"命令族的正则不合法 {text!r}: {error}") from error
+            if text in cleaned:
+                raise ValueError(f"命令族出现重复模式 {text!r}")
+            cleaned.append(text)
+        return tuple(cleaned)
 
 
 class ToolSpec(StrictModel):
@@ -707,6 +828,13 @@ class ToolSpec(StrictModel):
     shell: Tuple[str, ...] = Field(
         default=(),
         description="shell_command 驱动解析命令时使用的前缀（argv 形式，永不经过 shell 解析）",
+    )
+    command_families: Tuple[CommandFamily, ...] = Field(
+        default=(),
+        description="命令族数据（注册表 1.1 起）：按用途分组的 allowed_commands 模式。"
+        "它是**授权面数据**（进 schema_hash）：「approve --family」只从这里取模式，"
+        "「approval_allowlist_audit --check」把它与 allowed_commands 双向比对。"
+        "省略 = 该工具没有族数据（旧注册表照常加载）。",
     )
     audit_failure: AuditFailurePolicy = AuditFailurePolicy.BLOCK
     notes: str = ""
@@ -834,6 +962,21 @@ class ToolSpec(StrictModel):
                 f"{self.id}: ungoverned 只适用于 driver=none 且 effect=process 的委派工具；"
                 "平台真正执行的工具必须走驱动与 post_checks，不得用一句声明换掉门禁"
             )
+        if self.command_families:
+            if self.driver is not DriverKind.SHELL_COMMAND:
+                raise ValueError(
+                    f"{self.id}: command_families 只适用于 shell_command 驱动："
+                    "别的工具没有命令白名单，族数据会变成一份没人读的声明"
+                )
+            if not self.allowed_commands:
+                raise ValueError(
+                    f"{self.id}: 声明了 command_families 却没有 allowed_commands——"
+                    "族只能给白名单分组，不能凭空造出允许的命令"
+                )
+            ids = [item.id for item in self.command_families]
+            duplicates = sorted({item for item in ids if ids.count(item) > 1})
+            if duplicates:
+                raise ValueError(f"{self.id}: 命令族 ID 重复：{duplicates}")
         if self.is_delegated_process and self.code_check is None and self.ungoverned is None:
             raise ValueError(
                 f"{self.id}: driver=none 且 effect=process 的委派工具必须**显式**声明"
@@ -848,6 +991,24 @@ class ToolSpec(StrictModel):
         for spec in self.parameters:
             if spec.name == name:
                 return spec
+        return None
+
+    def param_defaults(self) -> dict[str, Any]:
+        """可选参数的默认值（参数名 → 值）：审批协议 1.3「参数域」的**唯一**来源。
+
+        只收 `default is not None` 的参数：没有默认值的参数不进这里，
+        于是"请求里出现未声明且无默认值的参数"仍然拒（参数域放宽的边界）。
+        这个方法只是把数据取出来，不改变任何执行行为。
+        """
+
+        return {item.name: item.default for item in self.parameters if item.default is not None}
+
+    def command_family(self, family_id: str) -> Optional[CommandFamily]:
+        """按 ID 取一个命令族；没有就是 None（调用方据此报"这个工具没有这一族"）。"""
+
+        for family in self.command_families:
+            if family.id == family_id:
+                return family
         return None
 
     @property

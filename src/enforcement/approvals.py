@@ -43,12 +43,24 @@ Phase 4 文档要求"参数绑定授权与人工门禁"。这里刻意不做任�
   "未过期 > 主体相符 > 绑定档 > `approval_id` 升序"排。
 - 没有该工具的记录时**不拿别人的条子顶替**：调用方据此得到 `approval_required`
   （"这个工具没有条子"），而不是把人引向"我的条子写错了"（`approval_invalid`）。
+
+**审批协议 1.3 的「参数域」**（B1，2026-10-20）：
+
+- 注册表把某参数声明为「可选且带默认值」（`ParamSpec.default`）时，条子可以**不逐格
+  声明**它：匹配前用默认值补齐两侧再比对——记录侧补成"必须等于默认值"，请求侧把缺席
+  补成默认值。于是缺席与默认值在这一格上是**同一件事**（驱动层本来也这么读：例如
+  `timeoutMs` 缺省用注册表 `timeout_ms`、`workdir` 缺省是工作区根）。
+- 这**不是通配**：补出来的是一条**精确等于默认值**的模式。请求带一个非默认值时仍然拒，
+  而"请求里出现未声明且无默认值的参数"也仍然拒（1.1 起的安全性质，一个字没改）。
+- 版本门是硬的：只有**记录自己**声明 1.3 时才补齐。1.1 / 1.2 的记录行为与修前逐字相同；
+  调用方不传注册表默认值时，1.3 记录同样按旧口径（失败关闭——放宽必须显式发生）。
 """
 
 from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -65,6 +77,7 @@ from .models import (
 )
 
 __all__ = [
+    "APPROVAL_PARAM_DOMAIN_VERSION",
     "APPROVAL_SCHEMA_VERSION",
     "APPROVAL_SET_SCHEMA_VERSIONS",
     "SUPPORTED_APPROVAL_SCHEMA_VERSIONS",
@@ -75,9 +88,11 @@ __all__ = [
     "approval_payload",
     "approval_store_payload",
     "available_tools",
+    "has_param_domain",
     "load_approval",
     "load_approvals",
     "select_approval",
+    "union_pattern",
     "verify_approval",
 ]
 
@@ -96,8 +111,24 @@ __all__ = [
 # 制造误读——这与 1.0→1.1 那次不同（那次 pattern"到底覆盖了什么"本身就是歧义的，
 # 只能拒收重签）。1.1 里**唯一**新增的约束是：那种文档里出现 records 就是自相矛盾
 #（那个版本不认识这个键），加载期拒绝。
-APPROVAL_SCHEMA_VERSION = "1.2"
-SUPPORTED_APPROVAL_SCHEMA_VERSIONS = frozenset({"1.1", APPROVAL_SCHEMA_VERSION})
+#
+# 1.3（B1，2026-10-20）：模式化审批新增**「参数域」语义**（没有新增键，改的是
+# param_patterns 的覆盖口径，所以按 AGENTS 第 55 条显式升版）：
+#
+#   - 注册表把某个参数声明为「可选且带默认值」（`ParamSpec.default`）时，
+#     条子**可以不逐格声明它**：匹配前用注册表默认值补齐**两侧**再比对——
+#     记录侧补成"该参数必须等于默认值"，请求侧把缺席补成默认值；
+#   - 请求里出现**未声明且无默认值**的参数仍然拒（1.1 起的安全性质一字未改）；
+#   - 补默认值**只在记录自己声明 1.3** 时发生：1.1 / 1.2 的记录行为与修前逐字相同，
+#     不因为"注册表恰好有默认值"就悄悄变宽（AGENTS 第 55 条：同一版本号底下不许
+#     有两种载荷形状）；拿不到注册表默认值（调用方不传）时同样按旧口径，失败关闭。
+#
+# 这三条都是**放宽**，因此 1.3 的条子必须逐条交差集（05 §4 B1 的门）。
+APPROVAL_SCHEMA_VERSION = "1.3"
+SUPPORTED_APPROVAL_SCHEMA_VERSIONS = frozenset({"1.1", "1.2", APPROVAL_SCHEMA_VERSION})
+#: 「参数域」语义从这一版起生效：记录侧的省略要按注册表默认值补齐。
+#: 用**数值比较**而不是"等于当前版本"：以后 1.4 不该把这条语义丢回去。
+APPROVAL_PARAM_DOMAIN_VERSION = "1.3"
 # 记录集（records 键）从 1.2 起才有：1.1 是唯一一个"记录只能单独放"的版本，把它排除
 # 在这里，于是"1.1 的文档里出现 records"在加载期就是一句能被读出来的自相矛盾。
 # 以后再升版时**不需要**改这一行——它按定义就是"支持的版本里、认识 records 的那些"。
@@ -373,6 +404,7 @@ def select_approval(
     subject: Optional[str] = None,
     now: Optional[datetime] = None,
     params: Optional[Mapping[str, Any]] = None,
+    param_defaults: Optional[Mapping[str, Any]] = None,
 ) -> Optional[ApprovalRecord]:
     """按当前动作**选出该出示哪一张条子**；没有这个工具的记录就返回 None。
 
@@ -390,14 +422,16 @@ def select_approval(
 
     | 序 | 偏好 | 为什么 |
     | --- | --- | --- |
-    | 0 | **参数形状对得上**（传了 `params` 时） | 同一个工具可以有多张条子（各自一个命令族）。不带这一档，选中的永远是 `approval_id` 最小的那张，第二族就**永远出示不到**——表现为"白名单里明明允许的命令却被拒"。它排在"未过期"之前：一张**对不上形状的**有效条子只会给出误导性的拒绝理由 |
+    | 0 | **参数形状完全对得上**（传了 `params` 时；1.3 记录按注册表默认值补齐后比） | 同一个工具可以有多张条子（各自一个命令族）。不带这一档，选中的永远是 `approval_id` 最小的那张，第二族就**永远出示不到**——表现为"白名单里明明允许的命令却被拒"。它排在"未过期"之前：一张**对不上形状的**有效条子只会给出误导性的拒绝理由 |
+    | 0.5 | 1.3 记录"声明的那几格全部对得上"、但请求还带了未声明的格（可能是默认值，也可能越界） | 拿不到注册表默认值时（例如 dsh 桥的调用点）只能这么读：它**只影响出示顺序**，判定仍由 `verify_approval` 给。1.1 / 1.2 记录没有这一档（它们没有参数域语义，形状必须逐格相等） |
     | 1 | 未过期 | 过期的条子必然被拒；让它排在后面只为了理由说的是"参数不匹配"而不是"过期" |
     | 2 | 主体相等 | 同上：跨主体的条子必然被拒，但"主体不符"比"参数不符"更接近真相 |
     | 3 | 绑定档：本次 action_id 的单次绑定 > 模式化 > 其它单次绑定 | 越具体越该被出示；陈旧的单次绑定只会得到"绑的是另一次调用" |
     | 4 | `approval_id` 升序 | 确定性：同样的输入必须选出同一张条子（AGENTS 第 5 条的口径） |
 
-    主体未知（请求没有主体）时第 2 档对所有候选同值，不影响排序；`params` 缺省（旧调用方）
-    时第 0 档对所有候选同值，于是排序与加这一档之前**逐位相同**（向后兼容，不是新语义）。
+    主体未知（请求没有主体）时"主体相等"那一档对所有候选同值，不影响排序；`params` 缺省
+    （旧调用方）时形状档对所有候选同值，于是排序与加这一档之前**逐位相同**
+    （向后兼容，不是新语义）。
 
     形状对不上的候选**仍然留在候选集里**（排在第 4 档之后按 `approval_id` 定序），
     于是"这个工具只有一张对不上的条子"仍然得到 `approval_invalid` + 具体的参数不匹配理由，
@@ -415,20 +449,28 @@ def select_approval(
         这不是 `verify_approval` 的替代品：次数、时效、主体、角色一概不看，
         只看"参数形状像不像"。缺参数 / 参数没声明 / 取值类型不支持模式匹配都算"对不上"——
         那是排序的输入，不是拒绝的理由（拒绝由 `verify_approval` 给出）。
+
+        三档取值（越小越先出示）：0 = 逐格完全对得上（1.3 记录按默认值补齐后比）；
+        1 = 1.3 记录声明的那几格全对得上、但请求还带着未声明的格；2 = 对不上。
         """
 
         if params is None:
-            return False
-        if set(params) != set(record.param_patterns):
-            return False
-        for name, pattern in record.param_patterns.items():
+            return 2
+        domain = approval_param_domain(record, params=params, param_defaults=param_defaults)
+        for name, pattern in domain.patterns.items():
+            if name not in domain.params:
+                return 2
             try:
-                text = pattern_text(params[name], name=name)
+                text = pattern_text(domain.params[name], name=name)
             except ApprovalError:
-                return False
+                return 2
             if re.fullmatch(pattern, text) is None:
-                return False
-        return True
+                return 2
+        if set(domain.params) == set(domain.patterns):
+            return 0
+        # 只在记录自己有"参数域"语义时才允许"声明的那几格对得上"这一档；
+        # 1.1 / 1.2 记录必须逐格相等（它们的行为与修前逐字相同）。
+        return 1 if has_param_domain(record) else 2
 
     def rank(record: ApprovalRecord) -> Tuple[int, int, int, int, str]:
         if record.binding is ApprovalBinding.ACTION:
@@ -436,7 +478,7 @@ def select_approval(
         else:
             binding_rank = 1
         return (
-            0 if shape_matches(record) else 1,
+            shape_matches(record),
             0 if record.expires_at > moment else 1,
             0 if (subject is not None and record.subject == subject) else 1,
             binding_rank,
@@ -447,7 +489,7 @@ def select_approval(
 
 
 def approval_store_payload(records: Sequence[ApprovalRecord]) -> dict[str, Any]:
-    """把一组记录渲染成要写盘的审批文档（1.2）。**形状随记录条数**：
+    """把一组记录渲染成要写盘的审批文档（当前协议版本；记录集自 1.2 起）。**形状随记录条数**：
 
     - **一条记录** → 历史上那种**单记录文档**（顶层就是记录的字段）。
       这不是遗留包袱，是兼容性：仓库内外都有一批消费者按 `record["action_hash"]` 这样读
@@ -487,6 +529,118 @@ def pattern_text(value: Any, *, name: str) -> str:
     )
 
 
+def _version_at_least(version: str, floor: str) -> bool:
+    """协议版本比较：`"1.3"` >= `"1.3"`，`"1.2"` < `"1.3"`。
+
+    只看数字段，不认未知形状（未知版本在模型校验阶段已经被拒）：这里比较的是
+    **已经过校验**的版本号，所以 `"1.3-rc"` 这种形态不可能到达。
+    """
+
+    def parse(value: str) -> tuple[int, ...]:
+        parts: list[int] = []
+        for item in str(value).split("."):
+            if not item.isdigit():
+                break
+            parts.append(int(item))
+        return tuple(parts)
+
+    return parse(version) >= parse(floor)
+
+
+def has_param_domain(record: ApprovalRecord) -> bool:
+    """这条记录是否按 1.3 的「参数域」解释（只有协议 ≥1.3 的记录才有）。
+
+    它是**唯一的版本判据**：verify（补齐）、select（形状档）、precheck（拒绝理由与审计
+    详情）都调这一个函数，避免三处各写一遍版本比较、日后只改其中两处。
+    """
+
+    return _version_at_least(record.schema_version, APPROVAL_PARAM_DOMAIN_VERSION)
+
+
+def _default_pattern(value: Any, *, name: str) -> str:
+    r"""把一个注册表默认值渲染成**精确匹配**的模式（转义全部正则元字符）。
+
+    它不是通配：`workdir="."` 得到 `^\.$`，只接受"."，不接受"src"。
+    """
+
+    return "^" + re.escape(pattern_text(value, name=name)) + "$"
+
+
+@dataclass(frozen=True)
+class _ParamDomain:
+    """一次模式化匹配的**生效参数域**（记录声明 + 注册表默认值）。
+
+    `params` 是补齐后的请求侧、`patterns` 是补齐后的记录侧（名字集合相同）；
+    `implicit` 记住哪些模式是**默认值补出来的**——拒绝时要说清"这条模式不是你写的"。
+    """
+
+    params: dict[str, Any]
+    patterns: dict[str, str]
+    implicit: frozenset
+    defaults: Mapping[str, Any]
+
+
+def approval_param_domain(
+    record: ApprovalRecord,
+    *,
+    params: Optional[Mapping[str, Any]],
+    param_defaults: Optional[Mapping[str, Any]] = None,
+) -> _ParamDomain:
+    """按记录版本算出本次匹配的生效参数域（1.3 才补默认值，其余版本原样）。
+
+    两条边界写死在这里：
+
+    1. **只有记录自己声明 ≥ 1.3 才补**：1.1 / 1.2 的记录遇到"可选参数缺失"时，
+       行为与修前逐字相同（不许因为注册表有默认值就悄悄变宽）；
+    2. **拿不到默认值就不补**：调用方不传 `param_defaults` 时按旧口径（失败关闭）。
+       放宽必须是显式的，不能靠"恰好拿到一份数据"发生。
+    """
+
+    declared = dict(params or {})
+    if not param_defaults or not has_param_domain(record):
+        return _ParamDomain(
+            params=declared, patterns=dict(record.param_patterns), implicit=frozenset(), defaults={}
+        )
+
+    # 请求侧：**所有**默认值都要补缺席（记录声明了的那几格也一样——"不传"在参数域里
+    # 就是"取默认值"，否则一条声明了 ^30000$ 的条子会意外地"接受不传"）。
+    effective = dict(declared)
+    for name, value in param_defaults.items():
+        effective.setdefault(name, value)
+    # 记录侧：只有**没被逐格声明**的那些才补一条"必须等于默认值"的模式。
+    applied = {
+        name: value
+        for name, value in param_defaults.items()
+        if name not in record.param_patterns
+    }
+    patterns = dict(record.param_patterns)
+    for name, value in applied.items():
+        patterns[name] = _default_pattern(value, name=name)
+    return _ParamDomain(
+        params=effective,
+        patterns=patterns,
+        implicit=frozenset(applied),
+        defaults=applied,
+    )
+
+
+def union_pattern(patterns: Sequence[str]) -> str:
+    """把一组**整串匹配**的模式并成一条模式（语义 = 任一分支整串匹配）。
+
+    它是 `approve --family` 的实现细节：一条记录只能给一个参数一种模式，而一个命令族
+    常有多条白名单（`python -m pytest` / `uv run python -m pytest`）。并法保持**精确**：
+    每个分支原样放进非捕获组，外层再套一层非捕获组——`re.fullmatch` 下等价于
+    "匹配任一分支"。单条模式**原样返回**（不包装，保持可读、可被前缀审计读出）。
+    """
+
+    items = [str(item).strip() for item in patterns]
+    if not items or any(not item for item in items):
+        raise ApprovalError("命令族的模式不能为空：族里没有任何模式就没有可签的东西")
+    if len(items) == 1:
+        return items[0]
+    return "(?:" + "|".join(f"(?:{item})" for item in items) + ")"
+
+
 def verify_approval(
     record: Optional[ApprovalRecord],
     *,
@@ -499,12 +653,22 @@ def verify_approval(
     now: Optional[datetime] = None,
     params: Optional[Mapping[str, Any]] = None,
     uses: Optional[int] = None,
+    param_defaults: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """校验审批与当前动作一致；任何不符都抛 ApprovalError。
 
     公共性质（两种档位都查）：工具、主体、签发时间不在未来、未过期、授予者持有审批角色。
     binding=action 追加：action_hash 与 action_id 逐位一致，且未被消费过（used=False）。
     binding=pattern 追加：次数未用尽，且每个声明的参数模式都整串匹配当前规范化取值。
+
+    **审批协议 1.3 的「参数域」**（`param_defaults` 是注册表声明的可选参数默认值）：
+
+    - 记录自述 ≥ 1.3 时，注册表声明为"可选且有默认值"、而记录**没有逐格声明**的参数，
+      会被补成一条**精确等于默认值**的模式（记录侧），请求侧缺席的那一格也补成默认值；
+      于是"不传"与"传了默认值"在这一格上是同一件事，非默认值仍然拒。
+    - 记录自述 1.1 / 1.2 时**一个字都不补**（与修前逐字相同）；
+      调用方不给 `param_defaults` 时也不补（拿不到数据就按旧口径，失败关闭）。
+    - 请求里出现**未声明且无默认值**的参数仍然拒——这是 1.1 起就有的安全性质。
     """
 
     if record is None:
@@ -553,14 +717,25 @@ def verify_approval(
         raise ApprovalError(
             "模式化审批需要本次请求的规范化参数才能校验模式：拿不到参数就拒绝（证明不了即失败关闭）"
         )
-    for name in sorted(record.param_patterns):
-        pattern = record.param_patterns[name]
-        if name not in params:
+    domain = approval_param_domain(record, params=params, param_defaults=param_defaults)
+    for name in sorted(domain.patterns):
+        pattern = domain.patterns[name]
+        if name not in domain.params:
             raise ApprovalError(
                 f"审批模式声明的参数 {name!r} 不在本次请求里：模式匹配不上，拒绝执行"
             )
-        text = pattern_text(params[name], name=name)
+        text = pattern_text(domain.params[name], name=name)
         if re.fullmatch(pattern, text) is None:
+            if name in domain.implicit:
+                # 这一条模式**不是签的人写的**，是 1.3 参数域按注册表默认值补出来的：
+                # 拒绝理由必须说清来源与"怎么改"，否则读的人会去查自己的条子。
+                default = domain.defaults[name]
+                raise ApprovalError(
+                    f"参数 {name!r} 的取值 {text!r} 不等于注册表声明的默认值 {default!r}"
+                    "（审批协议 1.3 的参数域）：条子没有逐格声明它，于是只覆盖"
+                    "「不传或等于默认值」的调用。要允许别的取值，请显式写成 "
+                    f"--param-pattern {name}=<正则> 后重签"
+                )
             raise ApprovalError(
                 f"参数 {name!r} 的取值不匹配审批模式 {pattern!r}（整串匹配）："
                 "参数一变旧授权自动失效"
@@ -569,7 +744,9 @@ def verify_approval(
     # 只校验声明过的那些，等于给未声明的参数（exec.pwsh 的 workdir / sandbox_permissions、
     # exec.shell 的 description …）留一张"跟着条子一起放行"的后门——而 binding=pattern
     # 不校验 action_hash，没有任何第二道闸能发现这种放大。
-    undeclared = sorted(set(params) - set(record.param_patterns))
+    # 1.3 的参数域只把「注册表声明为可选且有默认值」的那些补进 patterns（精确=默认值），
+    # 所以这一句的语义没有放宽：补出来的参数不再算"未声明"，别的照旧。
+    undeclared = sorted(set(domain.params) - set(domain.patterns))
     if undeclared:
         hints = "、".join(f"{name}=.*" for name in undeclared)
         raise ApprovalError(
