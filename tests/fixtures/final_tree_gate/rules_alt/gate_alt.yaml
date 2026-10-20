@@ -1,0 +1,24 @@
+# C3 最终树门禁的**第二份夹具规则集**：只服务 tests/unit/test_final_tree_gate.py。
+#
+# 两个用途：
+#   1) 规则集漂移用例（与 rules/ 同 id、不同 message ⇒ 同一份规则被改过）；
+#   2) 加载顺序用例（与 rules/ 一起按两种顺序传给 --rules，RuleSet.identity 必须不变）。
+id: GATE-002
+version: 1
+name: gate-fixture-line-length-advisory
+description: 夹具规则：单行不超过 100 列（Ruff E501），advisory 级别。
+scope:
+  language: python
+severity: warning
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [E501]
+message: 夹具规则（第二份）命中：单行超过 100 列（Ruff E501）。
+source:
+  kind: project-policy
+  path: tests/fixtures/final_tree_gate/source.md
+  note: C3 最终树门禁的夹具规则；不是项目规范。

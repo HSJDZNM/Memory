@@ -1,0 +1,24 @@
+# C3 最终树门禁的**夹具规则**：只服务 tests/unit/test_final_tree_gate.py。
+#
+# 为什么用例用夹具规则集：门禁要能分别造出「干净树 / 坏文件 / 规则集漂移」三种形态；仓库 43 条
+# 规则在一棵夹具小树上会让 TESTING / ARCH / DOC 全部参与，用例就变成在测规则集而不是在测门禁。
+# 判定路径没有缩水：真实验证器流水线（真调用 Ruff）+ 唯一判定入口 policy.engine.evaluate。
+id: GATE-001
+version: 1
+name: gate-fixture-line-length
+description: 夹具规则：单行不超过 100 列（Ruff E501）。
+scope:
+  language: python
+severity: error
+enforcement:
+  type: deterministic
+  checker: style_lint
+rule:
+  style_lint:
+    tool: ruff
+    codes: [E501]
+message: 夹具规则命中：单行超过 100 列（Ruff E501）。
+source:
+  kind: project-policy
+  path: tests/fixtures/final_tree_gate/source.md
+  note: C3 最终树门禁的夹具规则；不是项目规范。

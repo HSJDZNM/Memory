@@ -1,0 +1,19 @@
+# 夹具：C3 最终树门禁用例使用的 adapter 配置（分层 / 语言 / 规则目录都从这里来）。
+#
+# 字段口径与 examples/dsh/dsh-adapter.yaml 一致：相对路径相对**本文件所在目录**。
+# 门禁本身只消费 layers / languages / rules 这三段，其余段（principal / audit_log …）不读。
+project: final-tree-gate-fixture
+project_root: tree_clean
+rules:
+  - rules
+timeout_ms: 5000
+layers:
+  - pattern: "tests/**/*.py"
+    layer: test
+  - pattern: "**/*.py"
+    layer: module
+default_layer: null
+languages:
+  - pattern: "**/*.py"
+    language: python
+default_language: text
