@@ -157,7 +157,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | B1 | 审批签「参数域」：注册表声明的可选参数按默认值覆盖；族从注册表生成 | src/enforcement/approvals.py（1.2→1.3）、precheck.py（默认值补齐）、cli.py（approve --family）、registry/tool-registry.yaml（command_families）、tools/approval_allowlist_audit.py（--check）、契约用例 | 4 | 9/9 命令通过；三条负例（未知参数 / run_in_background=true / 白名单外命令）仍拒；approval_allowlist_audit --check 0 命中 | 审批文件换回逐格三条；1.3 分支无记录触发 | 已落地（2026-10-20，fe292b9）：读数 `readings/2026-10-20-B1-param-domain.md`；夹具矩阵 9/9，真实受治会话 9/9 待使用者签 1.3 条子；残留见 04 5.83 |
 | B2 | 测试支撑声明：test_support_patterns + selection 消费 | validation/test-layout.yaml（v1→v2）、src/validators/selection.py（PIPELINE_SCHEMA_VERSION 1.3→1.4）、conftest-alone.yaml 显式翻面、用例 | 3.5 | conftest-alone 翻绿且 failing_tests 进 served_checkers；真实 Hook edit conftest.py exit 0；5 类反例仍 block | 删除 test_support_patterns、版本回 v1 | 已落地（2026-10-18，47fa325） |
-| B3 | 只读命令族读面闸门 | registry/tool-registry.yaml（read_guard 数据）、src/enforcement/precheck.py（新检查）、models.py（新 reason code）、用例 | 3 | 3 条越界形态被拦；合法命令 0 误伤（400 份真实会话回放） | 删 read_guard 数据 | 已定（需解冻） |
+| B3 | 只读命令族读面闸门 | registry/tool-registry.yaml（read_guard 数据）、src/enforcement/precheck.py（新检查）、models.py（新 reason code）、用例 | 3 | 3 条越界形态被拦；合法命令 0 误伤（400 份真实会话回放） | 删 read_guard 数据 | 已落地（2026-10-20，9a88112）：读数 `readings/2026-10-20-B3-read-guard.md`；7 条新拦 / 8 条合法 0 误伤；400 份真实会话回放**未取得**；残留见 04 5.86 |
 
 **阶段 B 的纪律**：三项各自单独提交、单独差集；**不许合并成一次「方案包」提交**（否则 B2 的归因会被 B1 掩盖）。
 
