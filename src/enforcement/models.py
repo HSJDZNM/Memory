@@ -103,7 +103,7 @@ __all__ = [
 # （先例：`validators.pipeline` 的 `selection.level` 多出 "support" ⇒ 1.3 → 1.4）。
 # 旧消费方看到 `read_guard_blocked` 必须拒绝消费，而不是把它当成一个不认识的"放行"。
 # **1.0 仍然接受**：已经落盘的审计 / 台账 / 决策记录是 1.0 载荷，它们与 1.1 的键集合逐字相同，
-# 拒收只会让历史证据读不出来；这与 `REGISTRY_SCHEMA_VERSION` 的 1.0/1.1/1.2 同型。
+# 拒收只会让历史证据读不出来；这与 `REGISTRY_SCHEMA_VERSION` 的 1.0/1.1/1.2/1.3 同型。
 ENFORCEMENT_SCHEMA_VERSION = "1.1"
 SUPPORTED_ENFORCEMENT_SCHEMA_VERSIONS = frozenset({"1.0", ENFORCEMENT_SCHEMA_VERSION})
 
@@ -137,8 +137,16 @@ EnforcementVersion = Annotated[str, AfterValidator(_check_protocol_version)]
 # 1.2（B3，2026-10-20）：逐工具新增**可选**字段 `read_guard`（只读命令族的读面闸门数据，
 # 见 `ReadGuardSpec`）。同样按第 55 条显式升版；同样可选，因此 `SUPPORTED` 保留 1.0 / 1.1，
 # 两份旧注册表照常加载。它进 `schema_hash`（授权面数据）：读面的边界改一个字都必须重新审核。
-REGISTRY_SCHEMA_VERSION = "1.2"
-SUPPORTED_REGISTRY_SCHEMA_VERSIONS = frozenset({"1.0", "1.1", REGISTRY_SCHEMA_VERSION})
+#
+# 1.3（C3 第三件 v1，2026-10-21）：键集合没变，变的是 `blocked_prefixes` 这一列的**取值**——
+# 四个写类工具（fs.edit / fs.write / orc.fs.edit / orc.fs.write）补上 `.policy`。信任根
+# （审批条子 / 审计账本 / 受控执行台账）的读面从 1.2 起由 `read_guard` 封住，写面此前却敞着；
+# 按第 55 条"取值集合/语义变了就要显式升版"（同型先例：ReasonCode 多一个取值 ⇒ ENFORCEMENT
+# 1.0→1.1）。旧注册表 1.0 / 1.1 / 1.2 照常加载，因此 `SUPPORTED` 显式列出全部四个版本。
+REGISTRY_SCHEMA_VERSION = "1.3"
+SUPPORTED_REGISTRY_SCHEMA_VERSIONS = frozenset(
+    {"1.0", "1.1", "1.2", REGISTRY_SCHEMA_VERSION}
+)
 
 # 命令文本里出现这些片段就说明它不是一条单语句：分隔、管道、命令替换、重定向、
 # 换行都意味着「白名单匹配的那条命令之外还有别的东西」。这些一律结构性阻断——

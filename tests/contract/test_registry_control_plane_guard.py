@@ -7,11 +7,17 @@
 的是一条无门禁的篡改路径——改完注册表 / 哈希 / 声明，只有运行期"描述与已审核哈希对不上"
 时才会被发现。
 
-本文件两条断言缺一不可：
+注册表 1.3（C3 第三件 v1）把 `.policy/` 补进同一份 `blocked_prefixes`：受控项目里的
+**信任根**（审批条子 `approval.json`、审计账本 `audit.jsonl`、受控执行台账）同样定义治理，
+而读面从 B3（注册表 1.2 的 `read_guard`）起就已经挡着它——同一条信任根两条路，读挡着、
+写敞着，等于没挡。四个写类工具（dsh 的两个 + 编排层的两个）都必须声明它。
+
+本文件两组断言缺一不可：
 
 1. **数据面**：注册表里每个"不改就能自动放行"的写工具都必须声明同一组受保护前缀；
-2. **行为面**：拿真注册表对 `registry/tool-registry.yaml` 跑一次 pre-check，必须是 block
-   且原因是 `path_prefixes`；对照组（受控项目内的普通文件）不被这道闸拦。
+2. **行为面**：拿真注册表跑一次 pre-check，信任根写入必须是 block 且原因是 `path_prefixes`
+   （reason_code `path_out_of_scope`）；对照组（受控项目内的普通文件、近似前缀 `.policyx/`）
+   不被这道闸拦。
 """
 
 from __future__ import annotations
@@ -20,10 +26,12 @@ from pathlib import Path
 
 import pytest
 
+from enforcement.action import build_action_request
 from enforcement.audit import FileAuditSink
 from enforcement.ledger import EnforcementLedger
-from enforcement.models import CheckStatus, Decision
+from enforcement.models import CheckStatus, Decision, ReasonCode
 from enforcement.precheck import pre_execute
+from enforcement.registry import load_registry
 
 from conftest import REPO_ROOT
 from enforcement_support import ENFORCEMENT_APPROVED, ENFORCEMENT_REGISTRY
@@ -31,26 +39,28 @@ from enforcement_support import ENFORCEMENT_APPROVED, ENFORCEMENT_REGISTRY
 pytestmark = pytest.mark.contract
 
 # 控制面：这些目录里的数据定义了"什么受治理、授权给谁、按什么口径判"。
-CONTROL_PLANE_PREFIXES = {"policies", "registry", "adapters", "api", "validation"}
+# `.policy` 是受控项目里的**信任根**（审批条子 / 审计账本 / 台账）：它不定义规则，但定义
+# "这次治理发生过什么"，因此与上面五个目录同级保护（读面从注册表 1.2 起已同样保护）。
+CONTROL_PLANE_PREFIXES = {"policies", "registry", "adapters", "api", "validation", ".policy"}
+
+# 四个自动放行的写工具：两个 dsh 侧 + 两个编排层。少一个就是一条无门禁的改写路径。
+AUTO_APPROVED_WRITE_TOOLS = {"fs.edit", "fs.write", "orc.fs.edit", "orc.fs.write"}
 
 
 def _real_registry():
-    from enforcement.registry import load_registry
-
     return load_registry(ENFORCEMENT_REGISTRY, approved_path=ENFORCEMENT_APPROVED).registry
 
 
 def _precheck(tmp_root: Path, tool_id: str, params: dict, *, action_id: str):
-    from enforcement.action import build_action_request
-
     registry = _real_registry()
     spec = registry.tool(tool_id)
+    assert spec is not None
     request = build_action_request(
         spec,
         params,
         action_id=action_id,
         request_id=action_id,
-        agent="dsh",
+        agent=spec.agent,
         agent_version="0.1.6-alpha.2",
         trace_id=None,
         subject="local-user",
@@ -77,8 +87,9 @@ def test_every_auto_approved_write_tool_guards_the_control_plane() -> None:
         for spec in registry.tools
         if spec.effect.value == "file_write" and spec.approval.value == "none"
     ]
-    # 反真空：这条检查必须真的覆盖到 dsh 的两个自动放行写工具
-    assert {"fs.edit", "fs.write"} <= {spec.id for spec in auto}
+    # 反真空：这条检查必须真的覆盖到四个自动放行写工具（dsh 的 fs.* 与编排层的 orc.fs.*）。
+    # 只断言 fs.edit / fs.write 时，编排层那两条即使前缀表被悄悄改窄也发现不了。
+    assert AUTO_APPROVED_WRITE_TOOLS <= {spec.id for spec in auto}
 
     missing = {
         spec.id: sorted(CONTROL_PLANE_PREFIXES - set(spec.parameter("file_path").blocked_prefixes))
@@ -102,6 +113,80 @@ def test_the_guard_blocks_a_control_plane_write(tmp_root: Path) -> None:
     check = outcome.decision.check("path_prefixes")
     assert check is not None and check.status is CheckStatus.FAILED
     assert "受保护前缀" in check.detail
+
+
+@pytest.mark.parametrize(
+    "tool_id, case_id, params",
+    [
+        # 信任根：审批条子 / 审计账本 / 受控执行台账。
+        ("fs.edit", "approval-edit",
+         {"file_path": ".policy/approval.json",
+          "old_string": '"granted_by": "dshznm"', "new_string": '"granted_by": "mallory"'}),
+        ("fs.write", "audit-write",
+         {"file_path": ".policy/audit.jsonl", "content": "{\"sequence\": 1}\n"}),
+        ("fs.write", "ledger-write",
+         {"file_path": ".policy/enforcement-ledger.jsonl", "content": "{\"kind\": \"claim\"}\n"}),
+        # 拼写归一化：大小写、"./"、以及前缀本身（边界等值）都必须命中。
+        # blocked_path_prefix 的口径是 casefold + 去尾斜杠，Windows 文件系统不区分大小写，
+        # 所以 .POLICY 与 .policy 是同一个目标——漏掉它就是一个真实可用的绕过。
+        ("fs.edit", "upper-edit",
+         {"file_path": ".POLICY/approval.json", "old_string": "a", "new_string": "b"}),
+        ("fs.write", "dot-prefix-write",
+         {"file_path": "./.policy/audit.jsonl", "content": "{}\n"}),
+        ("fs.write", "exact-prefix-write",
+         {"file_path": ".policy", "content": "x\n"}),
+        # 编排层的两个自动放行写工具：两个 Agent 的信任根边界必须一致。
+        ("orc.fs.edit", "orc-edit",
+         {"file_path": ".policy/approval.json", "old_string": "a", "new_string": "b"}),
+        ("orc.fs.write", "orc-write",
+         {"file_path": ".policy/audit.jsonl", "content": "{}\n"}),
+    ],
+)
+def test_the_guard_blocks_the_trust_root_write(
+    tmp_root: Path, tool_id: str, case_id: str, params: dict
+) -> None:
+    """写 .policy/ 下的信任根必须被 path_prefixes 拦下（注册表 1.3 的数据缺口修复）。"""
+
+    outcome = _precheck(
+        tmp_root, tool_id, params, action_id=f"guard-trust-{case_id}"
+    )
+
+    assert outcome.decision.decision is Decision.BLOCK
+    assert outcome.decision.reason_code is ReasonCode.PATH_OUT_OF_SCOPE
+    check = outcome.decision.check("path_prefixes")
+    assert check is not None and check.status is CheckStatus.FAILED
+    assert "受保护前缀" in check.detail
+    assert ".policy" in check.detail
+
+
+def test_the_guard_does_not_block_the_lookalike_prefix(tmp_root: Path) -> None:
+    """精度：.policyx/ 不是 .policy 之下——前缀按路径分段边界匹配，不做字符串前缀。"""
+
+    outcome = _precheck(
+        tmp_root,
+        "fs.write",
+        {"file_path": ".policyx/audit.jsonl", "content": "{}\n"},
+        action_id="guard-lookalike",
+    )
+
+    check = outcome.decision.check("path_prefixes")
+    assert check is not None and check.status is CheckStatus.PASSED
+    assert outcome.decision.decision is not Decision.BLOCK
+
+
+def test_the_rule_directory_is_still_blocked(tmp_root: Path) -> None:
+    """回归：policies/（定义判定依据本身）在补 .policy 之后仍然被拦。"""
+
+    outcome = _precheck(
+        tmp_root,
+        "fs.write",
+        {"file_path": "policies/security/SEC-001.yaml", "content": "id: SEC-001\n"},
+        action_id="guard-policies",
+    )
+
+    assert outcome.decision.decision is Decision.BLOCK
+    assert outcome.decision.reason_code is ReasonCode.PATH_OUT_OF_SCOPE
+    assert outcome.decision.check("path_prefixes").status is CheckStatus.FAILED
 
 
 def test_the_guard_does_not_block_an_ordinary_workspace_file(tmp_root: Path) -> None:

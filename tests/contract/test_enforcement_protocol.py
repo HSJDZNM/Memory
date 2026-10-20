@@ -398,12 +398,15 @@ def test_orchestrator_tools_match_the_orchestration_layer():
     for tool_id in (EDIT_TOOL, WRITE_TOOL):
         generic = registry.tool(tool_id)
         assert generic is not None
+        # 受保护前缀是**同一组**：控制面目录（规则 / 工具授权 / 适配器声明 / 已审核哈希）+
+        # 受控项目里的信任根 `.policy`（注册表 1.3 起；读面从 1.2 起已同样保护）。
         assert set(generic.parameter("file_path").blocked_prefixes) == {
             "policies",
             "registry",
             "adapters",
             "api",
             "validation",
+            ".policy",
         }
 
 
