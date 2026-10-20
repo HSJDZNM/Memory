@@ -95,6 +95,7 @@
   2. 请求里出现未声明且**没有默认值**的参数，仍然拒；
   3. run_in_background=true、白名单外命令、未知参数三条负例**必须仍然拒**；
   4. 审批协议 1.2 → 1.3（新增「参数域」语义），旧记录照常读。
+  5. **默认值只给驱动真的按「缺席等价」读的三个参数**（`exec.pwsh` / `exec.bash` 的 `timeoutMs=60000` / `workdir="."` / `run_in_background=false`）；`sandbox_permissions` / `justification` **故意不给默认值**——平台从不把「缺席」当作 workspace-write 或空理由，给默认值会在审批域里说一句不真实的话。
 - **代价**：这是**放宽**，必须交 R-d 差集，且负例要有用例钉住。
 
 ### 3.3 批次状态的可行性
@@ -146,7 +147,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | A1 | 覆盖表：把「哪个通道 × 哪个工具 × 哪种治理 × 哪条检查」变成可查询的行；桌面通道从 out_of_scope 改判 | 新增 validation/channel-coverage.yaml；tools/control_plane_facts.py 消费 + 四格红条件；adapters/wiring-scope.yaml 一条改判；validation/control-plane-facts.yaml、validation/instrument-checks.yaml 连接键；新增契约用例 | 5.5 | 表可加载；**删掉某工具的最后一行 / 全部行的变异必红（工具级红键）**；每个有审计命中的工具都有行；引用完整性 0 红格 | wiring-scope.yaml 改回一行；表读数 not_applicable | 已落地（2026-10-18，9806031；门禁绿） |
 | A2 | 5.71 探针：delegated 支路在「干净树/脏树 × 空/非空输出」四种形态下的 post 证据 | 只跑探针，不改代码 | 0.5 | 能定性为「能力边界 / 假阳性 / 真阳性」之一；三种结论都要带读数 | 无（只读） | 已落地（2026-10-18；定性真阳性） |
-| A3 | 干跑四数：受治臂跑一遍任务，只量 ① 写动作治理覆盖率 ② 命令族成功率 ③ 任务触碰路径族是否都已声明 layer ④ 是否上下文触顶 | 只读；需要一份任务包 | 0.5 | 4/4 通过 ⇒ 阶段 D 成立；任一不过 ⇒ 先修构造，不跑两臂 | 无 | 已执行（2026-10-18）：v2 4/4 + 任务完成；D 校准门通过；A/B/C 未开（readings/2026-10-18-A3-dryrun-v2.md；前置见 04 5.78） |
+| A3 | 干跑四数：受治臂跑一遍任务，只量 ① 写动作治理覆盖率 ② 命令族成功率 ③ 任务触碰路径族是否都已声明 layer ④ 是否上下文触顶 | 只读；需要一份任务包 | 0.5 | 4/4 通过 ⇒ 阶段 D 成立；任一不过 ⇒ 先修构造，不跑两臂 | 无 | 已执行（2026-10-18）：v2 4/4 + 任务完成；D 校准门通过；A/B/C 已于 2026-10-20 各跑一次（readings/2026-10-18-A3-dryrun-v2.md、readings/2026-10-20-D-gate2-ab-c-runs.md；前置见 04 5.78） |
 
 **阶段 A 的退出条件**：A1 的变异证明通过、A2 有定性结论、A3 四数齐备。三者缺一，阶段 D 不开跑。
 
@@ -154,7 +155,7 @@
 
 | 编号 | 内容 | 改动面 | 人日 | 门 | 回退 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| B1 | 审批签「参数域」：注册表声明的可选参数按默认值覆盖；族从注册表生成 | src/enforcement/approvals.py（1.2→1.3）、precheck.py（默认值补齐）、cli.py（approve --family）、registry/tool-registry.yaml（command_families）、tools/approval_allowlist_audit.py（--check）、契约用例 | 4 | 9/9 命令通过；三条负例（未知参数 / run_in_background=true / 白名单外命令）仍拒；approval_allowlist_audit --check 0 命中 | 审批文件换回逐格三条；1.3 分支无记录触发 | 已定（需解冻） |
+| B1 | 审批签「参数域」：注册表声明的可选参数按默认值覆盖；族从注册表生成 | src/enforcement/approvals.py（1.2→1.3）、precheck.py（默认值补齐）、cli.py（approve --family）、registry/tool-registry.yaml（command_families）、tools/approval_allowlist_audit.py（--check）、契约用例 | 4 | 9/9 命令通过；三条负例（未知参数 / run_in_background=true / 白名单外命令）仍拒；approval_allowlist_audit --check 0 命中 | 审批文件换回逐格三条；1.3 分支无记录触发 | 已落地（2026-10-20，fe292b9）：读数 `readings/2026-10-20-B1-param-domain.md`；夹具矩阵 9/9，真实受治会话 9/9 待使用者签 1.3 条子；残留见 04 5.83 |
 | B2 | 测试支撑声明：test_support_patterns + selection 消费 | validation/test-layout.yaml（v1→v2）、src/validators/selection.py（PIPELINE_SCHEMA_VERSION 1.3→1.4）、conftest-alone.yaml 显式翻面、用例 | 3.5 | conftest-alone 翻绿且 failing_tests 进 served_checkers；真实 Hook edit conftest.py exit 0；5 类反例仍 block | 删除 test_support_patterns、版本回 v1 | 已落地（2026-10-18，47fa325） |
 | B3 | 只读命令族读面闸门 | registry/tool-registry.yaml（read_guard 数据）、src/enforcement/precheck.py（新检查）、models.py（新 reason code）、用例 | 3 | 3 条越界形态被拦；合法命令 0 误伤（400 份真实会话回放） | 删 read_guard 数据 | 已定（需解冻） |
 
@@ -166,7 +167,7 @@
 | --- | --- | --- | --- | --- | --- |
 | C1 | 批次台账：未结清集合进判定输入 | B2 落地；协议升版 | 5 | 三步（实现→测试→conftest）逐步 decision 与合并判定相等；批次能被显式 settle/abandon | 待裁定 |
 | C2 | 证据第三态（不适用） | 书面裁定 + EVIDENCE/PIPELINE 升版 + 到期日 | 3 | 「同一输入从 block 变 allow」的用例；反例一条不放宽 | 待裁定 |
-| C3 | 最终树门禁 + 规则集哈希钉住 + 危险动作前置阻断 | 无（可独立） | 5 | 门禁能对整棵树跑 43 条 + 真实验证器；规则集被改能被发现；删除/执行/控制面写被前置阻断 | 已定 |
+| C3 | 最终树门禁 + 规则集哈希钉住 + 危险动作前置阻断 | 无（可独立） | 5 | 门禁能对整棵树跑 43 条 + 真实验证器；规则集被改能被发现；删除/执行/控制面写被前置阻断 | **v1 已落地**（2026-10-20，aca9491）：整树判定 + 规则集哈希钉住（读数 `readings/2026-10-20-C3-final-tree-gate.md`）；**危险动作前置阻断未做**（04 5.84） |
 | C4 | 回合末 steer 门禁（可选） | **先验证** agent.steer 在桌面 profile 的插件 API 里可用；再裁定 | 3 | 真机：存在未结清文件时能多跑一步；不存在时不多跑 | 待验证 |
 
 **C3 说明**：这是把「判定对象从动作换成产物」的唯一落地件。它不依赖 C1/C2，可先做；但它**只保证「结束/提交时干净」**，不保证「中间态不落盘」——这条要写进接受边界。
@@ -269,6 +270,7 @@
 6. **2026-10-18 A3 修复裁定（F-2..F-7）与 D 前置（裁定 A-5/A-6/A-7/A-12；现行判据见 §4 D 行、§5.1、§5.6）**：F-2 保留 F2 族与 demo 交付物（v2 基线预置 `tools/audit_demo.py`，A7 改为运行已有脚本）；F-3 先修构造、不改熔断口径（`breaker_seconds`=300s）；F-4 修 `.tmp` 装配器谓词并用其复算 run-01（② 仍 1/2）；F-5 启动受治 dsh 用一次性 `danger-full-access` 授权 + 跑后哈希复核；F-6/F-7 记录卫生。B1 是**条件前置**：D 校准门不依赖 B1，A/B/C 构造门依赖 B1（或经裁定的替代 treatment）+ 用户签 1.3 条子；触发：任一次 pwsh 因「注册表声明为可选、带默认值的参数」得 `approval_invalid` 且挡住必需命令 ⇒ B1 升为前置、当轮读数作废。D 拆两门（校准门 / 构造门）；② 判据冻结。裁定见 `readings/2026-10-18-A3-fix-adjudication.md`。
 7. **2026-10-19 D 门 2 五项裁定（自行研讨；使用者授权自行决策）**：treatment = 04 5.75②（`production_patterns` 增 `tools/**/*.py`）+ 任务包 v3（要求新建 `tools/audit_demo.py`）；canary 退役（改判两层显式期望：同一动作 A 臂 block / B 臂 allow + 5 类反例两臂仍 block）；B1 不进 D（保留为 04 5.69 的独立 construct fix，若做则默认值语义只对 1.3 记录生效）；评分器按 `readings/2026-10-19-D-gate2-treatment.md` §4 冻结（先建 `tools/structure_metrics.py` 并做变异自证）；隐藏验收由独立子会话编写。执行次序、未核实项与回退见该文件 §8。
 8. **2026-10-20 A/B/C 各一次 run（n=1）与人工项代执行**：三臂同一首消息、同一 12 文件基线，run-manifest 落 `testing/ab/dgate2/runs/2026-10-20/`；H2/H3 由使用者授权的两个子会话代执行复核，抽样人/复核人记使用者，代执行事实写在两份复核记录里；三份 manifest `--strict` PASS。**主张边界**：n=1 只写案例读数，写「值得扩试」需每臂 k≥3（05 §5.5）；A 首跑因注册表装配错误作废（D-20261020-01），不进计分。
+9. **2026-10-20 使用者授权解冻与两项落地**：使用者在本会话明确授权解冻 05 §2.3 的四项不做（限 B1/B3/C3）；B1 审批「参数域」（协议 1.2→1.3、注册表 1.0→1.1、族数据）与 C3 最终树门禁 v1（整树判定 + `RuleSet.identity` 钉住）落地，读数见 `readings/2026-10-20-B1-param-domain.md`、`readings/2026-10-20-C3-final-tree-gate.md`；C3 的「危险动作前置阻断」未做（04 5.84）。**新增纪律**（同次事故换来的）：改 Hook 导入链上的模块后每次写入立刻跑 import 自检（04 5.85）。
 
 ---
 

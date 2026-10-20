@@ -119,10 +119,10 @@
 以下小节按第 6 节模板收录；未产生记录的阶段为空。
 
 - 阶段 A 执行情况：见 §7.1–§7.4（2026-10-18；A1/A2 已落地，A3 v2 4/4 + 任务完成）。
-- 阶段 B 执行情况：见 §7.5（B2 已落地；B1/B3 未解冻）。
-- 阶段 C 执行情况：空（未开跑）。
+- 阶段 B 执行情况：见 §7.5（B2 已落地；**B1 已落地 2026-10-20**；B3 未开）。
+- 阶段 C 执行情况：见 §7.5.1（**C3 v1 已落地**；C1/C2/C4 待裁定）。
 - 阶段 D 执行情况：见 §7.6（校准门通过 + 门 2 前置包冻结 + **A/B/C 已于 2026-10-20 各跑一次**；H2/H3 已复核、三份 run-manifest `--strict` PASS）。
-- 汇总与复审：见 §7.7（2026-10-18 汇总）。
+- 汇总与复审：见 §7.7（2026-10-18 汇总 + 2026-10-20 B1/C3 增补）。
 
 ### 7.1 阶段 A · 进度记录
 
@@ -166,6 +166,9 @@
 | C-20261019-08 | 2026-10-19T21:55:00+08:00 | docs(plan)：D 门 2 开跑前置工具化——状态同步 + 04 5.81 登记 | 04-open-work.md、05-implementation-plan.md、07-status-brief.md、docs README、06-plan-progress.md | D 门 2 / 04 5.78 | 否（纯文档） | Lead | git show --stat HEAD（本行所在提交） |
 | C-20261020-01 | 2026-10-20T07:58:00+08:00 | feat(dgate2)：A/B/C 三臂各一次 run 的受跟踪证据 + 案例读数 | testing/ab/dgate2/runs/2026-10-20/**、readings/2026-10-20-D-gate2-ab-c-runs.md、06/04/05 | D 门 2 A/B/C | 否（只记录 run；不改平台代码、判据或退出码） | Lead | git show --stat HEAD（本行所在提交） |
 | C-20261020-02 | 2026-10-20T08:45:00+08:00 | feat(dgate2)：H2/H3 人工项复核记录 + 三份 run-manifest 填满 | readings/2026-10-20-H2-bypass-sampling.md、readings/2026-10-20-H3-a4-review.md、runs/2026-10-20/{A,B,C}/human-items.json、runs/2026-10-20/{A,B,C}/run-manifest.json、06/04 | D 门 2 人工项 | 否（只记录复核与清单；不改判据/分数/平台代码） | 使用者授权（两个子会话代执行）+ Lead 复核 | git show --stat HEAD（本行所在提交） |
+| C-20261020-03 | 2026-10-20T20:05:00+08:00 | feat(enforcement)：B1 审批「参数域」——协议 1.2→1.3、注册表 1.0→1.1、族数据与工具（fe292b9） | src/enforcement/{approvals,models,precheck,cli}.py、registry/tool-registry.yaml + approved.json、tools/approval_allowlist_audit.py、examples/dsh/b-plan/README.md、tests/unit/test_enforcement_approvals.py、tests/contract/{test_approval_binding_modes,test_approval_allowlist_audit}.py、readings/2026-10-20-B1-param-domain.md | B1 | **是**（放宽：注册表声明为可选且有默认值的参数可省略，省略=只接受默认值；1.1/1.2 记录逐字不变；R-d 指针 readings/2026-10-20-B1-param-domain.md §5–§6，1.2 矩阵 18 行逐条相等、负例全拒） | Lead（使用者 2026-10-20 会话授权；registry 重审为单人仓库自审） | git show --stat fe292b9 |
+| C-20261020-04 | 2026-10-20T20:10:00+08:00 | feat(tools)：C3 最终树门禁 v1（整树判定 + 规则集哈希钉住；aca9491） | tools/final_tree_gate.py、tests/unit/test_final_tree_gate.py、tests/fixtures/final_tree_gate/**、readings/2026-10-20-C3-final-tree-gate.md | C3 v1 | 否（只读工具：不改 allow/block、不写审计；v1 不含危险动作前置阻断） | Lead | git show --stat aca9491 |
+| C-20261020-05 | 2026-10-20T20:20:00+08:00 | docs(plan)：B1/C3 落地状态、04 残留与 5.85 纪律、AGENTS 三条版本轴登记、授权与环境基线读数 | 04-open-work.md、05-implementation-plan.md、06-plan-progress.md、AGENTS.md、tools/README.md、readings/2026-10-20-authorization-and-env.md | B1/C3 | 否（纯文档；AGENTS 第 55 条登记 APPROVAL_AUDIT_SCHEMA_VERSION / FINAL_TREE_GATE_SCHEMA_VERSION / PIN_SCHEMA_VERSION） | Lead | git show --stat HEAD（本行所在提交） |
 
 ### 7.3 读数记录
 
@@ -216,6 +219,12 @@
 | R-A-D2-11 | 2026-10-20T08:40:00+08:00 | D 门 2 | H2/H3 人工项复核（使用者授权、子会话代执行） | 12 个「臂×测试文件」抽 6（50%）；3 臂全量 AST 站点 46 | H2：5 个抽中文件未发现削弱 + 1 跑不成（A 的 demo 收集错误）；全量 0 skip/xfail/空 assert/恒真/吞断言，基线断言 12/12 保留；H3：B/C 组合根 = `tools/audit_demo.py:16` 的 `main()`，A 无组合根（A4 pass 为空真）；三份 run-manifest 变 **16 recorded / 0 pending / 1 n/a**，`--strict` PASS | 符合 | readings/2026-10-20-H2-bypass-sampling.md；readings/2026-10-20-H3-a4-review.md；runs/2026-10-20/{A,B,C}/human-items.json | 抽样人为判断性抽样、非随机；H2 不改变 A 的 B2 自动判据；A4 的 `__init__` 豁免是位置豁免（已知边界） |
 | R-A-GATE-05 | 2026-10-19T12:50:00+08:00 | D 门 2 前置包收口 | 本机门禁 ci_local（danger-full-access；**收口提交后的干净树**） | 代码面 = HEAD 99fd894 + 本行所在提交的文档改动，工作树干净；26 正常步骤 + 4 只报告 | **26/26 ok，退出码 0**；总耗时 4m34.8s；只报告 4 步（0/0/0/113） | 符合 | readings/2026-10-19-gate-dgate2.md | 与 R-A-GATE-04（沙箱内 pytest 跑不成）的差别在沙箱形态，不追认成通过；12:10 那次在未提交的同一批文档上先跑过一次（26/26、5m04.6s），以本行为准 |
 | R-A-GATE-06 | 2026-10-19T21:58:00+08:00 | D 门 2 开跑前置收口 | 本机门禁 ci_local --full（danger-full-access；**收口提交后的干净树**） | HEAD 473ff91；工作树干净；30 正常步骤 + 4 只报告；改动文件 142 | **30/30 ok，退出码 0**；总耗时 **6m08.5s**（368.474s）；全量测试 3m04.0s rc=0；只报告 4 步（0/0/0/113）；34 条 entries 全部 returncode 0 | 符合 | readings/2026-10-19-gate-run-ready.md；.tmp/ci-local-timings.json（现场，cleanup 会删） | 步骤 26 → 30 是 --full 把 4 个完整模式步骤算了进来，不是新增门禁步骤；与 R-A-GATE-04 的差别在沙箱形态，不追认成通过 |
+| R-B1-01 | 2026-10-20T20:00:00+08:00 | B1 | 前后对比矩阵 | 固定语料 18 用例 × 3 列 + 9 命令门 | 1.2 列 before/after 的 decision+reason_code+failed_check 逐条相等；1.3 列 12 行（三族 × 2/3/4/5 格）全 allow；负例全拒（未知参数构造期、run_in_background=true 审批层拒、非默认值拒、白名单外 command_not_allowlisted）；夹具矩阵 9/9 | 符合 | readings/2026-10-20-B1-param-domain.md §5 | 真实受治会话 9/9 无读数（待使用者签 1.3 条子） |
+| R-B1-02 | 2026-10-20T20:00:00+08:00 | B1 | 定向测试 | 审批三文件 / enforcement 七文件 / registry+bridge+security 六文件 | 89 passed / 191 passed / 88 passed（均 exit 0）；tests/unit+contract 2323 passed / 6 skipped / 31 errors（31 个全是 tmp_path 在 .tmp 下的 PermissionError，setup 阶段，与改动无关） | 符合（31 errors 记环境构造） | readings/2026-10-20-B1-param-domain.md §9 | — |
+| R-B1-03 | 2026-10-20T20:00:00+08:00 | B1 | 审核与守门仪器 | registry 10 工具；条子×白名单 | registry --approve exit 0；--verify exit 0；approval_allowlist_audit --check → exit 0、0 hits；self-check exit 0；4 份决策夹具 sha256 前后相同 | 符合 | readings/2026-10-20-B1-param-domain.md §6–§8 | approved.json 10 个 schema_hash 全变（族/默认值进了审核面） |
+| R-C3-01 | 2026-10-20T20:10:00+08:00 | C3 v1 | 门禁用例 | 9 条 -n0 | 9 passed exit 0；干净树 0 / 坏文件 1（GATE-001@1、E501）/ 漂移 1（24f1eb… vs 5587ac…）/ 缺配置或缺验证器 2 / 两次 JSON 逐字节相同（sha256 d5819b7e…） | 符合 | readings/2026-10-20-C3-final-tree-gate.md §8 | 整树 43 条规则耗时与退出码未测 |
+| R-C3-02 | 2026-10-20T20:10:00+08:00 | C3 v1 | 规则集钉住口径 | RuleSet.identity | 改语义=漂移（1）；换加载顺序≠漂移（0）；纯注释/空白不漂移（已知边界）；PIN 1.0 | 符合 | readings/2026-10-20-C3-final-tree-gate.md §6 | — |
+| R-ENV-01 | 2026-10-20T19:51:00+08:00 | 环境基线 | 工作树/venv/.tmp | HEAD 30d10ae；clean；Python 3.13.11；cleanup 114,974→59,703 文件（1.9 GB→985 MB） | 工作树干净、pytest 冒烟 14 passed；.tmp 下 52 个 ACL 残留目录删不掉（cleanup exit 1，非本任务引入）；pytest 缓存目录不可建（仅告警） | 符合（两条已知约束登记） | readings/2026-10-20-authorization-and-env.md §2 | 环境可用 |
 
 ### 7.4 阶段 A · 偏离/作废记录
 
@@ -236,6 +245,7 @@
 | D-20261019-03 | 2026-10-19T10:25:00+08:00 | 评分器 config-root 草案要求自带副本 | 草案 §4.0 写 `scorer/config-root/validation/`，落地时 treatment 已建 `dgate2/configs/after/` | 会多出第三份要维护、要钉哈希的配置副本 | 改为引用 `configs/after` 并在 scorer/manifest.sha256 里钉住逐文件哈希；记录在 memo §9 第 1 条 | memo §9；dgate2/scorer/manifest.sha256 |
 | D-20261019-04 | 2026-10-19T21:44:00+08:00 | 派发文本的两处口径与实测不符：① activation 用 9 条 `--changed` 测不出翻面；② hidden runner 在 `workspace-write`（partial）沙箱下 30/40 | ① 口径：v3 README §3 与 memo §2.3.5 都用单路径 `--changed tools/audit_demo.py`；9 条形态两臂都 allow；② 环境：`tempfile.mkdtemp(0700)` 在旧沙箱下不可写（WinError 5） | 不影响判据；影响「activation 怎么记录」与「T 读数在哪个沙箱取得」 | 登记 04 5.81；读数按实测形态记录（单路径 activation；launcher/session 两种沙箱分别记） | readings/2026-10-19-D-gate2-run-ready-verify.md §1.4/§3；readings/2026-10-19-D-gate2-run-record.md §6/§10 |
 | D-20261020-01 | 2026-10-20T07:36:00+08:00 | A 臂首跑作废：装配用了仓库 `registry/tool-registry.yaml`，缺 `governed-dev` 角色 → 每个写/执行动作 Phase 4 `permission_denied` | 构造失败（装配错误，非平台缺陷）；首跑 182.4 s、19 条 `permission_denied`、无有效治理判定 | 首跑读数不进计分；不影响 B/C | 换 tracked `examples/dsh/b-plan/tool-registry.local.yaml` + 已审核对（`registry --verify` exit 0）；清审计/`pre-evidence` 后重跑 A；『装配必须用带 governed-dev 的本地注册表』写进 runs README | `.tmp/dgate2-arms/logs/A-invalid-run/`（现场）；readings/2026-10-20-D-gate2-ab-c-runs.md §2 |
+| D-20261020-02 | 2026-10-20T19:50:00+08:00 | 受治会话被自己的 Hook 锁死 | 构造/执行：approvals.py 漏 from dataclasses import dataclass；该文件在 Hook 导入链上（hooks.py:82 → adapters.dsh.enforcement → enforcement.approvals） | Hook 启动即 NameError → 宿主按「未知状态=失败关闭」拒绝全部工具调用（含 read/run_code）；两条子会话与 Lead 停摆约 15 分钟 | 使用者手工补 import 恢复；新增纪律：改 Hook 导入链模块后每次写入立刻跑 import 自检（04 5.85） | readings/2026-10-20-B1-param-domain.md §9 尾部；04 5.85 |
 
 ### 7.5 阶段 B · 进度记录
 
@@ -243,6 +253,14 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | P-B2-000 | 2026-10-18T16:20:00+08:00 | B2（解冻授权） | 使用者（授权） | HEAD ec63759；approval-pwsh-a3 sha256 9abd73a3… | 使用者显式解冻 B2（仅 B2）；A3 审批条子已签 | 符合 | 06 §7.1 P-A3-005；docs/project/engineering-policy-platform/testing/ab/2026-10-18-A3-handoff.md §1 | 05 §2.3 冻结令 + §4 B2 | 无 | 无 |
 | P-B2-001 | 2026-10-18T19:40:00+08:00 | B2 | b2-test-support（子会话） | HEAD d4b0a4f（BEFORE）→ a441877（AFTER，其间两份 A3 文档提交）；rule_set_hash 未变 | test-layout v2 + selection level=support + resolve_layer support→test + PIPELINE 1.4；conftest-alone 显式翻面；5 类反例；R-d 与真实 Hook 读数 | 符合 | docs/project/engineering-policy-platform/readings/2026-10-18-B2-rd.md；git show --stat 47fa325；pytest 259 passed；真实 Hook exit 0（新 event id 复跑结果一致） | 05 §4 B2 门 + §3.5 R-d | examples/dsh/dsh-adapter.yaml 超出预约写区（同层守卫必要，已由 contract 用例钉住） | C1 集合差是否纳入 support 需单列裁定 |
+| P-B1-001 | 2026-10-20T20:05:00+08:00 | B1 | b1-approval（子会话）+ Lead 复核 | HEAD 30d10ae；APPROVAL_SCHEMA_VERSION 1.2→1.3、REGISTRY_SCHEMA_VERSION 1.0→1.1、APPROVAL_AUDIT_SCHEMA_VERSION 1.0→1.1 | 参数域（默认值补齐两侧）+ 族数据 + approve --family + audit --check + 用例 + registry 重审 | 符合 | readings/2026-10-20-B1-param-domain.md；pytest 89/191/88；registry --verify exit 0；audit --check 0 hits；4 份决策夹具 sha256 相同 | 05 §4 B1 + §3.2 | 真实受治会话 9/9 待条子；04 5.83 四条残留 | B3 开跑（依赖本提交后） |
+
+
+### 7.5.1 阶段 C · 进度记录（2026-10-20）
+
+| id | 时间 | 阶段/任务 | 执行者 | 起点锁 | 做了什么 | 结果 | 证据指针 | 判据 | 偏差 | 下一步 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| P-C3-001 | 2026-10-20T20:10:00+08:00 | C3（v1） | c3-tree-gate（子会话）+ Lead 复核 | HEAD 30d10ae；FINAL_TREE_GATE_SCHEMA_VERSION / PIN_SCHEMA_VERSION 各 1.0 首次建轴 | 新工具 tools/final_tree_gate.py（整树判定 + RuleSet.identity 钉住；退出码 0/1/2）+ 9 条用例 + 夹具 | 符合（v1 范围） | readings/2026-10-20-C3-final-tree-gate.md；pytest tests/unit/test_final_tree_gate.py -n0 → 9 passed exit 0 | 05 §4 C3（前两件） | v1 不含危险动作前置阻断（04 5.84）；整树 43 条耗时未测 | 前置阻断单开一轮；整树读数在接 ci_local 前补 |
 
 ### 7.6 阶段 D · 记录（校准门 2026-10-18 + 门 2 前置 2026-10-19）
 
@@ -260,10 +278,10 @@
 | 项 | 当前状态 | 门 / 证据 | 下一步 |
 | --- | --- | --- | --- |
 | 阶段 A | A1、A2 已落地；A3 v2 4/4 + 任务完成（A1–A7，隐藏验收 6/6、pytest 10 passed、A8 7/7） | 05 §4 A3、§5.6；readings/2026-10-18-A3-dryrun-v2.md；06 P-A3-011/012、R-A-A3-09..11 | A3 不再重跑；构造若再改必须重新冻结 run-manifest |
-| 阶段 B | B2 已落地（47fa325）；B1/B3 未解冻 | readings/2026-10-18-B2-rd.md、B2-gate.md；05 §4 B | B1 是 A/B/C 的 treatment 候选（4 人日；改注册表要重新审核）；B3 只读族闸门可选 |
-| 阶段 C | 未开跑（C1/C2/C3/C4 待裁定） | 05 §4 C | 按使用者裁定 |
+| 阶段 B | B2 已落地（47fa325）；**B1 已落地（2026-10-20，fe292b9）**；B3 未开 | readings/2026-10-18-B2-rd.md、readings/2026-10-20-B1-param-domain.md；05 §4 B | B3（read_guard，3 人日）在 B1 提交后单独做；B1 残留见 04 5.83；B1 不再是 treatment 候选（05 §8 第 7 条已裁定） |
+| 阶段 C | **C3 v1 已落地**（整树判定 + 规则集哈希钉住）；C1/C2/C4 待裁定；C3 的「危险动作前置阻断」未做 | readings/2026-10-20-C3-final-tree-gate.md；05 §4 C；04 5.84 | 前置阻断单开一轮；C1/C2/C4 出裁定草案 |
 | 阶段 D | 校准门通过；门 2 前置包冻结；**A/B/C 已于 2026-10-20 各跑一次（n=1）**：A 任务未完成（T 30/40、A 6/10、C 规则 24/24 仅 7/8 文件、block 1、circuit_open 1），B 任务完成（T 40/40、C 29/30、A 27/30），C 任务完成（T 40/40、C 30/30、A 30/30）；**H2/H3 已复核**，三份 run-manifest 均 **16 recorded / 0 pending / 1 n/a，`--strict` PASS** | readings/2026-10-20-D-gate2-ab-c-runs.md；H2/H3 复核记录；testing/ab/dgate2/runs/2026-10-20/**；06 R-A-D2-09/10/11 | 要写「值得扩试」需每臂 k≥3 次同题 run（05 §5.5）；n=1 当前只作案例 |
 | 本机门禁 | ci_local **30/30、退出码 0**（HEAD 473ff91，6m08.5s；30 正常 + 4 只报告） | 06 R-A-GATE-06；readings/2026-10-19-gate-run-ready.md | 产品代码改动后重跑；同一工作树同时只跑一个 |
-| 未修缺口 | 04 5.76（breaker_seconds 两义）、5.77（A3 测量仪器升格触发）、5.79（评分器已知边界，10-20 实测补两条）、5.80（AGENTS 指令预算）、5.81（开跑执行事实）、5.82（首轮 run 构造事实）；5.75 已修（e341c08） | 04-open-work | 按 04 排期；5.75 的回退面见 readings/2026-10-19-treatment-tools-pattern.md |
+| 未修缺口 | 04 5.76（breaker_seconds 两义）、5.77（A3 测量仪器升格触发）、5.79（评分器已知边界，10-20 实测补两条）、5.80（AGENTS 指令预算）、5.81（开跑执行事实）、5.82（首轮 run 构造事实）、**5.83（B1 四处残留）、5.84（C3 前置阻断与整树读数）、5.85（Hook 导入链自检纪律）**；5.75 已修（e341c08） | 04-open-work | 按 04 排期；5.75 的回退面见 readings/2026-10-19-treatment-tools-pattern.md |
 
-**一句话**：阶段 A 退出条件已满足、D 校准门通过、门 2 前置包冻结；**A/B/C 已于 2026-10-20 各跑一次（n=1）**：现状治理的 A 臂任务未完成（M5b 被 TESTING-002 uncovered_checker 拦住，无 demo，第三次 post 失败触发熔断），treatment 的 B 臂完成（T 40/40、C 29/30、A 27/30），不治理的 C 臂完成（T 40/40、C 30/30、A 30/30）；H2/H3 已复核并记录（抽样人/复核人记使用者，Lead 子会话代执行），三份 run-manifest **16 recorded / 1 not_applicable、`--strict` PASS**。本页不写均值/提升/显著，也不把 n=1 当治理价值结论（05 §5.5）。
+**一句话**：阶段 A 退出条件已满足、D 校准门通过、门 2 前置包冻结；**A/B/C 已于 2026-10-20 各跑一次（n=1）**：现状治理的 A 臂任务未完成（M5b 被 TESTING-002 uncovered_checker 拦住，无 demo，第三次 post 失败触发熔断），treatment 的 B 臂完成（T 40/40、C 29/30、A 27/30），不治理的 C 臂完成（T 40/40、C 30/30、A 30/30）；H2/H3 已复核并记录（抽样人/复核人记使用者，Lead 子会话代执行），三份 run-manifest **16 recorded / 1 not_applicable、`--strict` PASS**。本页不写均值/提升/显著，也不把 n=1 当治理价值结论（05 §5.5）。**2026-10-20 增补**：B1（审批 1.3 参数域）与 C3 v1（最终树门禁）已落地，04 5.83–5.85 登记残留与纪律；同日一次自伤事故（approvals.py 漏一行 import 锁死受治会话）换来 5.85 的 import 自检纪律。

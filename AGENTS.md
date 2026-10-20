@@ -537,7 +537,8 @@
       `enforced` / `declared_uncovered` / `not_applicable`，mode 闭集
       `policy` / `pre_evidence` / `enforcement` / `delegated` / `post_check` 与四个红条件
       都写死在文件头；加载器只接受认识的版本号，读不出来只在只报告工具内部降级为
-      `unavailable` + reason——**不新增加载期 FATAL**，与上面那条载荷轴各走各的）。
+      `unavailable` + reason——**不新增加载期 FATAL**，与上面那条载荷轴各走各的）；
+      `tools.approval_allowlist_audit.APPROVAL_AUDIT_SCHEMA_VERSION`（`--check` 族级载荷，1.0 首次建轴 → 1.1）与 `tools.final_tree_gate.FINAL_TREE_GATE_SCHEMA_VERSION` / `PIN_SCHEMA_VERSION`（各 1.0 首次建轴）。
     - R-d 差集工具：`tools.decision_diff.DECISION_DIFF_SCHEMA_VERSION`（R-d 字段级差集的
       `--json` 载荷——**1.0 = 首次建轴**（2026-10-18，R-d 阶段 1）：`pairs`（文件级配对）+
       每条差集条目的 `kind` / `pointer` / `before` / `after` + `counts`；
