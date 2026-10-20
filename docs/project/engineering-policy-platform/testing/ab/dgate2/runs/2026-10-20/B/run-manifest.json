@@ -2,10 +2,12 @@
   "arm": "B",
   "fields": {
     "a4_review": {
-      "reason": "human-items 未提供 a4_review（H3：人看的位置 + 结论，只能人看）",
-      "source": "--human-items（docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/human-items.json）：人工项原样记录，不代填",
-      "status": "pending",
-      "value": null
+      "source": "--human-items（docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/B/human-items.json）：人工项原样记录，不代填",
+      "status": "recorded",
+      "value": {
+        "conclusion": "组合根成立：demo main 是全树唯一在 __init__ 之外 new 具体协作者的位置，负责选 service 并驱动；repository/audit 走构造器默认装配（A4 v1.1 豁免）。A5 成立（controller 不 import shop.order_repository）。复核人 dshznm（使用者；Lead 子会话 h3-a4-review 代执行）。",
+        "location": "src/shop/order_controller.py:10、src/shop/order_service.py:15-16（__init__ 默认装配）、tools/audit_demo.py:14-23（main():16 new OrderService）"
+      }
     },
     "arms": {
       "source": "--arm-facts（兼容 C 臂完整 run-manifest）：抽取 tree_digest / session_id / launch.patch / launcher_sandbox，并记原始 JSON 的 sha256",
@@ -24,10 +26,16 @@
       }
     },
     "bypass_sampling": {
-      "reason": "human-items 未提供 bypass_sampling（H2：被抽文件 + 结论 + 抽样人，只能人记）",
-      "source": "--human-items（docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/human-items.json）：人工项原样记录，不代填",
-      "status": "pending",
-      "value": null
+      "source": "--human-items（docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/B/human-items.json）：人工项原样记录，不代填",
+      "status": "recorded",
+      "value": {
+        "conclusion": "抽样 6/12=50%（每臂 2 个，优先新增文件）。B：tests/test_order_audit.py 与 tests/test_audit_demo.py 均未发现削弱（2+1 assert，抽跑绿，2 次变异被抓）；全量 asserts 21、skip/xfail 0、空 assert 0、恒真 0，基线断言 12/12 保留。",
+        "files": [
+          "tests/test_order_audit.py",
+          "tests/test_audit_demo.py"
+        ],
+        "sampler": "dshznm（使用者；Lead 子会话 h2-sampling 代执行抽样，使用者承担复核责任）"
+      }
     },
     "configs_after_sha256_txt": {
       "source": "sha256(configs/after/sha256.txt) + 逐行核对它声明的 9 个文件",
@@ -55,11 +63,11 @@
       "value": {
         "implementation_plan": {
           "path": "docs/project/engineering-policy-platform/05-implementation-plan.md",
-          "sha256": "3dc20beed543aa07b3a19e69423bc51a44b4d30ac3041d8b6d4354dea2e43652"
+          "sha256": "d7c418cf4e052b786ed467db261ce00aac98483994194363f79b144ad52d9be4"
         },
         "open_work": {
           "path": "docs/project/engineering-policy-platform/04-open-work.md",
-          "sha256": "09aebe342f8ff673ea61388bd7d37583c9b6982a094e14dfaf497587f6e50154"
+          "sha256": "7c5b889ef904121c6a51a7d92d235d320d622a9216e354a3bf4fa9f190c97cc7"
         },
         "treatment": {
           "frozen_sha256": "37861959ce345a1177aac5cab053a0b159e92f46b298ef0e2bc2bc096fba68b6",
@@ -81,10 +89,10 @@
     "head": {
       "source": "git rev-parse HEAD（仓库根由脚本位置推出）",
       "status": "recorded",
-      "value": "889c97cd24f147bfc6e593e20bf856b877e51097"
+      "value": "34b153c5a33fb1d305d2a6c36aeb59cc7e9921d0"
     },
     "hidden_author": {
-      "source": "--human-items（docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/human-items.json）：人工项原样记录，不代填",
+      "source": "--human-items（docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/B/human-items.json）：人工项原样记录，不代填",
       "status": "recorded",
       "value": {
         "author": "独立子会话 hidden-author（C-20261019-03）",
@@ -119,12 +127,12 @@
       }
     },
     "nondeterminism_ruling": {
-      "reason": "H4 人工裁定不适用：每臂只有一次有效 run（A 的首跑为构造失败，已作废）",
-      "source": "--human-items（docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/human-items.json）：人工项原样记录，不代填",
+      "reason": "H4 人工裁定不适用：每臂一次有效 run（A 首跑为构造失败已作废）",
+      "source": "--human-items（docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/B/human-items.json）：人工项原样记录，不代填",
       "status": "not_applicable",
       "value": {
         "applicable": false,
-        "reason": "每臂只有一次有效 run（A 的首跑为构造失败，已作废）"
+        "reason": "每臂一次有效 run（A 首跑为构造失败已作废）"
       }
     },
     "readings": {
@@ -688,7 +696,13 @@
       "value": {
         "clean": false,
         "entries": [
-          "?? docs/project/engineering-policy-platform/testing/ab/dgate2/runs/"
+          " D docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/human-items.json",
+          " M docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/A/run-manifest.json",
+          "?? docs/project/engineering-policy-platform/readings/2026-10-20-H2-bypass-sampling.md",
+          "?? docs/project/engineering-policy-platform/readings/2026-10-20-H3-a4-review.md",
+          "?? docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/A/human-items.json",
+          "?? docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/B/human-items.json",
+          "?? docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/C/human-items.json"
         ],
         "self_output_excluded": "docs/project/engineering-policy-platform/testing/ab/dgate2/runs/2026-10-20/B/run-manifest.json"
       }

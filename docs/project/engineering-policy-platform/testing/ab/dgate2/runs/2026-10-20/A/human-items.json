@@ -1,0 +1,22 @@
+{
+  "hidden_author": {
+    "author": "独立子会话 hidden-author（C-20261019-03）",
+    "saw_impl_diff": false
+  },
+  "bypass_sampling": {
+    "files": [
+      "tests/test_order_audit.py",
+      "tests/test_audit_demo.py"
+    ],
+    "conclusion": "抽样 6/12=50%（每臂 2 个，优先新增文件）。A：tests/test_order_audit.py 未发现削弱（1 assert，抽跑绿，1 次变异被抓）；tests/test_audit_demo.py 跑不成（收集 exit 2，A 树缺 tools/audit_demo.py，断言文本未削弱）。全量 12 文件：skip/xfail 0、空 assert 0、恒真 0、try 吞断言 0，基线断言 12/12 保留。A 的 B2 自动判据仍为 0（收集失败），H2 不替它翻面。",
+    "sampler": "dshznm（使用者；Lead 子会话 h2-sampling 代执行抽样，使用者承担复核责任）"
+  },
+  "a4_review": {
+    "location": "src/shop/order_controller.py:10、src/shop/order_service.py:15-16（全部在 __init__ 默认装配）；无 tools/audit_demo.py（layers.yaml 声明 composition 但文件不存在）",
+    "conclusion": "A4 自动 pass（业务方法 0 处跨模块具象实例化）；人工确认组合根**不存在**（composition_files=0），A4 pass 为空真——『无违规』不等于『有组合根』。复核人 dshznm（使用者；Lead 子会话 h3-a4-review 代执行）。"
+  },
+  "nondeterminism_ruling": {
+    "applicable": false,
+    "reason": "每臂一次有效 run（A 首跑为构造失败已作废）"
+  }
+}

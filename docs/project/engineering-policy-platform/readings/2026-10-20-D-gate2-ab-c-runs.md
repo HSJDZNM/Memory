@@ -65,12 +65,13 @@ B 臂同一步 `decision=allow`（`served_checkers` 含 `failing_tests`），随
 | 项 | 状态 |
 | --- | --- |
 | H1 隐藏验收作者 | 已记：独立子会话（C-20261019-03），未见实施 diff |
-| H2 无旁路抽样复核 | **pending**（自动只抓 assert 数/skip/xfail；「把断言改弱」需人工抽 10%） |
-| H3 A4 组合根语义 | **pending**（B 的 A4 自动 pass；「这一处是否真是组合根」需人看） |
+| H2 无旁路抽样复核 | **已完成**：抽样 6/12=50%，5 个未发现削弱 + 1 个跑不成（A 的 demo 收集错误，属实现缺失）；抽样人 dshznm（使用者；Lead 子会话 h2-sampling 代执行）——[复核记录](2026-10-20-H2-bypass-sampling.md) |
+| H3 A4 组合根语义 | **已完成**：B/C 组合根成立（`tools/audit_demo.py:16` 的 `main()`）；A 无组合根（A4 pass 为空真）；复核人 dshznm（使用者；Lead 子会话 h3-a4-review 代执行）——[复核记录](2026-10-20-H3-a4-review.md) |
 | H4 两次读数不同 | not_applicable（每臂一次有效 run；A 首跑为构造失败已作废） |
 
-因 H2/H3 未做，三份 run-manifest 均为 `14 recorded / 2 pending / 1 not_applicable`：
-`--check` PASS、`--check --strict` FAIL（`human_items_unrecorded`）。**这是如实状态，不是通过。**
+两份人工项复核完成后，三份 run-manifest 均为 `16 recorded / 0 pending / 1 not_applicable`：
+`--check` 与 `--check --strict` 都 PASS（退出码 0）。**H2 不改变 A 的 B2 自动判据**（收集失败仍失分）：
+「未发现削弱」不等于「测试通过了」。
 
 ## 6 边界（引用前必须读）
 

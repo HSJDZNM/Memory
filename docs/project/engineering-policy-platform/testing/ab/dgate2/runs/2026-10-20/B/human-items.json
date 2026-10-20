@@ -1,0 +1,22 @@
+{
+  "hidden_author": {
+    "author": "独立子会话 hidden-author（C-20261019-03）",
+    "saw_impl_diff": false
+  },
+  "bypass_sampling": {
+    "files": [
+      "tests/test_order_audit.py",
+      "tests/test_audit_demo.py"
+    ],
+    "conclusion": "抽样 6/12=50%（每臂 2 个，优先新增文件）。B：tests/test_order_audit.py 与 tests/test_audit_demo.py 均未发现削弱（2+1 assert，抽跑绿，2 次变异被抓）；全量 asserts 21、skip/xfail 0、空 assert 0、恒真 0，基线断言 12/12 保留。",
+    "sampler": "dshznm（使用者；Lead 子会话 h2-sampling 代执行抽样，使用者承担复核责任）"
+  },
+  "a4_review": {
+    "location": "src/shop/order_controller.py:10、src/shop/order_service.py:15-16（__init__ 默认装配）、tools/audit_demo.py:14-23（main():16 new OrderService）",
+    "conclusion": "组合根成立：demo main 是全树唯一在 __init__ 之外 new 具体协作者的位置，负责选 service 并驱动；repository/audit 走构造器默认装配（A4 v1.1 豁免）。A5 成立（controller 不 import shop.order_repository）。复核人 dshznm（使用者；Lead 子会话 h3-a4-review 代执行）。"
+  },
+  "nondeterminism_ruling": {
+    "applicable": false,
+    "reason": "每臂一次有效 run（A 首跑为构造失败已作废）"
+  }
+}
