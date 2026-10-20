@@ -457,7 +457,7 @@
       `adapters.wiring.WIRING_SCHEMA_VERSION`（接线报告）；`adapters.conformance.CONFORMANCE_SCHEMA_VERSION`
       （一致性套件报告）；`adapters.host_version.HOST_VERSION_SCHEMA_VERSION`（报告载荷）与
       `HOST_VERSION_RECORD_SCHEMA_VERSION`（提交进仓库的观测记录）；
-    - dsh Hook：`adapters.dsh.hooks.AUDIT_SCHEMA_VERSION`（判定记录）；`VERDICT_SCHEMA_VERSION`
+    - dsh Hook：`adapters.dsh.hooks.AUDIT_SCHEMA_VERSION`（判定记录，1.4 起带 batch_ref）；`adapters.dsh.batch_ledger.BATCH_LEDGER_SCHEMA_VERSION`（批次台账数据文件，1.0）；`VERDICT_SCHEMA_VERSION`
       （阻断判定行——**跨语言**：Python 与 `policy-hook.plugin.mjs` 必须同批改，插件按精确版本号读，
       不认识就回到"未知状态"）；`adapters.dsh.hooks.HOOK_PAYLOAD_SCHEMA_VERSION`
       （**插件→Hook 的 stdin 载荷**自己的轴，键名 `hook_payload_version`；**跨语言**，同样是两侧
