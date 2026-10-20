@@ -3,7 +3,7 @@
 > **性质**：案例读数（每臂 n=1）。**不写均值、提升百分比、显著性**（05 §5.5）。
 > 判据：`readings/2026-10-19-D-gate2-treatment.md` §4（评分器，冻结 `e3ef9e91…`）、05 §5.1/§5.4/§5.6、04 5.78。
 > 条子由使用者签（A `d53f0d99…`、B `346f35c2…`，均 expires 2026-10-26）；代理未签发任何审批。
-> 装载与读数文档：`testing/ab/dgate2/runs/2026-10-20/{A,B,C}/run-manifest.json`（17 字段，14 recorded / 2 pending / 1 not_applicable）。
+> 装载与读数文档：`testing/ab/dgate2/runs/2026-10-20/{A,B,C}/run-manifest.json`（17 字段，16 recorded / 0 pending / 1 not_applicable；`--strict` PASS）。
 
 ## 1 起点锁
 

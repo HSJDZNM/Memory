@@ -41,13 +41,13 @@
   门 2 前置包：treatment（`tools/**` 纳入生产文件，[读数](readings/2026-10-19-treatment-tools-pattern.md)）、任务包 v3
   （`examples/dsh/b-plan/a3-task-v3/`）、隐藏验收 30 条 + runner（`testing/ab/dgate2/hidden/`）、评分器
   （`testing/ab/dgate2/scorer/`，`freeze.status=frozen`，清单组合摘要 `e3ef9e91…`）、C 臂（不治理）装配与 n=1 冒烟
-  （`testing/ab/dgate2/c-arm/`）。**A/B/C 主实验未开跑**：开跑前需 `make_manifest.py --check --strict` 通过、
-  17 个 run-manifest 字段写全，并由使用者确认（04 5.78）。**2026-10-19 已把前两件工具化**：
+  （`testing/ab/dgate2/c-arm/`；目录索引与边界见 `testing/ab/dgate2/README.md`）。**A/B/C 主实验已于 2026-10-20 各跑一次（n=1）**：三份 run-manifest 已写全
+  （16 recorded / 1 not_applicable，`--strict` PASS），H2/H3 人工项已复核。**2026-10-19 已把清单与读数工具化**：
   `testing/ab/dgate2/run-manifest/`（17 字段生成/校验，`RUN_MANIFEST_SCHEMA_VERSION` 1.0）与
   `testing/ab/dgate2/run-record/`（T/C/A 三维读数，`RUN_RECORD_SCHEMA_VERSION` 1.0），读数见
   [冻结包复核](readings/2026-10-19-D-gate2-run-ready-verify.md) 与 [run-record 样例](readings/2026-10-19-D-gate2-run-record.md)；**A/B/C 已于 2026-10-20 各跑一次（n=1）**：现状治理臂未完成、treatment 臂与不治理臂完成；案例读数见
   [10-20 run 读数](readings/2026-10-20-D-gate2-ab-c-runs.md)，run-manifest 在
-  `testing/ab/dgate2/runs/2026-10-20/`；H2/H3 人工项待复核。
+  `testing/ab/dgate2/runs/2026-10-20/`；H2/H3 已复核（[H2](readings/2026-10-20-H2-bypass-sampling.md) / [H3](readings/2026-10-20-H3-a4-review.md)）。
   执行记录在 [06-plan-progress.md](06-plan-progress.md)，
   非技术读者先看 [07-status-brief.md](07-status-brief.md)。
 - **剩下的**：剩余缺口与未核实项（2026-10-19 新增评分器已知边界、AGENTS 指令预算、D 开跑执行事实三条）、各处未核实、已知边界与引用纪律，全部收在

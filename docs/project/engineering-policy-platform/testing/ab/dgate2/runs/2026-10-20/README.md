@@ -5,7 +5,7 @@
 
 | 目录 | 内容 |
 | --- | --- |
-| `A/` | `arm-facts.json`（树摘要/session/启动方式/沙箱）、`run-record.json`（部分读数：C 只有 7/8 文件）、`run-manifest.json`（17 字段，14 recorded / 2 pending / 1 not_applicable） |
+| `A/` | `arm-facts.json`（树摘要/session/启动方式/沙箱）、`run-record.json`（部分读数：C 只有 7/8 文件）、`run-manifest.json`（17 字段，16 recorded / 0 pending / 1 not_applicable；`--strict` PASS） |
 | `B/` | 同上；`run-record.json` 是 `run-record/collect.py` 的真实输出（T 40/40、C 23/24、A 9/10） |
 | `C/` | 同上；不治理，`launch.patch=null`；run-record T 40/40、C 24/24、A 10/10 |
 | `{A,B,C}/human-items.json` | 每臂一份：H1（独立子会话作者）、H2（抽样结论；抽样人 dshznm，Lead 子会话 h2-sampling 代执行）、H3（A4 复核；复核人 dshznm，Lead 子会话 h3-a4-review 代执行）、H4（not_applicable） |
