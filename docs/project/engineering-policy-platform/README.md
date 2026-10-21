@@ -52,7 +52,7 @@
   `testing/ab/dgate2/runs/2026-10-20/`；H2/H3 已复核（[H2](readings/2026-10-20-H2-bypass-sampling.md) / [H3](readings/2026-10-20-H3-a4-review.md)）。
   执行记录在 [06-plan-progress.md](06-plan-progress.md)，
   非技术读者先看 [07-status-brief.md](07-status-brief.md)。
-- **剩下的**：受治侧同步（注册表 1.4 + read_guard + `.policy`/`.git` 前缀）并重审、C4 验证探针、C1-b 裁定、间接执行面（`tools/**` 经 CI、`.gitattributes`）、D 实验每臂 k≥3、评分器已知边界、各处未核实与引用纪律，全部收在
+- **剩下的**：受治侧同步（注册表 1.4 + read_guard + `.policy`/`.git` 前缀）并重审、C1-b 裁定、间接执行面（`tools/**` 经 CI、`.gitattributes`）、D 实验每臂 k≥3、评分器已知边界、各处未核实与引用纪律；**C4 的能力验证已收口**（headless 真机可用、desktop 未验证，[读数](readings/2026-10-21-C4-steer-probe.md)），全部收在
   [04-open-work.md](04-open-work.md)——它是"还没做完"的唯一去处。AGENTS 指令预算（04 5.80）同日根治：第 55 条轴表拆到
   [版本轴登记表](../architecture/版本轴登记表.md)，AGENTS 50,266 B。
 
