@@ -570,22 +570,30 @@ def _test_path_witnesses(test_pattern: str, other_pattern: str) -> tuple[str, ..
 
 @dataclass(frozen=True)
 class BatchLedgerConfig:
-    """批次台账的声明（C1-a，只报告）。
+    """批次台账的声明（C1-a 只报告；C1-b 可选地进判定）。
 
-    **只写事实、不改判定**：账本里记的是"这个会话提议过哪些目标文件"，Hook 只把摘要与
-    状态写进审计；它不进 `policy.engine.evaluate` 的任何输入。声明这一项才启用，且本节
-    可以写 `enabled: false` 显式关掉（与"没有声明"是**两个**读法：前者会在审计里写
+    **只写事实**：账本里记的是"这个会话提议过哪些目标文件"；`into_decision` 为真时，
+    Hook 还会把"同批里已结算 allowed 且内容哈希与当前磁盘一致"的目标并进取证请求的
+    changed_files（判定范围），判定仍只由 `policy.engine.evaluate` 给出。声明这一项才启用，
+    且本节可以写 `enabled: false` 显式关掉（与"没有声明"是**两个**读法：前者会在审计里写
     `batch.status=disabled`，后者一个 batch 键都不加）。
 
     `root` 省略时取 `project_root/.policy/pre-evidence-batches`（**不**相对配置文件目录，
     避免把配置复制进 `<project>/.policy/` 之后变成 `.policy/.policy/...`）；显式声明时与
     本文件其他路径同一口径，相对配置文件所在目录。`ttl_hours` 只服务 TTL 清理（维护动作），
     不参与 batch_ref 计算——按时间过滤会让"同一批目标"在不同时刻得到两个摘要。
+
+    `into_decision`（C1-b 的 opt-in，默认 False）：False = 账本只记账/只报告，判定与审计
+    与 C1-a 逐字节相同；True = 结算 + 批次视图 + 成员并进 changed_files。
+    `max_targets` 是并进 changed_files 的上限（默认 20；0 = 不并任何成员），超限按排序
+    截断并把截断数写进审计。
     """
 
     enabled: bool
     root: Path
     ttl_hours: int = 24
+    into_decision: bool = False
+    max_targets: int = 20
 
 
 @dataclass(frozen=True)
@@ -871,7 +879,13 @@ def _pre_evidence_config(value: Any, *, base_dir: Path, project_root: Path) -> P
     )
 
 
-_BATCH_LEDGER_FIELDS: Tuple[str, ...] = ("enabled", "root", "ttl_hours")
+_BATCH_LEDGER_FIELDS: Tuple[str, ...] = (
+    "enabled",
+    "root",
+    "ttl_hours",
+    "into_decision",
+    "max_targets",
+)
 
 
 def _batch_ledger_config(
@@ -909,7 +923,30 @@ def _batch_ledger_config(
     ttl_hours = value.get("ttl_hours", 24)
     if not isinstance(ttl_hours, int) or isinstance(ttl_hours, bool) or ttl_hours <= 0:
         raise DshEventError(f"batch_ledger.ttl_hours 必须是正整数小时，得到 {ttl_hours!r}")
-    return BatchLedgerConfig(enabled=enabled, root=root, ttl_hours=ttl_hours)
+    # C1-b 的 opt-in：不加这一段时账本只记账、只报告（C1-a 行为逐字节不变）；
+    # 打开后才写结算、才把成员并进 changed_files。两个键都是显式数据，不做推断。
+    into_decision = value.get("into_decision", False)
+    if not isinstance(into_decision, bool):
+        raise DshEventError(
+            f"batch_ledger.into_decision 必须是布尔值，得到 {into_decision!r}"
+        )
+    max_targets = value.get("max_targets", 20)
+    if (
+        not isinstance(max_targets, int)
+        or isinstance(max_targets, bool)
+        or max_targets < 0
+    ):
+        raise DshEventError(
+            f"batch_ledger.max_targets 必须是非负整数（0 = 不把任何成员带进判定），"
+            f"得到 {max_targets!r}"
+        )
+    return BatchLedgerConfig(
+        enabled=enabled,
+        root=root,
+        ttl_hours=ttl_hours,
+        into_decision=into_decision,
+        max_targets=max_targets,
+    )
 
 
 def config_from_mapping(document: Mapping[str, Any], *, base_dir: Path) -> AdapterConfig:

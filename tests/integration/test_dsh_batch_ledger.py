@@ -118,9 +118,11 @@ def dump(value: object) -> str:
 def test_the_batch_ledger_has_its_own_protocol_axis() -> None:
     """账本文件与审计记录是两套协议：加键各升各的号，谁也不跟随谁。"""
 
-    assert BATCH_LEDGER_SCHEMA_VERSION == "1.0"
-    # C1-a 给判定记录新增 batch_ref 与 batch → 审计协议 1.3 → 1.4（同一条统一规则）。
-    assert AUDIT_SCHEMA_VERSION == "1.4"
+    # C1-b：账本 1.0 → 1.1（记录多出 kind，settle/abandon 是新的记录种类）。
+    assert BATCH_LEDGER_SCHEMA_VERSION == "1.1"
+    # C1-a 的 batch_ref/batch 把审计 1.3 → 1.4；C1-b 的 batch.settlement 与 pre_evidence.batch
+    # 再把它 1.4 → 1.5（同一条统一规则）。两条轴各走各的。
+    assert AUDIT_SCHEMA_VERSION == "1.5"
     assert AUDIT_SCHEMA_VERSION != BATCH_LEDGER_SCHEMA_VERSION
 
 
@@ -196,12 +198,17 @@ def test_switching_the_ledger_on_changes_only_the_audit_keys(
     assert [record["target"] for record in records] == [EDIT_TARGET]
     assert set(records[0]) == {
         "schema_version",
+        "kind",
         "session_id",
         "event_id",
         "tool",
         "target",
         "recorded_at",
     }
+    assert records[0]["kind"] == "proposal"
+    # into_decision=false（默认）：只记 proposal，不结算——判定与审计与 C1-a 逐字节相同，
+    # 唯一不可避免的差别是 batch.schema_version 这条**既有键**的值跟着账本协议走（1.1）。
+    assert records[0]["schema_version"] == BATCH_LEDGER_SCHEMA_VERSION
     assert records[0]["recorded_at"] == fixed_now
 
 
@@ -461,3 +468,131 @@ def test_a_disabled_declaration_is_explicit_and_writes_nothing(
     assert row["batch"]["status"] == "disabled"
     assert row["batch"]["recorded"] is False
     assert "batch_ref" not in row
+
+
+# --------------------------------------------------------------------------- C1-b：结算
+
+
+def test_into_decision_writes_the_settlement_before_the_audit_row(
+    tmp_root: Path, fixed_now: str
+) -> None:
+    """结算写在审计 append 之前：同一条记录能写出 batch.settlement，账本里是 proposal+settle。"""
+
+    project, _, hook, audit = build(
+        tmp_root, "settle", batch={"enabled": True, "into_decision": True}
+    )
+    outcome = run(hook, project)
+
+    assert (outcome.exit_code, outcome.reason_code) == (0, "allow")
+    row = decision_row(audit, "allow")
+    assert row["batch"]["settlement"] == {"status": "allowed"}
+    records = ledger_records(batch_path(project))
+    assert [record["kind"] for record in records] == ["proposal", "settle"]
+    assert records[1]["schema_version"] == BATCH_LEDGER_SCHEMA_VERSION
+    assert records[1]["outcome"] == "allowed"
+    assert records[1]["reason_code"] == "allow"
+    # 没有声明 pre_evidence：拿不到 proposal 摘要，settle 不带 content_sha256
+    # （读取侧因此把它算 not_landed，不会误当成员）。
+    assert "content_sha256" not in records[1]
+
+
+def test_into_decision_false_settles_nothing_and_adds_no_new_audit_key(
+    tmp_root: Path, fixed_now: str
+) -> None:
+    project, _, hook, audit = build(
+        tmp_root, "observe-only", batch={"enabled": True, "into_decision": False}
+    )
+    outcome = run(hook, project)
+
+    assert (outcome.exit_code, outcome.reason_code) == (0, "allow")
+    row = decision_row(audit, "allow")
+    assert "settlement" not in row["batch"]
+    assert "pre_evidence" not in row
+    records = ledger_records(batch_path(project))
+    assert [record["kind"] for record in records] == ["proposal"]
+
+
+def test_a_blocked_event_settles_as_blocked(tmp_root: Path, fixed_now: str) -> None:
+    project, _, hook, audit = build(
+        tmp_root, "blocked", batch={"enabled": True, "into_decision": True}
+    )
+    outcome = run(hook, project, fixture="pre-tool-use-edit-block.json")
+
+    assert outcome.exit_code == 2
+    row = decision_row(audit, outcome.reason_code)
+    assert row["batch"]["settlement"] == {"status": "blocked"}
+    records = ledger_records(batch_path(project))
+    assert records[-1]["kind"] == "settle"
+    assert records[-1]["outcome"] == "blocked"
+    assert records[-1]["reason_code"] == outcome.reason_code
+
+
+def test_a_settlement_write_failure_degrades_without_changing_the_decision(
+    tmp_root: Path,
+    fixed_now: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    project, _, hook, audit = build(
+        tmp_root, "settle-fail", batch={"enabled": True, "into_decision": True}
+    )
+
+    def boom(**_kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(hooks_module, "append_settlement", boom)
+    outcome = run(hook, project)
+
+    assert (outcome.exit_code, outcome.reason_code) == (0, "allow")
+    assert "BATCH SETTLEMENT UNAVAILABLE" in capsys.readouterr().err
+    row = decision_row(audit, "allow")
+    assert row["batch"]["settlement"]["status"] == "unavailable"
+    assert "disk full" in row["batch"]["settlement"]["reason"]
+    # 结算失败不补写、不伪造：账本里只剩 proposal。
+    records = ledger_records(batch_path(project))
+    assert [record["kind"] for record in records] == ["proposal"]
+
+
+def test_into_decision_must_be_a_boolean(tmp_root: Path) -> None:
+    project = tmp_root / "into-bad" / "demo-shop"
+    project.mkdir(parents=True)
+    config_path = write_dsh_config(
+        tmp_root / "into-bad" / "dsh-adapter.yaml",
+        project_root=project,
+        rules=POLICIES_DIR,
+        batch_ledger={"enabled": True, "into_decision": "yes"},
+    )
+    with pytest.raises(DshEventError, match="into_decision"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize("bad", [-1, "20", True, 3.5])
+def test_max_targets_must_be_a_non_negative_integer(
+    tmp_root: Path, bad: object
+) -> None:
+    project = tmp_root / "max-bad" / "demo-shop"
+    project.mkdir(parents=True)
+    config_path = write_dsh_config(
+        tmp_root / "max-bad" / "dsh-adapter.yaml",
+        project_root=project,
+        rules=POLICIES_DIR,
+        batch_ledger={"enabled": True, "max_targets": bad},
+    )
+    with pytest.raises(DshEventError, match="max_targets"):
+        load_config(config_path)
+
+
+def test_into_decision_and_max_targets_are_parsed(tmp_root: Path) -> None:
+    project = tmp_root / "into-ok" / "demo-shop"
+    project.mkdir(parents=True)
+    config_path = write_dsh_config(
+        tmp_root / "into-ok" / "dsh-adapter.yaml",
+        project_root=project,
+        rules=POLICIES_DIR,
+        batch_ledger={"enabled": True, "into_decision": True, "max_targets": 0},
+    )
+    config = load_config(config_path)
+
+    assert config.batch_ledger is not None
+    assert config.batch_ledger.into_decision is True
+    assert config.batch_ledger.max_targets == 0

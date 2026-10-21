@@ -42,6 +42,7 @@ from policy.models import PolicyContext, RuleSet
 from provenance.worktree import evidence_tree_digest
 
 from .adapter import TOOL_TABLE, AdapterConfig, PolicyEvent, ToolKind, glob_match
+from .batch_ledger import BATCH_VIEW_NOTE
 
 __all__ = ["PreEvidenceError", "PreEvidenceResult", "build_pre_evidence"]
 
@@ -140,12 +141,19 @@ def build_pre_evidence(
     config: AdapterConfig,
     rules: RuleSet,
     context: PolicyContext,
+    batch_targets: Sequence[str] = (),
+    batch_view: Optional[Mapping[str, Any]] = None,
 ) -> PreEvidenceResult:
     """在影子工作区上取证，返回证据包与脱敏摘要。
 
     预算是**硬上限**：`pre_evidence.timeout_ms` 之内拿不到证据就抛 PreEvidenceError。
     复制工作区、重建提议内容、跑验证器全都算在这次预算里——把它们拆成几段各自计时，
     就等于把"总时长"重新变成猜的（而 Hook 被 dsh 杀掉在协议里等于放行）。
+
+    C1-b：`batch_targets` 是 Hook 从批次台账折叠出的、已结算 allowed 且内容哈希与当前
+    磁盘一致的成员；它只并进 `PipelineRequest.changed_files`（判定范围），**不改变取证树**
+    （树仍是"当前磁盘树 + 本次提议"）。`batch_view` 是同一批次的只读摘要（含被排除的目标），
+    由 Hook 生成、原样进审计。两者都为空 = 与 C1-a 的行为逐字节相同。
     """
 
     pre = config.pre_evidence
@@ -163,7 +171,13 @@ def build_pre_evidence(
     def work() -> None:
         try:
             box["result"] = _collect_evidence(
-                raw_payload, event=event, config=config, rules=rules, context=context
+                raw_payload,
+                event=event,
+                config=config,
+                rules=rules,
+                context=context,
+                batch_targets=batch_targets,
+                batch_view=batch_view,
             )
         except BaseException as error:  # noqa: BLE001 - 任何异常都必须回到调用方
             box["error"] = error
@@ -195,6 +209,8 @@ def _collect_evidence(
     config: AdapterConfig,
     rules: RuleSet,
     context: PolicyContext,
+    batch_targets: Sequence[str] = (),
+    batch_view: Optional[Mapping[str, Any]] = None,
 ) -> PreEvidenceResult:
     """取证的全部动作（在 build_pre_evidence 的预算线程里跑）。"""
 
@@ -233,7 +249,13 @@ def _collect_evidence(
             anchor=anchor,
         )
         report = _run_validators(
-            pre=pre, anchor=anchor, event=event, context=context, rules=rules, shadow=shadow
+            pre=pre,
+            anchor=anchor,
+            event=event,
+            context=context,
+            rules=rules,
+            shadow=shadow,
+            batch_targets=batch_targets,
         )
     finally:
         # 用完必删：副本是被治理项目的一份拷贝，留下来就是一份没人管的代码。
@@ -260,6 +282,7 @@ def _collect_evidence(
         tree=tree,
         registry_path=Path(DEFAULT_REGISTRY).as_posix(),
         test_layout_path=Path(DEFAULT_TEST_LAYOUT).as_posix(),
+        batch_view=batch_view,
     )
     return PreEvidenceResult(bundle=bundle, summary=summary)
 
@@ -658,6 +681,7 @@ def _run_validators(
     context: PolicyContext,
     rules: RuleSet,
     shadow: Path,
+    batch_targets: Sequence[str] = (),
 ) -> Any:
     """跑真实流水线。
 
@@ -669,12 +693,16 @@ def _run_validators(
     from validators.registry import load_config as load_validation_config
 
     validation = load_validation_config(root=anchor)
+    # C1-b：批次成员只加宽"判定范围"（changed 集），**不改变取证树**。成员为空时
+    # changed 就是 (event.file,)，与 C1-a 的请求逐字节相同（排序后同样的单元素元组）。
+    changed_files = {event.file}
+    changed_files.update(member for member in batch_targets if member)
     request = PipelineRequest(
         target=event.file,
         workspace=shadow,
         context=context,
         rules=rules,
-        changed_files=(event.file,),
+        changed_files=tuple(sorted(changed_files)),
         only=pre.validators,
     )
     return run_pipeline(request, config=validation)
@@ -692,6 +720,7 @@ def _summary(
     tree: Mapping[str, Any],
     registry_path: str,
     test_layout_path: str,
+    batch_view: Optional[Mapping[str, Any]] = None,
 ) -> Mapping[str, Any]:
     """审计用的脱敏摘要：验证器怎么跑成、证据覆盖了哪些 checker、目标内容是哪一份。
 
@@ -774,4 +803,8 @@ def _summary(
         # 它只标注"读数的人该知道的事"，判定一个字都没改。
         "tree": dict(tree),
     }
+    # C1-b：只报告"这次的判定范围是不是按批次加宽的"。batch_view 为 None = 没有声明批次/
+    # 没有打开 into_decision/没有走取证：连这个键都不写（与 C1-a 的摘要逐字节相同）。
+    if batch_view is not None:
+        payload["batch"] = {**dict(batch_view), "note": BATCH_VIEW_NOTE}
     return _redact(payload)

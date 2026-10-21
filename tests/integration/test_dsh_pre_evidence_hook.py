@@ -19,8 +19,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -1210,3 +1212,259 @@ def test_the_test_first_flow_passes_through_both_steps(tmp_root: Path) -> None:
     assert second_record["pre_evidence"]["pending_implementation"] == []
     assert "failing_tests" in second_record["pre_evidence"]["served_checkers"]
     assert pytest_record_of(second_record)["status"] in {"ok", "findings"}
+
+
+# --------------------------------------------------------------------------- C1-b：批次进判定
+
+
+def _batch_edit_payload(
+    project: Path,
+    *,
+    file_path: str,
+    old_string: str,
+    new_string: str,
+    tool_use_id: str,
+) -> dict:
+    return dsh_event(
+        "pre-tool-use-edit-allow.json",
+        cwd=str(project),
+        tool_name="edit",
+        tool_input={
+            "file_path": file_path,
+            "old_string": old_string,
+            "new_string": new_string,
+            "replace_all": False,
+        },
+        tool_use_id=tool_use_id,
+    )
+
+
+def _apply_edit(path: Path, old_string: str, new_string: str) -> None:
+    """模拟 dsh 在这次 allow 之后真的把编辑落盘（Hook 自己只判定、不执行）。"""
+
+    text = path.read_text(encoding="utf-8")
+    assert text.count(old_string) == 1
+    path.write_text(text.replace(old_string, new_string, 1), encoding="utf-8", newline="")
+
+
+def _gate_projection(decision, served_checkers) -> tuple:
+    """C1-b 门 2 的比较投影：决策 + 违规清单 + 参与/跳过 + served（不含时戳/路径）。"""
+
+    return (
+        decision.decision.value,
+        tuple(
+            sorted(
+                (item.rule_id, item.severity.value, item.message)
+                for item in decision.violations
+            )
+        ),
+        tuple(sorted(decision.matched_rules)),
+        tuple(sorted(item.rule_id for item in decision.skipped_rules)),
+        tuple(sorted(served_checkers)),
+    )
+
+
+def test_the_batch_view_is_recorded_and_widens_changed_files(tmp_root: Path) -> None:
+    """C1-b：已结算 allowed 且哈希命中的目标进批次视图；它只加宽 changed 集，不改 tree.scope。"""
+
+    from adapters.dsh.batch_ledger import append_settlement, append_target
+
+    project = controlled_project(tmp_root)
+    rules = rule_dir(tmp_root)
+    shadow_root = tmp_root / "shadow"
+    config = config_with_evidence(
+        tmp_root,
+        project,
+        rules,
+        shadow_root=shadow_root,
+        batch_ledger={"enabled": True, "into_decision": True},
+    )
+    audit = tmp_root / "audit.jsonl"
+    session = "sess-demo-0001"
+    member = "src/shop/order_service.py"
+    content_sha = "sha256:" + hashlib.sha256((project / member).read_bytes()).hexdigest()
+    ledger_root = project / ".policy" / "pre-evidence-batches"
+    append_target(
+        root=ledger_root,
+        session_id=session,
+        event_id=session + ":call-earlier",
+        tool="edit",
+        target=member,
+        recorded_at="2026-10-21T00:00:00Z",
+    )
+    append_settlement(
+        root=ledger_root,
+        session_id=session,
+        event_id=session + ":call-earlier",
+        target=member,
+        outcome="allowed",
+        reason_code="allow",
+        content_sha256=content_sha,
+        recorded_at="2026-10-21T00:00:01Z",
+    )
+
+    payload = write_payload_for(
+        project,
+        file_path="src/shop/new_service.py",
+        content='"""新服务。"""' + chr(10) + chr(10) + "VALUE = 1" + chr(10),
+        tool_use_id="call-pre-batch",
+    )
+    outcome = run_hook(payload, config_path=config, audit_path=audit)
+
+    assert outcome.exit_code == EXIT_ALLOW, outcome.stderr
+    record = last_decision(audit)
+    batch = record["pre_evidence"]["batch"]
+    # 键集合冻结（C1-b 的审计 1.5）：多一个键少一个键都必须显式改这个用例。
+    assert set(batch) == {
+        "status",
+        "applied",
+        "members_digest",
+        "included",
+        "excluded",
+        "settled",
+        "truncated",
+        "skipped_lines",
+        "invalid_lines",
+        "note",
+    }
+    assert batch["status"] == "applied"
+    assert batch["applied"] is True
+    assert batch["included"] == [member]
+    assert batch["members_digest"].startswith("sha256:")
+    assert batch["truncated"] == 0
+    assert set(batch["excluded"]) == {
+        "blocked",
+        "unsettled",
+        "not_landed",
+        "abandoned",
+        "legacy",
+    }
+    # 取证树的范围没有变（批次只加宽判定范围，不往树里塞内容）。
+    assert record["pre_evidence"]["tree"]["scope"] == "current_disk_tree_plus_proposal"
+    # 结算写在最终判定那行上，且账本里是 proposal + settle 各一条。
+    assert record["batch"]["settlement"] == {"status": "allowed"}
+    rows = [
+        json.loads(line)
+        for line in (ledger_root / f"{session}.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [row["kind"] for row in rows][-2:] == ["proposal", "settle"]
+
+
+def test_the_conftest_step_with_batch_matches_the_merged_decision(tmp_root: Path) -> None:
+    """门 2：生产实现 → conftest 两步。第二步的 decision 与"合并 changed 集"的判定逐个相等。
+
+    这是 5.68 R5 的真实 Hook 版本：第一步（生产实现）结算 allowed 并落盘；第二步改 conftest，
+    批次把 order_service 带进 changed 集，support 作用域因此让位于 related/package
+    （写死在同一份 select_tests 语义里，见 tests/unit/test_validator_checkers.py:497-528）。
+    """
+
+    from conftest import POLICIES_DIR
+    from policy.engine import evaluate
+    from policy.loader import load_rule_set
+    from validators.pipeline import PipelineRequest, run_pipeline
+    from validators.registry import load_config as load_validation_config
+    from validators.selection import select_tests
+
+    from adapters.dsh.adapter import to_policy_context, to_policy_event
+
+    project = tmp_root / "project"
+    shutil.copytree(REPO_ROOT / "tests" / "fixtures" / "rules" / "_combinations" / "project", project)
+    shadow_root = tmp_root / "shadow"
+    config = write_dsh_config(
+        tmp_root / "config" / "gate.yaml",
+        project_root=project,
+        rules=POLICIES_DIR,
+        rules_root=str(REPO_ROOT),
+        layers=[
+            {"pattern": pattern, "layer": layer} for pattern, layer in DSH_LAYERS
+        ]
+        + [{"pattern": "tests/**", "layer": "test"}],
+        pre_evidence=pre_evidence_block(project, shadow_root, validators=()),
+        batch_ledger={"enabled": True, "into_decision": True, "max_targets": 20},
+    )
+    audit = tmp_root / "audit.jsonl"
+
+    implementation = "src/shop/order_service.py"
+    service_old = '"""订单用例。"""'
+    service_new = '"""订单用例（C1-b 批次门）。"""'
+    step1 = _batch_edit_payload(
+        project,
+        file_path=implementation,
+        old_string=service_old,
+        new_string=service_new,
+        tool_use_id="call-gate-1",
+    )
+    first = run_hook(step1, config_path=config, audit_path=audit)
+    assert first.exit_code == EXIT_ALLOW, first.stderr
+    first_record = last_decision(audit)
+    # 第一步没有任何已结算成员：批次视图存在但 applied=false（空批次中性）。
+    assert first_record["pre_evidence"]["batch"]["status"] == "empty"
+    assert first_record["pre_evidence"]["batch"]["applied"] is False
+    # 模拟 dsh 执行第一步：提议内容真的落盘，第二步的哈希才证明得了它。
+    _apply_edit(project / implementation, service_old, service_new)
+
+    conftest_target = "tests/conftest.py"
+    conftest_old = 'SRC = Path(__file__).resolve().parents[1] / "src"'
+    conftest_new = conftest_old + chr(10) + "# C1-b 批次门：让这次 conftest 改动可辨识。"
+    step2 = _batch_edit_payload(
+        project,
+        file_path=conftest_target,
+        old_string=conftest_old,
+        new_string=conftest_new,
+        tool_use_id="call-gate-2",
+    )
+    second = run_hook(step2, config_path=config, audit_path=audit)
+    assert second.exit_code == EXIT_ALLOW, second.stderr
+    record = last_decision(audit)
+    batch = record["pre_evidence"]["batch"]
+    assert batch["applied"] is True
+    assert batch["included"] == [implementation]
+
+    # 合并判定：在"第一步已落盘 + 第二步提议已应用"的等价树上，用同一个 context/规则跑流水线。
+    merged_workspace = tmp_root / "merged-project"
+    shutil.copytree(
+        project,
+        merged_workspace,
+        ignore=shutil.ignore_patterns(".policy", "__pycache__", ".git"),
+    )
+    _apply_edit(merged_workspace / conftest_target, conftest_old, conftest_new)
+    config_object = load_config(config)
+    admission = to_policy_event(step2, config=config_object)
+    assert admission.event is not None
+    context = to_policy_context(admission.event, config=config_object)
+    rules = load_rule_set([POLICIES_DIR], repo_root=REPO_ROOT)
+    validation = load_validation_config(root=REPO_ROOT)
+    report = run_pipeline(
+        PipelineRequest(
+            target=conftest_target,
+            workspace=merged_workspace,
+            context=context,
+            rules=rules,
+            changed_files=(implementation, conftest_target),
+        ),
+        config=validation,
+    )
+    merged = evaluate(rules, context, evidence=report.bundle)
+
+    assert _gate_projection(
+        second.decision, record["pre_evidence"]["served_checkers"]
+    ) == _gate_projection(merged, report.served_checkers)
+    # R5 语义的现场证明：同一棵树，批次把 support 换成 related/package。
+    layout = validation.layout
+    target_only = select_tests(
+        target_path=conftest_target,
+        changed_files=(conftest_target,),
+        layout=layout,
+        workspace=merged_workspace,
+        max_nodeids=layout.limits.max_nodeids,
+    )
+    with_batch = select_tests(
+        target_path=conftest_target,
+        changed_files=(implementation, conftest_target),
+        layout=layout,
+        workspace=merged_workspace,
+        max_nodeids=layout.limits.max_nodeids,
+    )
+    assert target_only.level == "support"
+    assert with_batch.level in {"related", "package"}

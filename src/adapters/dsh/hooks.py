@@ -62,6 +62,7 @@ from policy.models import (
     RequiredAction,
     RuleSet,
     ValidationResult,
+    normalize_repo_path,
 )
 from policy.obligations import book_pending_findings
 from provenance import reading_context as reading
@@ -81,8 +82,11 @@ from .adapter import (
 )
 from .batch_ledger import (
     BATCH_LEDGER_SCHEMA_VERSION,
+    BatchLedgerError,
+    append_settlement,
     append_target,
     batch_ref,
+    batch_view,
     prune_expired,
     targets_digest,
 )
@@ -164,7 +168,15 @@ EXIT_BLOCK = 2
 # 这些字段**不进** `policy.engine.evaluate`：decision / violations / reason_code 一个字都不变；
 # 未声明 `batch_ledger` 的部署不会得到任何 batch 键（行为与 1.3 时逐字相同，只有这一行的
 # 协议版本号跟着走）。批次账本自己的轴是 `batch_ledger.BATCH_LEDGER_SCHEMA_VERSION`。
-AUDIT_SCHEMA_VERSION = "1.4"
+#
+# 1.5（C1-b / 2026-10-21）：审计记录新增两处批次事实——`batch.settlement`
+# （allowed / blocked / unavailable，只在 batch_ledger 声明且 into_decision 打开时出现）与
+# `pre_evidence.batch`（status / applied / members_digest / included / excluded / settled /
+# truncated）。为什么升版：两条都是加键（第 55 条），且 `pre_evidence.batch.included` 让
+# "这次判定范围是否按批次加宽"能从账本读到。批次**仍然不进** `policy.engine.evaluate` 的
+# 输入：它只改变 pre_evidence 交给流水线的 `changed_files`（判定范围），决策协议与证据
+# 协议一字不动（PIPELINE 1.4 / EVIDENCE 1.2 均不升）。
+AUDIT_SCHEMA_VERSION = "1.5"
 
 # 插件→Hook 的 stdin 载荷自己的版本轴（AGENTS 第 55 条：加键就是改协议）。
 #
@@ -280,12 +292,14 @@ VIOLATIONS_NOTE = (
 # "batch 改了判定吗"。它与 obligations 那一条同族（只记账、不判罚），但比它更窄：
 # 批次连"判罚"的入口都没有——它不进 policy.engine.evaluate 的任何输入。
 BATCH_LEDGER_NOTE = (
-    "batch / batch_ref 是 C1-a 的**只报告**通道：记下本会话提议过的目标文件与它们的稳定摘要，"
-    "供后续台阶（C1-b）决定是否把同批文件放进取证树；它**不进** policy.engine.evaluate，"
-    "decision / violations / reason_code 一个字都由判定本身决定。"
+    "batch / batch_ref 是 C1-a 的只报告通道：记下本会话提议过的目标文件与它们的稳定摘要；"
+    "batch_ref 只是**每条记录写入时**的目标集合快照（同一会话会随目标增长而变化），"
+    "所以折叠批次必须按 session_id + 逐目标状态，不能按 batch_ref 相等来折叠。"
     "batch.recorded=false 表示这次**没有记上**（原因在 reason；stderr 另有一行 "
-    "BATCH LEDGER UNAVAILABLE），它同样不改变这次调用的放行或阻断。"
-    "同一 batch_ref 的记录属于同一批目标（按会话折叠；session_id 也是摘要输入）"
+    "BATCH LEDGER UNAVAILABLE），它不改变这次调用的放行或阻断。"
+    "打开 batch_ledger.into_decision 后：batch.settlement 记这次结算结果（allowed / blocked / "
+    "unavailable），pre_evidence.batch 记这次判定范围是否按批次加宽；批次仍**不进** "
+    "policy.engine.evaluate 的输入（decision / violations / reason_code 由判定本身决定）"
 )
 
 # 绝对路径的识别必须带**边界**：没有边界的 "/" 会把普通仓库相对路径
@@ -513,6 +527,8 @@ class EvidenceProvider(Protocol):
         config: AdapterConfig,
         rules: RuleSet,
         context: Any,
+        batch_targets: Sequence[str] = (),
+        batch_view: Optional[Mapping[str, Any]] = None,
     ) -> PreEvidenceResult:
         ...
 
@@ -807,6 +823,51 @@ def write_scope_fallback(
     return target
 
 
+def _batch_write_tools() -> frozenset[str]:
+    """批次成员只接受写类工具：读类/执行类目标不是"提议写这个文件"。
+
+    集合从 TOOL_TABLE（数据）现算，不另写一张表——工具表与 manifest 的一致性
+    由契约测试逐项比对，副本会漂移。
+    """
+
+    return frozenset(
+        name for name, spec in TOOL_TABLE.items() if spec.kind is ToolKind.WRITE
+    )
+
+
+def _batch_target_validator(workspace: Path) -> Callable[[str], str]:
+    """批次 target 的路径校验：仓库相对、且解析后落在取证工作区内。
+
+    与写类动作的范围校验同一句话（AGENTS 第 50 条：拒绝要说清改成什么形态），
+    但这里只做**成员资格**判断：不合法就抛 ValueError，由 batch_view 计入 invalid，
+    不会被当成成员，也不会让整份取证失败（账本里的坏行由 skipped/invalid 计数表达）。
+    """
+
+    root = workspace.resolve()
+
+    def validate(target: str) -> str:
+        try:
+            normalized = normalize_repo_path(str(target).replace("\\", "/"))
+        except PolicyContextError as error:
+            raise ValueError(
+                f"批次目标 {target!r} 不是合法的仓库相对路径：{error}"
+            ) from error
+        try:
+            resolved = (root / normalized).resolve()
+        except OSError as error:
+            raise ValueError(
+                f"批次目标 {normalized!r} 解析不了（{type(error).__name__}）："
+                "证明不了它落在取证工作区内"
+            ) from error
+        if root != resolved and root not in resolved.parents:
+            raise ValueError(
+                f"批次目标 {normalized!r} 落在取证工作区之外：拒绝把它当成批次成员"
+            )
+        return normalized
+
+    return validate
+
+
 def _within_budget(
     run: Callable[[], Any],
     *,
@@ -979,6 +1040,9 @@ class DshPreExecuteHook:
         *,
         outcome: HookOutcome,
     ) -> None:
+        # C1-b：结算写在审计 append **之前**，这样同一条记录能写出 batch.settlement。
+        # 放在 ledger 为 None 的早退之前：没有审计账本时结算仍然成立（它不是审计的一部分）。
+        settlement = self._settle_batch(record, outcome=outcome)
         if self.ledger is None:
             return
         payload: dict[str, Any] = {
@@ -993,11 +1057,82 @@ class DshPreExecuteHook:
             "rule_set_hash": self.rules.identity,
         }
         payload.update({key: value for key, value in record.items() if value is not None})
+        if settlement is not None:
+            # 复制一份 batch 再追加：不改调用方给的 record（同一个 dict 可能被重放路径复用）。
+            batch = dict(payload.get("batch") or {})
+            batch["settlement"] = settlement
+            payload["batch"] = batch
         # 台阶 4 / 21 号 §2.2：这条记录属于**哪棵树 / 哪一套声明 / 哪台宿主**。
         # 它是旁注——不进 policy.engine.evaluate 的任何输入，也不改任何 allow / block；
         # 放在既有键之后写，既有键的取值一个字符都不动。
         payload["reading_context"] = self.reading_context_for_record(payload)
         self.ledger.append(payload)
+
+    def _settle_batch(
+        self, record: Mapping[str, Any], *, outcome: HookOutcome
+    ) -> Optional[Mapping[str, Any]]:
+        """C1-b：在审计 append 之前把这次结果的结算写进账本（只写事实，不改判定）。
+
+        口径（每条都对应 C1-b 的门）：
+
+        - 只在 batch_ledger 声明 + enabled + into_decision 打开、且这次真的记上了 proposal
+          （batch.status=recorded）时写；否则返回 None（审计里连 settlement 键都不加）；
+        - outcome 只看**最终** exit_code：0 = allowed，其余 = blocked（含 enforcement 门禁在
+          policy allow 之后拦下——被门禁拦下的动作没有执行，不能算 allowed）；
+        - content_sha256 取自 pre_evidence 摘要的 proposal.sha256（只有收集成功才有）——它是
+          "动作之后目标文件的期望哈希"，读取侧拿它和磁盘比对来证明"提议真的落地了"；
+        - 写失败只打一行 stderr 并返回 unavailable：结算不是判定，**不改** allow / block；
+          下一次读取会把它当成 unsettled（不当作 allowed）。
+        """
+
+        declaration = self.config.batch_ledger
+        if declaration is None or not declaration.enabled or not declaration.into_decision:
+            return None
+        batch = record.get("batch")
+        if not isinstance(batch, Mapping) or batch.get("status") != "recorded":
+            return None
+        if outcome.exit_code == EXIT_ALLOW and "execution" not in record:
+            # 同一个事件可能出现不止一条 exit 0 审计行（Phase 4 的授权/派发行 executed=false，
+            # 最终判定行才带 execution）。结算只写一次、写在**最终判定**那行上：这样
+            # settle.reason_code 是最终 reason_code（allow / allow_with_warnings），
+            # 而不是中间授权行的 enforcement_allow。
+            return None
+        session_id = record.get("session_id")
+        event_id = record.get("event_id")
+        target = batch.get("target")
+        if not all(
+            isinstance(value, str) and value
+            for value in (session_id, event_id, target)
+        ):
+            return {
+                "status": "unavailable",
+                "reason": "批次的 session_id / event_id / target 缺失：结算不了这条记录",
+            }
+        content_sha: Optional[str] = None
+        pre = record.get("pre_evidence")
+        if isinstance(pre, Mapping) and pre.get("status") == "collected":
+            proposal = pre.get("proposal")
+            if isinstance(proposal, Mapping):
+                candidate = proposal.get("sha256")
+                if isinstance(candidate, str) and candidate:
+                    content_sha = candidate
+        settle_outcome = "allowed" if outcome.exit_code == EXIT_ALLOW else "blocked"
+        try:
+            append_settlement(
+                root=declaration.root,
+                session_id=session_id,
+                event_id=event_id,
+                target=target,
+                outcome=settle_outcome,
+                reason_code=outcome.reason_code,
+                content_sha256=content_sha,
+                recorded_at=_utc_now(),
+            )
+        except Exception as error:  # noqa: BLE001 - 只写事实：失败必须降级，不许改判定
+            reason = sanitize(str(error), project_root=self.config.project_root)
+            print("[policy] BATCH SETTLEMENT UNAVAILABLE " + reason, file=sys.stderr)
+            return {"status": "unavailable", "reason": reason}
+        return {"status": settle_outcome}
 
     def _audit_out_of_scope(self, record: Mapping[str, Any], *, outcome: HookOutcome) -> None:
         """范围外的「没管」记录：**受治账写不进去也不许拦人**，但必须把这件事写下来。
@@ -1179,14 +1314,23 @@ class DshPreExecuteHook:
         assert pre is not None  # 调用点在 pre is not None and pre.enabled 的分支里
         provider = self.evidence_provider or build_pre_evidence
         budget_ms = pre.timeout_ms + self.config.timeout_ms
-        return _within_budget(
-            lambda: provider(
+
+        def call() -> PreEvidenceResult:
+            # C1-b：批次读取也在预算里——它要读整个会话账本，并对至多 max_targets 个候选
+            # 各算一次文件 sha256。放到预算之外就等于把"总时长"重新变成猜的。
+            batch_targets, batch_payload = self._batch_inputs(event)
+            return provider(
                 raw_payload,
                 event=event,
                 config=self.config,
                 rules=self.rules,
                 context=context,
-            ),
+                batch_targets=batch_targets,
+                batch_view=batch_payload,
+            )
+
+        return _within_budget(
+            call,
             budget_ms=budget_ms,
             on_timeout=lambda: PreEvidenceError(
                 f"动手前取证超过外层预算 {budget_ms} ms（pre_evidence.timeout_ms="
@@ -1194,6 +1338,67 @@ class DshPreExecuteHook:
             ),
             name="pre-evidence-budget",
         )
+
+    def _batch_inputs(
+        self, event: PolicyEvent
+    ) -> tuple[tuple[str, ...], Optional[Mapping[str, Any]]]:
+        """C1-b：把本会话账本折叠成"可证明的成员 + 只读审计摘要"。
+
+        三种"不读账本"的情形返回空成员 + None（摘要里连 batch 键都不加，与 C1-a 逐字节
+        相同）：没有声明 / 声明了但 enabled=false / into_decision=false / pre_evidence 未启用。
+        读失败（文件存在但读不出来）返回空成员 + status=unreadable 的摘要，并打一行 stderr：
+        本次回退为单文件判定，**不阻断**——批次不是授权，阻断只会让坏账本成为锁会话的开关，
+        但"这次没按批次算"必须能从审计读到。
+        """
+
+        declaration = self.config.batch_ledger
+        pre = self.config.pre_evidence
+        if (
+            declaration is None
+            or not declaration.enabled
+            or not declaration.into_decision
+            or pre is None
+            or not pre.enabled
+        ):
+            return (), None
+        workspace = Path(pre.workspace)
+        try:
+            view = batch_view(
+                root=declaration.root,
+                session_id=event.session_id,
+                exclude_event_id=event.event_id,
+                workspace=workspace,
+                max_targets=declaration.max_targets,
+                validate_target=_batch_target_validator(workspace),
+                write_tools=_batch_write_tools(),
+            )
+        except BatchLedgerError as error:
+            reason = sanitize(str(error), project_root=self.config.project_root)
+            print("[policy] BATCH VIEW UNAVAILABLE " + reason, file=sys.stderr)
+            return (), {
+                "status": "unreadable",
+                "applied": False,
+                "members_digest": targets_digest(()),
+                "included": [],
+                "excluded": {},
+                "settled": {"allowed": 0, "blocked": 0, "abandoned": 0},
+                "truncated": 0,
+                "skipped_lines": 0,
+                "invalid_lines": 0,
+                "reason": reason,
+            }
+        payload = {
+            "status": view.status,
+            "applied": view.applied,
+            "members_digest": view.members_digest,
+            "included": list(view.members),
+            "excluded": {key: list(values) for key, values in view.excluded.items()},
+            "settled": dict(view.settled),
+            "truncated": view.truncated,
+            "skipped_lines": view.skipped_lines,
+            "invalid_lines": view.invalid_lines,
+        }
+        return view.members, payload
 
     def _checker_scope_note(self, evidence_collected: bool) -> str:
         """能力边界的说明文字。

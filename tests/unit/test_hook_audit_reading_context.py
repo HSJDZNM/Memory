@@ -133,7 +133,7 @@ def test_reading_context_names_the_evidence_tree_and_the_registry(tmp_root: Path
     assert outcome.exit_code == EXIT_BLOCK  # DOC-900 命中：取证真的发生了
 
     record = decision_record(audit)
-    assert record["audit_schema_version"] == AUDIT_SCHEMA_VERSION == "1.4"
+    assert record["audit_schema_version"] == AUDIT_SCHEMA_VERSION == "1.5"
     assert record["pre_evidence_status"] == "collected"
 
     context = record["reading_context"]

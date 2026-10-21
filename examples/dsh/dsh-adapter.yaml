@@ -112,27 +112,36 @@ enforcement_ledger: ../../.tmp/artifacts/dsh-enforcement-ledger.jsonl
 #   validators: []                  # 省略 = 按规则选择；写死可省时间（例如 [py.source, tool.ruff]）
 #   timeout_ms: 20000
 
-# —— C1-a：批次台账（可选；不声明时行为与现在逐字相同） ——
-# 记录"本会话提议过哪些目标文件"，给后续台阶（C1-b：把同批已提议文件放进取证树）提供输入。
-# **它不进 policy.engine.evaluate**：判定记录里只多出 batch_ref 与 batch 块（审计协议 1.4），
-# decision / violations / reason_code / 退出码一个字都不变。
+# —— C1-a / C1-b：批次台账（可选；不声明时行为与现在逐字相同） ——
+# 记录"本会话提议过哪些目标文件"（C1-a，只报告）；`into_decision: true` 时再把"同批里已结算
+# allowed 且内容 sha256 与当前磁盘一致"的目标并进 `pre_evidence` 的 `changed_files`（C1-b，
+# 判定范围）。**判定仍只由 policy.engine.evaluate 给出**；不声明整段 = 行为与 C1-a 之前逐字相同。
+# 审计协议：C1-a 加 `batch_ref` + `batch` 四态块（审计 1.4）；C1-b 加 `batch.settlement` 与
+# `pre_evidence.batch`（审计 1.5，只在 into_decision=true 时出现）。
 #
-# 落点：<root>/<session_id>.jsonl（追加写、按会话分文件、UTF-8 + LF、一条记录一行 JSON，
-# 字段 {schema_version, session_id, event_id, tool, target, recorded_at}）。
+# 落点：<root>/<session_id>.jsonl（追加写、按会话分文件、UTF-8 + LF、一条记录一行 JSON）。
+# 记录种类（账本 1.1）：proposal（字段 {schema_version, kind, session_id, event_id, tool, target,
+# recorded_at}）/ settle（+ outcome / reason_code / content_sha256）/ abandon（+ reason）。
+# 1.0 的六键记录按 proposal 读、**永不可结算**（legacy，不进批次）。
 # root 省略 = <project_root>/.policy/pre-evidence-batches；显式声明时与本节其他路径同一口径，
 # **相对本文件所在目录**（见文件头）。声明成项目根或它的祖先会在加载期被拒绝——那是追加写 +
 # TTL 清理的落点，不能覆盖项目本身。
 #
+# 批次口径（写死）：同一 session、逐目标折叠（最后一条记录胜出）；成员 = settle.outcome=allowed
+# 且 content_sha256 与当前磁盘一致，且 tool 属写类；blocked / unsettled / not_landed / abandoned /
+# legacy 一律只进审计的 excluded（"已提议"绝不被读成"已允许"）；上限 max_targets（0 = 不并成员）。
 # TTL / 保留口径：ttl_hours（默认 24）只服务清理——删除该目录下 mtime 超过它的 *.jsonl；
 # 本次会话自己的文件永不删除；目录名不是 pre-evidence-batches 时清理整个不执行（防止一个
 # 写错的 root 把审计 / 台账 / 审批文件当过期批次删掉）。清理**不参与** batch_ref：摘要覆盖
 # "session_id + 排序去重的目标集合"，时间不参与，所以同一批目标两次计算逐字节相同。
 #
-# 失败边界（只报告通道）：账本不可写 / session_id 不是安全文件名 / 读不出来时只打一行
-# [policy] BATCH LEDGER UNAVAILABLE 并**继续**；审计里是 batch.recorded=false + reason，
-# 绝不静默，也绝不因此改变这次调用的放行或阻断。
+# 失败边界：账本不可写 / session_id 不是安全文件名 / 读不出来时只打一行 `BATCH LEDGER UNAVAILABLE`
+# （读取侧是 `BATCH VIEW UNAVAILABLE`）并**继续**；审计写明 batch.recorded=false 或
+# pre_evidence.batch.status=unreadable，绝不静默，也绝不因此改变这次调用的放行或阻断。
 #
 # batch_ledger:
 #   enabled: true                   # 默认 true（声明即启用）；写 false = 显式关闭（审计里 status=disabled）
 #   root: .policy/pre-evidence-batches  # 相对本文件所在目录；复制进 <project>/.policy/ 后请**省略**它
 #   ttl_hours: 24
+#   into_decision: false            # C1-b 的 opt-in：true 才把批次成员并进 changed_files（默认只报告）
+#   max_targets: 20                 # 并入 changed_files 的成员上限；0 = 不并任何成员（只记审计）

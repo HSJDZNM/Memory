@@ -523,8 +523,10 @@ Phase 4 门禁有 `enforcement_detail` 而没有 `detail`），以及
 既有字段（`matched_rules` / `skipped_rules` / …）只增不改；审计记录协议自己的版本号随
 **键集合**走（统一规则见 AGENTS 第 55 条）：台阶 3a 加 `decision_reason` → `1.1`，
 台阶 3b 加 `pending_findings` → `1.2`，台阶 4 加 `reading_context` 与 `pre_evidence.registry`
-→ `1.3`（见 §12.10）。P1 与台阶 2 当时"加键未升版"是既成事实，
-登记在 AGENTS 第 55 条里，不作为可以再犯的先例。
+→ `1.3`（见 §12.10），C1-a 加 `batch_ref` 与 `batch` → `1.4`，C1-b 加
+`batch.settlement` 与 `pre_evidence.batch` → `1.5`（见 §12.11；批次账本自己的轴
+`BATCH_LEDGER_SCHEMA_VERSION` 与之各走各的，1.0 → 1.1）。P1 与台阶 2 当时"加键未升版"
+是既成事实，登记在 AGENTS 第 55 条里，不作为可以再犯的先例。
 
 **会失败的检查**：`tests/unit/test_hook_skip_visibility.py`（确定性单测 + 真实产物的字段断言，
 含"既有字段只增不改"的清单与 `skipped_reason` 归类）。
@@ -1084,6 +1086,69 @@ python .tmp/round-07/harness/probe_pre_evidence.py --json .tmp/round-07/evidence
 "把 `workspace_tree_digest` 换成『一调就炸』后调用仍必须成功"、1.2/1.3 混排的链校验，
 以及两条 test_layout 用例：三处摘要必须同源，且 `test_layout` 在一次 Hook 调用里**只被流水线算一次**
 ——"另算"的变异会让它红，见 23 号 §12）。
+
+### 12.11 C1-b · 批次进判定（into_decision；账本 1.0 → 1.1，审计 1.4 → 1.5）
+
+**问题**：Hook 每次工具调用是新进程，判定粒度是单次编辑；同一会话里"生产实现 → conftest"两步，
+第二步单独看只能按 support 作用域跑整棵子树，而批次语义（判定单位是这一批）要求把已结算的
+生产变更带进 changed_files。
+
+**做法（opt-in）**：batch_ledger 段新增两个键，默认关闭：
+
+```yaml
+batch_ledger:
+  enabled: true
+  into_decision: true      # 默认 false：账本只记账、只报告，判定与审计与 C1-a 相同
+  max_targets: 20          # 并进 changed_files 的上限；0 = 不并任何成员
+  ttl_hours: 24
+```
+
+**账本 1.1（BATCH_LEDGER_SCHEMA_VERSION）**：一条记录一行 JSON，三种 kind：
+
+| kind | 键 | 写入时机 |
+| --- | --- | --- |
+| proposal | {schema_version, kind, session_id, event_id, tool, target, recorded_at} | 判定**之前**（book_batch，位置不变） |
+| settle | {..., kind:"settle", target, outcome:"allowed"｜"blocked", reason_code, content_sha256?, recorded_at} | 最终判定确定、审计 append **之前**；outcome 只看最终 exit_code（0=allowed），content_sha256 取自 pre_evidence.proposal.sha256 |
+| abandon | {..., kind:"abandon", target?, reason, recorded_at} | 显式作废（append_abandon；target 省略 = 作废该会话此前全部目标） |
+
+折叠口径（batch_view，逐目标）：最后一条 proposal 是"最新意图"，settle 必须对应它的
+event_id；abandon 只有在晚于最新 proposal 时才算数。成员资格 = settle=allowed **且**
+content_sha256 等于当前取证工作区该文件 sha256 **且** target 通过 normalize_repo_path /
+落在工作区内 **且** tool 属写类；本次事件自己的 target/event 排除。1.0 记录按 proposal 读、
+**永远不可结算**（legacy）。
+
+**排除清单（审计可读，不静默）**：blocked（被拦下，没有执行）/ unsettled（有 proposal 无
+settle，例如 Hook 被杀）/ not_landed（allowed 但哈希不匹配或文件不在）/ abandoned / legacy；
+坏行或未知 schema_version 进 skipped_lines，session 不符 / 越界 / 非写类进 invalid_lines；
+超过 max_targets 截断记 truncated。
+
+**审计（AUDIT_SCHEMA_VERSION = 1.5）**：
+
+- batch.settlement ∈ {allowed, blocked, {status:"unavailable", reason}}：只在 batch_ledger
+  声明且 into_decision: true 时出现；写失败只打一行 [policy] BATCH SETTLEMENT UNAVAILABLE，
+  **不改判定**；
+- pre_evidence.batch：{status, applied, members_digest, included, excluded, settled,
+  truncated, skipped_lines, invalid_lines, note}。status ∈ {empty, applied, partial,
+  unreadable}（读不出账本时 Hook 打一行 [policy] BATCH VIEW UNAVAILABLE，applied=false，
+  changed 回退为 (event.file,)，**不阻断**）；
+- tree.scope **不变**（仍是 current_disk_tree_plus_proposal）：批次只加宽判定范围，不往
+  取证树里塞内容（账本不存正文；已 allowed 的提议在下一个 Hook 进程里已经落盘）。
+
+**可观察后果（M1，沿用现有 changed 集语义）**：批次就是 changed_files 的取值来源，与 CLI
+--changed 完全一致——批次里有生产变更时 select_tests 的 support 作用域让位于 related/package
+（tests/unit/test_validator_checkers.py:497-528）。代价是**证据覆盖可能收窄**（conftest 不再跑
+整棵子树）；pre_evidence.batch.included 是"这次按批次算"的唯一可信来源。into_decision: false 时
+decision / violations / reason_code / exit_code 与关闭时逐字节相等（C1-a 门①不变）。
+
+**预算**：账本读取在 pre_evidence.timeout_ms + timeout_ms 外层预算内；b-plan 的
+20000 + 5000 < 30000 仍然成立。离线读数（.tmp/c1b-analyst/gate-reading.json）：账本读取
+3 成员均值 0.382ms / 最大 0.731ms，20 成员均值 3.623ms / 最大 5.686ms；真实 Hook 两步各约
+1.37s。settle 追加与 book_batch 的 TTL 清理在预算之外（既有记账缺口）。
+
+**会失败的检查**：tests/unit/test_dsh_batch_view.py（折叠 / 五类排除 / cap / 越界 / session
+不符 / 坏行 / 1.0 legacy）、tests/integration/test_dsh_batch_ledger.py（结算写入时机、blocked
+结算、写入失败降级、协议轴 1.1/1.5）、tests/integration/test_dsh_pre_evidence_hook.py（批次视图
+进审计、生产实现 → conftest 两步与合并判定逐个相等、support → related）。
 
 ## 13. 声明版本 vs 宿主实际版本：一条能失败的检查（R14 / 缺陷 2）
 
