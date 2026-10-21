@@ -1,12 +1,14 @@
 # bank-flagship-returns（旗舰题：退货模块 · 冻结候选）
 
 > **它是什么**：任务题库里的**旗舰题**——要求模型独立构建一个完整的退货（refunds）功能模块：
-> 6 个新生产模块 + 7 个新测试文件 + 1 篇文档 + 2 个工具脚本，给既有 `OrderRepository` 加 `get`，
+> 5 个新生产模块 + 7 个新测试文件 + 1 篇文档 + 2 个工具脚本 + 1 个迁移产物，给既有 `OrderRepository` 加 `get`，
 > 更新同名测试与 README。跨 model / repository / service / controller 四层，含数据迁移与演示入口。
-> **冻结状态**：字节已固定（`task-package/manifest.sha256` 5/5 可复核；基线组合摘要可复核）；
-> **签字前状态 = frozen-pending-signature**。隐藏验收代码（48 条）与参考解**已由独立子会话写**（2026-10-21；
-> 作者未读 `reference/`，见 `hidden/README.md` 的「作者独立性」）；**仍缺**：本题 `scoring.yaml`、冻结清单、
-> A/B/C 臂与审批，以及参考解上的 T/C/A 天花板实测（`reference/README.md` §3）。
+> **冻结状态**：task-package 字节已固定（manifest 5/5 可复核；基线组合摘要可复核）；隐藏验收代码（48 条）与参考解
+> 已由独立子会话写（2026-10-21；作者未读 `reference/`，见 `hidden/README.md` 的「作者独立性」）；`scoring.yaml`
+> 已冻结（bank-scoring/2，参考解上实测 **T 48/48 · C 30/30 · A 30/30**）；A/B/C 臂已装配（基线 `b6d6d2f7…`）；
+> 审批已签（每臂 2 条，TTL 2026-10-22 19:55 +08）。**2026-10-21 真机 A/B/C 冒烟各 1 次（n=1，五判据过）**。
+> **未签「可开跑」**：k≥3 未跑；读数见 `docs/project/engineering-policy-platform/readings/` 下
+> `2026-10-21-bank-flagship-arms-and-ceiling.md` 与 `2026-10-21-bank-flagship-abc-smoke.md`（n=1 只作案例）。
 > **用法**：Lead 重置基线 → 以任务树为 cwd 起受治会话 → 首消息 = `task-package/first-message.md`；
 > 跑完后按 `acceptance.md` + 隐藏验收 + 基线 diff 判分（或按 `coverage.md` 对接 dgate2 的 T/C/A）。
 
@@ -68,10 +70,13 @@ Get-Content "$pkg/manifest.sha256" | ForEach-Object {
 ## 4 怎么用（Lead）
 
 ```powershell
-cd C:/Users/ZNM/Downloads/Memory
+# 以下命令都在仓库根执行；$repo 是仓库根（不写死绝对路径）
+$repo = (Resolve-Path .).Path
+$taskPkg = "$repo/docs/project/engineering-policy-platform/testing/ab/bank/tasks/bank-flagship-returns"
+
 # 0) 看计划 / 重置（目标树默认 .tmp/bank-flagship/tree，14 文件；不预置任何任务要创建的文件）
-.venv/Scripts/python.exe docs/project/engineering-policy-platform/testing/ab/bank/tasks/bank-flagship-returns/reset-arm.py --dry-run
-.venv/Scripts/python.exe docs/project/engineering-policy-platform/testing/ab/bank/tasks/bank-flagship-returns/reset-arm.py
+.venv/Scripts/python.exe "$taskPkg/reset-arm.py" --dry-run
+.venv/Scripts/python.exe "$taskPkg/reset-arm.py"
 #    退出码：0 = 重置并校验通过；1 = 前置缺失（基线缺失/文件数不对/摘要不符/基线混入任务文件）；2 = 校验失败
 
 # 1) 记下 audit 起始行数（reset-arm 会写进 .tmp/bank-flagship/reset-manifest.json）
@@ -84,8 +89,8 @@ cd C:/Users/ZNM/Downloads/Memory
 
 # 3) 以任务树根为 cwd 起受治会话；首消息 sha256 必须等于 bd19e4ca…
 cd .tmp/bank-flagship/tree
-$env:PYTHONPATH='C:/Users/ZNM/Downloads/Memory/src'; $env:PYTHONIOENCODING='utf-8'
-$task = Get-Content -Raw -Encoding utf8 C:/Users/ZNM/Downloads/Memory/docs/project/engineering-policy-platform/testing/ab/bank/tasks/bank-flagship-returns/task-package/first-message.md
+$env:PYTHONPATH="$repo/src"; $env:PYTHONIOENCODING='utf-8'
+$task = Get-Content -Raw -Encoding utf8 "$taskPkg/task-package/first-message.md"
 dsh --profile headless --patch .policy/patch.yml $task
 ```
 
@@ -108,10 +113,11 @@ dsh --profile headless --patch .policy/patch.yml $task
 | `task-package/` | 首消息 / 里程碑 / 验收表 / 接口契约 / 允许写 / manifest | **已冻结候选**（字节固定） |
 | `baseline/` | 14 文件基线树（逐字节） | **已冻结候选**（组合摘要可复核） |
 | `reset-arm.py` | 逐字节重置 + 摘要校验 + reset-manifest.json | 已实测（dry-run + 真跑 14/14 ok） |
-| `layers.yaml` / `interfaces.yaml` | A 维度声明（30 文件 → 层；A3 公开面上限） | 已写；**A3 上限待 `structure_metrics` 实测校准** |
+| `layers.yaml` / `interfaces.yaml` | A 维度声明（30 文件 → 层；A3 公开面上限） | 已写并校准（参考解实测 A 10/10；A3 用 `declared_caps`） |
 | `coverage.md` | 43 条规则点 + A1–A10 + 隐藏面的逐项覆盖矩阵与实测读数 | 已写（12 直接 / 22 变异 / 9 不适用） |
 | `reference/README.md` | 参考解要点（模块/接口/测试/文档/决策点） | 已写（给另一子会话的要点；隐藏代码作者不得读） |
-| `reference/tree/` | 参考解实现（30 文件 = 14 基线 + 16 新建；11 个冻结文件逐字节不变） | **已写**：pytest 29 passed / demo fee 25·12 / migrate 3 行且幂等 |
+| `reference/tree/` | 参考解实现（30 文件 = 14 基线 + 16 新建；11 个冻结文件逐字节不变） | **已写并校准**：pytest 29 passed / demo fee 25·12 / migrate 3 行且幂等；T 48/48、C 30/30、A 30/30 |
+| `scoring.yaml` | 本题评分器（bank-scoring/2，version 2）：T/C/A=40/30/30、8 条 C 规则、10 条 A 谓词、12 条作废条件 | **已冻结**（参考解上实测 **T 48/48 · C 30/30 · A 30/30**） |
 | `hidden/PLAN.md` | 38 条隐藏验收 + EN/I 的条目清单与判据 | **已冻结**；实现 = `hidden/runner.py`（48 条，参考树 48/48、基线 2/48，见 `hidden/README.md`） |
 
 ## 7 边界（引用本包前必须读）
@@ -123,4 +129,5 @@ dsh --profile headless --patch .policy/patch.yml $task
   `task-package/manifest.sha256` / 基线摘要 / 本文件 §3 的哈希表；冻结后逐文件哈希不符 => 该 run 作废。
 - **本包不声称已激活任何 treatment**：本题不是 dgate2 的 A/B 臂任务，也不替代 `a3-task-v3`；
   它是**题库**里的旗舰题，评测臂与 treatment 由 Lead 另定（见 `bank/README.md` §6 的决策点）。
-- **不跑真机会话、不 commit**：本包落地时只做了只读/本地验证（pytest、policy.check、reset-arm、哈希）。
+- **本包不含运行产物**：落地时只做只读/本地验证（pytest、policy.check、reset-arm、哈希）；真机读数在
+  `readings/2026-10-21-bank-flagship-abc-smoke.md`（n=1 只作案例，不是 k≥3）。

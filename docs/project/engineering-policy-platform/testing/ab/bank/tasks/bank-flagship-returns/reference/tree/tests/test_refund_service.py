@@ -1,10 +1,10 @@
 """refund_service 的用例：正常路径、拒绝路径与幂等。"""
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from shop.refund_model import RefundRecord
 from shop.refund_policy import load_policy
 from shop.refund_service import RefundService
 
@@ -30,7 +30,7 @@ class _Refunds:
     def __init__(self) -> None:
         self.rows: list[dict] = []
 
-    def add(self, record: RefundRecord) -> dict:
+    def add(self, record: Any) -> dict:
         """追加并返回副本。"""
         payload = record.to_dict()
         self.rows.append(dict(payload))

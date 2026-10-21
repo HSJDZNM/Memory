@@ -2,7 +2,8 @@
 
 > **它回答什么**：这道题到底把治理系统的哪些规则点/结构谓词/隐藏验收真正压到了，
 > 哪些只是「规则数据上可触发」而本任务没有岔口，哪些结构性不适用。
-> **它不回答什么**：不构成「参考解已通过」的证据——参考解尚未实现；本文件给的是**判据与可执行测法**。
+> **它不回答什么**：不构成「参考解已通过」的证据——参考解已实现，但通过与否以 run 记录/天花板读数
+> （`readings/2026-10-21-bank-flagship-arms-and-ceiling.md`）为准；本文件给的是**判据与可执行测法**。
 > 规则点一律从 `policies/**/*.yaml` 读出（43 条；rule id / checker / severity / scope 逐条核对），
 > 不编造。期望的 decision 形态来自 `policy.check` 的四种结果：
 > `allow` / `allow_with_warnings` / `block`（另有 `evidence_unavailable` 等失败关闭形态，本表不涉及）。
@@ -164,13 +165,12 @@ error → `block`，warning → `allow_with_warnings`。全部未在本任务实
 **证据边界**：5.2/5.3/5.5/5.6/5.7/5.8 是**本次实测**；5.4 引用 dgate2 的同一套规则读数；
 其余 ○/— 未在本任务上实测（AGENTS 第 45 条：没测过的不能写成覆盖）。
 
-## 8 与评分器 T/C/A 三维的对接（Lead 决策前）
+## 8 与评分器 T/C/A 三维的对接（2026-10-21 已冻结）
 
-- **C 维度**：本文件 §2 的 12 条可直接映射成 `dgate2/scorer` 的 8 条规则口径的超集；
-  若要复用 C 的 24 分模板，需要显式冻结「本题被测文件集」（建议 = 19 条允许写集合里的 `.py` 文件，
-  不含只读的 `order_service.py` / `order_controller.py`）——否则会重演 dgate2 的
-  「整树口径把没改过的 `__init__.py` 判成缺测试」的测量假象（dgate2 scorer/README §3）。
-- **A 维度**：`layers.yaml` / `interfaces.yaml` 已按 structure_metrics 1.1 的闭集写成；
-  30 条路径声明是否 100%、A3 上限是否合适，由参考解跑一遍 `structure_metrics` 后**实测校准**。
-- **T 维度**：`hidden/PLAN.md` 的 38 + 5 + 5 = 48 条是**候选**；dgate2 的 T 是 40 分制
-  （30+5+5），本题是否沿用 40 分、还是按 48 条重新配权，属评分器扩展决策（见 `bank/README.md` §6）。
+- **C 维度**：`scoring.yaml` 冻结 8 条规则 × 3（24）+ 11 个冻结文件未改（3）+ 无旁路 B1/B2/B3（各 1）= 30；
+  被测 `.py` = 19 条允许写里的 16 个，不含只读的 `order_service.py` / `order_controller.py`——
+  避免重演 dgate2 的「整树口径把没改过的 `__init__.py` 判成缺测试」测量假象。本题 `ARCH-001`
+  **适用**（file_set 含 `refund_controller.py`，层 = controller），不标 N/A。
+- **A 维度**：10 条谓词 × 3 = 30；`layers.yaml` / `interfaces.yaml` 已由参考解校准（A 10/10，A3 用 `declared_caps`）。
+- **T 维度**：`hidden/PLAN.md` 的 38 + 5 + 5 = **48 条已冻结**（记 passed/48 + `round(40×passed/48)`）；
+  参考解 48/48、基线 2/48。T 只读最终树，不把过程读数折算进分数。

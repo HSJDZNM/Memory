@@ -25,8 +25,26 @@ def _require_int(name: str, value: object, number: int) -> int:
     return value
 
 
+def _parse_legacy_line(line: str, number: int) -> dict:
+    """解析并校验一行旧记录（键集合、类型、非空 why）。"""
+    if not line.strip():
+        raise ValueError("line " + str(number) + ": blank line")
+    try:
+        data = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise ValueError("line " + str(number) + ": not JSON") from exc
+    if not isinstance(data, dict) or set(data) != _LEGACY_KEYS:
+        raise ValueError("line " + str(number) + ": keys must be exactly id/order/cents/why")
+    for name in ("id", "order", "cents"):
+        _require_int(name, data[name], number)
+    why = data["why"]
+    if not isinstance(why, str) or not why.strip():
+        raise ValueError("line " + str(number) + ": why must be a non-empty string")
+    return data
+
+
 def _read_legacy(path: Path) -> list[dict]:
-    """读入旧记录；键集合、类型、重复 id 任一不对就 ValueError。"""
+    """读入旧记录；重复 id 与格式问题一律 ValueError。"""
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -34,21 +52,7 @@ def _read_legacy(path: Path) -> list[dict]:
     rows: list[dict] = []
     seen: set[int] = set()
     for number, line in enumerate(text.splitlines(), 1):
-        if not line.strip():
-            raise ValueError("line " + str(number) + ": blank line")
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError("line " + str(number) + ": not JSON") from exc
-        if not isinstance(data, dict) or set(data) != _LEGACY_KEYS:
-            raise ValueError(
-                "line " + str(number) + ": keys must be exactly id/order/cents/why"
-            )
-        for name in ("id", "order", "cents"):
-            _require_int(name, data[name], number)
-        why = data["why"]
-        if not isinstance(why, str) or not why.strip():
-            raise ValueError("line " + str(number) + ": why must be a non-empty string")
+        data = _parse_legacy_line(line, number)
         if data["id"] in seen:
             raise ValueError("line " + str(number) + ": duplicate id " + str(data["id"]))
         seen.add(data["id"])
