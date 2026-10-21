@@ -590,6 +590,16 @@ def _payload_context() -> dict:
         "task_id": "task-x",
         "arm_manifest": {"task": {"package": {"combined_digest": "sha256:" + "a" * 64}}},
         "profile": "headless",
+        "launch": {
+            "profile": "headless",
+            "profile_files": 4,
+            "profile_files_copied": [],
+            "sandbox_patch": "written",
+            "sandbox_mode": "danger-full-access",
+            "temp": "isolated",
+            "dsh_home": ".tmp/ab/dsh-home",
+            "env": ["DSH_HOME", "DSH_PERMISSION_MODE", "TEMP", "TMP"],
+        },
         "dsh_version": "0.2.1-rc.2",
         "dsh_source": "app",
         "sandbox": "danger-full-access",
@@ -638,11 +648,14 @@ def test_run_payload_field_set_and_no_absolute_paths(monkeypatch):
         "arm",
         "task",
         "host",
+        "launch",
         "sandbox",
         "freeze",
         "exit",
         "readings",
     }
+    assert payload["launch"]["sandbox_mode"] == "danger-full-access"
+    assert payload["launch"]["temp"] == "isolated"
     assert set(payload["readings"]) == {
         "records",
         "decisions",
@@ -722,22 +735,110 @@ def test_build_overlay_uses_powershell_call_operator():
     assert text.endswith("\n")
 
 
+# --------------------------------------------------------------------------- 隔离 profile 与子进程环境
+
+
+def test_ensure_sandbox_patch_writes_declares_and_refuses_conflicts():
+    text, status, problem = run_session.ensure_sandbox_patch("[]\n", "danger-full-access")
+    assert (status, problem) == ("written", "")
+    assert "- id: sandbox-policy" in text
+    assert "mode: danger-full-access" in text
+
+    same, status, problem = run_session.ensure_sandbox_patch(text, "danger-full-access")
+    assert (same, status, problem) == (text, "declared", ""), "已声明同一 mode 时不该改字节"
+
+    appended, status, problem = run_session.ensure_sandbox_patch(
+        "- id: policy-hook\n  config:\n    x: 1\n", "danger-full-access"
+    )
+    assert (status, problem) == ("appended", "")
+    assert appended.startswith("- id: policy-hook")
+    assert appended.endswith("mode: danger-full-access\n")
+
+    _, status, problem = run_session.ensure_sandbox_patch(
+        text.replace("danger-full-access", "workspace-write"), "danger-full-access"
+    )
+    assert status == "conflict" and problem, "既有 mode 与声明不一致时失败关闭，不静默覆盖"
+
+    _, status, problem = run_session.ensure_sandbox_patch("foo: bar\n", "danger-full-access")
+    assert status == "unreadable" and problem, "不是补丁列表就不猜"
+
+
+def test_prepare_profile_copies_structures_and_writes_sandbox_patch(tmp_path):
+    source = tmp_path / "profile-source" / "headless"
+    _write(source / "cordis.yml", "[]\n")
+    _write(source / "cordis.patch.yml", "[]\n")
+    _write(source / "package.json", "{}\n")
+    _write(source / "pnpm-workspace.yaml", "packages: []\n")
+    home = tmp_path / "dsh-home"
+
+    record, problem = run_session.prepare_profile(home, "headless", source, "danger-full-access")
+    assert problem == ""
+    assert record["sandbox_patch"] == "written"
+    assert record["temp"] == "isolated"
+    assert (home / "tmp").is_dir(), "TEMP 必须落在隔离 DSH_HOME 内"
+    assert sorted(record["profile_files_copied"]) == sorted(run_session.PROFILE_FILES)
+    patch = (home / "profiles" / "headless" / "cordis.patch.yml").read_text(encoding="utf-8")
+    assert "mode: danger-full-access" in patch
+
+    again, problem = run_session.prepare_profile(home, "headless", source, "danger-full-access")
+    assert problem == ""
+    assert again["sandbox_patch"] == "declared"
+    assert again["profile_files_copied"] == [], "已存在的结构文件不覆盖"
+
+
+def test_prepare_profile_reports_missing_source_files(tmp_path):
+    source = tmp_path / "profile-source" / "headless"
+    _write(source / "cordis.yml", "[]\n")
+    home = tmp_path / "dsh-home"
+    _record, problem = run_session.prepare_profile(home, "headless", source, "workspace-write")
+    assert "package.json" in problem
+    assert "pnpm-workspace.yaml" in problem
+
+
+def test_build_child_env_sets_isolated_home_sandbox_and_temp(tmp_path):
+    home = tmp_path / "dsh-home"
+    env = run_session.build_child_env(
+        {"PATH": "x"}, dsh_home=home, sandbox="danger-full-access"
+    )
+    assert env["DSH_HOME"] == str(home)
+    assert env["DSH_PERMISSION_MODE"] == "danger-full-access"
+    assert env["TEMP"] == str(home / "tmp")
+    assert env["TMP"] == str(home / "tmp")
+    assert env["PATH"] == "x", "只加三件事，不丢启动环境"
+    assert env["PYTHONIOENCODING"] == "utf-8"
+
+
+def test_tree_digests_excludes_governance_artifacts(tmp_path):
+    _write(tmp_path / "src" / "app.py", "VALUE = 1\n")
+    _write(tmp_path / ".policy" / "audit.jsonl", "{}\n")
+    digests, unreadable = run_session.tree_digests(tmp_path)
+    assert "src/app.py" in digests
+    assert ".policy/audit.jsonl" not in digests, ".policy 是治理产物，不是任务树文件"
+    assert unreadable == []
+
+
 # --------------------------------------------------------------------------- 前置门（dry-run，不发真机）
 
 
 def _prepare_run(tmp_path: Path, task_package: Path, arm_config: Path) -> dict:
-    """把一条 run 需要的东西都建好：臂树 + 臂清单 + 实验集 + 冻结清单。"""
+    """把一条 run 需要的东西都建好：臂树 + 臂清单 + 实验集 + 冻结清单 + profile 源。"""
 
     target, manifest_path, _payload = _scaffold(tmp_path, task_package, arm_config)
     set_path = _freeze_set(tmp_path, task_package, arm_config)
     freeze_path = tmp_path / "freeze.json"
     assert _freeze(set_path, freeze_path, "--write") == 0
+    profile_source = tmp_path / "profile-source" / "headless"
+    _write(profile_source / "cordis.yml", "[]\n")
+    _write(profile_source / "cordis.patch.yml", "[]\n")
+    _write(profile_source / "package.json", "{}\n")
+    _write(profile_source / "pnpm-workspace.yaml", "packages: []\n")
     return {
         "root": tmp_path,
         "target": target,
         "manifest": manifest_path,
         "set": set_path,
         "freeze": freeze_path,
+        "profile_source": profile_source,
     }
 
 
@@ -769,6 +870,8 @@ def _run_session_args(ready, *, sandbox: str = "danger-full-access") -> list:
         str(ready["root"] / "run"),
         "--dsh-home",
         str(ready["root"] / "dsh-home"),
+        "--profile-source",
+        str(ready["profile_source"]),
         "--platform-src",
         str(REPO_ROOT / "src"),
         "--sandbox",
@@ -805,6 +908,12 @@ def test_run_session_dry_run_is_green_and_never_prints_the_credential(
     assert "PREFLIGHT: ok" in captured.out
     assert "dummy-not-a-real-key" not in captured.out + captured.err
     assert not (run_ready["root"] / "run").exists(), "dry-run 不写任何 run 产物"
+    profile = run_ready["root"] / "dsh-home" / "profiles" / "headless"
+    assert (profile / "cordis.patch.yml").is_file(), "dry-run 也要把隔离 profile 备好"
+    assert "mode: danger-full-access" in (profile / "cordis.patch.yml").read_text(
+        encoding="utf-8"
+    )
+    assert (run_ready["root"] / "dsh-home" / "tmp").is_dir()
 
 
 def test_run_session_refuses_unsigned_placeholders(run_ready_unsigned, monkeypatch, capsys):

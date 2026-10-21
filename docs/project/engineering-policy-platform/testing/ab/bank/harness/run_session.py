@@ -17,8 +17,10 @@ r"""一次 run 的包装器：**默认 dry-run，不发真机**；只有 `--exec
    （耗时只进日志与 stdout，**不进载荷**）。
 
 结果载荷 `run.json` 的字段是协议（见 README §3）：`schema_version` / `arm` /
-`task` / `host` / `sandbox` / `freeze` / `exit` / `readings`。
+`task` / `host` / `launch` / `sandbox` / `freeze` / `exit` / `readings`。
 **不带绝对路径、不带凭据、不带时戳**；加键必须升 `AB_RUN_SCHEMA_VERSION`（AGENTS 第 55 条）。
+1.1 起多一份 `launch`：证明这次真的把「隔离 DSH_HOME + 子进程沙箱 + TEMP 重定向 + 隔离 profile」
+四件事配上了（2026-10-21 冒烟的三次「跑不成」就是缺了它们，见 readings/2026-10-21-bank-flagship-abc-smoke.md §1）。
 
 边界（三条，README 里也写）
 =========================
@@ -72,7 +74,8 @@ from scaffold_arms import (  # noqa: E402
 )
 
 #: run 载荷自己的版本轴；加键 / 改语义必须按 AGENTS 第 55 条递增。
-AB_RUN_SCHEMA_VERSION = "1.0"
+#: 1.0 = 首次建轴（顶层八键）；1.1 = 顶层多一份 `launch`（隔离 profile / 子进程 env 的构造事实）。
+AB_RUN_SCHEMA_VERSION = "1.1"
 
 #: 凭据只从启动环境读；这个名字进载荷时只记「在不在」。
 CREDENTIAL_ENV = "DEEPSEEK_API_KEY"
@@ -92,6 +95,21 @@ SANDBOXES: Tuple[str, ...] = ("danger-full-access", "workspace-write", "unknown"
 HOOK_SPAWN_OK: Tuple[str, ...] = ("danger-full-access",)
 
 DEFAULT_WATCH: Tuple[str, ...] = (".policy/**/*.jsonl",)
+
+#: 隔离 profile 的四个结构文件（2026-10-21 冒烟：缺 dsh 就起不来或读不到接线）。
+PROFILE_FILES: Tuple[str, ...] = (
+    "cordis.yml",
+    "cordis.patch.yml",
+    "package.json",
+    "pnpm-workspace.yaml",
+)
+
+#: 会话沙箱在隔离 profile 里的补丁块 id（dsh 的 cordis.patch.yml 用 - id: <插件> + config）。
+SANDBOX_PATCH_ID = "sandbox-policy"
+
+#: 树 diff 排除治理产物：.policy/** 是装配 / 审计 / 批次账本，不是任务树文件。
+#: 2026-10-21 冒烟：created 44 里 28 个是 .policy 产物，会被误读成任务写了 44 个文件。
+RUN_TREE_IGNORE: Tuple[str, ...] = TREE_IGNORE + (".policy/**",)
 
 #: 审计记录里承载「事后结局」的键前缀（hooks.py 把 post 结局写成 reason_code）。
 POST_PREFIX = "post_"
@@ -209,6 +227,157 @@ def build_overlay(
         "",
     ]
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- 隔离 profile 与子进程环境
+
+
+def _scan_sandbox_patch(text: str) -> Tuple[int, List[str]]:
+    """读 cordis.patch.yml 里的 sandbox-policy 块：返回（块数, mode 列表）。
+
+    只认**顶层**块（行首 `- id: ...`）；块内只认 `mode:`。读不懂时调用方失败关闭，
+    不猜一个 mode 出来。
+    """
+
+    blocks = 0
+    modes: List[str] = []
+    current = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if raw.startswith("-"):
+            current = line[1:].strip()
+            if current.startswith("id:"):
+                current = current[3:].strip()
+                if current == SANDBOX_PATCH_ID:
+                    blocks += 1
+            else:
+                current = ""
+            continue
+        if current == SANDBOX_PATCH_ID and line.startswith("mode:"):
+            modes.append(line[5:].strip())
+    return blocks, modes
+
+
+def ensure_sandbox_patch(text: str, mode: str) -> Tuple[str, str, str]:
+    """确保 cordis.patch.yml 把会话沙箱固定为 `mode`。
+
+    返回（新文本, 状态, 问题）。状态取 declared / written / appended；declared 表示
+    原文件已声明同一个 mode（不改字节）。问题非空时**不写盘**：
+
+    - 已有 sandbox-policy 块但 mode 不同或读不到 mode（不静默覆盖既有接线）；
+    - 文件不是「[] 或 - 开头」的补丁列表（可能是别的插件配置，不擅自改）。
+    """
+
+    blocks, modes = _scan_sandbox_patch(text)
+    if blocks and not modes:
+        return text, "unreadable", "cordis.patch.yml 里有 sandbox-policy 块但读不到 mode：不擅自改"
+    if modes:
+        if set(modes) == {mode}:
+            return text, "declared", ""
+        return (
+            text,
+            "conflict",
+            "cordis.patch.yml 已把 sandbox-policy.mode 设为 %r，与 --sandbox %r 不一致"
+            % (sorted(set(modes)), mode),
+        )
+    body = "\n".join(
+        line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")
+    )
+    block = "- id: %s\n  config:\n    mode: %s\n" % (SANDBOX_PATCH_ID, mode)
+    if body in ("", "[]"):
+        return block, "written", ""
+    if body.lstrip().startswith("-"):
+        return text.rstrip("\n") + "\n" + block, "appended", ""
+    return (
+        text,
+        "unreadable",
+        "cordis.patch.yml 不是补丁列表（既不是 [] 也不是 - 开头）：不擅自改；"
+        "请手工加 sandbox-policy 覆盖或删除该文件",
+    )
+
+
+def prepare_profile(
+    dsh_home: Path,
+    profile: str,
+    source: Optional[Path],
+    sandbox: str,
+) -> Tuple[Dict[str, Any], str]:
+    """准备隔离 profile：补缺四个结构文件 + 写/校验 sandbox 覆盖 + 建 TEMP。
+
+    只从 `source` 读**结构文件**（默认宿主 ~/.dsh/profiles/<profile>），不读宿主
+    sessions / 凭据。四个文件缺一个而 source 也没有 → 返回问题，调用方记 blocker。
+    `cordis.patch.yml` 可以现场生成（内容只有 sandbox-policy 覆盖），所以不是必需源文件。
+    """
+
+    profile_dir = dsh_home / "profiles" / profile
+    record: Dict[str, Any] = {
+        "profile": profile,
+        "profile_files": len(PROFILE_FILES),
+        "sandbox_mode": sandbox,
+    }
+    try:
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        copied: List[str] = []
+        missing: List[str] = []
+        for name in PROFILE_FILES:
+            target = profile_dir / name
+            if target.is_file():
+                continue
+            candidate = (source / name) if source is not None else None
+            if candidate is not None and candidate.is_file():
+                target.write_bytes(candidate.read_bytes())
+                copied.append(name)
+            elif name == "cordis.patch.yml":
+                # 补丁文件现场生成：不要求宿主一定有它。
+                continue
+            else:
+                missing.append(name)
+        if missing:
+            return record, (
+                "隔离 profile 缺 %s：--profile-source（默认 ~/.dsh/profiles/%s）里也没有，"
+                "dsh 起不来；不猜接线" % (missing, profile)
+            )
+        patch = profile_dir / "cordis.patch.yml"
+        text = patch.read_text(encoding="utf-8") if patch.is_file() else ""
+        new_text, status, problem = ensure_sandbox_patch(text, sandbox)
+        if problem:
+            return record, problem
+        if status != "declared":
+            write_text_lf(patch, new_text)
+        temp = dsh_home / "tmp"
+        temp.mkdir(parents=True, exist_ok=True)
+        record["profile_files_copied"] = copied
+        record["sandbox_patch"] = status
+        record["temp"] = "isolated"
+        return record, ""
+    except (OSError, UnicodeDecodeError) as error:
+        return record, "隔离 profile 准备失败（%s）" % type(error).__name__
+
+
+def build_child_env(
+    base: Dict[str, str],
+    *,
+    dsh_home: Path,
+    sandbox: str,
+    temp_dir: Optional[Path] = None,
+) -> Dict[str, str]:
+    """子进程必须显式拿到的三件事（缺一即「跑不成」，2026-10-21 冒烟 §1）：
+
+    1. `DSH_HOME` = 隔离目录（`--dsh-home` 只是本包装器的参数，不会自动传给 dsh 子进程）；
+    2. `DSH_PERMISSION_MODE` = 本次声明的沙箱（`--sandbox` 过去只记录、不配置子进程）；
+    3. `TEMP` / `TMP` = `<DSH_HOME>/tmp`（`%TEMP%` 下 mkdtemp 会 EPERM）。
+    """
+
+    env = dict(base)
+    env["DSH_HOME"] = str(dsh_home)
+    env["DSH_PERMISSION_MODE"] = sandbox
+    target = temp_dir if temp_dir is not None else dsh_home / "tmp"
+    env["TEMP"] = str(target)
+    env["TMP"] = str(target)
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
 
 
 # --------------------------------------------------------------------------- 增量（按偏移）
@@ -331,7 +500,8 @@ def read_increments(
 
 
 def tree_digests(target: Path) -> Tuple[Dict[str, str], List[str]]:
-    files, unreadable, _ignored = walk_files(target, TREE_IGNORE, "tree")
+    # 治理产物（.policy/**）不是任务树文件：排除它们，树 diff 才是「模型写了什么」。
+    files, unreadable, _ignored = walk_files(target, RUN_TREE_IGNORE, "tree")
     return {item: sha256_file(target / item, item) for item in files}, unreadable
 
 
@@ -571,6 +741,29 @@ def preflight(repo_root: Path, args: argparse.Namespace) -> Tuple[Dict[str, Any]
         elif is_under(home, target) or is_under(target, home):
             blockers.append(_blocker("dsh_home_unsafe", "--dsh-home 与臂树互相包含"))
 
+    profile_source = (
+        Path(args.profile_source).resolve()
+        if args.profile_source
+        else Path.home() / ".dsh" / "profiles" / args.profile
+    )
+    context["profile_source"] = profile_source
+    profile_source_bad = bool(args.profile_source) and not profile_source.is_dir()
+    if profile_source_bad:
+        blockers.append(_blocker("profile_source_missing", "--profile-source 不是目录"))
+    launch_blocked = any(
+        item["code"]
+        in ("sandbox_undeclared", "sandbox_blocks_hook_spawn", "dsh_home_missing", "dsh_home_unsafe")
+        for item in blockers
+    )
+    if home is not None and not profile_source_bad and not launch_blocked:
+        launch, problem = prepare_profile(home, args.profile, profile_source, args.sandbox)
+        if problem:
+            blockers.append(_blocker("profile_prepare_failed", problem))
+        else:
+            launch["dsh_home"] = display_path(home, repo_root)
+            launch["env"] = ["DSH_HOME", "DSH_PERMISSION_MODE", "TEMP", "TMP"]
+            context["launch"] = launch
+
     if context["arm"] in ("A", "B"):
         src = Path(args.platform_src).resolve() if args.platform_src else None
         if src is None or not src.is_dir():
@@ -643,6 +836,17 @@ def _print_plan(context: Dict[str, Any], blockers: Sequence[Dict[str, str]], mod
     )
     print("  run-dir         : %s" % (display_path(run_dir, repo_root) if run_dir else "<none>"))
     print("  sandbox         : %s" % context.get("sandbox"))
+    launch = context.get("launch") or {}
+    if launch:
+        print(
+            "  launch          : profile=%s files=%s sandbox-patch=%s temp=%s"
+            % (
+                launch.get("profile"),
+                launch.get("profile_files"),
+                launch.get("sandbox_patch"),
+                launch.get("temp"),
+            )
+        )
     if context.get("arm") == "C":
         print("  overlay         : <none>（C 臂不治理，不挂 --patch）")
     else:
@@ -694,6 +898,7 @@ def build_run_payload(
             "id": context.get("task_id"),
             "package_digest": (task.get("package") or {}).get("combined_digest"),
         },
+        "launch": context.get("launch") or {},
         "host": {
             "profile": context.get("profile"),
             "dsh": {
@@ -785,8 +990,12 @@ def execute(repo_root: Path, args: argparse.Namespace, context: Dict[str, Any]) 
     argv.append("-")
 
     secret = os.environ.get(CREDENTIAL_ENV)
-    env = dict(os.environ)
-    env["PYTHONIOENCODING"] = "utf-8"
+    # 三件事必须显式给子进程：DSH_HOME / DSH_PERMISSION_MODE / TEMP+TMP（2026-10-21 冒烟 §1）。
+    env = build_child_env(
+        os.environ,
+        dsh_home=context["dsh_home"],
+        sandbox=context["sandbox"],
+    )
     offsets = snapshot_offsets(target, watch)
     before_tree, unreadable_before = tree_digests(target)
     started = time.monotonic()
@@ -891,6 +1100,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hook-python", default=None, help="Hook 解释器（默认当前解释器）")
     parser.add_argument("--plugin", default=None, help="插件 .mjs（默认 <platform-src>/adapters/dsh/policy-hook.plugin.mjs）")
     parser.add_argument("--dsh-home", required=True, help="隔离的 DSH_HOME（不能是宿主的 ~/.dsh）")
+    parser.add_argument(
+        "--profile-source",
+        default=None,
+        help="隔离 profile 的结构文件来源（默认 ~/.dsh/profiles/<profile>；只读四个结构文件）",
+    )
     parser.add_argument(
         "--sandbox",
         default="unknown",

@@ -8,9 +8,9 @@
 | --- | --- | --- |
 | `freeze_manifest.py` | 实验集 → 确定性冻结清单（`<sha256>  <仓库相对路径>` 行 + 组合摘要），`--write` / `--check` / `--check --strict` | `AB_FREEZE_MANIFEST_SCHEMA_VERSION = "1.0"`（首次建轴） |
 | `scaffold_arms.py` | 任务包 + 臂（A/B/C）+ 目标目录 → 臂树 + `arm-manifest.json`；`--check` 只校验 | `AB_ARM_MANIFEST_SCHEMA_VERSION = "1.0"`（首次建轴） |
-| `run_session.py` | 一次 run 的包装器；**默认 dry-run**，`--execute` 才真跑 | `AB_RUN_SCHEMA_VERSION = "1.0"`（首次建轴） |
+| `run_session.py` | 一次 run 的包装器；**默认 dry-run**，`--execute` 才真跑 | `AB_RUN_SCHEMA_VERSION = "1.1"`（1.0 首次建轴；1.1 多一份 `launch`） |
 | `_ab_harness_common.py` | 三者共用的口径：确定性 JSON、仓库相对路径、组合摘要、通配、脱敏 | — |
-| `tests/unit/test_ab_harness.py` | 纯函数与退出码回归（50 例，不 spawn dsh、不写共享 `.tmp` 路径） | — |
+| `tests/unit/test_ab_harness.py` | 纯函数与退出码回归（55 例，不 spawn dsh、不写共享 `.tmp` 路径） | — |
 
 **组合摘要是哪一个**：`sha256("\n".join(lines) + "\n")`，`lines` 是按**路径**升序的
 `"<sha256>  <仓库相对路径>"`。这与 `examples/dsh/b-plan/a3-task-v3/reset-arm.py` 的
@@ -40,6 +40,12 @@ $H  = 'docs/project/engineering-policy-platform/testing/ab/bank/harness'
   --platform-src src --sandbox danger-full-access
 & $py "$H/run_session.py" ... --execute
 ~~~
+
+`--dsh-home` 是隔离目录；`--profile-source` 缺省为宿主 `~/.dsh/profiles/<profile>`（只读
+`cordis.yml` / `cordis.patch.yml` / `package.json` / `pnpm-workspace.yaml` 四个结构文件）。
+1.1 起 `--sandbox` **真的配置子进程**：子进程拿到 `DSH_HOME` / `DSH_PERMISSION_MODE` /
+`TEMP` + `TMP`（指向 `<DSH_HOME>/tmp`），隔离 profile 的 `cordis.patch.yml` 被写上
+`sandbox-policy.mode` 覆盖——三件事缺一即「跑不成」（2026-10-21 冒烟 §1）。
 
 任务目录一律由参数给：本目录**不硬编码**任何任务包名或题号，题库产出一份就能直接用。
 arm-manifest 的默认路径是**臂树的兄弟路径**（`<target>.arm-manifest.json`），不进任务树——
@@ -102,12 +108,13 @@ JSON，键集合固定（多一个键就是声明错误，退出 2）。所有�
 
 ### 3.3 run 载荷（`run.json`）
 
-顶层只有八个键，多了就是改协议：
+顶层只有九个键，多了就是改协议：
 
 | 字段 | 内容 |
 | --- | --- |
-| `schema_version` | `"1.0"`（`AB_RUN_SCHEMA_VERSION`） |
+| `schema_version` | `"1.1"`（`AB_RUN_SCHEMA_VERSION`） |
 | `arm` / `task` | 臂名；`{id, package_digest}` |
+| `launch` | `{dsh_home, profile, profile_files, profile_files_copied[], sandbox_patch, sandbox_mode, temp, env[]}`：证明这次真的配了隔离 profile / 子进程沙箱 / TEMP 重定向；无绝对路径 |
 | `host` | `{profile, dsh{version, source}, python, platform, env[]}`；`env` 只记「在不在」（`value_recorded` 恒为 `false`） |
 | `sandbox` | `{mode, hook_spawn_required}` |
 | `freeze` | `{manifest_digest, entries, check{strict, exit_code, result_line}}` |
@@ -135,6 +142,8 @@ JSON，键集合固定（多一个键就是声明错误，退出 2）。所有�
   4. 首消息摘要变了（模型收到的任务文本变了，那是另一个实验）；
   5. 宿主变了：`run.json` 的 `host.dsh.version` / `host.dsh.source` 不同就是不同实验条件
      （本机 `PATH` 上有一份 npm 装的旧 dsh，所以「找到哪一个」由 `source` 写明，不靠猜测）。
+  6. 环境契约变了：`run.json` 的 `launch.sandbox_mode` / `launch.temp` / `launch.profile_files`
+     不同。光在命令行写 `--sandbox` 不算——`launch` 记的是**这次真的配到子进程上的**那几件事。
 - **改冻结件 = 换判据**：改完之后必须重新 `--write`，并在读数里写明「旧 run 作废」。
 
 ## 5 退出码（三个脚本一致）
@@ -158,6 +167,12 @@ JSON，键集合固定（多一个键就是声明错误，退出 2）。所有�
    `--sandbox danger-full-access`；`unknown` 一律拒绝（`sandbox_undeclared`），
    `workspace-write` 给 A / B 臂是 `sandbox_blocks_hook_spawn`。C 臂不挂 Hook，两种都行。
    读数依据：`readings/2026-10-21-registry-1.4-registry-sync.md` 的 §2.3 / §2.4。
+   **1.1 起 `--sandbox` 不只是记录**：`prepare_profile` 把 `sandbox-policy.mode` 写进/校验在
+   隔离 profile 的 `cordis.patch.yml`，`build_child_env` 把 `DSH_HOME` / `DSH_PERMISSION_MODE` /
+   `TEMP` + `TMP` 显式交给 dsh 子进程；`run.json.launch` 记下这次的事实。2026-10-21 冒烟的
+   三次「跑不成」就是缺这三件事（`readings/2026-10-21-bank-flagship-abc-smoke.md` §1）；机制在
+   一次性启动器上实测过，**1.1 的自动化路径由 55 条用例钉住、尚未再跑一次真机**（下一次 k≥3 前
+   先 dry-run + 一臂 re-smoke）。
 3. **同一工作树不能并跑 `ci_local`**。那份排他锁（`.tmp/ci-local.lock`）不归本框架管，也不会等它。
 4. **`run_session.py` 不重建臂树**：前置会用 `scaffold_arms.py --check` 复核，臂树与臂清单不一致
    就拒绝发车（`arm_tree_drift`）——它绝不「先修一下再跑」。
@@ -170,11 +185,14 @@ JSON，键集合固定（多一个键就是声明错误，退出 2）。所有�
    （半张清单比没有更危险）。
 8. **单次 run 的语义**：一次调用一次会话，没有重试、没有并行、没有 n>=3 的自动重复。
 9. **`DSH_HOME` 只做目录隔离**，不是文件系统命名空间：宿主既有接线仍然可能被读到，
-   「本机跑不跑得出干净控制臂」要靠读数里的隔离断言，不是靠本框架。
-10. **`--execute` 未经真机验证**：本次交付按约束不跑真机会话。`--execute` 里可离线测的部分
-    （按偏移增量、树 diff、载荷组装与脱敏）有用例覆盖；**起 dsh 那一步没有被执行过**，
-    「dsh 会不会把插件的 deny 传到工具管线」这一段仍未被覆盖——首次真机 run 之后要回头核对
-    `run.json` 的 `readings.decisions` 与 `exit.code`。
+   「本机跑不跑得出干净控制臂」要靠读数里的隔离断言，不是靠本框架。1.1 起它至少把**结构**做实了：
+   四个 profile 文件缺时从 `--profile-source` 复制，`cordis.patch.yml` 的沙箱覆盖被写入或校验，
+   `TEMP` 落进隔离目录；`launch` 记录这些事实，不把它们留在人的终端历史里。
+10. **`--execute` 已在 2026-10-21 冒烟里真跑过**（A/B/C 各 1 次，n=1，只作案例）：
+    三臂 exit 0、`invalid=[]`；三次环境失败依次是「`DSH_HOME` 没传给子进程」「会话沙箱仍是
+    workspace-write」「`%TEMP%` 下 mkdtemp EPERM」，修法已并入 1.1。**仍未复跑**：从空
+    `DSH_HOME` 起走 `run_session --execute` 的自动化路径没有在新代码上再跑一次真机；下一次
+    k≥3 之前先 dry-run + 一臂 re-smoke，核对 `launch` 块、审计条数与 `exit.code`。
 
 ## 7 不做的事
 
@@ -192,7 +210,7 @@ JSON，键集合固定（多一个键就是声明错误，退出 2）。所有�
 >
 > `ab/bank/harness/scaffold_arms.py` 的 `AB_ARM_MANIFEST_SCHEMA_VERSION = "1.0"`（臂清单载荷，**1.0 = 首次建轴**：基线 / 任务包 / 臂配置 / 首消息四类摘要 + 命令族 + 写入面；同上）。
 >
-> `ab/bank/harness/run_session.py` 的 `AB_RUN_SCHEMA_VERSION = "1.0"`（一次 run 的结果载荷，**1.0 = 首次建轴**：八键顶层 + 按偏移增量读数；同上）。
+> `ab/bank/harness/run_session.py` 的 `AB_RUN_SCHEMA_VERSION = "1.1"`（一次 run 的结果载荷，**1.0 = 首次建轴**：八键顶层 + 按偏移增量读数；**1.1 = 2026-10-21 冒烟后**：顶层多一份 `launch`，记隔离 profile / 子进程 env / TEMP 重定向 / 沙箱覆盖的构造事实；同上）。
 >
 > 实验集声明自己的轴 `AB_FREEZE_SET_SCHEMA_VERSION = "1.0"` 也一并登记（它与冻结清单轴**独立演进**：
 > 声明加了字段不会自动改变清单的形状，反之亦然）。
@@ -229,5 +247,9 @@ JSON，键集合固定（多一个键就是声明错误，退出 2）。所有�
 | `test_freeze_*` | 两次生成逐字节相同、无绝对路径 / 时戳；漂移 / 多出 / 少文件 / 版本不认识一律退出 1；日志式声明错误退出 2 |
 | `test_scaffold_*` | 臂配置摘要 = 树里那份文件的摘要；未签字占位被点名；越界目标与非空目标被拒；`--check` 抓树漂移与首消息漂移 |
 | `test_read_increments_*` | 按**字节偏移**读增量（不依赖前后集合差）；半行与截断各自记成 invalid |
-| `test_run_payload_*` | 顶层八键、读数八键；凭据值不进载荷、只记「在不在」；摘要行确定性 |
-| `test_run_session_*` | 缺凭据 / 未签字占位 / 臂树漂移 / 沙箱形态 / `DSH_HOME` 各发一个 blocker 且退出 2；全绿时 dry-run 退出 0 且不写任何 run 产物 |
+| `test_run_payload_*` | 顶层九键、读数八键；凭据值不进载荷、只记「在不在」；`launch` 记录环境契约；摘要行确定性 |
+| `test_run_session_*` | 缺凭据 / 未签字占位 / 臂树漂移 / 沙箱形态 / `DSH_HOME` 各发一个 blocker 且退出 2；全绿时 dry-run 退出 0、不写 run 产物，但**要备好隔离 profile** 并把 sandbox 覆盖写进去 |
+| `test_ensure_sandbox_patch_*` | `[]` → 写入、已有同 mode → declared 不改字节、有别的块 → 追加、mode 冲突 / 形状不认识 → 失败关闭 |
+| `test_prepare_profile_*` | 四个结构文件从 source 补缺；`<DSH_HOME>/tmp` 建出来；缺源文件如实报缺 |
+| `test_build_child_env_*` | `DSH_HOME` / `DSH_PERMISSION_MODE` / `TEMP`+`TMP` 三件事显式给子进程，且不丢启动环境 |
+| `test_tree_digests_*` | 树 diff 排除 `.policy/**`（治理产物不算任务树文件） |
