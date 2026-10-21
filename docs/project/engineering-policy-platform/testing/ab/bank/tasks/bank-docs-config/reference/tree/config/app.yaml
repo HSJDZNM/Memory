@@ -1,0 +1,10 @@
+# 应用配置（v2 口径）。
+# v1 的标量 retry 已迁到结构化的 retry_policy：max_attempts / backoff_ms / jitter。
+app_name: demo-shop
+retry_policy:
+  max_attempts: 3
+  backoff_ms: 100
+  jitter: true
+feature_flags:
+  - checkout
+  - search

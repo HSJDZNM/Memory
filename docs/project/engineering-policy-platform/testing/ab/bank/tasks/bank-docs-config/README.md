@@ -3,8 +3,9 @@
 > **它是什么**：任务题库里的第 6 题——把订单示例项目的应用配置从 v1 迁到 v2（标量 `retry` 改成结构化
 > `retry_policy`），补一个**严格只读**的加载器与一个**只读校验脚本**，并把 `docs/config.md`、新建的
 > 迁移说明与 `README.md` 的配置一节同步到 v2。改动面以 `.md` / `.yaml` 为主，Python 只有两个文件。
-> **冻结状态**：**基线 + task-package + C/A 判据已落盘可复核**；T 维度**未冻结**（`hidden/` 未落盘）、
-> 参考解与天花板**未做**（§7）。**未经 Lead 签字**。
+> **冻结状态**：基线 + task-package + C/A 判据 + **hidden（T 已冻结）+ reference + 天花板已完成**
+> （§7 与 §7.1 的实测读数）。T = **40 条**（`hidden/PLAN.md`），`scoring.yaml` 的 `case_ids` 与
+> runner 的 `CASE_IDS` 逐个相等。**未经 Lead 签字**（`frozen_by = pending_lead_signature`）。
 > **用法**：Lead 重置基线 → 以任务树为 cwd 起受治会话 → 首消息 = `task-package/first-message.md`；
 > 跑完后按 `acceptance.md` + 隐藏验收 + 基线 diff 判分（C/A 见 `scoring.yaml`、`coverage.md`）。
 
@@ -50,7 +51,9 @@
 | `reset-arm.py` | `768638aca01f72e07b686b23229d44be96fa77b0343894d12ffe8229e764e76e`（不在 manifest 里；它只冻结基线） |
 | `layers.yaml` | `d3a40a7578a4d8a5591c0dc95cabe4a302d60e8d2f47b4daf32a05813b206814` |
 | `interfaces.yaml` | `91c3ce85e337d0fbfabb6d318519c41b487beab52f7a641fd59d131c17b981a2` |
-| `scoring.yaml` | `34ae4b10d86baaeb49f15c4090189d8177372d4ccb5ab8e7611cb46b96fd4a0c`（自指不写进自己，见其 `scoring_sha256_note`） |
+| `scoring.yaml` | 本批改动前的值 `34ae4b10d86baaeb49f15c4090189d8177372d4ccb5ab8e7611cb46b96fd4a0c`；**T 冻结后已变**（内容改过），现由冻结集现场实算（自指不写进自己，见其 `scoring_sha256_note`） |
+| `hidden/PLAN.md` | `c555a64bb229a723f795f15015abe7dc38034961949fd82e2046ab6ce00852e5`（40 条；T 冻结输入） |
+| `hidden/runner.py` | `9164afea2194377cf80559af20611672b09a9a7c611f4697ad4922a464b72247`（T 冻结输入） |
 | `coverage.md` | 不进 manifest（覆盖表不是判据输入）；改动它不改判分 |
 
 复核（Lead 开跑前逐行比对，5/5 必须 ok；任一不符 => 该 run 作废）：
@@ -102,7 +105,7 @@ cd <仓库根>
 
 ## 5 本题的读法（不是「跑完就算」）
 
-- **四个维度分开读**：T（任务完成；**未冻结**）、C（规则遵守；`scoring.yaml` 的 `dimension_c`）、
+- **四个维度分开读**：T（任务完成；**已冻结 40 条**，读数见 §7.1）、C（规则遵守；`scoring.yaml` 的 `dimension_c`）、
   A（结构；`layers.yaml` / `interfaces.yaml` + `tools/structure_metrics.py`）、过程（平台账本）。
   **不许把过程读数折算进 T/C/A**。
 - **`allow_with_warnings` 不是失败、也不是通过**：DOC-001 / STYLE-001 / STYLE-018 命中时 decision 是它，
@@ -144,14 +147,46 @@ cd <仓库根>
 | `baseline/`（13 文件） | 逐字节基线树（11 个来自旗舰 baseline + 2 个构造） | **已落盘**：组合摘要可复核 |
 | `reset-arm.py` | 逐字节重置 + 摘要校验 + `RESET-ARM-JSON` + `reset-manifest.json` | **已实测**：dry-run + 真跑 13/13 |
 | `layers.yaml` / `interfaces.yaml` | A 维度声明（18 文件 → 层；6 个非测试模块的公开面上限） | **已落盘**：基线树实测 10/10 pass |
-| `scoring.yaml` | T/C/A 三维判据（T **未冻结**：`pending_hidden`、`case_ids: []`、`total: null`、`planned_min_total: 30`） | C/A 已写；T 待隐藏代码 |
+| `scoring.yaml` | T/C/A 三维判据（T **已冻结**：`frozen`、`total: 40`、40 个 `case_ids`、两个 hidden 摘要实算） | C/A 已写并可复核；T 与 runner 同批冻结 |
 | `coverage.md` | 43 条规则点 + A1–A10 + 隐藏面的逐项覆盖矩阵与实测读数 | 已写（8 直接 / 23 变异 / 12 不适用；`STYLE-004` 记实测负例） |
-| `hidden/` | 隐藏验收 PLAN + runner + 用例（>= 30 条） | **未做**（下一批任务；`scoring.yaml` 的 `hidden_plan_sha256` / `hidden_runner_sha256` 写 `null`） |
-| `reference/` | 参考解（模块 / 接口 / 文档要点 + 实现树） | **未做**（不参与判分） |
-| 天花板 | 参考解上的 T/C/A 实测（`total` 的可达性与 A3 上限校准） | **未测**（依赖 `hidden/` 与 `reference/`） |
+| `hidden/` | 隐藏验收 PLAN + runner（`T01–T26` + `EN1–EN7` + `I1–I7`，40 条） | **已落盘**：基线 **2/40**、参考树 **40/40**；两次输出逐字节相同 |
+| `reference/` | 参考解（18 文件实现树 + README：决策点 / 读数 / 命令 / 与 SPEC 的偏差） | **已落盘**（不参与判分；树组合摘要 `69b6fda3…`） |
+| 天花板 | 参考解上的 T/C/A 实测（`total` 的可达性与 A3 上限校准） | **已实测**：T 40/40 · C 27/27（effective_total）· A 10/10 |
 
 **完成度一句话**：基线、task-package、reset-arm、layers/interfaces、C/A 判据、覆盖表**已落盘并实测可复核**；
-隐藏验收代码、参考解、天花板实测、T 的 `total` / `case_ids` 冻结**都没做**。
+隐藏验收（40 条）与参考解**已落盘**，T/C/A 天花板**已实测**（§7.1），T 的 `total` / `case_ids` **已冻结**；
+剩下的只有 Lead 签字与真机 A/B 冒烟（不在本包范围）。
+
+### 7.1 本批实测读数（给 Lead 与读数者；命令见 `reference/README.md` §4）
+
+| 维度 | 读数 | 一次读数是什么 |
+| --- | --- | --- |
+| T（隐藏验收） | 基线 **2 / 40**；参考树 **40 / 40**（exit 0） | `BANK_TASK_TREE=<tree> python hidden/runner.py`；同一 cwd + 同一棵树两次 stdout 逐字节相同：参考树 `sha256 f56d46d4bca49825b012084b689cd8362017a8febc959145de300baa5ac01b9b`、基线 `sha256 cd34bbe30ce303bf4b564a07691a9dcaeb27e578cbd6895eb70af4c840157c6d`（换 `BANK_TASK_TMPDIR` 不改 payload，见 §7.2） |
+| pytest | **18 passed**，exit 0；`--collect-only -q` = **18 collected** | 在参考树**副本**里跑 `python -m pytest -q`（树本身一个字节都不写） |
+| C（规则遵守） | 4/4 文件 `allow`，**0 条 violations**；`effective_total = 27` → **27 / 27** | 逐文件 `policy.check`（`--changed` 8 条全量、固定 `--request-id`、`--layer` 取 `layers.yaml`）：4 个文件都 `matched_rules` 42、`skipped_rules=[ARCH-001@1]`（`layer != controller`）、`served_checkers=[failing_tests, missing_docstring, missing_tests, style_lint]`、`check_volume.complete=true`、`blocking_capable_skipped=1` |
+| A（结构） | **10 / 10 pass**，exit 0 | `structure_metrics.py --workspace <reference-tree> --layers layers.yaml --interfaces interfaces.yaml --json`；`workspace_scope`：12 个 .py、`undeclared=[]`、`declared_unmatched=[]`、`unresolved=0` |
+
+- **C 的逐文件 decision**：`src/shop/config.py`（model）、`tests/test_check_config.py`（test）、
+  `tests/test_config.py`（test）、`tools/check_config.py`（composition）全部 `allow` / exit 0；
+  ARCH-001 在这 4 个文件上都是 `scope_mismatch` 跳过（**跳过不是通过**），按 `not_applicable` 不计分也不进分母。
+- **基线读数不是 0/40 也不是「跑不成」**：`T26`（10 个冻结文件逐字节）与 `EN1`（基线 3 条测试本来就绿）
+  在基线上成立；其余 38 条按「缺件 / v1 配置 / 缺文档」红。**基线红是构造带来的**，不是 runner 失败。
+- **文档类目标仍不在规则证据面里**：`.md` / `.yaml` 走验证器路径得到
+  `language_coverage.status = not_covered_by_design`、`served_checkers = []`；文档正确性由隐藏 T20–T24 判，
+  **不许**把那条 allow 读成「规则查过」。
+
+### 7.2 隐藏用例的「能不能红」（5 处显式变异，参考树副本上做）
+
+参考树副本（`.tmp/bank-docs-config-author/mut-*/tree`）上逐处做一处缺陷、跑一遍 runner，读失败的 id：
+**变异不是判分，只证「断言不是空的」**（守 AGENTS 第 45 条：自己的仪器也要能失败）。
+
+| 变异 | 失败的隐藏用例 | 说明 |
+| --- | --- | --- |
+| 加载器把 `yaml.safe_load(text)` 换成 `yaml.load(text, Loader=yaml.Loader)` | `T18` | 不安全加载器只由 AST 断言（T01–T17 行为面照旧通过） |
+| 去掉 `isinstance(value, bool)` 的判断（bool 冒充 int） | `T11`、`T12`、`T17`、`EN1` | `max_attempts: true` / `jitter: 1` 被接受；参考解自己的测试也红 |
+| 把 `app_name` 的错误消息从 `path.name` 改成 `str(path)` | `T17` | 只泄漏一条消息也会红（7 类失败逐条检查）——这条变异最初**没被抓到**，因此把 T17 从 4 类扩到 7 类 |
+| 把 `README.md` 的 `## 配置` 标题改名 | `T23`、`T24` | 标题序列与「其余小节逐字节」两条判据都响 |
+| 删掉 `tests/test_config.py` | `T25`、`EN2`、`I5` | 文件集合、收集数、测试形态同时响 |
 
 ## 8 构造决定与与 SPEC 的偏差（读之前先看）
 
@@ -171,7 +206,10 @@ cd <仓库根>
    SPEC 只给了键名，取值由本包钉死，否则 A3 / A6 与隐藏用例没有唯一答案。
 6. **`docs/config.md` 的表头与类型列是逐字判据**（A6）：这样「文档与加载器一致」才是机器可判的；
    比较口径是「去掉首尾空白与反引号后逐字相等」，写在 `acceptance.md` 的补充口径里。
-7. **`total` / `case_ids` 故意留空**：不伪造已冻结的 T（见 §7 与 `scoring.yaml` 的 `dimension_t.note`）。
+7. **`total` / `case_ids` 先空后冻**：隐藏代码落盘之前不伪造已冻结的 T（`pending_hidden`）；本批
+   由独立出题子会话写 `hidden/PLAN.md` + `hidden/runner.py`（40 条）后**同批**冻结为
+   `frozen / total: 40 / 40 个 case_ids`，两个 hidden 摘要由实算写入（见 §3 与 §7.1），
+   `frozen_by` 仍是 `pending_lead_signature`（**不冒充 Lead 签字**）。
 
 ## 9 边界（引用本包前必须读）
 
