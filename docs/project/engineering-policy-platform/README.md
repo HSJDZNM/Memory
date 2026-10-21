@@ -42,10 +42,13 @@
   C1-b/C2/C4 的裁定草案见 [2026-10-21 草案](readings/2026-10-21-C1C2C4-adjudication-draft.md)；新会话交接提示词见 [2026-10-21-new-session-prompt.md](2026-10-21-new-session-prompt.md)。**阶段 D** 的**校准门**通过（P+/P−/canary）；2026-10-19 交付并**冻结**了
   门 2 前置包：treatment（`tools/**` 纳入生产文件，[读数](readings/2026-10-19-treatment-tools-pattern.md)）、任务包 v3
   （`examples/dsh/b-plan/a3-task-v3/`）、隐藏验收 30 条 + runner（`testing/ab/dgate2/hidden/`）、评分器
-  （`testing/ab/dgate2/scorer/`，`freeze.status=frozen`，清单组合摘要 `e3ef9e91…`）、C 臂（不治理）装配与 n=1 冒烟
+  （`testing/ab/dgate2/scorer/`，`freeze.status=frozen`；清单组合摘要在 2026-10-19 冻结时是 `e3ef9e91…`，
+  2026-10-21 评分器升到 version 3 / 重生成后是 `3fda3ee2…`）、C 臂（不治理）装配与 n=1 冒烟
   （`testing/ab/dgate2/c-arm/`；目录索引与边界见 `testing/ab/dgate2/README.md`）。**A/B/C 主实验已于 2026-10-20 各跑一次（n=1）**：三份 run-manifest 已写全
   （16 recorded / 1 not_applicable，`--strict` PASS），H2/H3 人工项已复核。**2026-10-19 已把清单与读数工具化**：
-  `testing/ab/dgate2/run-manifest/`（17 字段生成/校验，`RUN_MANIFEST_SCHEMA_VERSION` 1.0）与
+  `testing/ab/dgate2/run-manifest/`（18 字段生成/校验，`RUN_MANIFEST_SCHEMA_VERSION` 1.1：1.0 首次建轴，
+  1.1 起新增 `platform_generation`——宿主/沙箱/配置审批摘要/批次代际/预算/模型/起点，见
+  `readings/2026-10-21-run-manifest-1.1-platform-generation.md`）与
   `testing/ab/dgate2/run-record/`（T/C/A 三维读数，`RUN_RECORD_SCHEMA_VERSION` 1.0），读数见
   [冻结包复核](readings/2026-10-19-D-gate2-run-ready-verify.md) 与 [run-record 样例](readings/2026-10-19-D-gate2-run-record.md)；**A/B/C 已于 2026-10-20 各跑一次（n=1）**：现状治理臂未完成、treatment 臂与不治理臂完成；案例读数见
   [10-20 run 读数](readings/2026-10-20-D-gate2-ab-c-runs.md)，run-manifest 在

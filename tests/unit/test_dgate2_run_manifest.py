@@ -1,4 +1,4 @@
-"""D 门 2 run-manifest（17 字段契约）的回归：字段集合、三态、确定性、摘要漂移与退出码。
+"""D 门 2 run-manifest（18 字段契约）的回归：字段集合、三态、确定性、摘要漂移与退出码。
 
 判据来源：`scorer/scorer.yaml` 的 `run_manifest_fields`、`scorer/README.md` 第 4/5/6/11 节、
 `readings/2026-10-19-D-gate2-treatment.md` 4.4/4.5、`c-arm/README.md` 第 6 节。本文件只使用
@@ -61,16 +61,18 @@ def base(module, module_tmp_root):
     return path, json.loads(raw.decode("utf-8")), raw
 
 
-def test_seventeen_field_ids_match_scorer_yaml_exactly(module):
+def test_eighteen_field_ids_match_scorer_yaml_exactly(module):
     document = yaml.safe_load(SCORER_YAML.read_text(encoding="utf-8"))
     ids = [item["id"] for item in document["run_manifest_fields"]["items"]]
-    assert len(ids) == 17
+    assert len(ids) == 18
     assert list(module.RUN_MANIFEST_FIELDS) == ids
+    assert ids[-1] == "platform_generation"
+    assert document["version"] == "3"
 
 
-def test_generate_a_arm_writes_17_field_payload(module, base):
+def test_generate_a_arm_writes_18_field_payload(module, base):
     path, payload, raw = base
-    assert payload["schema_version"] == "1.0" == module.RUN_MANIFEST_SCHEMA_VERSION
+    assert payload["schema_version"] == "1.1" == module.RUN_MANIFEST_SCHEMA_VERSION
     assert payload["arm"] == "A"
     fields = payload["fields"]
     assert set(fields) == set(module.RUN_MANIFEST_FIELDS)
@@ -109,7 +111,7 @@ def test_check_reports_missing_field_by_id(module, base, module_tmp_root, capsys
 
 
 def test_check_reports_unexpected_field_by_id(module, base, module_tmp_root, capsys):
-    """字段比 17 个多也要点名：多出来的键同样会让载荷形状偏离契约。"""
+    """字段比 18 个多也要点名：多出来的键同样会让载荷形状偏离契约。"""
 
     _, payload, _ = base
     mutated = copy.deepcopy(payload)
@@ -248,3 +250,196 @@ def test_ab_arm_facts_must_declare_launcher_sandbox(module, module_tmp_root):
     code = module.run(["--arm", "B", "--out", str(target), "--arm-facts", str(facts)])
     assert code == 2
     assert not target.exists()
+@pytest.fixture(scope="module")
+def platform_facts_document(base):
+    """一份可通过的 platform_generation 事实（首消息摘要取真实任务包的那一份）。"""
+
+    _, payload, _ = base
+    first = payload["fields"]["first_message_sha256"]["value"]["sha256"]
+    head = payload["fields"]["head"]["value"]
+    return {
+        "host": {
+            "entry": "desktop",
+            "dsh_runtime": "0.2.1-rc.2",
+            "dsh_source": "app_bundled",
+            "dsh_entry": "<install>/resources/runtime/cli/bin/dsh.cmd",
+            "profile": "desktop-gui",
+            "session_sandbox": "workspace-write",
+            "file_policy": "danger-full-access",
+            "sandbox": "unrestricted",
+        },
+        "start": {"head": head, "worktree_clean": True},
+        "run": {"serial": True, "ci_local_lock_held": False, "concurrent_sessions": 1},
+        "declarations": {
+            "adapter_config": {
+                "path": "<governed>/.policy/dsh-adapter.yaml",
+                "sha256": "a" * 64,
+                "agent_version": "0.2.1-rc.2",
+                "into_decision": True,
+                "max_targets": 20,
+            },
+            "registry": {
+                "path": "<governed>/.policy/tool-registry.local.yaml",
+                "sha256": "b" * 64,
+                "registry_schema_version": "1.4",
+                "approved_path": "<governed>/.policy/tool-registry.approved.json",
+                "approved_sha256": "c" * 64,
+                "approved_reviewed_by": "dshznm",
+                "approved_reviewed_at": "2026-10-21T10:00:00+08:00",
+            },
+            "approval": {"path": "<governed>/.policy/approval.json", "sha256": "d" * 64},
+            "test_layout": {"path": "validation/test-layout.yaml", "sha256": "e" * 64},
+        },
+        "batch_ledger": {
+            "enabled": True,
+            "into_decision": True,
+            "max_targets": 20,
+            "ttl_hours": 24,
+            "schema_version": "1.1",
+        },
+        "audit_schema_version": "1.5",
+        "pre_evidence": {"enabled": True, "timeout_ms": 20000},
+        "timeouts": {"tool_timeout_ms": 5000, "hooks_timeout_ms": 30000},
+        "model": {
+            "id": "deepseek-v4-flash",
+            "params": {"temperature": 0},
+            "first_message_sha256": first,
+        },
+        "observations": {
+            "batch": {
+                "decisions": 9,
+                "with_batch": 6,
+                "settled": 6,
+                "truncated": 0,
+                "unreadable": 0,
+                "degraded": False,
+            }
+        },
+    }
+
+
+def _generate_with_platform(module, module_tmp_root, document, name):
+    facts_path = _write(module_tmp_root / (name + "-facts.json"), document)
+    target = module_tmp_root / (name + ".json")
+    code = module.run(["--arm", "A", "--out", str(target), "--platform-facts", str(facts_path)])
+    return code, target
+
+
+def test_platform_generation_is_pending_without_platform_facts(base):
+    _, payload, _ = base
+    entry = payload["fields"]["platform_generation"]
+    assert entry["status"] == "pending"
+    assert entry["value"] is None
+    assert entry["reason"]
+
+
+def test_platform_generation_records_generation_and_recomputes_budget(
+    module, module_tmp_root, platform_facts_document
+):
+    code, target = _generate_with_platform(
+        module, module_tmp_root, platform_facts_document, "run-manifest-platform"
+    )
+    assert code == 0
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    entry = payload["fields"]["platform_generation"]
+    assert entry["status"] == "recorded"
+    value = entry["value"]
+    assert value["budget"] == {
+        "applicable": True,
+        "ok": True,
+        "left_ms": 25000,
+        "right_ms": 30000,
+        "inequality": "pre_evidence.timeout_ms + timeouts.tool_timeout_ms < timeouts.hooks_timeout_ms",
+    }
+    assert value["batch_ledger"]["into_decision"] is True
+    assert value["declarations"]["adapter_config"]["max_targets"] == 20
+    assert value["model"]["first_message_sha256"] == (
+        payload["fields"]["first_message_sha256"]["value"]["sha256"]
+    )
+    assert value["problems"] == []
+    assert module.run(["--check", str(target)]) == 0
+    text = target.read_text(encoding="utf-8")
+    assert not DRIVE_PATH.search(text)
+
+
+def test_platform_facts_reject_unknown_key(
+    module, module_tmp_root, platform_facts_document, capsys
+):
+    document = copy.deepcopy(platform_facts_document)
+    document["host"]["extra"] = "x"
+    facts_path = _write(module_tmp_root / "platform-unknown-facts.json", document)
+    target = module_tmp_root / "run-manifest-platform-unknown.json"
+    code = module.run(
+        ["--arm", "A", "--out", str(target), "--platform-facts", str(facts_path)]
+    )
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "未知键" in err
+    assert not target.exists(), "未知键不部分接受：读不到声明时不许写出半成品清单"
+
+
+def test_platform_budget_inequality_is_a_manifest_failure(
+    module, module_tmp_root, platform_facts_document, capsys
+):
+    document = copy.deepcopy(platform_facts_document)
+    document["timeouts"]["hooks_timeout_ms"] = 24000
+    facts_path = _write(module_tmp_root / "platform-budget-facts.json", document)
+    target = module_tmp_root / "run-manifest-platform-budget.json"
+    code = module.run(
+        ["--arm", "A", "--out", str(target), "--platform-facts", str(facts_path)]
+    )
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "预算不等式" in err
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    budget = payload["fields"]["platform_generation"]["value"]["budget"]
+    assert budget["ok"] is False
+    assert budget["left_ms"] == 25000 and budget["right_ms"] == 24000
+    capsys.readouterr()
+    assert module.run(["--check", str(target)]) == 1
+
+
+def test_platform_serial_contradiction_is_a_manifest_failure(
+    module, module_tmp_root, platform_facts_document, capsys
+):
+    document = copy.deepcopy(platform_facts_document)
+    document["run"]["ci_local_lock_held"] = True
+    facts_path = _write(module_tmp_root / "platform-serial-facts.json", document)
+    target = module_tmp_root / "run-manifest-platform-serial.json"
+    code = module.run(
+        ["--arm", "A", "--out", str(target), "--platform-facts", str(facts_path)]
+    )
+    assert code == 1
+    assert "run.serial" in capsys.readouterr().err
+
+
+def test_check_flags_mismatched_first_message(
+    module, module_tmp_root, platform_facts_document, capsys
+):
+    document = copy.deepcopy(platform_facts_document)
+    document["model"]["first_message_sha256"] = "0" * 64
+    facts_path = _write(module_tmp_root / "platform-first-facts.json", document)
+    target = module_tmp_root / "run-manifest-platform-first.json"
+    code = module.run(
+        ["--arm", "A", "--out", str(target), "--platform-facts", str(facts_path)]
+    )
+    assert code == 1
+    assert "first_message_sha256" in capsys.readouterr().err
+
+
+def test_check_recomputes_platform_budget_and_flags_tampering(
+    module, module_tmp_root, platform_facts_document, capsys
+):
+    code, target = _generate_with_platform(
+        module, module_tmp_root, platform_facts_document, "run-manifest-platform-tamper"
+    )
+    assert code == 0
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    payload["fields"]["platform_generation"]["value"]["budget"]["left_ms"] = 1
+    tampered = _write(module_tmp_root / "run-manifest-platform-tampered.json", payload)
+    capsys.readouterr()
+    code = module.run(["--check", str(tampered)])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "budget.left_ms" in out
+    assert "RESULT: FAIL" in out

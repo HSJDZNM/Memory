@@ -1,0 +1,22 @@
+# bank-flagship-returns：A3「公开符号最小面」的声明接口上限（--interfaces 的输入）。
+#
+# 口径（与 tools/structure_metrics.py 的 A3 一致）：每个**非测试层**模块的公开定义数
+# （DefinitionFact.private=false，含方法）≤ 这里声明的上限；没声明上限的模块判 fail。
+# 测试层不约束（A3_SKIP_LAYERS）。
+#
+# 上限 = 接口契约里的公开面 + 1 个余量（order_repository 是 4 个：类 + insert/listing/get，余量 1；
+# order_service / order_controller 是基线文件、本任务不许改，各 3 个，上限 4）。
+# 未列出的模块（测试文件）不在 A3 范围内。
+
+src/shop/__init__.py: 0
+src/shop/order_controller.py: 4
+src/shop/order_repository.py: 5
+src/shop/order_service.py: 4
+src/shop/refund_controller.py: 4
+src/shop/refund_model.py: 4
+src/shop/refund_policy.py: 4
+src/shop/refund_repository.py: 5
+src/shop/refund_service.py: 4
+tools/__init__.py: 0
+tools/migrate_refunds.py: 3
+tools/refund_demo.py: 2

@@ -1,0 +1,43 @@
+# bank-flagship-returns：最终树（30 文件）→ 层的唯一声明（A 维度，structure_metrics 1.1 的词汇）。
+#
+# 消费者：python tools/structure_metrics.py --workspace <final-tree> --layers <本文件> --interfaces interfaces.yaml --json
+# 层值闭集 = composition / controller / service / repository / model / test / other / skip（未声明层的 .py 会让 A1 fail）。
+# 文件集 = 14 个基线文件 + 任务创建的 16 个文件（每多/少一个都让「路径族声明 100%」这句话变成假的）。
+#
+# 列在这里的非 .py 文件用 skip（移出测量范围），不是「没有层」：workspace_scope 需要它是显式声明。
+# test：测试文件与测试支撑文件（conftest.py 命中 validation/test-layout.yaml 的 test_support_patterns，
+# 平台口径的层就是 test，AGENTS 第 49 条）。
+# other：生产代码但无分层角色（两个 __init__.py）。
+# model：纯数据/纯函数模块（refund_model / refund_policy）；任意层 → model 是 A1 允许的方向。
+# composition：组合根与工具入口（两个 tools 脚本：它们 new 具体协作者；这是 A4 唯一豁免的生产层）。
+
+AGENTS.md: skip
+README.md: skip
+config/refund_policy.yaml: skip
+conftest.py: test
+data/refunds-legacy.jsonl: skip
+data/refunds-v2.jsonl: skip
+docs/refund.md: skip
+pytest.ini: skip
+src/shop/__init__.py: other
+src/shop/order_controller.py: controller
+src/shop/order_repository.py: repository
+src/shop/order_service.py: service
+src/shop/refund_controller.py: controller
+src/shop/refund_model.py: model
+src/shop/refund_policy.py: model
+src/shop/refund_repository.py: repository
+src/shop/refund_service.py: service
+tests/test_migrate_refunds.py: test
+tests/test_order_controller.py: test
+tests/test_order_repository.py: test
+tests/test_order_service.py: test
+tests/test_refund_controller.py: test
+tests/test_refund_demo.py: test
+tests/test_refund_model.py: test
+tests/test_refund_policy.py: test
+tests/test_refund_repository.py: test
+tests/test_refund_service.py: test
+tools/__init__.py: other
+tools/migrate_refunds.py: composition
+tools/refund_demo.py: composition

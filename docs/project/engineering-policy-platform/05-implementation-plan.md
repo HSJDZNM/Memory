@@ -272,6 +272,8 @@
 8. **2026-10-20 A/B/C 各一次 run（n=1）与人工项代执行**：三臂同一首消息、同一 12 文件基线，run-manifest 落 `testing/ab/dgate2/runs/2026-10-20/`；H2/H3 由使用者授权的两个子会话代执行复核，抽样人/复核人记使用者，代执行事实写在两份复核记录里；三份 manifest `--strict` PASS。**主张边界**：n=1 只写案例读数，写「值得扩试」需每臂 k≥3（05 §5.5）；A 首跑因注册表装配错误作废（D-20261020-01），不进计分。
 9. **2026-10-20 使用者授权解冻与两项落地**：使用者在本会话明确授权解冻 05 §2.3 的四项不做（限 B1/B3/C3）；B1 审批「参数域」（协议 1.2→1.3、注册表 1.0→1.1、族数据）与 C3 最终树门禁 v1（整树判定 + `RuleSet.identity` 钉住）落地，读数见 `readings/2026-10-20-B1-param-domain.md`、`readings/2026-10-20-C3-final-tree-gate.md`；C3 的「危险动作前置阻断」未做（04 5.84）。**新增纪律**（同次事故换来的）：改 Hook 导入链上的模块后每次写入立刻跑 import 自检（04 5.85）。
 
+10. **2026-10-21 实验冻结与 C1-b 裁决（两项研讨裁决在 18:00 恢复后集成）**：C1-b = **T3**（平台代际基线，A/B 两臂 `into_decision=true`、`max_targets=20`；C 臂 N/A；A/B 仍只差 `production_patterns`；旧 n=1 与旧 M5b activation 作废，D 校准门与 C1-b 门 2/4/5 须在冻结配置下重跑）——读数 `readings/2026-10-21-c1b-treatment-adjudication.md`。冻结五项：宿主冻结 **app 自带 dsh 0.2.1-rc.2**（PATH alpha.2 仅历史案例）、控制器/测量进程 **danger-full-access**（workspace-write 下 Hook spawn EPERM）、04 5.90 **接受为实验已知边界**（实验后修）、批次并发 **串行 run 不加锁**、每臂**自己的 registry 1.4 副本 + 自己那份已审核**（仓库 `registry/**` 不动，条子只由使用者签）——读数 `readings/2026-10-21-experiment-freeze-adjudication.md`。**记录字段（2026-10-21 已实现）**：不新增第二个顶层字段，宿主/沙箱/配置/审批/模型并入 `platform_generation`；`RUN_MANIFEST_SCHEMA_VERSION` 1.0→1.1 + 评分器冻结块 version 2→3 + 重生成 `manifest.sha256` 一次做完（组合摘要 `3fda3ee2…`），`--platform-facts` 是闭集输入、`budget` 由工具按三值现场重算；读数 `readings/2026-10-21-run-manifest-1.1-platform-generation.md`。
+
 ---
 
 ## 附录 A · 本计划的依据来源

@@ -10,11 +10,11 @@ af70bee1bb8a886190cda33141d0ccf6d00acd0dde92383dddb0a30f37b9bf2a  docs/project/e
 1182a9c724ef073f5ba3dd7dff564d77d2d774e70bcf3f3daca7661fb5abe4dd  docs/project/engineering-policy-platform/testing/ab/dgate2/configs/after/validation/validators.yaml
 340e9c431e8fd5f800a9b18d0915b078e272d7edc639976734baa05f3f9bd794  docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/runner.py
 9ccdb2e263647bf5c3ad579b4980e4fbc979422f5be64fd49bdf387dac91d23c  docs/project/engineering-policy-platform/testing/ab/dgate2/hidden/test_acceptance_dgate2.py
-c4aa9ab86337379870665caf4777bc587781124f0bb99468b3f73cfa9169e108  docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/README.md
+9d5b1ba5e53eaeb433deae430bd1d7087c9ca229420fc1380876590dee0b2180  docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/README.md
 dda6fb855d545e3e31b6795688abe22efb4a4ad8dfb26e8db3d033e536898ab9  docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/interfaces.yaml
 8baa7039354c66597bc803e9d24cc9f12d6eea2844c24f02a546964bd4e5c10c  docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/layers.yaml
 c484837e7edce5326ca6d230cd344e422ca36153e7dc4d9d8e37972981423822  docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/make_manifest.py
-f6247edbd60b2e6b2cfd61d457bf2f18ce0567e0eae03b58c2230f637dffa0bd  docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/scorer.yaml
+addea56791f399e632f1bd43fee2f85204fe496784e0e7c05330850cbfd39d12  docs/project/engineering-policy-platform/testing/ab/dgate2/scorer/scorer.yaml
 6cbcc6fa604da9b5b25cfa8fc08a6b7166d3ec7a31c4e2d4cc5f8d3df47ee654  examples/dsh/b-plan/a3-task-v3/task-package/acceptance.md
 c03bd30ad5dd076dd49026f8e4dbd4ca56bfda4f93100ddccca23dd9275fc1fe  examples/dsh/b-plan/a3-task-v3/task-package/allowed-writes.txt
 123c938c28a176ede6e2d888bea83b21e4a32684e5c4824283eeb376ee92625c  examples/dsh/b-plan/a3-task-v3/task-package/first-message.txt

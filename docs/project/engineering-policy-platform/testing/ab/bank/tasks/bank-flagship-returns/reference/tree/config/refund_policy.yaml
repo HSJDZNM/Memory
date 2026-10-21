@@ -1,0 +1,8 @@
+# 退货金额策略（基线只读输入：改它等于改基线）。
+# 结构固定为 6 个键；多一个、少一个、类型不对，refund_policy.load_policy 都必须失败关闭。
+version: 1
+currency: CNY
+fee_bps: 250
+min_fee_cents: 0
+max_fee_cents: 500
+max_refund_ratio: 1.0

@@ -1,9 +1,9 @@
-r"""D 门 2 的 run-manifest 生成器与校验器（17 字段契约）。
+r"""D 门 2 的 run-manifest 生成器与校验器（18 字段契约）。
 
 它回答什么
 ==========
 
-`scorer.yaml` 的 `run_manifest_fields` 规定了每次 run 必须记下的 17 个字段；本脚本把这句话
+`scorer.yaml` 的 `run_manifest_fields` 规定了每次 run 必须记下的 18 个字段；本脚本把这句话
 变成**可生成、可校验**的载荷：
 
     python run_manifest.py --arm A --out .tmp/dgate2/run-manifest-A.json
@@ -25,8 +25,10 @@ r"""D 门 2 的 run-manifest 生成器与校验器（17 字段契约）。
 载荷自己的版本轴（AGENTS 第 55 条）
 =================================
 
-`RUN_MANIFEST_SCHEMA_VERSION = "1.0"`——**首次建轴**（2026-10-19，D 门 2 前置）。
-17 个字段的 id 与 `scorer/scorer.yaml` 的 `run_manifest_fields` 逐字一致；加字段、改状态
+`RUN_MANIFEST_SCHEMA_VERSION = "1.1"`——1.0 首次建轴（2026-10-19，D 门 2 前置）；
+**1.1 = 新增第 18 个字段 `platform_generation`**（2026-10-21 实验冻结裁决：宿主 / 沙箱 /
+每臂配置与审批摘要 / 批次代际 / 模型与起点事实一次并入，同批评分器 version 2→3）。
+18 个字段的 id 与 `scorer/scorer.yaml` 的 `run_manifest_fields` 逐字一致；加字段、改状态
 语义都按 AGENTS 第 55 条显式递增版本号，并同批改本文件、README 与测试。
 
 确定性（与 `policy.check` 的 `--json` 包装层同一条纪律）
@@ -63,9 +65,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 #: run-manifest 载荷自己的版本轴；加键 / 改语义必须按 AGENTS 第 55 条递增。
-RUN_MANIFEST_SCHEMA_VERSION = "1.0"
+RUN_MANIFEST_SCHEMA_VERSION = "1.1"
 
-#: 17 个字段 id，顺序与 scorer/scorer.yaml 的 run_manifest_fields.items 逐字一致。
+#: 18 个字段 id，顺序与 scorer/scorer.yaml 的 run_manifest_fields.items 逐字一致。
 RUN_MANIFEST_FIELDS: Tuple[str, ...] = (
     "head",
     "worktree_clean",
@@ -84,6 +86,7 @@ RUN_MANIFEST_FIELDS: Tuple[str, ...] = (
     "bypass_sampling",
     "a4_review",
     "nondeterminism_ruling",
+    "platform_generation",
 )
 
 #: 只能由人记录的四个字段（scorer/README.md §6 的 H1–H4）。
@@ -97,6 +100,89 @@ HUMAN_FIELD_IDS: Tuple[str, ...] = (
 FIELD_STATUSES: Tuple[str, ...] = ("recorded", "pending", "not_applicable")
 ARMS: Tuple[str, ...] = ("A", "B", "C")
 LAUNCHER_SANDBOXES: Tuple[str, ...] = ("workspace-write", "danger-full-access", "unknown")
+
+#: platform_generation（1.1 起）的闭集与键集合：输入里的未知键一律拒收（AGENTS 55）。
+PLATFORM_HOST_ENTRIES: Tuple[str, ...] = ("headless", "desktop")
+PLATFORM_DSH_SOURCES: Tuple[str, ...] = ("app_bundled", "path_cli")
+SANDBOX_MODES: Tuple[str, ...] = ("workspace-write", "danger-full-access", "unknown")
+SANDBOX_STATES: Tuple[str, ...] = ("restricted", "unrestricted", "unknown")
+TOKEN_ROOTS: Tuple[str, ...] = (
+    "<install>",
+    "<npm-global>",
+    "<governed>",
+    "<DSH_HOME>",
+    "<temp>",
+    "<workspace>",
+    "<outside-workspace>",
+)
+PLATFORM_KEYS: Tuple[str, ...] = (
+    "host",
+    "start",
+    "run",
+    "declarations",
+    "batch_ledger",
+    "audit_schema_version",
+    "pre_evidence",
+    "timeouts",
+    "model",
+    "observations",
+)
+_PLATFORM_HOST_KEYS: Tuple[str, ...] = (
+    "entry",
+    "dsh_runtime",
+    "dsh_source",
+    "dsh_entry",
+    "profile",
+    "session_sandbox",
+    "file_policy",
+    "sandbox",
+)
+_PLATFORM_START_KEYS: Tuple[str, ...] = ("head", "worktree_clean")
+_PLATFORM_RUN_KEYS: Tuple[str, ...] = ("serial", "ci_local_lock_held", "concurrent_sessions")
+_PLATFORM_DECLARATION_KEYS: Tuple[str, ...] = (
+    "adapter_config",
+    "registry",
+    "approval",
+    "test_layout",
+)
+_PLATFORM_ADAPTER_KEYS: Tuple[str, ...] = (
+    "path",
+    "sha256",
+    "agent_version",
+    "into_decision",
+    "max_targets",
+)
+_PLATFORM_REGISTRY_KEYS: Tuple[str, ...] = (
+    "path",
+    "sha256",
+    "registry_schema_version",
+    "approved_path",
+    "approved_sha256",
+    "approved_reviewed_by",
+    "approved_reviewed_at",
+)
+_PLATFORM_APPROVAL_KEYS: Tuple[str, ...] = ("path", "sha256")
+_PLATFORM_TEST_LAYOUT_KEYS: Tuple[str, ...] = ("path", "sha256")
+_PLATFORM_BATCH_KEYS: Tuple[str, ...] = (
+    "enabled",
+    "into_decision",
+    "max_targets",
+    "ttl_hours",
+    "schema_version",
+)
+_PLATFORM_PRE_EVIDENCE_KEYS: Tuple[str, ...] = ("enabled", "timeout_ms")
+_PLATFORM_TIMEOUT_KEYS: Tuple[str, ...] = ("tool_timeout_ms", "hooks_timeout_ms")
+_PLATFORM_MODEL_KEYS: Tuple[str, ...] = ("id", "params", "first_message_sha256")
+_PLATFORM_OBSERVATION_KEYS: Tuple[str, ...] = ("batch",)
+_PLATFORM_BATCH_OBSERVATION_KEYS: Tuple[str, ...] = (
+    "decisions",
+    "with_batch",
+    "settled",
+    "truncated",
+    "unreadable",
+    "degraded",
+)
+_VERSION_TEXT = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z._-]+)?$")
 
 DGATE2_REL = "docs/project/engineering-policy-platform/testing/ab/dgate2"
 SCORER_REL = DGATE2_REL + "/scorer"
@@ -464,7 +550,7 @@ def _verify_field_contract(scorer: Dict[str, Any]) -> None:
         missing = [item for item in RUN_MANIFEST_FIELDS if item not in ids]
         extra = [item for item in ids if item not in RUN_MANIFEST_FIELDS]
         raise ManifestInputError(
-            "scorer.yaml 的 run_manifest_fields 与脚本的 17 字段不一致"
+            "scorer.yaml 的 run_manifest_fields 与脚本的 18 字段不一致"
             "（missing=%s / extra=%s）" % (missing, extra)
         )
 
@@ -902,6 +988,492 @@ def _normalize_human_items(path: Path) -> Dict[str, Dict[str, Any]]:
     return normalized
 
 
+# --------------------------------------------------------------------------- platform_generation
+
+
+def _platform_path_problem(value: str, where: str, token_only: bool = False) -> Optional[str]:
+    for root in TOKEN_ROOTS:
+        if value.startswith(root + "/") and _is_safe_relative(value[len(root) + 1 :]):
+            return None
+    if token_only:
+        return "%s 必须是 <token> 下的相对路径（仓库外路径按 token 记）" % where
+    if _is_safe_relative(value):
+        return None
+    return "%s 必须是仓库相对路径或 <token> 下的相对路径" % where
+
+
+def _platform_text_problem(
+    value: Any,
+    where: str,
+    *,
+    path: bool = False,
+    token_only: bool = False,
+    pattern: Optional[re.Pattern[str]] = None,
+) -> Optional[str]:
+    if not isinstance(value, str) or not value.strip():
+        return "%s 必须是非空字符串" % where
+    text = value.strip()
+    if _absolute_path_in(text) is not None:
+        return "%s 不许写绝对路径" % where
+    if path:
+        problem = _platform_path_problem(text, where, token_only=token_only)
+        if problem is not None:
+            return problem
+    if pattern is not None and not pattern.match(text):
+        return "%s 的形状不合法（%s）" % (where, text)
+    return None
+
+
+def _platform_bool_problem(value: Any, where: str) -> Optional[str]:
+    if not isinstance(value, bool):
+        return "%s 必须是布尔值" % where
+    return None
+
+
+def _platform_int_problem(value: Any, where: str, minimum: int = 0) -> Optional[str]:
+    if not isinstance(value, int) or isinstance(value, bool):
+        return "%s 必须是整数" % where
+    if value < minimum:
+        return "%s 必须 >= %d" % (where, minimum)
+    return None
+
+
+def _platform_hex_problem(value: Any, where: str) -> Optional[str]:
+    if not isinstance(value, str) or not _HEX64.match(value):
+        return "%s 必须是 64 位十六进制摘要" % where
+    return None
+
+
+def _platform_enum_problem(value: Any, where: str, allowed: Sequence[str]) -> Optional[str]:
+    if value not in allowed:
+        return "%s 必须是 %s 之一，读到 %r" % (where, list(allowed), value)
+    return None
+
+
+def _platform_version_problem(value: Any, where: str) -> Optional[str]:
+    if not isinstance(value, str) or not _VERSION_TEXT.match(value.strip()):
+        return "%s 必须是版本号（如 0.2.1-rc.2 / 1.5），读到 %r" % (where, value)
+    return None
+
+
+def _platform_block(value: Any, where: str, keys: Sequence[str]) -> Dict[str, Any]:
+    """严格块：未知键 / 缺键都是输入错误（退出 2），不做部分接受。"""
+
+    if not isinstance(value, dict):
+        raise ManifestInputError("platform-facts：%s 必须是对象" % where)
+    unknown = sorted(set(value) - set(keys))
+    missing = sorted(set(keys) - set(value))
+    if unknown:
+        raise ManifestInputError("platform-facts：%s 有未知键 %s" % (where, unknown))
+    if missing:
+        raise ManifestInputError("platform-facts：%s 缺少 %s" % (where, ", ".join(missing)))
+    return value
+
+
+def _platform_need(problem: Optional[str]) -> None:
+    if problem is not None:
+        raise ManifestInputError("platform-facts：" + problem)
+
+
+def _platform_semantic_problems(value: Dict[str, Any]) -> List[str]:
+    """跨字段不变量（已通过形状检查之后才调用）。"""
+
+    problems: List[str] = []
+    run = value["run"]
+    if run["serial"] and (run["ci_local_lock_held"] or run["concurrent_sessions"] != 1):
+        problems.append(
+            "run.serial=true 与 ci_local_lock_held / concurrent_sessions 矛盾："
+            "串行 run 不持 ci_local 锁，且并发会话数必须是 1"
+        )
+    batch = value["batch_ledger"]
+    adapter = value["declarations"]["adapter_config"]
+    if batch["into_decision"] and not batch["enabled"]:
+        problems.append("batch_ledger.into_decision=true 但 enabled=false（关闭的账本不能进判定）")
+    if adapter["into_decision"] != batch["into_decision"]:
+        problems.append(
+            "declarations.adapter_config.into_decision 与 batch_ledger.into_decision 不一致"
+        )
+    if adapter["max_targets"] != batch["max_targets"]:
+        problems.append(
+            "declarations.adapter_config.max_targets 与 batch_ledger.max_targets 不一致"
+        )
+    budget = value["budget"]
+    if budget["applicable"] and not budget["ok"]:
+        problems.append(
+            "预算不等式不成立："
+            "pre_evidence.timeout_ms + timeouts.tool_timeout_ms 必须 < timeouts.hooks_timeout_ms"
+        )
+    observations = value["observations"]["batch"]
+    if observations["unreadable"] > 0 and not observations["degraded"]:
+        problems.append("observations.batch.unreadable>0 但 degraded=false（读不出的账本必须记 degraded）")
+    if observations["truncated"] > 0 and not observations["degraded"]:
+        problems.append("observations.batch.truncated>0 但 degraded=false（截断必须记 degraded）")
+    if observations["degraded"] and observations["unreadable"] == 0 and observations["truncated"] == 0:
+        problems.append("observations.batch.degraded=true 但没有任何证据（unreadable / truncated 都是 0）")
+    return problems
+
+
+def _normalize_platform_facts(path: Path, repo_root: Path) -> Dict[str, Any]:
+    """校验并规范化 --platform-facts：未知键 / 类型错 / 计数矛盾退出 2；跨字段矛盾记 problems。"""
+
+    document = _load_json(path, "platform-facts")
+    if not isinstance(document, dict):
+        raise ManifestInputError("platform-facts 顶层不是对象")
+    unknown = sorted(set(document) - set(PLATFORM_KEYS))
+    missing = sorted(set(PLATFORM_KEYS) - set(document))
+    if unknown:
+        raise ManifestInputError(
+            "platform-facts 顶层出现未知键 %s；允许的键为 %s" % (unknown, sorted(PLATFORM_KEYS))
+        )
+    if missing:
+        raise ManifestInputError("platform-facts 缺少 %s" % ", ".join(missing))
+
+    host = _platform_block(document["host"], "host", _PLATFORM_HOST_KEYS)
+    _platform_need(_platform_enum_problem(host["entry"], "host.entry", PLATFORM_HOST_ENTRIES))
+    _platform_need(_platform_text_problem(host["dsh_runtime"], "host.dsh_runtime", pattern=_VERSION_TEXT))
+    _platform_need(_platform_enum_problem(host["dsh_source"], "host.dsh_source", PLATFORM_DSH_SOURCES))
+    _platform_need(_platform_text_problem(host["dsh_entry"], "host.dsh_entry", path=True, token_only=True))
+    _platform_need(_platform_text_problem(host["profile"], "host.profile"))
+    _platform_need(_platform_enum_problem(host["session_sandbox"], "host.session_sandbox", SANDBOX_MODES))
+    _platform_need(_platform_enum_problem(host["file_policy"], "host.file_policy", SANDBOX_MODES))
+    _platform_need(_platform_enum_problem(host["sandbox"], "host.sandbox", SANDBOX_STATES))
+
+    start = _platform_block(document["start"], "start", _PLATFORM_START_KEYS)
+    if not isinstance(start["head"], str) or not _HEX_ANY.match(start["head"]):
+        raise ManifestInputError("platform-facts：start.head 必须是 40/64 位十六进制 git HEAD")
+    _platform_need(_platform_bool_problem(start["worktree_clean"], "start.worktree_clean"))
+
+    run = _platform_block(document["run"], "run", _PLATFORM_RUN_KEYS)
+    _platform_need(_platform_bool_problem(run["serial"], "run.serial"))
+    _platform_need(_platform_bool_problem(run["ci_local_lock_held"], "run.ci_local_lock_held"))
+    _platform_need(_platform_int_problem(run["concurrent_sessions"], "run.concurrent_sessions", 1))
+
+    declarations = _platform_block(document["declarations"], "declarations", _PLATFORM_DECLARATION_KEYS)
+    adapter = _platform_block(declarations["adapter_config"], "declarations.adapter_config", _PLATFORM_ADAPTER_KEYS)
+    _platform_need(_platform_text_problem(adapter["path"], "declarations.adapter_config.path", path=True))
+    _platform_need(_platform_hex_problem(adapter["sha256"], "declarations.adapter_config.sha256"))
+    _platform_need(_platform_version_problem(adapter["agent_version"], "declarations.adapter_config.agent_version"))
+    _platform_need(_platform_bool_problem(adapter["into_decision"], "declarations.adapter_config.into_decision"))
+    _platform_need(_platform_int_problem(adapter["max_targets"], "declarations.adapter_config.max_targets"))
+    registry = _platform_block(declarations["registry"], "declarations.registry", _PLATFORM_REGISTRY_KEYS)
+    _platform_need(_platform_text_problem(registry["path"], "declarations.registry.path", path=True))
+    _platform_need(_platform_hex_problem(registry["sha256"], "declarations.registry.sha256"))
+    _platform_need(_platform_version_problem(registry["registry_schema_version"], "declarations.registry.registry_schema_version"))
+    _platform_need(_platform_text_problem(registry["approved_path"], "declarations.registry.approved_path", path=True))
+    _platform_need(_platform_hex_problem(registry["approved_sha256"], "declarations.registry.approved_sha256"))
+    _platform_need(_platform_text_problem(registry["approved_reviewed_by"], "declarations.registry.approved_reviewed_by"))
+    _platform_need(_platform_text_problem(registry["approved_reviewed_at"], "declarations.registry.approved_reviewed_at"))
+    approval = _platform_block(declarations["approval"], "declarations.approval", _PLATFORM_APPROVAL_KEYS)
+    _platform_need(_platform_text_problem(approval["path"], "declarations.approval.path", path=True))
+    _platform_need(_platform_hex_problem(approval["sha256"], "declarations.approval.sha256"))
+    test_layout = _platform_block(declarations["test_layout"], "declarations.test_layout", _PLATFORM_TEST_LAYOUT_KEYS)
+    _platform_need(_platform_text_problem(test_layout["path"], "declarations.test_layout.path", path=True))
+    _platform_need(_platform_hex_problem(test_layout["sha256"], "declarations.test_layout.sha256"))
+
+    batch = _platform_block(document["batch_ledger"], "batch_ledger", _PLATFORM_BATCH_KEYS)
+    _platform_need(_platform_bool_problem(batch["enabled"], "batch_ledger.enabled"))
+    _platform_need(_platform_bool_problem(batch["into_decision"], "batch_ledger.into_decision"))
+    _platform_need(_platform_int_problem(batch["max_targets"], "batch_ledger.max_targets"))
+    _platform_need(_platform_int_problem(batch["ttl_hours"], "batch_ledger.ttl_hours", 1))
+    _platform_need(_platform_version_problem(batch["schema_version"], "batch_ledger.schema_version"))
+    audit_version = document["audit_schema_version"]
+    _platform_need(_platform_version_problem(audit_version, "audit_schema_version"))
+
+    pre_evidence = _platform_block(document["pre_evidence"], "pre_evidence", _PLATFORM_PRE_EVIDENCE_KEYS)
+    _platform_need(_platform_bool_problem(pre_evidence["enabled"], "pre_evidence.enabled"))
+    _platform_need(_platform_int_problem(pre_evidence["timeout_ms"], "pre_evidence.timeout_ms", 1))
+    timeouts = _platform_block(document["timeouts"], "timeouts", _PLATFORM_TIMEOUT_KEYS)
+    _platform_need(_platform_int_problem(timeouts["tool_timeout_ms"], "timeouts.tool_timeout_ms", 1))
+    _platform_need(_platform_int_problem(timeouts["hooks_timeout_ms"], "timeouts.hooks_timeout_ms", 1))
+
+    model = _platform_block(document["model"], "model", _PLATFORM_MODEL_KEYS)
+    _platform_need(_platform_text_problem(model["id"], "model.id"))
+    params = model["params"]
+    if not isinstance(params, dict):
+        raise ManifestInputError("platform-facts：model.params 必须是对象")
+    normalized_params: Dict[str, Any] = {}
+    for key, item in params.items():
+        if not isinstance(key, str) or not key.strip() or _absolute_path_in(key) is not None:
+            raise ManifestInputError("platform-facts：model.params 的键必须是非空字符串且不含绝对路径")
+        if isinstance(item, bool) or isinstance(item, (int, float)):
+            normalized_params[key.strip()] = item
+        elif isinstance(item, str):
+            _platform_need(_platform_text_problem(item, "model.params.%s" % key))
+            normalized_params[key.strip()] = item.strip()
+        else:
+            raise ManifestInputError(
+                "platform-facts：model.params.%s 只接受标量（str / int / float / bool）" % key
+            )
+    _platform_need(_platform_hex_problem(model["first_message_sha256"], "model.first_message_sha256"))
+
+    observations = _platform_block(document["observations"], "observations", _PLATFORM_OBSERVATION_KEYS)
+    batch_observations = _platform_block(observations["batch"], "observations.batch", _PLATFORM_BATCH_OBSERVATION_KEYS)
+    for key in ("decisions", "with_batch", "settled", "truncated", "unreadable"):
+        _platform_need(_platform_int_problem(batch_observations[key], "observations.batch.%s" % key))
+    _platform_need(_platform_bool_problem(batch_observations["degraded"], "observations.batch.degraded"))
+    if batch_observations["with_batch"] > batch_observations["decisions"]:
+        raise ManifestInputError("platform-facts：observations.batch.with_batch 不能大于 decisions")
+    if batch_observations["settled"] > batch_observations["with_batch"]:
+        raise ManifestInputError("platform-facts：observations.batch.settled 不能大于 with_batch")
+
+    if pre_evidence["enabled"]:
+        left = pre_evidence["timeout_ms"] + timeouts["tool_timeout_ms"]
+        budget: Dict[str, Any] = {
+            "applicable": True,
+            "ok": left < timeouts["hooks_timeout_ms"],
+            "left_ms": left,
+            "right_ms": timeouts["hooks_timeout_ms"],
+            "inequality": (
+                "pre_evidence.timeout_ms + timeouts.tool_timeout_ms "
+                "< timeouts.hooks_timeout_ms"
+            ),
+        }
+    else:
+        budget = {
+            "applicable": False,
+            "reason": "pre_evidence.enabled=false（未声明取证，预算不等式不适用）",
+        }
+
+    value: Dict[str, Any] = {
+        "host": {
+            "entry": host["entry"],
+            "dsh_runtime": host["dsh_runtime"],
+            "dsh_source": host["dsh_source"],
+            "dsh_entry": host["dsh_entry"],
+            "profile": host["profile"],
+            "session_sandbox": host["session_sandbox"],
+            "file_policy": host["file_policy"],
+            "sandbox": host["sandbox"],
+        },
+        "start": {"head": start["head"], "worktree_clean": start["worktree_clean"]},
+        "run": {
+            "serial": run["serial"],
+            "ci_local_lock_held": run["ci_local_lock_held"],
+            "concurrent_sessions": run["concurrent_sessions"],
+        },
+        "declarations": {
+            "adapter_config": {
+                "path": adapter["path"],
+                "sha256": adapter["sha256"],
+                "agent_version": adapter["agent_version"],
+                "into_decision": adapter["into_decision"],
+                "max_targets": adapter["max_targets"],
+            },
+            "registry": {
+                "path": registry["path"],
+                "sha256": registry["sha256"],
+                "registry_schema_version": registry["registry_schema_version"],
+                "approved_path": registry["approved_path"],
+                "approved_sha256": registry["approved_sha256"],
+                "approved_reviewed_by": registry["approved_reviewed_by"],
+                "approved_reviewed_at": registry["approved_reviewed_at"],
+            },
+            "approval": {"path": approval["path"], "sha256": approval["sha256"]},
+            "test_layout": {"path": test_layout["path"], "sha256": test_layout["sha256"]},
+        },
+        "batch_ledger": {
+            "enabled": batch["enabled"],
+            "into_decision": batch["into_decision"],
+            "max_targets": batch["max_targets"],
+            "ttl_hours": batch["ttl_hours"],
+            "schema_version": batch["schema_version"],
+        },
+        "audit_schema_version": audit_version.strip(),
+        "pre_evidence": {
+            "enabled": pre_evidence["enabled"],
+            "timeout_ms": pre_evidence["timeout_ms"],
+        },
+        "timeouts": {
+            "tool_timeout_ms": timeouts["tool_timeout_ms"],
+            "hooks_timeout_ms": timeouts["hooks_timeout_ms"],
+        },
+        "budget": budget,
+        "model": {
+            "id": model["id"],
+            "params": normalized_params,
+            "first_message_sha256": model["first_message_sha256"],
+        },
+        "observations": {"batch": {key: batch_observations[key] for key in _PLATFORM_BATCH_OBSERVATION_KEYS}},
+        "problems": [],
+    }
+    value["problems"] = sorted(_platform_semantic_problems(value))
+    return {"value": value, "problems": list(value["problems"])}
+
+
+def _verify_platform_structure(value: Any) -> List[str]:
+    if not isinstance(value, dict):
+        return ["platform_generation: value 必须是对象"]
+    required = set(PLATFORM_KEYS) | {"budget", "problems"}
+    if set(value) != required:
+        return ["platform_generation: value 的键必须是 %s" % sorted(required)]
+    problems: List[str] = []
+
+    def need(problem: Optional[str]) -> None:
+        if problem is not None:
+            problems.append(problem)
+
+    def block(where: str, item: Any, keys: Sequence[str]) -> bool:
+        if not isinstance(item, dict):
+            problems.append("%s 必须是对象" % where)
+            return False
+        unknown = sorted(set(item) - set(keys))
+        missing = sorted(set(keys) - set(item))
+        if unknown:
+            problems.append("%s 有未知键 %s" % (where, unknown))
+        if missing:
+            problems.append("%s 缺少 %s" % (where, ", ".join(missing)))
+            return False
+        return True
+
+    host = value.get("host")
+    if block("platform_generation.host", host, _PLATFORM_HOST_KEYS):
+        need(_platform_enum_problem(host.get("entry"), "platform_generation.host.entry", PLATFORM_HOST_ENTRIES))
+        need(_platform_text_problem(host.get("dsh_runtime"), "platform_generation.host.dsh_runtime", pattern=_VERSION_TEXT))
+        need(_platform_enum_problem(host.get("dsh_source"), "platform_generation.host.dsh_source", PLATFORM_DSH_SOURCES))
+        need(_platform_text_problem(host.get("dsh_entry"), "platform_generation.host.dsh_entry", path=True, token_only=True))
+        need(_platform_text_problem(host.get("profile"), "platform_generation.host.profile"))
+        need(_platform_enum_problem(host.get("session_sandbox"), "platform_generation.host.session_sandbox", SANDBOX_MODES))
+        need(_platform_enum_problem(host.get("file_policy"), "platform_generation.host.file_policy", SANDBOX_MODES))
+        need(_platform_enum_problem(host.get("sandbox"), "platform_generation.host.sandbox", SANDBOX_STATES))
+
+    start = value.get("start")
+    if block("platform_generation.start", start, _PLATFORM_START_KEYS):
+        head = start.get("head")
+        if not isinstance(head, str) or not _HEX_ANY.match(head):
+            problems.append("platform_generation.start.head 必须是 40/64 位十六进制 git HEAD")
+        need(_platform_bool_problem(start.get("worktree_clean"), "platform_generation.start.worktree_clean"))
+
+    run = value.get("run")
+    if block("platform_generation.run", run, _PLATFORM_RUN_KEYS):
+        need(_platform_bool_problem(run.get("serial"), "platform_generation.run.serial"))
+        need(_platform_bool_problem(run.get("ci_local_lock_held"), "platform_generation.run.ci_local_lock_held"))
+        need(_platform_int_problem(run.get("concurrent_sessions"), "platform_generation.run.concurrent_sessions", 1))
+
+    declarations = value.get("declarations")
+    if block("platform_generation.declarations", declarations, _PLATFORM_DECLARATION_KEYS):
+        adapter = declarations.get("adapter_config")
+        if block("platform_generation.declarations.adapter_config", adapter, _PLATFORM_ADAPTER_KEYS):
+            need(_platform_text_problem(adapter.get("path"), "platform_generation.declarations.adapter_config.path", path=True))
+            need(_platform_hex_problem(adapter.get("sha256"), "platform_generation.declarations.adapter_config.sha256"))
+            need(_platform_version_problem(adapter.get("agent_version"), "platform_generation.declarations.adapter_config.agent_version"))
+            need(_platform_bool_problem(adapter.get("into_decision"), "platform_generation.declarations.adapter_config.into_decision"))
+            need(_platform_int_problem(adapter.get("max_targets"), "platform_generation.declarations.adapter_config.max_targets"))
+        registry = declarations.get("registry")
+        if block("platform_generation.declarations.registry", registry, _PLATFORM_REGISTRY_KEYS):
+            need(_platform_text_problem(registry.get("path"), "platform_generation.declarations.registry.path", path=True))
+            need(_platform_hex_problem(registry.get("sha256"), "platform_generation.declarations.registry.sha256"))
+            need(_platform_version_problem(registry.get("registry_schema_version"), "platform_generation.declarations.registry.registry_schema_version"))
+            need(_platform_text_problem(registry.get("approved_path"), "platform_generation.declarations.registry.approved_path", path=True))
+            need(_platform_hex_problem(registry.get("approved_sha256"), "platform_generation.declarations.registry.approved_sha256"))
+            need(_platform_text_problem(registry.get("approved_reviewed_by"), "platform_generation.declarations.registry.approved_reviewed_by"))
+            need(_platform_text_problem(registry.get("approved_reviewed_at"), "platform_generation.declarations.registry.approved_reviewed_at"))
+        approval = declarations.get("approval")
+        if block("platform_generation.declarations.approval", approval, _PLATFORM_APPROVAL_KEYS):
+            need(_platform_text_problem(approval.get("path"), "platform_generation.declarations.approval.path", path=True))
+            need(_platform_hex_problem(approval.get("sha256"), "platform_generation.declarations.approval.sha256"))
+        test_layout = declarations.get("test_layout")
+        if block("platform_generation.declarations.test_layout", test_layout, _PLATFORM_TEST_LAYOUT_KEYS):
+            need(_platform_text_problem(test_layout.get("path"), "platform_generation.declarations.test_layout.path", path=True))
+            need(_platform_hex_problem(test_layout.get("sha256"), "platform_generation.declarations.test_layout.sha256"))
+
+    batch = value.get("batch_ledger")
+    if block("platform_generation.batch_ledger", batch, _PLATFORM_BATCH_KEYS):
+        need(_platform_bool_problem(batch.get("enabled"), "platform_generation.batch_ledger.enabled"))
+        need(_platform_bool_problem(batch.get("into_decision"), "platform_generation.batch_ledger.into_decision"))
+        need(_platform_int_problem(batch.get("max_targets"), "platform_generation.batch_ledger.max_targets"))
+        need(_platform_int_problem(batch.get("ttl_hours"), "platform_generation.batch_ledger.ttl_hours", 1))
+        need(_platform_version_problem(batch.get("schema_version"), "platform_generation.batch_ledger.schema_version"))
+    need(_platform_version_problem(value.get("audit_schema_version"), "platform_generation.audit_schema_version"))
+
+    pre_evidence = value.get("pre_evidence")
+    if block("platform_generation.pre_evidence", pre_evidence, _PLATFORM_PRE_EVIDENCE_KEYS):
+        need(_platform_bool_problem(pre_evidence.get("enabled"), "platform_generation.pre_evidence.enabled"))
+        need(_platform_int_problem(pre_evidence.get("timeout_ms"), "platform_generation.pre_evidence.timeout_ms", 1))
+    timeouts = value.get("timeouts")
+    if block("platform_generation.timeouts", timeouts, _PLATFORM_TIMEOUT_KEYS):
+        need(_platform_int_problem(timeouts.get("tool_timeout_ms"), "platform_generation.timeouts.tool_timeout_ms", 1))
+        need(_platform_int_problem(timeouts.get("hooks_timeout_ms"), "platform_generation.timeouts.hooks_timeout_ms", 1))
+
+    model = value.get("model")
+    if block("platform_generation.model", model, _PLATFORM_MODEL_KEYS):
+        need(_platform_text_problem(model.get("id"), "platform_generation.model.id"))
+        need(_platform_hex_problem(model.get("first_message_sha256"), "platform_generation.model.first_message_sha256"))
+        params = model.get("params")
+        if not isinstance(params, dict):
+            problems.append("platform_generation.model.params 必须是对象")
+        else:
+            for key, item in params.items():
+                if not isinstance(key, str) or not key.strip():
+                    problems.append("platform_generation.model.params 的键必须是非空字符串")
+                    continue
+                if isinstance(item, bool) or isinstance(item, (int, float)):
+                    continue
+                if isinstance(item, str) and _absolute_path_in(item) is None:
+                    continue
+                problems.append("platform_generation.model.params.%s 只能是标量或不含绝对路径的字符串" % key)
+
+    observations = value.get("observations")
+    batch_observations: Any = None
+    if block("platform_generation.observations", observations, _PLATFORM_OBSERVATION_KEYS):
+        batch_observations = observations.get("batch")
+        if block("platform_generation.observations.batch", batch_observations, _PLATFORM_BATCH_OBSERVATION_KEYS):
+            for key in ("decisions", "with_batch", "settled", "truncated", "unreadable"):
+                need(_platform_int_problem(batch_observations.get(key), "platform_generation.observations.batch.%s" % key))
+            need(_platform_bool_problem(batch_observations.get("degraded"), "platform_generation.observations.batch.degraded"))
+            decisions = batch_observations.get("decisions")
+            with_batch = batch_observations.get("with_batch")
+            settled = batch_observations.get("settled")
+            if isinstance(decisions, int) and isinstance(with_batch, int) and with_batch > decisions:
+                problems.append("platform_generation.observations.batch.with_batch 不能大于 decisions")
+            if isinstance(settled, int) and isinstance(with_batch, int) and settled > with_batch:
+                problems.append("platform_generation.observations.batch.settled 不能大于 with_batch")
+
+    budget = value.get("budget")
+    if not isinstance(budget, dict):
+        problems.append("platform_generation.budget 必须是对象")
+    elif budget.get("applicable") is True:
+        if set(budget) != {"applicable", "ok", "left_ms", "right_ms", "inequality"}:
+            problems.append("platform_generation.budget 的形状必须是 applicable/ok/left_ms/right_ms/inequality")
+        else:
+            need(_platform_bool_problem(budget.get("ok"), "platform_generation.budget.ok"))
+            need(_platform_int_problem(budget.get("left_ms"), "platform_generation.budget.left_ms"))
+            need(_platform_int_problem(budget.get("right_ms"), "platform_generation.budget.right_ms"))
+            if not isinstance(budget.get("inequality"), str) or not budget.get("inequality", "").strip():
+                problems.append("platform_generation.budget.inequality 必须是非空字符串")
+            pre_block = pre_evidence if isinstance(pre_evidence, dict) else {}
+            timeout_block = timeouts if isinstance(timeouts, dict) else {}
+            expected_left = pre_block.get("timeout_ms", 0) + timeout_block.get("tool_timeout_ms", 0)
+            expected_right = timeout_block.get("hooks_timeout_ms")
+            if budget.get("left_ms") != expected_left:
+                problems.append("platform_generation.budget.left_ms 与 pre_evidence.timeout_ms + tool_timeout_ms 不符")
+            if budget.get("right_ms") != expected_right:
+                problems.append("platform_generation.budget.right_ms 与 timeouts.hooks_timeout_ms 不符")
+            expected_ok = isinstance(expected_right, int) and expected_left < expected_right
+            if budget.get("ok") is not expected_ok:
+                problems.append("platform_generation.budget.ok 与现场重算的预算不等式不符")
+    elif budget.get("applicable") is False:
+        if set(budget) != {"applicable", "reason"}:
+            problems.append("platform_generation.budget 不适用时必须是 {applicable: false, reason}")
+        else:
+            reason = budget.get("reason")
+            if not isinstance(reason, str) or not reason.strip():
+                problems.append("platform_generation.budget.reason 必须是非空字符串")
+        if (pre_evidence or {}).get("enabled") is not False:
+            problems.append("platform_generation.budget.applicable=false 但 pre_evidence.enabled=true")
+    else:
+        problems.append("platform_generation.budget.applicable 必须是布尔值")
+
+    issues = value.get("problems")
+    if not isinstance(issues, list) or any(not isinstance(item, str) for item in issues):
+        problems.append("platform_generation.problems 必须是字符串列表")
+    else:
+        problems.extend("platform_generation: " + item for item in issues)
+
+    if not problems:
+        problems.extend(_platform_semantic_problems(value))
+    return problems
+
+
 # --------------------------------------------------------------------------- 字段组装
 
 
@@ -922,7 +1494,7 @@ _HUMAN_REASONS = {
 
 
 class _Builder:
-    """把 17 个字段逐个算出来；所有问题汇总在 self.problems（生成模式退出 1 的依据）。"""
+    """把 18 个字段逐个算出来；所有问题汇总在 self.problems（生成模式退出 1 的依据）。"""
 
     def __init__(
         self,
@@ -933,6 +1505,7 @@ class _Builder:
         reference_tree: Optional[Path],
         arm_facts: Optional[Dict[str, Any]],
         readings: Optional[Dict[str, Any]],
+        platform_facts: Optional[Dict[str, Any]],
         human_items: Optional[Dict[str, Dict[str, Any]]],
         human_source: Optional[str],
     ) -> None:
@@ -943,8 +1516,10 @@ class _Builder:
         self.reference_tree = reference_tree
         self.arm_facts = arm_facts
         self.readings = readings
+        self.platform_facts = platform_facts
         self.human_items = human_items
         self.human_source = human_source
+        self._first_message_cache: Optional[Dict[str, Any]] = None
         self.problems: List[str] = []
         scorer_entries, malformed, _ = _read_sha256_manifest(
             repo_root, SCORER_REL + "/manifest.sha256"
@@ -977,13 +1552,14 @@ class _Builder:
             "reference_tree": self._reference_tree(),
             "arms": self._arms(),
             "readings": self._readings(),
+            "platform_generation": self._platform_generation(),
             "hidden_author": self._human("hidden_author"),
             "bypass_sampling": self._human("bypass_sampling"),
             "a4_review": self._human("a4_review"),
             "nondeterminism_ruling": self._human("nondeterminism_ruling"),
         }
         if set(fields) != set(RUN_MANIFEST_FIELDS):
-            raise ManifestInputError("内部错误：生成的字段集合与 17 字段契约不一致")
+            raise ManifestInputError("内部错误：生成的字段集合与 18 字段契约不一致")
         return {"schema_version": RUN_MANIFEST_SCHEMA_VERSION, "arm": self.arm, "fields": fields}
 
     # -- 冻结类摘要 -------------------------------------------------------
@@ -1032,13 +1608,17 @@ class _Builder:
         )
 
     def _first_message(self) -> Dict[str, Any]:
+        if self._first_message_cache is not None:
+            return self._first_message_cache
         value, problems = _compute_first_message(self.repo_root, self.task_entries)
         self.problems.extend(problems)
-        return _entry(
+        entry = _entry(
             "recorded",
             value,
             "sha256(task-package/first-message.txt) 与任务包清单的 first-message.txt 行比对",
         )
+        self._first_message_cache = entry
+        return entry
 
     def _configs_after(self) -> Dict[str, Any]:
         value, problems = _compute_configs_after(self.repo_root)
@@ -1127,7 +1707,31 @@ class _Builder:
             "--run-record 的身份键与 dimensions{T,C,A}（按 T、C、A 固定顺序记录，原样保存读数）",
         )
 
+    def _platform_generation(self) -> Dict[str, Any]:
+        if self.platform_facts is None:
+            return _entry(
+                "pending",
+                None,
+                "--platform-facts <JSON>：本臂的宿主 / 沙箱 / 配置与审批摘要 / 批次代际 / 模型 / 起点事实（1.1 新增）",
+                "未提供 --platform-facts（开跑前按冻结清单记录；任何 k≥3 run 之前必填）",
+            )
+        value = self.platform_facts["value"]
+        self.problems.extend("platform_generation: " + problem for problem in value["problems"])
+        expected = self._first_message()["value"]["sha256"]
+        if value["model"]["first_message_sha256"] != expected:
+            self.problems.append(
+                "platform_generation.model.first_message_sha256 与任务包 first-message 的 sha256 不符"
+            )
+        if value["start"]["head"] == "0" * len(value["start"]["head"]):
+            self.problems.append("platform_generation.start.head 不能是全零占位")
+        return _entry(
+            "recorded",
+            value,
+            "--platform-facts：输入逐键校验后原样记录；budget 由工具按三值（pre_evidence + tool < hooks）现场重算",
+        )
+
     # -- 人工项 -----------------------------------------------------------
+
 
     def _human(self, field_id: str) -> Dict[str, Any]:
         item = (self.human_items or {}).get(field_id)
@@ -1287,6 +1891,8 @@ def _verify_field_value(field_id: str, value: Any, repo_root: Path) -> List[str]
         return _verify_arms_structure(value)
     if field_id == "readings":
         return _verify_readings_structure(value)
+    if field_id == "platform_generation":
+        return _verify_platform_structure(value)
     if field_id in HUMAN_FIELD_IDS:
         try:
             status, _ = _validate_human_value(field_id, value)
@@ -1295,7 +1901,7 @@ def _verify_field_value(field_id: str, value: Any, repo_root: Path) -> List[str]
         if status != "recorded":
             return ["%s: recorded 字段不允许 applicable:false 的形态（应记 not_applicable）" % field_id]
         return []
-    return ["%s: 未知字段 id（不在 17 字段契约里）" % field_id]
+    return ["%s: 未知字段 id（不在 18 字段契约里）" % field_id]
 
 
 def _verify_criterion_structure(value: Any) -> List[str]:
@@ -1640,6 +2246,16 @@ def _verify_manifest_file(path: Path, repo_root: Path) -> Tuple[List[str], List[
             )
         except ManifestInputError as error:
             problems.append("%s: 现场重算失败（%s）" % (field_id, error))
+        if field_id == "platform_generation" and isinstance(entry.get("value"), dict):
+            value = entry["value"]
+            first = fields.get("first_message_sha256")
+            first_value = first.get("value") if isinstance(first, dict) else None
+            model = value.get("model")
+            if isinstance(first_value, dict) and isinstance(model, dict):
+                if model.get("first_message_sha256") != first_value.get("sha256"):
+                    problems.append(
+                        "platform_generation: model.first_message_sha256 与 first_message_sha256 字段不符"
+                    )
     return problems, pending, not_applicable
 
 
@@ -1676,7 +2292,7 @@ def _do_check(path: Path, repo_root: Path, strict: bool) -> int:
         note = "0 条 pending"
     if not_applicable:
         note += "；not_applicable：%s" % ", ".join(not_applicable)
-    print("RESULT: PASS（17 字段齐全；%s）" % note)
+    print("RESULT: PASS（18 字段齐全；%s）" % note)
     return EXIT_OK
 
 
@@ -1687,7 +2303,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="run_manifest",
         description=(
-            "D 门 2 的 run-manifest 生成/校验（17 字段契约；"
+            "D 门 2 的 run-manifest 生成/校验（18 字段契约；"
             "0=ok / 1=清单不完整或摘要不符 / 2=用法或读不到声明）"
         ),
     )
@@ -1715,6 +2331,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="run_record",
         metavar="JSON",
         help="生成模式：run-record（至少 schema_version / arm / dimensions{T,C,A}）",
+    )
+    parser.add_argument(
+        "--platform-facts",
+        type=Path,
+        dest="platform_facts",
+        metavar="JSON",
+        help="生成模式：platform_generation 事实 JSON（宿主/沙箱/配置与审批摘要/批次/模型/起点；1.1 起）",
     )
     parser.add_argument(
         "--human-items",
@@ -1754,6 +2377,9 @@ def _generate(args: argparse.Namespace, repo_root: Path) -> int:
     readings = None
     if args.run_record is not None:
         readings = _normalize_run_record(args.run_record.resolve(), args.arm, repo_root)
+    platform_facts = None
+    if args.platform_facts is not None:
+        platform_facts = _normalize_platform_facts(args.platform_facts.resolve(), repo_root)
     human_items = None
     human_source = None
     if args.human_items is not None:
@@ -1770,6 +2396,7 @@ def _generate(args: argparse.Namespace, repo_root: Path) -> int:
         reference_tree,
         arm_facts,
         readings,
+        platform_facts,
         human_items,
         human_source,
     )

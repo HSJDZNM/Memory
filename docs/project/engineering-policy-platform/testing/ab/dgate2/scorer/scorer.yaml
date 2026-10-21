@@ -2,7 +2,7 @@
 # 判据原文见 docs/project/engineering-policy-platform/readings/2026-10-19-D-gate2-treatment.md §4。
 # 不加时戳、不加 run id、不写绝对路径：相同输入两次读取逐字节相同。
 schema_id: dgate2-scorer/1
-version: "2"
+version: "3"
 
 purpose: >-
   2026-10-19 D 门 2 的评分器机读规格：把 readings/2026-10-19-D-gate2-treatment.md §4 的
@@ -29,8 +29,12 @@ freeze:
     Lead（使用者 2026-10-19 授权「各决策点自行研讨决策」，可复核/可回退）。冻结对象 = 本文件 +
     README 的冻结记录 + 当时的 manifest.sha256；签字后改任何输入 = 换判据（invalidation.hash_mismatch 作废该 run）。
   frozen_note: >-
-    version 1 → 2：本次冻结新增了 criterion_sources / run_manifest_fields / self_proof 三块（键集合变了，
+    version 1 → 2：新增 criterion_sources / run_manifest_fields / self_proof 三块（键集合变了，
     按 AGENTS 第 55 条显式递增），并把 status 从 pending_signature 改为 frozen。
+    version 2 → 3（2026-10-21，实验冻结裁决 task-6/task-7）：run_manifest_fields 新增第 18 条
+    platform_generation（宿主 / 沙箱 / 每臂 adapter+registry+approval 摘要 / 批次代际 / 预算三值 /
+    模型 / 起点 / 批次观测），与 RUN_MANIFEST_SCHEMA_VERSION 1.0→1.1 同批；T/C/A 权重、规则集、
+    作废条件与既有 17 条字段的语义没变；旧 run-manifest 因载荷形状变化不再可比。
   criterion_sources:
     - path: docs/project/engineering-policy-platform/readings/2026-10-19-D-gate2-treatment.md
       sha256: 37861959ce345a1177aac5cab053a0b159e92f46b298ef0e2bc2bc096fba68b6
@@ -621,3 +625,4 @@ run_manifest_fields:
     - {id: bypass_sampling, value: H2 抽样文件 + 结论 + 抽样人}
     - {id: a4_review, value: H3 人看的位置 + 结论}
     - {id: nondeterminism_ruling, value: H4 若两次读数不同：差异指针 + 裁定 + 依据}
+    - {id: platform_generation, value: 本臂的平台代际：宿主/沙箱、adapter+registry+approval 摘要、batch_ledger 与审计轴、预算三值、模型、起点、批次观测（1.1 起）}

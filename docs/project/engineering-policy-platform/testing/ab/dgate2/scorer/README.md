@@ -9,7 +9,9 @@ C 走既有的 `policy.check`，A 走 `tools/structure_metrics.py`，T 走 `../h
 （`scorer.yaml` 的 `invalidation` + `manifest.sha256`）。
 
 **冻结状态**：`scorer.yaml` 的 `freeze.status = frozen`（2026-10-19，version 1 → 2；
-冻结人 = Lead，使用者当日授权「各决策点自行研讨决策」，可复核 / 可回退）。
+**2026-10-21，version 2 → 3**：`run_manifest_fields` 新增第 18 条 `platform_generation`，与
+`RUN_MANIFEST_SCHEMA_VERSION` 1.0→1.1 同批，理由见 §11.3；冻结人 = Lead，使用者当日授权
+「各决策点自行研讨决策」，可复核 / 可回退）。
 冻结后改任何输入 = 换判据，该 run 作废（见 `scorer.yaml` 的 `invalidation` 与 §11）。
 
 ## 1 这里有什么
@@ -238,7 +240,7 @@ POSIX 上清单就是 `sha256sum -c` 的格式（`<sha256>  <path>`、LF、单�
 
 | 项 | 值 |
 | --- | --- |
-| 判据版本 | `schema_id: dgate2-scorer/1`、`version: "2"`（v1 → v2 新增 `criterion_sources` / `run_manifest_fields` / `self_proof`，并把 `freeze.status` 翻成 `frozen`） |
+| 判据版本 | `schema_id: dgate2-scorer/1`、`version: "3"`（v1 → v2 新增 `criterion_sources` / `run_manifest_fields` / `self_proof`，并把 `freeze.status` 翻成 `frozen`；v2 → v3 见 §11.3） |
 | 冻结人 | Lead（使用者 2026-10-19 授权自行决策，可复核/可回退） |
 | 冻结输入 | `manifest.sha256` 覆盖的 7 组输入（任务包整目录、configs/after 整目录、本目录整目录、hidden 两文件、tools 两文件） |
 | 组合摘要 | **不嵌在本文件**（本文件在清单里，自指哈希会变）：以 `make_manifest.py --check --strict` 的 exit 0 与冻结提交正文里记的 `manifest.sha256` sha256 为准，run-manifest 必记同一份 |
@@ -266,3 +268,14 @@ POSIX 上清单就是 `sha256sum -c` 的格式（`<sha256>  <path>`、LF、单�
 - 第 5、8 条顺带触发了别的规则（STYLE-002 / SEC-015），判定按「命中集合包含目标规则」判，不假装它是唯一命中；
 - **DOC-001 的 targets 是 module / class / function**（方法级刻意不在范围，见 `policies/coding/DOC-001.yaml`）：所以第 6 条的变异对象是类 docstring，删方法 docstring 不会红——这一点在 A7（`structure_metrics`，含方法）与 DOC-001 之间是**有意不同**，不是缺口；
 - 这 8 条只证明「C 的仪器能红」，不证明「C 能区分好解法与坏解法」——C 对合法解仍是 30/30（§10 天花板）。
+
+### 11.3 2026-10-21 升版记录（version 2 → 3）
+
+| 项 | 值 |
+| --- | --- |
+| 触发 | `readings/2026-10-21-c1b-treatment-adjudication.md` §4.2（17 字段不足以记录平台代际）与 `readings/2026-10-21-experiment-freeze-adjudication.md` §3（宿主 / 沙箱 / 配置审批 / 预算 / 模型 / 起点必须进同一份自我描述） |
+| 改了什么 | `run_manifest_fields` 追加第 18 条 `platform_generation`；`version` "2" → "3"；重生成 `manifest.sha256` |
+| 没改什么 | T/C/A 权重、8 条规则、作废条件、既有 17 条字段的语义（`invalidation` / `measurement` / `ceiling` 一个字没动） |
+| 同批 | `run-manifest/run_manifest.py` 的 `RUN_MANIFEST_SCHEMA_VERSION` 1.0 → 1.1（字段集合变了，AGENTS 第 55 条）；`run-manifest/README.md` 与 `tests/unit/test_dgate2_run_manifest.py` 同步 |
+| 代价 | 旧 `runs/2026-10-20/*/run-manifest.json` 与新载荷形状不同，不能合并引用（本目录的 `manifest.sha256` 也随之换了一份组合摘要） |
+| 冻结人 | Lead（沿用 2026-10-19 的授权；本次是**载荷形状**升版，不是新判据：T/C/A 数值与阈值未变） |

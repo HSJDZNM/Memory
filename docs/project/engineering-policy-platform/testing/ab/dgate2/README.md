@@ -13,7 +13,7 @@
 | `hidden/` | 30 条隐藏验收 + `runner.py`（T 维度） | **是**（在 scorer 清单里） |
 | `configs/` | `before`（A 臂）与 `after`（B 臂/treatment）两份 9 文件配置快照，各带 `sha256.txt` | 是（`after` 在 scorer 清单里；`before` 由自己的 `sha256.txt` 冻结） |
 | `c-arm/` | C 臂（不治理）装配器与冒烟读数 | 否（装配工具；读数在 README） |
-| `run-manifest/` | 17 字段 run-manifest 的生成/校验器 + README + 用例（`RUN_MANIFEST_SCHEMA_VERSION 1.0`） | 否（工具；输入是上面那些冻结件） |
+| `run-manifest/` | 18 字段 run-manifest 的生成/校验器 + README + 用例（`RUN_MANIFEST_SCHEMA_VERSION 1.1`；1.1 起含 `platform_generation`） | 否（工具；输入是上面那些冻结件） |
 | `run-record/` | T/C/A 三维读数采集器 + README + 用例（`RUN_RECORD_SCHEMA_VERSION 1.0`） | 否（工具） |
 | `runs/2026-10-20/` | A/B/C 各一次 run 的 `arm-facts.json` / `run-record.json` / `human-items.json` / `run-manifest.json` | 否（run 证据；改它不改变判据，但读数不可重跑） |
 

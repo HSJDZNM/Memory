@@ -1,14 +1,14 @@
-# D 门 2 · run-manifest（17 字段契约）
+# D 门 2 · run-manifest（18 字段契约）
 
-`scorer/scorer.yaml` 的 `run_manifest_fields` 规定了每次 run 必须记下的 17 个字段。本目录把它
+`scorer/scorer.yaml` 的 `run_manifest_fields` 规定了每次 run 必须记下的 18 个字段。本目录把它
 变成**可生成、可校验**的载荷：`run_manifest.py` 现场计算每个字段并写出确定性 JSON；
 `--check` 重算冻结类摘要并逐项比对。它**不**生成 `scorer/manifest.sha256`，也**不**改动任何冻结输入。
 
 | 文件 | 作用 |
 | --- | --- |
-| `run_manifest.py` | 生成 / 校验（`RUN_MANIFEST_SCHEMA_VERSION = "1.0"`，首次建轴） |
+| `run_manifest.py` | 生成 / 校验（`RUN_MANIFEST_SCHEMA_VERSION = "1.1"`；1.0 首次建轴，1.1 新增 `platform_generation`） |
 | `README.md` | 本文件：字段表、用法、退出码、确定性与边界 |
-| `tests/unit/test_dgate2_run_manifest.py` | 17 字段契约、三态、确定性、摘要漂移与退出码的回归 |
+| `tests/unit/test_dgate2_run_manifest.py` | 18 字段契约、三态、确定性、摘要漂移与退出码的回归 |
 
 ## 1 字段表
 
@@ -34,9 +34,10 @@
 | `bypass_sampling` | `--human-items JSON` | H2：`{files, conclusion, sampler}` 原样记录 | pending | recorded |
 | `a4_review` | `--human-items JSON` | H3：`{location, conclusion}` 原样记录 | pending | recorded |
 | `nondeterminism_ruling` | `--human-items JSON` | H4：`{applicable:false, reason}` → not_applicable；或 `{diff_pointer, ruling, basis}` → recorded | pending | recorded / not_applicable |
+| `platform_generation` | `--platform-facts JSON` | 逐键严格校验（未知键 / 类型错 / 枚举错 = 退出 2）；`budget` 由工具按三值现场重算；跨字段矛盾（serial、into_decision、degraded）记 problems → 退出 1 | pending | recorded |
 
 每条字段的形状固定为 `{status, value, source}`；`pending` / `not_applicable` 另带 `reason`。
-生成模式汇总一行：`fields=17 recorded=… pending=… not_applicable=… manifest_check=… combined_digest=sha256:…`。
+生成模式汇总一行：`fields=18 recorded=… pending=… not_applicable=… manifest_check=… combined_digest=sha256:…`。
 
 ## 2 三条用法
 
@@ -46,8 +47,13 @@
 # ① 开跑前：先记一份只有冻结事实的清单（reference_tree / arms / readings / H1–H4 都是 pending）
 .venv/Scripts/python.exe $R/run_manifest.py --arm A --out .tmp/dgate2/run-manifest-A.json
 
-# ② 跑完：补参考树、臂事实、run-record 与四项人工记录（四份输入都写成仓库相对路径）
+# ①′ 开跑前补平台代际事实（1.1 起；任何 k≥3 run 之前必须给）
 .venv/Scripts/python.exe $R/run_manifest.py --arm A --out .tmp/dgate2/run-manifest-A.json \
+  --platform-facts .tmp/dge2/platform-facts-A.json
+
+# ② 跑完：补参考树、臂事实、run-record 与四项人工记录（输入都写成仓库相对路径）
+.venv/Scripts/python.exe $R/run_manifest.py --arm A --out .tmp/dgate2/run-manifest-A.json \
+  --platform-facts .tmp/dge2/platform-facts-A.json \
   --reference-tree .tmp/dge2/ref \
   --arm-facts .tmp/dge2/arm-facts-A.json \
   --run-record .tmp/dge2/run-record-A.json \
@@ -95,6 +101,47 @@ A/B 臂必须**显式**声明 `patch`（可以是 null）与 `launcher_sandbox`�
 }
 ```
 
+### 2.1 `--platform-facts` 的形状（1.1 起；任何 k≥3 run 之前必给）
+
+```json
+{
+  "host": {
+    "entry": "desktop",
+    "dsh_runtime": "0.2.1-rc.2",
+    "dsh_source": "app_bundled",
+    "dsh_entry": "<install>/resources/runtime/cli/bin/dsh.cmd",
+    "profile": "desktop-gui",
+    "session_sandbox": "workspace-write",
+    "file_policy": "danger-full-access",
+    "sandbox": "unrestricted"
+  },
+  "start": {"head": "<40/64 位十六进制>", "worktree_clean": true},
+  "run": {"serial": true, "ci_local_lock_held": false, "concurrent_sessions": 1},
+  "declarations": {
+    "adapter_config": {"path": "<governed>/.policy/dsh-adapter.yaml", "sha256": "<摘要>", "agent_version": "0.2.1-rc.2", "into_decision": true, "max_targets": 20},
+    "registry": {"path": "<governed>/.policy/tool-registry.local.yaml", "sha256": "<摘要>", "registry_schema_version": "1.4", "approved_path": "<governed>/.policy/tool-registry.approved.json", "approved_sha256": "<摘要>", "approved_reviewed_by": "dshznm", "approved_reviewed_at": "<approved.json 里的值>"},
+    "approval": {"path": "<governed>/.policy/approval.json", "sha256": "<摘要>"},
+    "test_layout": {"path": "validation/test-layout.yaml", "sha256": "<摘要>"}
+  },
+  "batch_ledger": {"enabled": true, "into_decision": true, "max_targets": 20, "ttl_hours": 24, "schema_version": "1.1"},
+  "audit_schema_version": "1.5",
+  "pre_evidence": {"enabled": true, "timeout_ms": 20000},
+  "timeouts": {"tool_timeout_ms": 5000, "hooks_timeout_ms": 30000},
+  "model": {"id": "<会话 header 的模型标识>", "params": {"temperature": 0}, "first_message_sha256": "<任务包首消息摘要>"},
+  "observations": {"batch": {"decisions": 9, "with_batch": 6, "settled": 6, "truncated": 0, "unreadable": 0, "degraded": false}}
+}
+```
+
+- 键集合是闭集：**任何未知键都退出 2**（不部分接受）；枚举/类型/摘要形状同样。
+- `budget` **不写在输入里**：工具按 `pre_evidence.timeout_ms + timeouts.tool_timeout_ms < timeouts.hooks_timeout_ms`
+  现场算 `{applicable, ok, left_ms, right_ms, inequality}`；不成立 = 清单不合格（退出 1）。
+  未开 pre_evidence 时记 `{applicable:false, reason}`。
+- 跨字段矛盾记 `problems`（退出 1）：`run.serial` 与 `ci_local_lock_held/concurrent_sessions`、
+  `adapter_config.into_decision` ↔ `batch_ledger.into_decision`、`degraded` 与 `unreadable/truncated`。
+- 路径字段只接受**仓库相对路径**或 `<install>` / `<npm-global>` / `<governed>` / `<DSH_HOME>` /
+  `<temp>` / `<workspace>` / `<outside-workspace>` token；`host.dsh_entry` 只接受 token（宿主不在仓库里）。
+- `model.first_message_sha256` 必须等于 `first_message_sha256` 字段算出的摘要（跨字段核对，不符退出 1）。
+
 ## 3 退出码与输出
 
 | 模式 | 0 | 1 | 2 |
@@ -133,13 +180,17 @@ A/B 臂必须**显式**声明 `patch`（可以是 null）与 `launcher_sandbox`�
    run 期间是否被改写，由读 run-manifest 的 run 报告按 `spec_text_drift` 判定。
 5. **臂事实只抽四类**：未知键不拒绝、不复制；原始 JSON 的 sha256 记在 `arms.source_sha256`，
    以后可据此核对「这份 manifest 取自哪份启动记录」。
-6. **不替代 `make_manifest.py`**：冻结门禁仍是 `scorer/make_manifest.py --check --strict`；
+6. **`platform_generation` 反过来：全量复制、未知键一律拒收**（1.1 起）。它不抽摘要就够，而是把
+   宿主 / 沙箱 / 每臂配置与审批 / 批次代际 / 预算 / 模型逐键写进载荷，让「这次 run 的平台是哪一代」
+   不依赖任何 `.tmp` 旁文件。`budget` 是唯一由工具**算出**的子对象（三值现场重算）。
+7. **不替代 `make_manifest.py`**：冻结门禁仍是 `scorer/make_manifest.py --check --strict`；
    `manifest_check` 字段是它的实时读数。
-7. **pending 不是通过**（AGENTS 第 51 条）：开跑前清单允许 pending；`--strict` 才是完整性门禁。
+8. **pending 不是通过**（AGENTS 第 51 条）：开跑前清单允许 pending；`--strict` 才是完整性门禁。
+   `platform_generation` 在没给 `--platform-facts` 时就是 pending —— 开跑前的清单不是「平台代际已记录」。
 
 ## 6 建议登记进 AGENTS 第 55 条 dgate2 条目的一句话（由 Lead 落）
 
-> `dgate2/run-manifest/run_manifest.py` 的 `RUN_MANIFEST_SCHEMA_VERSION = "1.0"`（17 字段 run-manifest 载荷，**1.0 = 首次建轴**：三态字段 + 摘要现场重算；加键或改语义必须按本条递增，并同批改 README 与测试）。
+> `dgate2/run-manifest/run_manifest.py` 的 `RUN_MANIFEST_SCHEMA_VERSION = "1.1"`（18 字段 run-manifest 载荷：**1.0 = 首次建轴**（三态字段 + 摘要现场重算）；**1.1 = 新增 `platform_generation`**（2026-10-21 实验冻结裁决，宿主/沙箱/配置审批/批次代际/预算/模型/起点）；加键或改语义必须按本条递增，并同批改 README 与测试）。
 
 ## 7 与 scorer/README 的对应
 
@@ -149,3 +200,4 @@ A/B 臂必须**显式**声明 `patch`（可以是 null）与 `launcher_sandbox`�
 | §5 复核命令 | `manifest_check.result_line`（`make_manifest.py --check --strict` 的末行 RESULT） |
 | §6 人工项 H1–H4 | `hidden_author` / `bypass_sampling` / `a4_review` / `nondeterminism_ruling` |
 | §11 冻结记录 | `head` / `criterion_sources` / `rule_set_identity` / `hidden_digests` / `arms` / `readings` |
+| §11.3 升版（v2 → v3） | `platform_generation` + `RUN_MANIFEST_SCHEMA_VERSION` 1.1（字段集合变了） |
