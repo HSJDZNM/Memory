@@ -1,0 +1,44 @@
+# v2 台账（data/ledger-v2.jsonl）的形状声明：**只读输入**，迁移工具与校验工具都按它判定。
+#
+# 为什么是 YAML 而不是 JSON：这份文件要能写注释（每个键为什么这么约束），json 表达不了。
+# 因此读它的代码必须用 yaml.safe_load（SEC-006）；json.load 在这份文件上会直接失败。
+#
+# 顶层键集合固定（多一个/少一个都是坏 schema）：schema_id / version / key_order / sort_by /
+# sort_direction / fields。key_order 必须与 fields 的键集合相同，且顺序就是输出行里键的顺序。
+schema_id: ledger-schema/2
+version: 2
+
+# 输出每一行里键的**顺序**（不是字母序）：迁移产物必须逐行按这个顺序写。
+key_order:
+  - schema_version
+  - entry_id
+  - order_id
+  - amount_cents
+  - reason
+  - status
+
+# 记录之间的排序：按 sort_by 升序（asc）/ 降序（desc）；迁移产物必须是 asc。
+sort_by: entry_id
+sort_direction: asc
+
+# 每个键的类型与取值范围。允许的约束键：type / const / min / min_length / enum。
+fields:
+  schema_version:
+    type: int
+    const: 2
+  entry_id:
+    type: int
+    min: 0
+  order_id:
+    type: int
+    min: 0
+  amount_cents:
+    type: int
+    min: 0
+  reason:
+    type: str
+    min_length: 1
+  status:
+    type: str
+    enum:
+      - migrated

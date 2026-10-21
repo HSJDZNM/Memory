@@ -3,8 +3,9 @@
 > **它是什么**：题库第 4 题——把订单项目的 v1 JSONL 台账迁到 v2（`schema_version: 2`），要求**无损、原子、
 > 幂等、失败关闭**。模型要写 1 个 model 层纯函数模块（读 schema / 读 v1 / 映射校验排序 / 原子写 v2）、
 > 2 个工具脚本（迁移与校验）、3 个同名测试、1 篇迁移文档，并更新 README。
-> **冻结状态**：**只冻结了基线、任务包、C/A 两维与允许写**；隐藏验收代码/PLAN、参考解、T 的 total 与
-> case_ids、A 的天花板**都还没做**（见 §8）。本包**不含隐藏验收代码**（下一批任务）。
+> **冻结状态**：基线、任务包、C/A 两维与允许写已冻结；**hidden（PLAN 40 条 + runner）、reference 与天花板
+> 都已完成**——T 的 total（40）与 case_ids 已冻结，A 的 10/10 与 C 的 27/27 已在参考树上实测（见 §7、§8）。
+> **Lead 签字（frozen_by）仍未做**：这里只冻结 T，不冒充 Lead。
 > **用法**：Lead 用 `reset-arm.py` 重置基线 → 以任务树为 cwd 起受治会话 → 首消息 = `task-package/first-message.md`。
 
 ## 1 基线（13 文件；只读，除允许写集合里的 `README.md`）
@@ -47,7 +48,7 @@
 | `reset-arm.py` | `ac97587897fded68031d146e69203f48a05a75ab3c4cb4e6d0a3f673423ed9bd`（不在 manifest 里；它只冻结基线） |
 | `layers.yaml` | `1752fd6a4a4418b802f5e56be0f88fd9c16584443a8846d4fb1250d8f17ee3e6` |
 | `interfaces.yaml` | `e7bf3bbabe5054c84cf27f6d9543024c263ab66f70279a29f7115d3a1785fea5` |
-| `scoring.yaml` | `7a0aa0abf96d69001e9b2d6b71e3800e3db9a77777a675e29d9fe245bb553c45` |
+| `scoring.yaml` | `42640f6b6e882b04e7ce85e00686ef68f30be5d145e66a425f94003c2c190c87`（T 冻结后的取值；冻结前是 `7a0aa0ab…`） |
 | `baseline/`（13 文件） | 组合摘要 `eedac602c64c7dbd4633d01a481495fa489406ac08e3a85a2c1c4ac2e0c91fa3` |
 
 复核（Lead 开跑前逐行比对，5/5 必须 ok；任一不符 => 该 run 作废）：
@@ -143,20 +144,38 @@ dsh --profile headless --patch .policy/patch.yml $task
 | A 维度声明 | `python tools/structure_metrics.py --workspace .tmp/bank-data-migration/scratch --layers .../layers.yaml --interfaces .../interfaces.yaml --json` | exit 0，A1–A10 全 pass，`declared_unmatched` 为空（**构造树**，不是参考解） |
 | 文本规范 | `python tools/check_text_conventions.py <24 个文件>` | `问题 0 处` |
 
-## 8 完成度（明确未做）
+### 7.1 隐藏验收与参考解（本轮新增，全部实测）
+
+| 项 | 命令（相对仓库根；`<tree>` = 被评树） | 读数 |
+| --- | --- | --- |
+| **T（基线红）** | `BANK_TASK_TREE=<baseline 的 13 文件副本> python <task>/hidden/runner.py` | exit 1，**passed 2 / total 40**；两次运行 stdout 逐字节相同（sha256 `2b813af526881c878995ff03e12c0214779b632cee04bd279184e1e755c9f67f`）。通过的 2 条是 T29（未改动 ⇒ 树 diff 干净）与 EN1（基线 3 条本来就绿） |
+| **T（参考解）** | `BANK_TASK_TREE=<task>/reference/tree python <task>/hidden/runner.py` | exit 0，**passed 40 / total 40**；两次运行逐字节相同（sha256 `23bb6880c25bc46a41e3ab6165d3fcef1cb4e84f84258ca27ab7278059b22581`）；weighted = 40 |
+| 参考树 pytest | 树根 `python -m pytest -q`（临时目录指到树外） | exit 0，**19 passed** |
+| **A（参考树）** | `python tools/structure_metrics.py --workspace <task>/reference/tree --layers .../layers.yaml --interfaces .../interfaces.yaml --json` | exit 0，**A1–A10 全 pass（10/10）**，`declared_unmatched: []`，21 条层声明 / 14 个 .py 全命中 |
+| **C（参考树）** | 6 个 file_set 文件各跑一次 `policy.check`（9 个 `--changed`、显式 `--layer`、`--operation edit`、固定 `--request-id`） | 6/6 `allow`、**0 error 级 violation**；每次只跳过 `ARCH-001@1`（scope_mismatch），`complete=true`；**C = 21 + 3 + 3 = 27/27（effective_total）** |
+| 冻结文件 | 12 个逐字节比对 | **12/12 不变**；树 diff 的 9 条改动 ⊆ allowed-writes |
+| 参考树摘要 | 21 文件组合摘要 | `d162fcc632c9fffd03f023f9dbbaddfb97bc02a46e34bf2fd1f690fe7f3173ca` |
+| hidden 摘要 | 实算 sha256 | PLAN `acd21468f20bbb3dd94a3860e97c881ec617f93dd8befe3bbf1b0d0c0d57254f`；runner `156024acce457057edd106f63be8d91a8bc293a5f85d1250e2e52d21469a8d3b` |
+| exit 2 自检 | 缺 `BANK_TASK_TREE` / 树不存在 / case 注册表被删一条 | 3/3 exit 2 且 stdout 为空（2 = 跑不成，不是 0 分） |
+
+> 复跑命令、逐文件 C 读数与决策点见 `reference/README.md`；T 的 40 条判据见 `hidden/PLAN.md`。
+
+## 8 完成度（hidden + reference + 天花板已完成）
 
 | 件 | 状态 |
 | --- | --- |
 | `baseline/`（13 文件） | **已落盘**（11 个逐字节复制 + 2 个构造），组合摘要可复核 |
 | `task-package/`（6 文件） | **已冻结**（5 文件 + manifest 5/5） |
 | `reset-arm.py` | **已实测**（dry-run + 真跑 13/13） |
-| `layers.yaml` / `interfaces.yaml` | **已写**；加载性与 A1–A10 一致性在构造树上实测通过（A3 上限据此校准） |
-| `scoring.yaml` | **C/A 两维已冻结**；T 的 `status: pending_hidden`、`total: null`、`case_ids: []`、`planned_min_total: 30` |
+| `layers.yaml` / `interfaces.yaml` | **已写**；参考树上实测 A1–A10 全 pass（未改任何阈值/声明） |
+| `scoring.yaml` | **T/C/A 三维全部冻结**：T `status: frozen` / `total: 40` / 40 个 `case_ids` / 22 个 `reverse_cases` / `freeze_note: null`，两个 hidden 摘要已回填；C/A 两维沿用冻结值 |
 | `coverage.md` | **已写**（43 条逐行 + A1–A10 + 隐藏面规划 + 12 个探针读数） |
-| `hidden/`（PLAN + runner + 用例代码） | **未做**（下一批任务；本包不含隐藏验收代码） |
-| `reference/`（参考解） | **未做**（所以 A 的「可达天花板」与 T 的可达性都还没测） |
-| T 的 `total` / `case_ids` / `reverse_cases` | **未冻结**（隐藏代码落盘后再冻结；此刻任何 T 读数都不是读数） |
-| `frozen_by` 签字 / 审批条子 / 真机会话 | **未做**（使用者与 Lead 的事） |
+| `hidden/`（PLAN + runner） | **已完成**：`PLAN.md` 40 条（T01–T32 / EN1–EN4 / I1–I4）+ 单文件 `runner.py`（只读树副本、60 秒超时、exit 0/1/2、两次逐字节相同） |
+| `reference/`（参考解） | **已完成**：`reference/tree/`（21 文件）+ `reference/README.md`（决策点 / 读数 / 命令 / 偏差） |
+| T 的 `total` / `case_ids` / `reverse_cases` | **已冻结**（40 / 40 个 id / 22 个反向用例；基线 2/40、参考解 40/40 均实测） |
+| A 的天花板 | **已实测**：参考树 10/10（exit 0） |
+| C 的天花板 | **已实测**：参考树 6/6 `allow`、0 error 级 violation ⇒ 27/27（effective_total） |
+| `frozen_by` 签字 / 审批条子 / 真机会话 | **未做**（使用者与 Lead 的事；`frozen_by` 保持 `pending_lead_signature`） |
 
 ## 9 边界（引用本包前必须读）
 
