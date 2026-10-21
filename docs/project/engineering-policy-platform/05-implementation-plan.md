@@ -165,7 +165,7 @@
 
 | 编号 | 内容 | 前置 | 人日 | 门 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| C1 | 批次台账：未结清集合进判定输入 | B2 落地；协议升版 | 5 | 三步（实现→测试→conftest）逐步 decision 与合并判定相等；批次能被显式 settle/abandon | **C1-a 已落地**（2026-10-21，05a05d5，只报告：批次落盘 + 审计 `batch_ref`，批次不进 evaluate；审计 1.3→1.4）；**C1-b（批次进判定）待裁定**，残项见 04 5.88 |
+| C1 | 批次台账：未结清集合进判定输入 | B2 落地；协议升版 | 5 | 三步（实现→测试→conftest）逐步 decision 与合并判定相等；批次能被显式 settle/abandon | **C1-a 已落地**（2026-10-21，05a05d5，只报告：批次落盘 + 审计 `batch_ref`，批次不进 evaluate；审计 1.3→1.4）；**C1-b 已落地（2026-10-21，opt-in）**：`BATCH_LEDGER_SCHEMA_VERSION` 1.0→1.1、`AUDIT_SCHEMA_VERSION` 1.4→1.5；`batch_ledger.into_decision`（默认 false）+ `max_targets`；`pre_evidence` 的 `changed_files` 并入批次成员（只加宽判定范围、不改取证树）；裁定口径见 04 5.46；残项与真机读数见 04 5.88 |
 | C2 | 证据第三态（不适用） | 书面裁定 + EVIDENCE/PIPELINE 升版 + 到期日 | 3 | 「同一输入从 block 变 allow」的用例；反例一条不放宽 | 待裁定 |
 | C3 | 最终树门禁 + 规则集哈希钉住 + 危险动作前置阻断 | 无（可独立） | 5 | 门禁能对整棵树跑 43 条 + 真实验证器；规则集被改能被发现；删除/执行/控制面写被前置阻断 | **v1 已落地**（2026-10-20 aca9491：整树判定 + 规则集哈希钉住）＋ **第三件 v1 已落地**（2026-10-21 8e6a3cb：控制面 `.policy` 写面阻断 + 三路径验证套件）＋ **执行面 v2 已落地**（2026-10-21 45d6168：`.git` 与 `.github/workflows` 纳入受保护前缀；27 条矩阵 7 条翻面、20 条相等）；读数 `readings/2026-10-20-C3-final-tree-gate.md`、`readings/2026-10-21-C3-control-plane-write-guard.md`、`readings/2026-10-21-C3-git-surface-guard.md`；其余治理面（dgate2/evaluation/语料/文档）按「规则 + 审批」不封（04 5.87） |
 | C4 | 回合末 steer 门禁（可选） | **先验证** agent.steer 在桌面 profile 的插件 API 里可用；再裁定 | 3 | 真机：存在未结清文件时能多跑一步；不存在时不多跑 | 待验证 |
