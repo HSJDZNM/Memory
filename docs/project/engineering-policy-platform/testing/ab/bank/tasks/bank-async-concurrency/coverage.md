@@ -1,5 +1,10 @@
 # 覆盖表（bank-async-concurrency）
 
+> **2026-10-21 深夜状态（本覆盖表快照之后）**：本题 hidden/PLAN.md（38 条）与 hidden/runner.py、
+> reference/tree/ 与天花板已落盘并实测：T 基线 2/38、参考树 38/38；C effective_total 27/27；A 10/10。
+> 本文正文里「hidden 未实现 / 未测 / pending_hidden」的措辞是该批落地前的快照；当前读数以本题
+> README 的「天花板读数」节与 reference/README.md 为准。
+
 > **口径**：● = 本题有真实岔口（错法会命中）；○ = 本题不设计岔口、留作变异（规则在**同一写面**上
 > 仍可触发）；— = 结构性不适用（**不许**从 `allow` 反推成「查过没问题」）；◐ = 只能靠隐藏验收。
 > **证据等级**：`实测` = 构建本包时在基线副本 + 构造变异上跑了真 `policy.check`（读数见 §2）；

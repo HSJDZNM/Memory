@@ -4,28 +4,28 @@
 # 只复用 T/C/A=40/30/30 与 C/A 的口径，**不复制字节**；dgate2 冻结件一个字节不动。
 # 本文件自己的轴 = schema_id + version（bank-scoring，现处 2）。
 #
-# 冻结状态（读之前先看这一条）：**C 与 A 已冻结；T 未冻结**。
-#   dimension_t.status = pending_hidden，total = null，case_ids = []，planned_min_total = 30。
-#   隐藏验收代码（hidden/runner.py + 用例 + PLAN.md）由下一批独立子会话写；代码落盘并复核后，
-#   才把 total 与 case_ids 冻结进本文件（同批更新 frozen_inputs.hidden_plan_sha256 /
-#   hidden_runner_sha256）。**当前不得把 T 读成 0 分或 48 分**。
+# 冻结状态（读之前先看这一条）：**T / C / A 三维都已冻结**。
+#   dimension_t.status = frozen，total = 38，case_ids = T01-T23 / EN1-EN8 / I1-I7；
+#   hidden/runner.py 与 hidden/PLAN.md 已落盘并在参考树上实测 38/38（基线 2/38），
+#   frozen_inputs 的两个 hidden 摘要是实算值（不是 null、不是空串）。
+#   **冻结的是 T 的读数依据，不是 Lead 签字**：frozen_by 仍是 pending_lead_signature。
 #
 # 形状 = **bank-scoring/2**（2026-10-21 §4.2 收口）：顶层 18 键、frozen_inputs 11 键、dimension_t 13 键；
 # 同一版本号下只有一种维度形状——pending 与 frozen 只差取值、不差键集合，顶层 status 是判别符。
-# 本题是 pending：status: pending_hidden、frozen_by: pending_lead_signature、两个 hidden 摘要为 null。
+# 本题是 frozen：status: frozen、frozen_by: pending_lead_signature、两个 hidden 摘要为实算值。
 # C 维度：ARCH-001 结构性不适用（file_set 无 controller 层）→ 见 dimension_c.not_applicable，
 # effective_total = 27；不把 skipped_rules 读成通过。
 schema_id: bank-scoring/2
 version: "2"
 task_id: bank-async-concurrency
 operation_type: 并发 / 异步（同步通知队列 → 确定性 asyncio 工作队列：有界、幂等、取消、停机排空）
-status: pending_hidden
+status: frozen
 frozen_by: pending_lead_signature
 authority: >-
-  本文件与题库其余冻结件同批可复核、可回退。冻结对象 = 本文件字节 + frozen_inputs 中**非 null**
-  的八个摘要（hidden_plan_sha256 / hidden_runner_sha256 为 null = 隐藏代码未落盘，不是空串）；
-  改任一项 = 换判据。T 维度的 total / case_ids 尚未冻结（见 dimension_t.freeze_note），
-  且本文件**未经 Lead 签字**（frozen_by = pending_lead_signature），不把 pending 读成 frozen。
+  本文件与题库其余冻结件同批可复核、可回退。冻结对象 = 本文件字节 + frozen_inputs 的十个摘要
+  （hidden_plan_sha256 / hidden_runner_sha256 现为实算值，写死当天与 total / case_ids 同批落盘）；
+  改任一项 = 换判据。T 的 total = 38 与 case_ids 已冻结，但本文件**仍未经 Lead 签字**
+  （frozen_by = pending_lead_signature）——冻结的是读数依据，签字是另一件事。
 
 invariants:
   - 本文件不含时戳、run id、绝对路径、耗时；相同输入两次读取逐字节相同。
@@ -33,10 +33,10 @@ invariants:
     bank/README.md 与该题的冻结记录（freeze set 的 scorer_input 根覆盖本文件）。
   - 判据的数值（权重、分母、阈值、作废条件）只能出现在本文件；脚本不许另写一份常数。
   - 跨题只比同一条轴；不写总分/均值/百分比/显著性（bank/README.md §5）。
-  - T 未冻结时不写「已冻结的 total」：null 表示未定，不是 0。
+  - 已冻结的 T 只写实测读数（passed/total 与两次输出的摘要）；未跑过的读数不写、不许把 planned 当分母。
   - 形状（bank-scoring/2）：顶层 18 键、frozen_inputs 11 键、dimension_t 13 键；pending 与 frozen
     只差取值、不差键集合——加键或改语义必须递增 version 并同批改六份 scoring.yaml。
-  - dimension_t.freeze_note 在 pending 题里**必须非空**（写明落盘后同批写哪些字段）；null 只属于已冻结题。
+  - dimension_t.freeze_note 在本题为 null（= 已冻结 / 无待冻结事项）；pending 题里才必须非空。
 
 weights:
   T: 40
@@ -54,8 +54,8 @@ frozen_inputs:
   baseline_combined_digest: d12576d82488d3665ea38bacdb6b1a32e23b08caa979f316ca6ba07aadb581e8
   first_message_sha256: 748f48ab2c11f463adf534df50f89ac5b69b427842960727294ab3d4935ada63
   allowed_writes_sha256: 1ad69cf570a6e0ccc20ec4dcd65727e195e12ded62570ae3f0b3cbbb22689a9f
-  hidden_plan_sha256: null
-  hidden_runner_sha256: null
+  hidden_plan_sha256: 8ca7b678c86c0097b1e859ad87f37d64cae6ace3e324ad044356aa0191b5f45b
+  hidden_runner_sha256: 365f0fe432c309e374bc4c9b42287623bccbde473ab50bcf5ee77467a96f0dc9
   layers_sha256: ba97221e9e42592d92191629c1f95994386046e57789730997277f7fb0a9ecf3
   interfaces_sha256: fad6848215cdc0567619e6ccec334904eca76a4c2c929b8bdd04849883ecdeb4
   command_families_sha256: 6943e9880d83a14d3f439587be460f69f7de6e71b078f5fc2ca1608eb27ee5d9
@@ -66,20 +66,54 @@ frozen_inputs:
 
 dimension_t:
   tool: hidden/runner.py
-  status: pending_hidden
-  total: null
-  case_ids: []
-  planned_min_total: 30
-  case_groups: []
-  reverse_cases: []
-  freeze_note: >-
-    隐藏验收代码尚未写（下一批独立子会话按 PLAN 实现，作者不得读参考解）。**代码落盘并由 Lead
-    复核后**，再冻结 total 与 case_ids（total ≥ planned_min_total=30；id 集合必须与 case_ids 相等，
-    差集/缺条按「跑不成」处理，不把「少测了」记成「测过了」）。**落盘当天同一批**把 total、case_ids
-    与 frozen_inputs 的两个 hidden 摘要一起写死（缺一项都不算冻结）。在此之前：total=null 表示未定，
-    case_ids 为空不是「0 条用例」；frozen_inputs 的两个 hidden 摘要为 null 同理。
-    case_groups 保持空列表是**显式未声明**：本题 SPEC §5 只给「≥30 条要点」，没有 id 前缀分组，
-    落盘时与 case_ids 同批补上（不临时编一组只为让字段非空）。
+  status: frozen
+  total: 38
+  case_ids:
+    - T01
+    - T02
+    - T03
+    - T04
+    - T05
+    - T06
+    - T07
+    - T08
+    - T09
+    - T10
+    - T11
+    - T12
+    - T13
+    - T14
+    - T15
+    - T16
+    - T17
+    - T18
+    - T19
+    - T20
+    - T21
+    - T22
+    - T23
+    - EN1
+    - EN2
+    - EN3
+    - EN4
+    - EN5
+    - EN6
+    - EN7
+    - EN8
+    - I1
+    - I2
+    - I3
+    - I4
+    - I5
+    - I6
+    - I7
+  planned_min_total: null
+  case_groups:
+    - {id_prefix: T, range: T01-T23, count: 23, what: 核心行为（Notification 形状/校验/不可变；NotificationWorker 幂等/有界/排空/关闭/共享队列/取消/确定性）}
+    - {id_prefix: EN, range: EN1-EN8, count: 8, what: 入口（冒烟脚本退出码与 stdout 形状/两次逐字节相同/smoke 测试静态 import/docs 与 README/全树 pytest/收集数）}
+    - {id_prefix: I, range: I1-I7, count: 7, what: 接口与树形状（类形状与签名/AST 确定性/旧队列弃用/测试断言/11 冻结文件/文件集与改动集合）}
+  reverse_cases: [T04, T05, T06, T13, T18, T19, T20, T22]
+  freeze_note: null
   contract: >-
     被评树由环境变量 BANK_TASK_TREE 传入；只读被评树（pytest / smoke 都在树副本上跑）；
     stdout 唯一载荷 {schema_version, tree, cases[], summary{passed,total}}；无时戳 / run id / 绝对路径；
@@ -88,12 +122,12 @@ dimension_t:
     BANK_TASK_TREE=<final-tree> .venv/Scripts/python.exe <task-root>/hidden/runner.py
   exit_codes: {0: 全过, 1: 有失败, 2: 跑不成（缺树 / 树不存在 / 用例集合不完整 / 树复制不出来）}
   scoring:
-    weighted: null
+    weighted: round(40 * passed / 38)
     recorded: [passed, total, weighted]
     cannot_judge: >-
-      total 未冻结 = **判不了**：不记 0 分、也不记满分（当前 null 表示判不了，不是 0 分）；total 冻结后
-      weighted = round(40 * passed / total)。exit 2 同样记「跑不成」并写明原因；
-      缺任一条 id 或 id 集合与 case_ids 不相等同样按跑不成处理。
+      exit 2 = T 判不了：记「跑不成」并写明原因，**不记 0 分**；缺任一条 id 或 cases 的 id 集合与
+      case_ids 不相等同样按跑不成处理（不把「少测了」记成「测过了」）。total 冻结后的基线读数
+      （2/38）与参考树读数（38/38）见 README.md 的「天花板读数」一节。
   boundary: >-
     T 只读最终树；里程碑顺序、被拒动作不重试、会话内的治理读数属于过程维度，不在 T。
 
@@ -246,8 +280,8 @@ invalidation:
     rule: 最终树的 14 个基线文件与 frozen_inputs.baseline_combined_digest 不符，或其中 11 个冻结文件（不属于允许写集合）有任一字节变化。
   - id: hidden_drift
     rule: >-
-      T 冻结后：hidden/runner.py 或 hidden/PLAN.md 的摘要不符，或 cases 的 id 集合与 case_ids 不相等。
-      当前 hidden 未写、total/case_ids 未冻结 => 本项**不适用**（不是「通过」）。
+      hidden/runner.py 或 hidden/PLAN.md 的摘要与 frozen_inputs 不符，或 cases 的 id 集合与 case_ids
+      不相等 => 该 run 作废（T 只认这两个文件与这 38 条 id）。
   - id: scoring_drift
     rule: 本文件摘要与 freeze.json 记录的 scorer_input 摘要不符。
   - id: layers_interfaces_drift

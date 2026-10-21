@@ -4,12 +4,14 @@
 > **确定性的 asyncio 工作队列**：有界队列、按 key 幂等去重、可取消、停机排空、异常不吞。
 > 跨 model（`Notification`）与 service（`NotificationWorker`）两层，含一个冒烟脚本、3 个同名
 > 测试文件、1 篇文档；旧队列保留并标注弃用。
-> **冻结状态**：**pending_hidden**——基线、任务包、reset-arm、A 维度声明、C/A 判据
-> 已落盘；**T 维度未冻结**（`scoring.yaml` 的 `dimension_t.status: pending_hidden`、
-> `total: null`、`case_ids: []`、`planned_min_total: 30`）。隐藏验收代码、参考解、天花板实测
-> **都还没有做**（见 §7）。
+> **冻结状态**：**hidden + reference + 天花板已完成**——基线、任务包、reset-arm、A 维度声明、
+> C/A 判据、隐藏验收（T）与参考解**全部落盘**，T 已冻结：`dimension_t.status: frozen`、
+> `total: 38`、`case_ids = T01-T23 / EN1-EN8 / I1-I7`、两个 hidden 摘要是实算值。
+> **实测天花板**：参考树 T **38/38**、A **10/10**、C **27/27**（`effective_total = 27`）、
+> `pytest` 22 passed；基线 T **2/38**（起点红）。逐条读数见 **§9**。
+> `frozen_by` 仍是 `pending_lead_signature`：冻结的是读数依据，**Lead 签字是另一件事**。
 > **用法**：Lead 重置基线 → 以任务树为 cwd 起受治会话 → 首消息 = `task-package/first-message.md`；
-> 跑完后按 `acceptance.md` + 隐藏验收（下一批）+ 树 diff 判分。
+> 跑完后按 `acceptance.md` + 隐藏验收（`hidden/runner.py`）+ 树 diff 判分。
 
 ## 1 基线（14 文件；只读，除允许写集合里的 3 个）
 
@@ -61,7 +63,9 @@
 | `reset-arm.py` | `157e2e080d1282ac0fa094c7cdab7bd04a1bd4e330e22d9c32ad120ad99f3ebf`（不在 manifest 里；它只冻结基线） |
 | `layers.yaml` | `ba97221e9e42592d92191629c1f95994386046e57789730997277f7fb0a9ecf3` |
 | `interfaces.yaml` | `fad6848215cdc0567619e6ccec334904eca76a4c2c929b8bdd04849883ecdeb4` |
-| `scoring.yaml` | `a32a41b711139c4ee66f983a0415d48a908520e728be603805ce8d061ff6e31a`（自指摘要不写进自己；本行由构建时现算，freeze.json 另记） |
+| `scoring.yaml` | `626a27b82fbfa826576a64e00eb21e614f41afbd25c409215302690ff2337010`（自指摘要不写进自己；本行是**冻结 T 之后**的现算值，freeze.json 另记） |
+| `hidden/PLAN.md` | `8ca7b678c86c0097b1e859ad87f37d64cae6ace3e324ad044356aa0191b5f45b`（38 条，见 §9） |
+| `hidden/runner.py` | `365f0fe432c309e374bc4c9b42287623bccbde473ab50bcf5ee77467a96f0dc9`（单文件自包含） |
 
 复核：对 `task-package/` 的前 5 个文件各算一次 sha256，与 `manifest.sha256` 的 5 行逐行比对
 （本包构建时 **5/5 ok**；任一不符 => 该 run 作废）。
@@ -108,7 +112,7 @@ python docs/project/engineering-policy-platform/testing/ab/bank/tasks/bank-async
 
 ## 6 本题的读法（不是「跑完就算」）
 
-- **四个维度分开读**：T（任务完成；隐藏用例**未写**，`total` 未冻结）、C（规则遵守；`scoring.yaml` 的
+- **四个维度分开读**：T（任务完成；`hidden/runner.py` 的 38 条，基线 2/38、参考树 38/38，见 §9）、C（规则遵守；`scoring.yaml` 的
   8 条 + 冻结文件 + 旁路）、A（结构；`layers.yaml` / `interfaces.yaml` + `tools/structure_metrics.py`）、
   过程（平台账本：被拒动作、原因码、`matched / skipped / served_checkers`）。**不许把过程读数折算进 T/C/A**。
 - **`allow_with_warnings` 不是失败、也不是通过**：M1/M3 的「待实现」走 `pending_findings`
@@ -129,11 +133,11 @@ python docs/project/engineering-policy-platform/testing/ab/bank/tasks/bank-async
 | `baseline/` | 14 文件基线树（逐字节；含与旗舰逐字节相同的 `tools/__init__.py`） | **已落盘**（组合摘要可复核；pytest 4 passed） |
 | `reset-arm.py` | 逐字节重置 + 摘要校验 + reset-manifest.json | **已实测**（dry-run + 真跑 14/14；三种前置失败都退出 1） |
 | `layers.yaml` / `interfaces.yaml` | A 维度声明（最终树 21 文件 → 层；非测试模块公开面上限） | **已写**；`structure_metrics` 加载通过，**基线副本 A1–A10 全 pass**（A9 5/5；`tools/__init__.py` 显式 `skip` 移出测量范围，理由见 §8.1）；7 个新建文件未落盘 → 声明为 unmatched；**最终树读数未测**（替身树只验证了 A9 的包初始化器口径：7/7，见 §8.1） |
-| `scoring.yaml` | C/A 判据（已冻结）+ T 维度（pending_hidden） | **已写**（`total: null`、`case_ids: []`、`planned_min_total: 30`） |
+| `scoring.yaml` | T/C/A 三维判据 | **已冻结**（`status: frozen`、`dimension_t.status: frozen`、`total: 38`、38 条 `case_ids`、`freeze_note: null`；`frozen_by` 仍是 `pending_lead_signature`） |
 | `coverage.md` | 43 条规则点 ○/—、A1–A10、隐藏行为面、实测读数 | **已写**（未实测项如实标未测） |
-| `hidden/` | 隐藏验收代码 + PLAN + runner | **未做**（下一批独立子会话；T 因此未冻结） |
-| `reference/` | 参考解（模块/接口/决策点 + 实现） | **未做** |
-| 天花板实测 | 参考解上的 T/C/A 上限 | **未做** |
+| `hidden/` | `PLAN.md`（38 条：T01–T23 / EN1–EN8 / I1–I7）+ `runner.py`（单文件自包含） | **已完成**：基线 **2/38**、参考树 **38/38**；两次输出逐字节相同（§9） |
+| `reference/` | 参考解（`README.md` 决策点 + `tree/` 21 文件） | **已完成**：`pytest` 22 passed、`smoke` 2 条、允许写 10 条逐条落地（§9） |
+| 天花板实测 | 参考树上的 T/C/A 上限 | **已完成**：T 38/38、C 27/27（`effective_total` 27）、A 10/10（§9） |
 
 ## 8 边界与已知构造问题（引用本包前必须读）
 
@@ -203,8 +207,98 @@ ruff 0.14.13 **不报**「裸 `sys.path.insert(...)` 后紧跟 import」的 E402
 - **本包是任务数据，不是平台规则**：它只描述「要模型做什么、允许写什么、怎么判」，不改任何判定逻辑。
 - **隐藏验收必须独立出题**：写隐藏代码的子会话不得读参考解、不得看任何实施 diff（dgate2 H1 同一口径）；
   PLAN 可以先于代码冻结，但**开跑前必须代码落盘**（pending 不是通过）。
+  **本批是降级形态（如实记录）**：隐藏与参考解由**同一个子会话**完成，顺序是「PLAN + runner 先落盘 →
+  跑出基线红 2/38 → 才写 `reference/tree`」，写隐藏时没有读过任何参考实现（当时本题 `reference/` 还不存在）；
+  但作者知道自己的实现意图，因此不满足「未参与实施」的字面要求。下一道同类题若要严格口径，须换一个子会话出题。
 - **改它 = 改构造**：任何改动（哪怕一个字节）都要按 05 §8 记录理由与回退，重新生成
   `task-package/manifest.sha256` / 基线摘要 / 本文件 §3 的哈希表；冻结后逐文件哈希不符 => 该 run 作废。
 - **本包不声称已激活任何 treatment**：本题 SPEC 未给 A/B 臂（`scoring.yaml` 的 `treatment.arms` 为空）。
 - **不跑真机会话、不 commit**：本包落地时只做了只读/本地验证（pytest、policy.check 探针、reset-arm、
   structure_metrics、哈希、文本规范）。
+
+## 9 天花板读数（hidden + reference 已完成；本机实测，2026-10-21 批次）
+
+> 口径：三个维度分开读、都带分母；**n=1 只写案例读数**，不算均值/提升/显著（bank/README.md §5）。
+> 环境：Windows + `.venv/Scripts/python.exe`（Python 3.13.11、pytest 9.1.1）；C 的 style_lint 用 ruff 0.14.13。
+> 树：基线 = 本包 `baseline/`（14 文件）；参考树 = `reference/tree/`（21 文件）。
+
+### 9.1 T（隐藏验收 `hidden/runner.py`，38 条）
+
+| 树 | 命令 | exit | passed/total | 两次输出 sha256 |
+| --- | --- | --- | --- | --- |
+| 基线 | `BANK_TASK_TREE=<树副本> python hidden/runner.py` | 1 | **2 / 38** | `7941facf266ba8f9ae2a4488cef97254b06db1d96fd1961229a94e39b13542ee`（两次相同） |
+| 参考树 | 同一命令 | 0 | **38 / 38** | `3d216ebcd82f0606c50f7b5aef6ac677c3588a39ab1593ec103651418b84e98a`（两次相同） |
+
+- 38 条 = **T01–T23**（模型 / worker 核心行为）、**EN1–EN8**（入口：冒烟脚本、文档、README、全树 pytest、
+  收集数）、**I1–I7**（接口与树形状：签名、AST 确定性、旧队列弃用、冻结文件、改动集合）；**反向用例 8 条**：
+  T04 / T05 / T06 / T13 / T18 / T19 / T20 / T22。逐条的断言要点与反向构造见 `hidden/PLAN.md`。
+- 基线为什么只过 2 条：`EN7`（基线 pytest 本来就绿，是必要条件不是充分条件）与 `I6`
+  （基线当然没动冻结文件）；其余 36 条因缺文件 / 缺语义而红。**起点红**是设计目标，不是缺陷。
+- 契约：树只从 `BANK_TASK_TREE` 读、**只在副本上跑**（pytest / 冒烟 / 导入都在临时副本里，退出即删）、
+  stdout 唯一 JSON、无时戳 / run id / 绝对路径、子进程 60 秒超时、exit 0 / 1 / 2。实测
+  `BANK_TASK_TREE` 缺失与树不存在都退 **2**（判不了，不是 0 分）；运行前后基线组合摘要不变
+  （`d12576d8…`）=> 被评树一个字节没写。
+
+### 9.2 参考树（`reference/tree/`）
+
+- 21 文件 = 14 基线 + 7 新建；与基线的 diff **恰为 10 条允许写**（3 改 + 7 新建），基线 11 个冻结文件逐字节不变。
+- `python -m pytest -q` → **22 passed**、exit 0（基线 4；新增 7 + 9 + 1 个用例与新断言）。
+- `python tools/notify_smoke.py` → exit 0，单行 JSON：
+  `[{"key": "smoke-1", "kind": "email", "order_id": 1}, {"key": "smoke-2", "kind": "sms", "order_id": 2}]`。
+- 决策点与踩到的坑见 `reference/README.md`（例如 A7 对**公开内嵌函数**也要 docstring、DOC-004 的 D401 会咬
+  以 `action()` 开头的中文 docstring）。
+
+### 9.3 A（`tools/structure_metrics.py`，schema 1.1）
+
+命令：
+
+```powershell
+.venv/Scripts/python.exe tools/structure_metrics.py --workspace <reference/tree> --layers <task>/layers.yaml --interfaces <task>/interfaces.yaml --json
+```
+
+读数：**exit 0、10/10 pass**（A1–A10 全 pass）。关键计数：A1 违规边 0 / unresolved 0；A2 13 边 16 点 0 环；
+A3 8 模块 20 个公开定义、超上限 0；A4 违规 0（默认装配 2 处计入证据）；A5 57 函数 0 超阈值；
+A6 16 文件 57 函数 0 超长；A7 64 定义 0 缺失；A8 扇出 0 超阈值、unresolved 0；**A9 覆盖 8/8 生产文件**；
+A10 动态 / 通配 import 0。**没有改 layers.yaml / interfaces.yaml 的任何阈值或声明来凑 A**——
+两份声明的 sha256 与 `frozen_inputs` 一致（`ba97221e…` / `fad68482…`）。
+
+### 9.4 C（8 次 `python -m policy.check`，`--operation edit` + 10 条 `--changed` + 固定 `--request-id`）
+
+| 文件 | `--layer` | exit | decision | violations | skipped_rules | `blocking_capable_skipped` | complete |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `src/shop/notification.py` | service | 0 | `allow` | [] | `[ARCH-001@1]` | 1 | true |
+| `src/shop/notify_model.py` | model | 0 | `allow` | [] | `[ARCH-001@1]` | 1 | true |
+| `src/shop/notify_worker.py` | service | 0 | `allow` | [] | `[ARCH-001@1]` | 1 | true |
+| `tests/test_notification.py` | test | 0 | `allow` | [] | `[ARCH-001@1]` | 1 | true |
+| `tests/test_notify_model.py` | test | 0 | `allow` | [] | `[ARCH-001@1]` | 1 | true |
+| `tests/test_notify_smoke.py` | test | 0 | `allow` | [] | `[ARCH-001@1]` | 1 | true |
+| `tests/test_notify_worker.py` | test | 0 | `allow` | [] | `[ARCH-001@1]` | 1 | true |
+| `tools/notify_smoke.py` | composition | 0 | `allow` | [] | `[ARCH-001@1]` | 1 | true |
+
+- **没有 error 级（也没有 warning 级）violation**；每次 4 个 checker served
+  （`failing_tests / missing_docstring / missing_tests / style_lint`），`ARCH-001` 因 `layer != controller`
+  进 `skipped_rules`——**跳过不是通过**，这正是 C 的分母要按 `effective_total` 读的原因。
+- C 计分：7 条适用规则 × 3 = **21** + 冻结文件未改 **3** + 无旁路 **3** = **27 / 27**
+  （`effective_total = 27`；`ARCH-001` 的 3 分 `not_applicable`，不计分也不计分母）。
+- 旁路三项也逐条实测：控制面目录（`policies/ registry/ validation/ adapters/ api/`）在参考树里都不存在；
+  每个新测试文件都有 assert（13 / 21 / 3 条）且无 `skip / skipif / xfail`；`--collect-only -q` 收集 **22**
+  条（≥7）；树 diff ⊆ 10 条允许写。
+
+### 9.5 换算（与 40 / 30 / 30 同口径）
+
+| 维度 | 读数 | 加权 |
+| --- | --- | --- |
+| T（参考树） | 38 / 38 | `round(40 × 38 / 38) = 40` |
+| C（参考树） | 27 / 27 | C 满分按 `effective_total = 27` 读，得 30 |
+| A（参考树） | 10 / 10 | 30 |
+| T（基线，作对照） | 2 / 38 | `round(40 × 2 / 38) = 2` |
+
+**这是 n=1 的案例读数**（一棵参考树、一台宿主）：它证明「38 条可过、A 可 10/10、C 可 0 error」，
+不证明任何模型会达到，也不构成对照实验。
+
+### 9.6 本批写面与 `coverage.md` 的关系
+
+本批只改：`hidden/`（新增 PLAN + runner）、`reference/`（新增 README + tree）、`scoring.yaml`（T 冻结）、
+`README.md`（本文）。**没有改 `coverage.md`**：它 §5 / §6 的「隐藏验收未写、全部未测」是**当时**的如实状态，
+本批用本节取代那部分读数（此句就是取代关系的记录）。要改 coverage.md 需要按 05 §8 另记理由并重算它的
+哈希，不在本批写面内。
