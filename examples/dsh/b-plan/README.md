@@ -102,24 +102,45 @@ pwsh 调用；模型若带上 `workdir` / `timeoutMs` / `run_in_background`，�
 > 这条纪律是 1.1 起就有的安全性质（未声明的参数不得跟着条子一起放行），本次没有放宽：
 > 一格不漏才算覆盖，反过来多声明一格也会被拒（"声明的参数不在本次请求里"）。
 
-> **2026-10-20（B1）起的新档口：审批协议 1.3 的「参数域」，只对声明了默认值的注册表生效。**
-> 仓库的 `registry/tool-registry.yaml`（1.1 起）给 `exec.pwsh` / `exec.bash` 的
-> `timeoutMs=60000` / `workdir="."` / `run_in_background=false` 声明了默认值：一张
-> **自述 1.3** 且省略这几格的条子，仍覆盖"不传或恰好等于默认值"的调用；**非默认值照样拒**
+> **2026-10-20（B1）起的档口：审批协议 1.3 的「参数域」。**
+> 本目录的 `tool-registry.local.yaml` **2026-10-21 已从 1.0 同步到仓库 1.4**（见下节），
+> 它现在带 `command_families`、`timeoutMs=60000` / `workdir="."` / `run_in_background=false`
+> 三个默认值、`read_guard` 与 `.policy`/`.git`/`.github/workflows` 受保护前缀：
+> 一张**自述 1.3** 且省略这几格的条子，仍覆盖"不传或恰好等于默认值"的调用；**非默认值照样拒**
 > （理由会写"不等于注册表声明的默认值"）。`sandbox_permissions` / `justification`
-> **故意没有默认值**——要覆盖它们必须显式写模式。
->
-> 本目录的 `tool-registry.local.yaml` 是**副本、且本次不动**（它是受治项目自己的数据）：
-> 它没有 `command_families`、也没声明默认值，所以上面这条纪律在**这个副本**上仍然逐字成立。
-> 要用新档口：把仓库注册表同步进 `$g/.policy/`，重新 `registry --approve`，再按族签发：
+> **故意没有默认值**——要覆盖它们必须显式写模式。按族签发（`--family`）也可以直接用在副本上：
 >
 > ```powershell
-> python -m enforcement.cli approve --registry "$g/.policy/tool-registry.yaml" --approved "$g/.policy/tool-registry.approved.json" --request "$g/.policy/shell-request.json" --out "$g/.policy/approval.json" --granted-by dshznm --roles reviewer --binding pattern --max-uses 1000 --ttl 86400 --family exec.pwsh:tests --param-pattern "description=.*" --approval-id approval-pwsh-tests
+> python -m enforcement.cli approve --registry "$g/.policy/tool-registry.local.yaml" --approved "$g/.policy/tool-registry.approved.json" --request "$g/.policy/shell-request.json" --out "$g/.policy/approval.json" --granted-by dshznm --roles reviewer --binding pattern --max-uses 1000 --ttl 86400 --family exec.pwsh:tests --param-pattern "description=.*" --approval-id approval-pwsh-tests
 > ```
 >
 > `--family TOOL:FAMILY` 只认**注册表 `command_families` 里声明过的族**（这里是
 > `exec.pwsh:tests` / `readonly` / `scripts`），命令参数不用再写；族与白名单的一致性由
-> `python tools/approval_allowlist_audit.py --check --registry <注册表>` 双向比对（0 命中才算齐）。
+> `python tools/approval_allowlist_audit.py --check --registry <注册表> --approved <已审核哈希>` 双向比对（0 命中才算齐）。
+
+### 2026-10-21：受治侧副本同步到 registry 1.4
+
+副本以仓库 `registry/tool-registry.yaml`（1.4）为基线重放，**本地增量一条不丢**：
+
+| 项 | 同步后 |
+| --- | --- |
+| `registry_schema_version` | `"1.0"` → **`"1.4"`** |
+| `read_guard`（`exec.pwsh` / `exec.bash`） | **新增**：`families: [readonly]`、`path_forms: [positional, revision_path]`、`forbidden_path_prefixes: [".policy"]`、`forbidden_forms: [parent_escape, absolute_path]` |
+| 受保护前缀（`fs.edit` / `fs.write` / `orc.fs.edit` / `orc.fs.write`） | **补** `.policy`、`.git`、`.github/workflows`（与仓库 1.4 逐字相同） |
+| `command_families`（`exec.pwsh`） | **新增** 3 族：tests 4 条 / readonly 6 条 / scripts 3 条——13 条白名单恰好各属一族 |
+| 参数默认值（两条命令工具） | **新增** `timeoutMs=60000` / `workdir="."` / `run_in_background=false` |
+| B 方案本地增量 | **保留**：`governed-dev` 角色；`exec.pwsh` 白名单 13 条（仓库 7 条原样保留，另加 6 条：unittest / 裸 pytest / `scripts/*.py` / `Get-Content` / `Select-String` / `Test-Path`；git 那条是含 ls-files·rev-parse 的镜面写法）；`exec.run_code` 的 `ungoverned` 声明（替代仓库的 `code_check`） |
+| 去重 | 旧副本里 `^uv run python -m pytest( .*)?$` 重复两条，同步时按「每条白名单恰好属于一个命令族」的精确成员口径**去重为一条**（无行为变化） |
+
+副本自己的三条复核（approved 哈希是**副本自己的**，仓库的 `registry/tool-registry.approved.json` 一个字节没动）：
+
+```text
+python -m enforcement.cli registry --registry <副本> --approved <临时 approved> --approve --reviewer dshznm   # exit 0，10 个工具
+python -m enforcement.cli registry --registry <副本> --approved <临时 approved> --verify                      # exit 0，10 个工具 ok
+python tools/approval_allowlist_audit.py --check --registry <副本> --approved <临时 approved>                 # exit 0，HITS: 0（tools=2 families=6）
+```
+
+读数见 `docs/project/engineering-policy-platform/readings/2026-10-21-registry-1.4-registry-sync.md`。
 
 `Free` 那个工作区**什么都不用做**——作用域感知保证它**不被判定**（不查、不拦、不警告）。
 
