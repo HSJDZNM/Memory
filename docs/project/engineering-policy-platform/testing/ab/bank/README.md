@@ -11,15 +11,16 @@
 | # | task id | 操作类型 | 一句话 | 基线 | 新建 / 修改 | 隐藏条数 | 冻结状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | `bank-flagship-returns` | **旗舰：独立构建功能模块** | 订单项目里从零构建退货模块（model→repository→service→controller + 演示 + 迁移 + 文档） | 14 文件（订单项目 11 + tools + config + 旧数据） | 16 新建 / 3 修改 | 48（38 + 5 EN + 5 I，已落盘） | 冻结候选（隐藏 48 条 + 参考解已写；`scoring.yaml`/冻结集/三臂已就绪、参考解上实测 T 48/48·C 30/30·A 30/30；真机 A/B/C 冒烟 n=1（五判据过，T/C/A：A 48/30/24、B/C 47/30/24）**只作案例、不写「值得扩试」**；审批已签：TTL 2026-10-22 19:55 +08，过期重签） |
-| 2 | `bank-crossmodule-refactor` | 跨模块重构 / 废弃 API | 把 `OrderRepository.insert/listing` 换成新 API，加兼容门面并删旧调用点，行为不变 | 14 文件（与旗舰基线逐字节相同） | 3 新建 / 7 修改 | ≥30（计划，未落盘） | 冻结候选（包已落盘；隐藏/参考解/天花板未做） |
-| 3 | `bank-bugfix-first-failing-test` | 修 bug（先有失败测试） | 基线自带两条失败回归测试；只改实现让测试转绿，不许削弱测试 | 11 文件（含红测试） | 2 新建 / 3 修改 | ≥30（计划，未落盘） | 冻结候选（含死锁读数，见 §6 决策 2；隐藏/参考解/天花板未做） |
-| 4 | `bank-data-migration` | 数据迁移 | 把 v1 JSONL 台账迁到 v2（原子替换、幂等、无损、坏行失败关闭） | 13 文件（含 v1 数据 + schema 文档） | 8 新建 / 1 修改 | ≥30（计划，未落盘） | 冻结候选（包已落盘；隐藏/参考解/天花板未做） |
-| 5 | `bank-async-concurrency` | 并发 / 异步 | 同步通知队列改成 `asyncio` 工作队列（确定性调度、幂等去重、超时、取消） | 14 文件（11 + `tools/__init__.py` + 同步队列 2） | 7 新建 / 3 修改 | ≥30（计划，未落盘） | 冻结候选（包已落盘；隐藏/参考解/天花板未做） |
-| 6 | `bank-docs-config` | 文档 / 配置为主 | 配置键 `retry`→`retry_policy` 迁移 + 加载器 + 文档同步 + 校验脚本 | 13 文件 | 5 新建 / 3 修改 | ≥30（计划，未落盘） | 冻结候选（包已落盘；隐藏/参考解/天花板未做） |
+| 2 | `bank-crossmodule-refactor` | 跨模块重构 / 废弃 API | 把 `OrderRepository.insert/listing` 换成新 API，加兼容门面并删旧调用点，行为不变 | 14 文件（与旗舰基线逐字节相同） | 3 新建 / 7 修改 | 34（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 34/34、C 30/30、A 10/10；可开跑签字待） |
+| 3 | `bank-bugfix-first-failing-test` | 修 bug（先有失败测试） | 基线自带两条失败回归测试；只改实现让测试转绿，不许削弱测试 | 11 文件（含红测试） | 2 新建 / 3 修改 | 38（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 38/38、C 27/27、A 10/10；死锁读数见 §6 决策 2；可开跑签字待） |
+| 4 | `bank-data-migration` | 数据迁移 | 把 v1 JSONL 台账迁到 v2（原子替换、幂等、无损、坏行失败关闭） | 13 文件（含 v1 数据 + schema 文档） | 8 新建 / 1 修改 | 40（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 40/40、C 27/27、A 10/10；可开跑签字待） |
+| 5 | `bank-async-concurrency` | 并发 / 异步 | 同步通知队列改成 `asyncio` 工作队列（确定性调度、幂等去重、超时、取消） | 14 文件（11 + `tools/__init__.py` + 同步队列 2） | 7 新建 / 3 修改 | 38（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 38/38、C 27/27、A 10/10；可开跑签字待） |
+| 6 | `bank-docs-config` | 文档 / 配置为主 | 配置键 `retry`→`retry_policy` 迁移 + 加载器 + 文档同步 + 校验脚本 | 13 文件 | 5 新建 / 3 修改 | 40（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 40/40、C 27/27、A 10/10；STYLE-004 实测负例见 §2；可开跑签字待） |
 
 每题的完整内容在 `tasks/<id>/`：旗舰是**冻结包**（见 §4，另有 `hidden/` 与 `reference/`），其余
 5 题也各有完整包（`baseline/`、`SPEC.md`、`task-package/`、`layers.yaml`、`interfaces.yaml`、
-`coverage.md`、`reset-arm.py`、`scoring.yaml`）；5 题的 `hidden/` 与 `reference/` 仍缺。命令族统一见
+`coverage.md`、`reset-arm.py`、`scoring.yaml`）；5 题的 `hidden/` 与 `reference/` 已于 2026-10-21 深夜落盘
+（T 已冻结、参考树全过、基线红），命令族统一见
 `COMMAND-FAMILIES.md`。
 
 ## 2 覆盖矩阵：任务 × 可检测规则点（直接可触发面）
@@ -60,7 +61,7 @@ warning 级 = `allow_with_warnings`（判定取决于是否另有 error）；`TE
    声明在每题的 `layers.yaml` / `interfaces.yaml`。6 题的这两份声明都已落盘并可加载；最终树读数在
    各自的 `coverage.md` 里按题记录（无参考解的题只记基线树读数）。
 3. **行为层**（◐）：字段形状、幂等语义、原子替换、无损迁移、确定性调度、文档句子……规则表达不了，
-   只能靠隐藏验收。其余 5 题计划 ≥30 条、尚未落盘；旗舰已落盘 48 条（38 + 5 EN + 5 I）。
+   只能靠隐藏验收。6 题都已落盘：旗舰 48 条（38 + 5 EN + 5 I）；其余 5 题 34 / 38 / 40 / 38 / 40 条（T 已冻结，参考树全过、基线红）。
 
 **汇总口径**：仓库共 **43 条规则 / 5 个 checker**（`style_lint` 39、`forbidden_dependency` 1、
 `missing_docstring` 1、`missing_tests` 1、`failing_tests` 1；error 24 / warning 19）。
@@ -221,7 +222,8 @@ warning 级 = `allow_with_warnings`（判定取决于是否另有 error）；`TE
   **n=1 只作案例，不写「值得扩试」**（要写需每臂 k≥3）。**审批**：已签（2026-10-21 冒烟时每臂 2 条，
   run_code + 三族合并成一条 `exec.pwsh`；TTL 2026-10-22 19:55 +08，过期须重签 → 重冻结 → 重脚手架）。
   **仍待**：启动环境凭据、三臂 k≥3。
-- 其余 5 题：**包已完整落盘**（`baseline/`、`SPEC.md`、`task-package/`、`layers.yaml`、`interfaces.yaml`、
-  `coverage.md`、`reset-arm.py`、`scoring.yaml`），基线/任务包/reset-arm/C/A 判据可复核；**仍缺**：
-  `hidden/`（PLAN + runner + 用例）、`reference/` 参考解、T/C/A 天花板实测（`dimension_t` 停在
-  `pending_hidden`，`total: null`）。
+- 其余 5 题：**包 + `hidden/`（PLAN + runner）+ `reference/` + 天花板已完成**（2026-10-21 深夜）：
+  基线/任务包/reset-arm/C/A 判据可复核；T 已冻结（total 34/38/40/38/40），参考树全过、基线红；
+  C effective_total **27/27**（crossmodule 30/30）、A **10/10**。读数：
+  `readings/2026-10-21-bank-five-tasks-hidden-and-ceilings.md`。**仍待**：使用者签「可开跑」、
+  3 题 × 3 臂 × k≥3。
