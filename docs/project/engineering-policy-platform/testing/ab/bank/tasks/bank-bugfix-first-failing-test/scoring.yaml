@@ -4,24 +4,27 @@
 # 与 dgate2/scorer/scorer.yaml 的关系：只复用 T/C/A=40/30/30 与 C/A 的口径，**不复制字节**；
 # dgate2 冻结件一个字节不动。本文件自己的轴 = schema_id + version（bank-scoring，现处 2）。
 #
-# **状态 = pending_hidden**：隐藏验收代码（≥30 条）与隐藏计划是**下一批**任务；
-# 本文件此刻只冻结 T 的**口径与下限**（planned_min_total），**不伪造已冻结的 total 与 case_ids**。
+# **状态 = frozen（本轮只冻结 T）**：`hidden/PLAN.md`（38 条）与 `hidden/runner.py` 已落盘，
+# 本文件把 T 的 total / case_ids / 两个 hidden 摘要同批填实；**frozen_by 仍是 pending_lead_signature**
+# ——只冻结 T 的判据，签「可开跑」仍属 Lead，不冒充签字。
 #
 # 形状 = **bank-scoring/2**（2026-10-21 §4.2 收口）：顶层 18 键、frozen_inputs 11 键、dimension_t 13 键；
 # 同一版本号下只有一种维度形状——pending 与 frozen 只差取值、不差键集合，顶层 status 是判别符。
-# 本题是 pending：status: pending_hidden、frozen_by: pending_lead_signature、两个 hidden 摘要为 null。
+# 本题本轮从 pending_hidden 转 frozen：两个 hidden 摘要已填实值；frozen_by 保持 pending_lead_signature。
 # C 维度：ARCH-001 结构性不适用（file_set 无 controller 层）→ 见 dimension_c.not_applicable，
 # effective_total = 27；不把 skipped_rules 读成通过。
 schema_id: bank-scoring/2
 version: "2"
 task_id: bank-bugfix-first-failing-test
 operation_type: 修 bug（先有失败测试）
-status: pending_hidden
+status: frozen
 frozen_by: pending_lead_signature
 authority: >-
   使用者授权「自行研讨构建题库」（授权记录见 bank/README.md）；本文件与题库其余冻结件同批可复核、可回退。
   冻结对象 = 本文件字节 + frozen_inputs 的摘要；改任一项 = 换判据。
-  与旗舰不同之处只有一处且是显式的：dimension_t 的 total / case_ids **尚未冻结**（status: pending_hidden）。
+  与旗舰不同之处只有两处且都是显式的：① frozen_by 是 pending_lead_signature 而不是 Lead——本轮只冻结 T 的
+  判据（total / case_ids / 两个 hidden 摘要），签「可开跑」仍属 Lead；② T 的 total 是 38（旗舰 48，
+  题不同、用例数不同），C 的 effective_total 是 27（旗舰 30，ARCH-001 在本题结构性不适用）。
 
 invariants:
   - 本文件不含时戳、run id、绝对路径、耗时；相同输入两次读取逐字节相同。
@@ -41,15 +44,15 @@ weights:
 shared_contract: >-
   所有题库题共享同一骨架：T = 隐藏验收通过数（记 passed/total）+ 加权分 round(40 × passed / total)；
   C = 8 条规则 × 3 分（24）+ 冻结文件未改 3 分 + 无旁路 3 分；A = 10 条结构谓词 × 3 分。
-  本题的具体取值（hidden total 待冻结、planned_min_total=30、3 个被测 .py、8 个冻结文件、5 条允许写）在下面逐项写。
+  本题的具体取值（hidden total=38、3 个被测 .py、8 个冻结文件、5 条允许写）在下面逐项写。
 
 frozen_inputs:
   task_package_manifest_sha256: bfacd9454dcbebe9182bc3e87501b85c660d9755eba230a3feb02d5baf9ba508
   baseline_combined_digest: b9bb24d16937783dabfa13b3baddb027cdffad4af32bf0e8610685ac8aa1cafd
   first_message_sha256: f61aab33ac89da0388a1fbab91ac189a8b586d5cf3edcb1d78d751e5039e46d9
   allowed_writes_sha256: e3f0a46dc2a7e9c4c55855467f01d8483f751d925059aec26d6389ce5c7baac6
-  hidden_plan_sha256: null
-  hidden_runner_sha256: null
+  hidden_plan_sha256: b52fd1d84cd66467a39f3f9655af345e2c4fed4912c9ce83f21636fb3d418426
+  hidden_runner_sha256: 6e2e05ccc7bb037136379e03b823d09e8a5be93acec861a4db8298039d771895
   layers_sha256: ba0691e22fb002d60771eeb78722dca954d45ed45fe2cd757771ecedadfc2d40
   interfaces_sha256: c952acfdad95302d9a47937458e60306f4d2e5821b1a94fe9d1c2495b68f20ab
   command_families_sha256: 6943e9880d83a14d3f439587be460f69f7de6e71b078f5fc2ca1608eb27ee5d9
@@ -60,39 +63,71 @@ frozen_inputs:
 
 dimension_t:
   tool: hidden/runner.py
-  status: pending_hidden
-  total: null
-  case_ids: []
-  planned_min_total: 30
+  status: frozen
+  total: 38
+  case_ids:
+    - T01
+    - T02
+    - T03
+    - T04
+    - T05
+    - T06
+    - T07
+    - T08
+    - T09
+    - T10
+    - T11
+    - T12
+    - T13
+    - T14
+    - T15
+    - T16
+    - T17
+    - T18
+    - T19
+    - EN1
+    - EN2
+    - EN3
+    - EN4
+    - EN5
+    - EN6
+    - I1
+    - I2
+    - I3
+    - I4
+    - I5
+    - I6
+    - I7
+    - I8
+    - I9
+    - I10
+    - I11
+    - I12
+    - I13
+  planned_min_total: null
   case_groups:
-    - {id_prefix: BASE, what: 基线性质（未修改的基线树上两条用例必须失败；隐藏用例证明「先有失败测试」不是口头声明）}
-    - {id_prefix: T, what: 最终树行为（insert 双侧副本、listing 副本、service 层副本语义、AST 断言保留、树形状）}
-    - {id_prefix: N, what: 反向构造（返回入参 / 清空列表 / 只复制一侧 → 必须 fail）}
-  reverse_cases: []
-  freeze_note: >-
-    隐藏代码落盘后，**同一批**完成：写 case_ids（显式清单）与 total、把 status 从 pending_hidden 改成
-    frozen、把 weighted 从 null 改成 round(40 * passed / total)、回填 frozen_inputs.hidden_plan_sha256 /
-    hidden_runner_sha256，并在 run-manifest 记这三个摘要；两个 hidden 摘要在落盘前保持 null
-    （显式未写，不是空串、也不是伪造值）。在此之前本题**不具备完整 T 读数**（可以跑 C/A 与过程读数，
-    但那不是三维齐备的 run）。reverse_cases 在隐藏代码落盘时同批写成实际反向用例 id。
+    - {id_prefix: T, what: "T01-T19 最终树上的行为：insert 双侧副本、listing 副本、多记录身份、payload 键集、空仓储、service/controller 链、两条原用例的断言逐字保留（AST）、新用例加厚、fix-notes 三节、README 只改跑测试一节"}
+    - {id_prefix: EN, what: "EN1-EN6 树执行：pytest 退出码、两条目标用例逐条点名跑、收集数、summary 解析（failed=0 且 passed>=8）、基线构造证明（重建的 9 文件基线树 2 failed 2 passed）、基线别名 bug 可观测"}
+    - {id_prefix: I, what: "I1-I13 接口 / 树形状 / 反向构造：签名与 docstring、无新增异常分支、只 import 标准库、8 个冻结文件逐字节、改动 ⊆ 5 条允许写、13 文件；I8-I13 是反向用例（歪法必须让同款探针失败）"}
+  reverse_cases: [I8, I9, I10, I11, I12, I13]
+  freeze_note: null
   contract: >-
-    隐藏代码落盘后照旗舰的 runner 契约实现：被评树由环境变量 BANK_TASK_TREE 传入；只读被评树
-    （pytest 在树的副本上跑）；stdout 唯一载荷 {schema_version, tree, cases[], summary{passed,total}}；
-    无时戳 / run id / 绝对路径；同一 cwd + 同一棵树两次运行逐字节相同；子进程超时 60 秒；
-    退出码 0 = 全过 / 1 = 有失败 / 2 = 跑不成（缺树、树不存在、用例集合不完整）。
+    照旗舰的 runner 契约：被评树由环境变量 BANK_TASK_TREE 传入；只读被评树（pytest / 导入被测模块 /
+    变异副本都在树副本上跑，临时目录在树外）；stdout 唯一载荷 {schema_version, tree, cases[],
+    summary{passed,total}}；无时戳 / run id / 绝对路径；同一 cwd + 同一棵树两次运行逐字节相同；
+    子进程超时 60 秒；cases 顺序固定为 T01..T19, EN1..EN6, I1..I13；
+    用例注册表与 case_ids 不相等 => 退出码 2（跑不成），不把「少测了」记成「测过了」。
   measurement: >-
     BANK_TASK_TREE=<final-tree> .venv/Scripts/python.exe <task-root>/hidden/runner.py
-  exit_codes: {0: 全过, 1: 有失败, 2: 跑不成（缺树 / 树不存在 / 用例集合不完整）}
+  exit_codes: {0: 全过, 1: 有失败, 2: 跑不成（缺树 / 树不存在 / 用例集合不完整 / 树复制失败）}
   scoring:
-    weighted: null
+    weighted: round(40 * passed / 38)
     recorded: [passed, total, weighted]
     cannot_judge: >-
-      total 未冻结 = **判不了**：不记 0 分、也不记满分；total 冻结后 weighted = round(40 * passed / total)。
-      cases 的 id 集合与 case_ids 不相等同样按「跑不成」处理（不把「少测了」记成「测过了」）。
+      exit 2 = T 判不了：记「跑不成」并写明原因，**不记 0 分**；缺任一条 id 或 id 集合与 case_ids
+      不相等同样按跑不成处理（不把「少测了」记成「测过了」）。
   boundary: >-
-    T 只读最终树；里程碑顺序、被拒动作不重试、会话内的治理读数属于过程维度，不在 T。
-    基线红是**构造**不是失败：BASE 组用例在基线上必须「通过」（因为它们的期望就是 red）。
-
+    T 只读最终树与两条基线构造证明；里程碑顺序、被拒动作不重试、会话内的治理读数属于过程维度，不在 T。
 dimension_c:
   tool: python -m policy.check（本仓库的判定入口；本文件不复制实现）
   interpreter: .venv/Scripts/python.exe
@@ -226,8 +261,8 @@ dimension_a:
   predicates_source: 谓词定义与阈值语义以 tools/structure_metrics.py 1.1 为准（不复制实现）。
   measurement_note: >-
     已在 11 文件的基线树上实测 10/10 pass（workspace_scope.files=8；声明了 13 条、其中 2 条指向
-    任务要创建的文件，记为 declared_unmatched，不判 fail）。**最终树未实测**：本包不写参考解，
-    A 的最终读数只能等参考树或真实 run。
+    任务要创建的文件，记为 declared_unmatched，不判 fail）。**最终树已实测（参考解）**：13 文件、
+    workspace_scope.files=9、declared_unmatched=[]、A1–A10 全 pass（10/10、exit 0）。
 
 invalidation:
   - id: task_package_drift
@@ -237,7 +272,7 @@ invalidation:
   - id: hidden_drift
     rule: >-
       hidden/runner.py 或隐藏计划的摘要不符，或 cases 的 id 集合与 case_ids 不相等。
-      **pending_hidden 期间这条不可满足**：没有隐藏代码就没有可比的摘要（该 run 只能出 C/A 读数）。
+      两个摘要已填实值（T 已冻结），因此这条**现在可判定**：摘要不符 = 该 run 作废。
   - id: scoring_drift
     rule: 本文件摘要与 freeze.json 记录的 scorer_input 摘要不符。
   - id: layers_interfaces_drift
@@ -275,4 +310,5 @@ readings:
   note: >-
     每题每次 run 记 T/C/A 三个数 + 过程读数（matched/skipped/violations/check_volume/served_checkers）；
     过程读数只做描述，不进 100 分；n=1 只写案例，k>=3 且过预注册规则才可写「值得扩试」。
-    **pending_hidden 期间 T 记「跑不成」**，不得写 0 分或满分；C/A 可以单独出读数但要标明不是三维齐备。
+    T 已冻结（total=38）：exit 2 或缺 id 时记「跑不成」，不得写 0 分或满分；C/A 可以单独出读数，
+    但要标明不是三维齐备。

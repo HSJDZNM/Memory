@@ -1,5 +1,10 @@
 # 覆盖矩阵（bank-bugfix-first-failing-test）
 
+> **2026-10-21 深夜状态（本覆盖表快照之后）**：本题 hidden/PLAN.md（38 条）与 hidden/runner.py、
+> reference/tree/ 与天花板已落盘并实测：T 基线 21/38、参考树 38/38；C effective_total 27/27；A 10/10。
+> 本文正文里「hidden 未实现 / 未测 / pending_hidden」的措辞是该批落地前的快照；当前读数以本题
+> README 的「天花板读数」节与 reference/README.md 为准。
+
 > **它回答什么**：这道题把治理系统的哪些规则点 / 结构谓词 / 隐藏验收真正压到了，
 > 哪些只是「规则数据上可触发」而本题没有岔口，哪些结构性不适用，以及**每条读数的证据等级**。
 > **它不回答什么**：不构成「参考解已通过」的证据——参考解与本包的隐藏代码**都还没写**（下一批）；
@@ -31,7 +36,7 @@
 | 本题留作变异 | **24** 条 | 一处显式缺陷即可命中；不影响「本任务不压这些面」这一结论 |
 | 结构性不适用 | **12** 条 | 不写 SQL/XML/TLS/网络/套接字/模板；不宣称覆盖 |
 | 结构谓词（A 维度） | **10** 条 | `tools/structure_metrics.py` 1.1；声明在 `layers.yaml` / `interfaces.yaml`，本题已在**基线树**上实测 10/10 |
-| 隐藏验收（行为面） | **候选 36 条（未实现）** | 见 §6；`scoring.yaml` 的 `planned_min_total: 30`，**total 未冻结** |
+| 隐藏验收（行为面） | **38 条（已实现并冻结）** | `scoring.yaml` 的 `total: 38`、`case_ids` 38 条；参考树 38/38、基线 21/38（2026-10-21，见 §6 与 README §10） |
 
 **怎么读**：● 的 7 条是本任务真正压到的判定面；○ 的 24 条说明这些规则在**同一写面上仍然会响**，
 但本题不把它们当岔口；— 的 12 条必须写成「本题不覆盖」，不得从 `allow` 反推成「查过没问题」；
@@ -124,16 +129,15 @@ error → `block`，warning → `allow_with_warnings`。除 `TESTING-001`（已�
 | A9 测试对应完备 | 100% | 每个生产文件都有测试层静态 import | 新建生产文件但不写测试（同时命中 TESTING-001） |
 | A10 无动态执行 | 违规 0 | 静态 import | `importlib.import_module("shop.order_repository")` 或通配 import |
 
-**实测状态**：在**基线树**（11 文件 / 8 个 .py）上跑 `structure_metrics` → **10/10 pass**
-（`workspace_scope.files=8`；`layers.yaml` 声明 13 条，其中 2 条指向任务要创建的文件，记为
-`declared_unmatched`，不判 fail）。**最终树未实测**（本包不写参考解 ⇒ 没有可测的最终树），
-所以「最终树 A 全过」这句话目前**没有读数支撑**，只能等参考树或真实 run。
+**实测状态**：基线树（11 文件 / 8 个 .py）跑 `structure_metrics` → **10/10 pass**；
+**参考解最终树**（13 文件）也实测 **10/10 pass、exit 0**（`workspace_scope.files=9`；
+`layers.yaml` 声明 13 条，其中 2 条指向任务要创建的文件，记为 `declared_unmatched`，不判 fail）。
 
-## 6 只能靠隐藏验收（◐；候选 36 条，**未实现**）
+## 6 只能靠隐藏验收（◐；38 条，已实现并冻结）
 
-> **状态**：本节是**候选清单**，隐藏代码与隐藏计划是**下一批**任务（本包不含 `hidden/`）。
-> 每条的「判据」都是可执行的；写隐藏代码的子会话按本清单落条目、再冻结 `scoring.yaml` 的
-> `case_ids` 与 `total`。**下表的条数（36）不是已冻结的 hidden total**。
+> **状态（2026-10-21 深夜）**：`hidden/PLAN.md`（38 条）与 `hidden/runner.py` 已落盘；
+> `scoring.yaml` 的 `case_ids`（38 条）与 `total: 38` 已冻结。参考树 **38/38**、基线 **21/38**，
+> 两次运行逐字节相同；读数见 README §10。下表的分组是**计划骨架**，实际 id 以 runner 的 `CASE_IDS` 为准。
 
 **BASE（基线性质，4 条）** —— 证明「起点是红的」不是口头声明
 
