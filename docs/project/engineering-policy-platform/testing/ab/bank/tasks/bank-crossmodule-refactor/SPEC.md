@@ -1,7 +1,7 @@
 # SPEC：跨模块重构 / 废弃 API（`bank-crossmodule-refactor`）
 
-> **状态**：规格（可直接冻结）；本次**不要求**写冻结包。照本页 + `bank/README.md` §4 即可产出
-> `task-package/ + baseline/ + reset-arm.py + hidden/ + reference/ + layers.yaml + interfaces.yaml`。
+> **状态**：规格（本题的冻结依据）；`baseline/`、`task-package/`、`layers.yaml`、`interfaces.yaml`、
+> `coverage.md`、`reset-arm.py`、`scoring.yaml` 已按本页落盘；`hidden/`、`reference/` 与天花板尚未做。
 
 ## 1 场景
 

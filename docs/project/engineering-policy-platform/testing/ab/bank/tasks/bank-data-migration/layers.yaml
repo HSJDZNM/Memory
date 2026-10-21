@@ -1,0 +1,36 @@
+# bank-data-migration：最终树（21 文件）→ 层的唯一声明（A 维度，structure_metrics 1.1 的词汇）。
+#
+# 消费者：python tools/structure_metrics.py --workspace <final-tree> --layers <本文件> --interfaces interfaces.yaml --json
+# 层值闭集 = composition / controller / service / repository / model / test / other / skip（未声明层的 .py 会让 A1 fail）。
+# 文件集 = 13 个基线文件 + 任务创建的 8 个文件（每多/少一个都让「路径族声明 100%」这句话变成假的）。
+#
+# 列在这里的非 .py 文件用 skip（移出测量范围），不是「没有层」：workspace_scope 需要它是显式声明。
+# test：测试文件与测试支撑文件（conftest.py 命中 validation/test-layout.yaml 的 test_support_patterns，
+# 平台口径的层就是 test，AGENTS 第 49 条）。
+# other：生产代码但无分层角色（src/shop/__init__.py，只有一行包 docstring）。
+# model：纯数据/纯函数模块（ledger_migration 只做数据变换，不 import 任何项目内模块）；
+#   任意层 → model 是 A1 允许的方向，A9 仍要求它有测试层 import。
+# composition：组合根与工具入口（两个 tools 脚本：它们解析参数、读 schema、调 model 层；
+#   这是 A4 唯一豁免的生产层）。
+
+AGENTS.md: skip
+README.md: skip
+config/ledger_schema.yaml: skip
+conftest.py: test
+data/ledger-v1.jsonl: skip
+data/ledger-v2.jsonl: skip
+docs/migration.md: skip
+pytest.ini: skip
+src/shop/__init__.py: other
+src/shop/ledger_migration.py: model
+src/shop/order_controller.py: controller
+src/shop/order_repository.py: repository
+src/shop/order_service.py: service
+tests/test_ledger_migration.py: test
+tests/test_migrate_ledger.py: test
+tests/test_order_controller.py: test
+tests/test_order_repository.py: test
+tests/test_order_service.py: test
+tests/test_verify_ledger.py: test
+tools/migrate_ledger.py: composition
+tools/verify_ledger.py: composition

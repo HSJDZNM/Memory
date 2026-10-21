@@ -1,6 +1,7 @@
 # SPEC：并发 / 异步（`bank-async-concurrency`）
 
-> **状态**：规格（可直接冻结）。本页 + `bank/README.md` §4 即可产出冻结包。
+> **状态**：规格（本题的冻结依据）；`baseline/`、`task-package/`、`layers.yaml`、`interfaces.yaml`、
+> `coverage.md`、`reset-arm.py`、`scoring.yaml` 已按本页落盘；`hidden/`、`reference/` 与天花板尚未做。
 
 ## 1 场景
 
@@ -8,16 +9,17 @@
 有界队列、按 key 幂等去重、可取消、停机时排空、异常不许吞。测试不得依赖墙钟/随机/网络，
 用 `asyncio.run` 与 `queue.join()` 驱动，同一输入重复跑读数一致。
 
-## 2 基线（13 文件；起点全绿，**没有失败测试**）
+## 2 基线（14 文件；起点全绿，**没有失败测试**）
 
 | 组 | 文件 |
 | --- | --- |
 | 订单项目（11） | `bank-flagship-returns/baseline` 的 11 个文件（逐字节） |
+| 脚本包（1） | `tools/__init__.py`（与 `bank-flagship-returns/baseline/tools/__init__.py` **逐字节相同**；它让 `tools` 成为树里的顶层包，`tools.*` 的测试先写才会走「待实现」而**不是**收集失败） |
 | 同步队列（2） | `src/shop/notification.py`（`NotificationQueue.append/pop/len`）+ `tests/test_notification.py` |
 
 起点：`python -m pytest -q` → 4 passed。
 
-## 3 模型要做什么（允许写 9 路径）
+## 3 模型要做什么（允许写 10 路径）
 
 - 新建 `src/shop/notify_model.py`（model 层）：`@dataclass(frozen=True) class Notification`
   （`key: str, order_id: int, kind: str`），`to_dict()`；键集合与类型校验失败关闭；
@@ -32,10 +34,11 @@
 - 改 `src/shop/notification.py` 加一行 deprecation 说明（保留旧队列），并改 `tests/test_notification.py`
   断言该说明存在。
 
-**允许写 9 路径**：`src/shop/notify_model.py`、`src/shop/notify_worker.py`、`tools/notify_smoke.py`、
+**允许写 10 路径**：`src/shop/notify_model.py`、`src/shop/notify_worker.py`、`tools/notify_smoke.py`、
 `tests/test_notify_model.py`、`tests/test_notify_worker.py`、`tests/test_notify_smoke.py`、
-`docs/async.md`、`README.md`、`src/shop/notification.py`、`tests/test_notification.py`（共 10）。
-不许改 `src/shop/order_*.py`、`conftest.py`、`pytest.ini`、`AGENTS.md`。
+`docs/async.md`、`README.md`、`src/shop/notification.py`、`tests/test_notification.py`（共 10 条，
+与 `task-package/allowed-writes.txt` 逐行一致）。
+不许改 `src/shop/order_*.py`、`conftest.py`、`pytest.ini`、`AGENTS.md`、`tools/__init__.py`。
 
 ## 4 可检测规则点（真实存在）
 
@@ -46,12 +49,12 @@
 | DOC-001 | missing_docstring | warning | 协程/类漏 docstring | `allow_with_warnings` |
 | STYLE-001 | style_lint | warning | 长断言/长 docstring 超 100 列 | `allow_with_warnings` |
 | STYLE-002 | style_lint | error | 改完留下未使用 import | `block`（error） |
-| STYLE-004 | style_lint | warning | smoke 脚本 `sys.path` 后 import 忘 `# noqa: E402` | `allow_with_warnings` |
+| STYLE-004 | style_lint | warning | smoke 脚本先写模块级赋值（如 `ROOT = Path(...)`）再 `sys.path.insert`、随后 import 忘 `# noqa: E402`（**实测正例**；裸 `sys.path.insert` 后 import 不报） | `allow_with_warnings` |
 | STYLE-018 | style_lint | warning | import 分组顺序错 | `allow_with_warnings` |
 | SEC-011 | style_lint | error | 用 `random.random()` 做退避/抖动或事件 id | `block`（error） |
 | SEC-015 | style_lint | error | `except (Exception, asyncio.CancelledError): pass` 吞取消 | `block`（error） |
 
-其余：`ARCH-001` 为 —（不碰 controller）；`SEC-006` 为 —（本题不读 YAML）；
+其余：`ARCH-001` 为 —（不碰 controller；`scoring.yaml` 已把它的 3 分标 `not_applicable`，C 上限 27）；`SEC-006` 为 —（本题不读 YAML）；
 `STYLE-010` 为 ○（裸 `except:` 的变体也会被 SEC-015 兜住）；
 `SEC-005/007/008/009/010/012/014/019/021/022` 为 —；其余 `DOC-002/003/004`、
 `STYLE-003/005/006/007/008/009/011/012/014/015/016/017`、`SEC-001/002/003/004/017/018` 为 ○（`STYLE-010` 已单列为 ○）。

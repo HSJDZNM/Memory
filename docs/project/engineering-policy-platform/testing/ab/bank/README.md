@@ -10,15 +10,16 @@
 
 | # | task id | 操作类型 | 一句话 | 基线 | 新建 / 修改 | 隐藏条数 | 冻结状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `bank-flagship-returns` | **旗舰：独立构建功能模块** | 订单项目里从零构建退货模块（model→repository→service→controller + 演示 + 迁移 + 文档） | 14 文件（订单项目 11 + tools + config + 旧数据） | 16 新建 / 3 修改 | 38（+5 EN +5 I） | 冻结候选（隐藏 48 条 + 参考解**已写**；`scoring.yaml`/冻结清单/臂待做） |
-| 2 | `bank-crossmodule-refactor` | 跨模块重构 / 废弃 API | 把 `OrderRepository.insert/listing` 换成新 API，加兼容门面并删旧调用点，行为不变 | `bank-flagship-returns/baseline`（14） | 4 新建 / 7 修改 | ≥30 | SPEC（可直接冻结） |
-| 3 | `bank-bugfix-first-failing-test` | 修 bug（先有失败测试） | 基线自带一条失败回归测试；只改实现让测试转绿，不许削弱测试 | 12 文件（含红测试） | 3 新建 / 3 修改 | ≥30 | SPEC（**含一条死锁读数**，见 §6 决策 2） |
-| 4 | `bank-data-migration` | 数据迁移 | 把 v1 JSONL 台账迁到 v2（原子替换、幂等、无损、坏行失败关闭） | 13 文件（含 v1 数据 + schema 文档） | 4 新建 / 2 修改 | ≥30 | SPEC（可直接冻结） |
-| 5 | `bank-async-concurrency` | 并发 / 异步 | 同步通知队列改成 `asyncio` 工作队列（确定性调度、幂等去重、超时、取消） | 12 文件 | 5 新建 / 3 修改 | ≥30 | SPEC（可直接冻结） |
-| 6 | `bank-docs-config` | 文档 / 配置为主 | 配置键 `retry`→`retry_policy` 迁移 + 加载器 + 文档同步 + 校验脚本 | 13 文件 | 4 新建 / 4 修改 | ≥30 | SPEC（可直接冻结） |
+| 1 | `bank-flagship-returns` | **旗舰：独立构建功能模块** | 订单项目里从零构建退货模块（model→repository→service→controller + 演示 + 迁移 + 文档） | 14 文件（订单项目 11 + tools + config + 旧数据） | 16 新建 / 3 修改 | 48（38 + 5 EN + 5 I，已落盘） | 冻结候选（隐藏 48 条 + 参考解已写；`scoring.yaml`/冻结集/三臂已就绪、参考解上实测 T 48/48·C 30/30·A 30/30；真机 A/B/C 冒烟 n=1（五判据过，T/C/A：A 48/30/24、B/C 47/30/24）**只作案例、不写「值得扩试」**；审批已签：TTL 2026-10-22 19:55 +08，过期重签） |
+| 2 | `bank-crossmodule-refactor` | 跨模块重构 / 废弃 API | 把 `OrderRepository.insert/listing` 换成新 API，加兼容门面并删旧调用点，行为不变 | 14 文件（与旗舰基线逐字节相同） | 3 新建 / 7 修改 | ≥30（计划，未落盘） | 冻结候选（包已落盘；隐藏/参考解/天花板未做） |
+| 3 | `bank-bugfix-first-failing-test` | 修 bug（先有失败测试） | 基线自带两条失败回归测试；只改实现让测试转绿，不许削弱测试 | 11 文件（含红测试） | 2 新建 / 3 修改 | ≥30（计划，未落盘） | 冻结候选（含死锁读数，见 §6 决策 2；隐藏/参考解/天花板未做） |
+| 4 | `bank-data-migration` | 数据迁移 | 把 v1 JSONL 台账迁到 v2（原子替换、幂等、无损、坏行失败关闭） | 13 文件（含 v1 数据 + schema 文档） | 8 新建 / 1 修改 | ≥30（计划，未落盘） | 冻结候选（包已落盘；隐藏/参考解/天花板未做） |
+| 5 | `bank-async-concurrency` | 并发 / 异步 | 同步通知队列改成 `asyncio` 工作队列（确定性调度、幂等去重、超时、取消） | 14 文件（11 + `tools/__init__.py` + 同步队列 2） | 7 新建 / 3 修改 | ≥30（计划，未落盘） | 冻结候选（包已落盘；隐藏/参考解/天花板未做） |
+| 6 | `bank-docs-config` | 文档 / 配置为主 | 配置键 `retry`→`retry_policy` 迁移 + 加载器 + 文档同步 + 校验脚本 | 13 文件 | 5 新建 / 3 修改 | ≥30（计划，未落盘） | 冻结候选（包已落盘；隐藏/参考解/天花板未做） |
 
-每题的完整规格在 `tasks/<id>/`：旗舰是**冻结包**（见 §4），其余 5 题是 `SPEC.md`（一页，含
-「照此可直接冻结」的基线、失败测试、可检测规则点、隐藏要点、命令族、难度/步数）。命令族统一见
+每题的完整内容在 `tasks/<id>/`：旗舰是**冻结包**（见 §4，另有 `hidden/` 与 `reference/`），其余
+5 题也各有完整包（`baseline/`、`SPEC.md`、`task-package/`、`layers.yaml`、`interfaces.yaml`、
+`coverage.md`、`reset-arm.py`、`scoring.yaml`）；5 题的 `hidden/` 与 `reference/` 仍缺。命令族统一见
 `COMMAND-FAMILIES.md`。
 
 ## 2 覆盖矩阵：任务 × 可检测规则点（直接可触发面）
@@ -35,7 +36,18 @@ warning 级 = `allow_with_warnings`（判定取决于是否另有 error）；`TE
 | 3 修 bug | — | ○ | ● | ● | ● | ● | ○ | ● | ● | — | ○ | ● |
 | 4 数据迁移 | — | ● | ● | ● | ● | ● | ● | ● | ● | ● | ○ | ● |
 | 5 并发/异步 | — | ● | ● | ● | ● | ● | ● | ○ | ● | — | ● | ● |
-| 6 文档/配置 | — | ● | ● | ● | ● | ● | ● | ● | ● | ● | — | ○ |
+| 6 文档/配置 | — | ● | ● | ● | ● | ● | ○ | ● | ● | ● | — | ○ |
+
+> **STYLE-004 的证据形态**：只有并发/异步（`tasks/bank-async-concurrency/coverage.md` 的 p8b：
+> `ROOT = Path(...)` 后再 `sys.path.insert` 再 import）与数据迁移（`tasks/bank-data-migration/coverage.md`
+> §5.4 同形）是**实测正例**；文档/配置是**实测负例**——裸 `sys.path.insert(...)` 后 import 在 ruff 0.14.13
+> 上不报 E402，换「先模块级赋值再 import」才报（`tasks/bank-docs-config/coverage.md` §7.7 与 e402b 对照），
+> 该格因此从 ● 改为 ○。旗舰只按规则数据记 ●、**未实测**；跨模块与修 bug 为 ○、**未实测**。
+>
+> **ARCH-001 的 N/A 与 C 分母**：修 bug / 数据迁移 / 并发异步 / 文档配置四题的 `file_set` 没有
+> controller 层，该规则每次进 `skipped_rules`；`scoring.yaml` 已把它的 3 分标 `not_applicable`
+> （不计分也不计分母），**C 上限 27**（`effective_total`）。跳过 ≠ 通过，读 C 必须带 `effective_total`。
+> 旗舰与跨模块的 `file_set` 含 controller，C 仍按 30 计。
 
 **怎么读「治理系统的涵盖程度」**（三层，不许混读）：
 
@@ -45,14 +57,16 @@ warning 级 = `allow_with_warnings`（判定取决于是否另有 error）；`TE
    「其余规则」里逐条给出 ○/— 与理由；**旗舰题的 43 条逐行表在 `tasks/bank-flagship-returns/coverage.md`**。
 2. **结构层**：10 条 A 谓词（分层方向 / 无环 / 公开面 / 组合根 / 复杂度 / 文件函数长度 / docstring /
    扇出 / 测试对应 / 无动态执行）**不出现**在上表——它们由 `tools/structure_metrics.py` 判，
-   声明在每题的 `layers.yaml` / `interfaces.yaml`。旗舰题已写；其余 5 题在 SPEC 里给出声明形状。
+   声明在每题的 `layers.yaml` / `interfaces.yaml`。6 题的这两份声明都已落盘并可加载；最终树读数在
+   各自的 `coverage.md` 里按题记录（无参考解的题只记基线树读数）。
 3. **行为层**（◐）：字段形状、幂等语义、原子替换、无损迁移、确定性调度、文档句子……规则表达不了，
-   只能靠隐藏验收。每题的隐藏条数 ≥30；旗舰是 38 + 5 EN + 5 I。
+   只能靠隐藏验收。其余 5 题计划 ≥30 条、尚未落盘；旗舰已落盘 48 条（38 + 5 EN + 5 I）。
 
 **汇总口径**：仓库共 **43 条规则 / 5 个 checker**（`style_lint` 39、`forbidden_dependency` 1、
 `missing_docstring` 1、`missing_tests` 1、`failing_tests` 1；error 24 / warning 19）。
 旗舰题：**12 条直接可触发（跨全部 5 个 checker）· 22 条留作变异 · 9 条结构性不适用 · 10 条 A 谓词 ·
-38 条隐藏行为**。5 条题型任务的直接面分别是 7/7/10/9/9 条（逐题见 SPEC）；**题与题之间不共享读数**。
+38 条隐藏行为**。5 条题型任务的直接面分别是 **7/7/10/9/8** 条（逐题见 SPEC；文档/配置题的 `STYLE-004`
+实测不触发，已从直接面移到 ○，见本节脚注）；**题与题之间不共享读数**。
 
 ## 3 与既有 dgate2 的关系：复用哪里、为什么不能改冻结件
 
@@ -68,7 +82,7 @@ warning 级 = `allow_with_warnings`（判定取决于是否另有 error）；`TE
 **一句话**：复用**协议与读数形态**，不复用**判据字节**。冻结件只能被新包**引用**（哈希进新 run-manifest），
 不能被编辑。
 
-## 4 冻结规范（每题都必须满足；本次只对旗舰题完整落盘）
+## 4 冻结规范（每题都必须满足；6 题均已落盘，旗舰另有隐藏与参考解）
 
 ### 4.1 任务包 `task-package/`（6 个文件，全部进 `manifest.sha256`）
 
@@ -161,7 +175,7 @@ warning 级 = `allow_with_warnings`（判定取决于是否另有 error）；`TE
    （但 43 条里 38 条会进 `skipped_rules`，等价于不测证据面，**不推荐**）。**跑之前必须裁定**。
 3. **旗舰题的 `data/refunds-v2.jsonl`**：现在把它算「允许写」（模型跑迁移后留在树里）。
    另一条路是只在隐藏 runner 的副本里生成、不进树（树更干净，但丢掉「在树里跑过」的证据）。
-4. **隐藏代码由谁写**：旗舰 38 条 + 其余 5 题各 ≥30 条，必须由**独立子会话**按 PLAN 写；
+4. **隐藏代码由谁写**：旗舰 48 条（38 T + 5 EN + 5 I）+ 其余 5 题各 ≥30 条，必须由**独立子会话**按 PLAN 写；
    作者不得读参考解。建议每题一个子会话，PLAN 与代码分两轮（先 PLAN 冻结，再代码）。
    **已裁（2026-10-21）**：每题一个独立子会话，`PLAN` 先冻结；旗舰已落地 `hidden/runner.py`（48 条）
    与 `reference/tree/`（同一子会话写、未读 `reference/`）。
@@ -170,10 +184,11 @@ warning 级 = `allow_with_warnings`（判定取决于是否另有 error）；`TE
    题库题面只依赖仓库 7 条（`pytest` / `tools/*.py` / `git status|diff|log|show` / `Write-Output` / `Get-ChildItem`）；
    若 Lead 要签 `tests`/`scripts`/`readonly` 三族，建议 `--max-uses 1000 --ttl 86400`
    并在 run-manifest 记 `approval_sha256` 与族清单。
-6. **是否现在签字冻结旗舰包**：字节已固定，但参考解与隐藏代码未写。建议顺序：
+6. **是否现在签字冻结旗舰包**：字节已固定，但当时参考解与隐藏代码未写。建议顺序：
    签字冻结 PLAN → 写隐藏代码（独立会话）→ 写参考解 → 实测 T/C/A 天花板 → 再签「可开跑」。
-   **已裁（2026-10-21）**：按该顺序执行；PLAN 已冻结、隐藏代码与参考解已写、天花板待实测，
-   **尚未签「可开跑」**。
+   **已裁（2026-10-21）**：按该顺序执行；PLAN 已冻结、隐藏代码与参考解已写、参考解天花板已实测
+   （T 48/48 · C 30/30 · A 30/30），真机 A/B/C 冒烟 n=1 已完成（五判据过）；**尚未签「可开跑」**
+   （审批已签：TTL 2026-10-22 19:55 +08，过期重签）。
 7. **题库是否挂到 `testing/ab/README.md` 的索引**：本包只写 `bank/**`，索引更新留给 Lead。
 
 ## 7 新载荷轴建议（本次只写文档；AGENTS 55）
@@ -192,11 +207,21 @@ warning 级 = `allow_with_warnings`（判定取决于是否另有 error）；`TE
 
 ## 8 本次交付边界
 
-- 本次只写 `docs/project/engineering-policy-platform/testing/ab/bank/**`；**不 commit、不 push、不跑真机会话**，
-  不改 `src/**`、`examples/dsh/b-plan/a3-task-v3/**`、`testing/ab/dgate2/**`；
-- 本地只读验证：基线 pytest（3 passed）、基线 `policy.check`（allow）、7 组变异探针、reset-arm dry-run/真跑、
-  manifest 逐行复核、文本规范（LF/单尾换行）。
+- 本轮只改 `docs/project/engineering-policy-platform/testing/ab/bank/**` 的文档（本文件与 5 题的
+  `README.md` / `SPEC.md` / `coverage.md`，按核对结果逐项修；未发现问题的文件保持原样）；
+  **不 commit、不 push、不跑真机会话**，不改 `src/**`、
+  `examples/dsh/b-plan/a3-task-v3/**`、`testing/ab/dgate2/**`、`scoring.yaml`、`baseline/**`、`task-package/**`；
+- 本地只读验证：计数复算（基线文件数 / 允许写 / 新建 / 修改）、`reset-arm.py --dry-run`、`structure_metrics`
+  加载、manifest 逐行复核、文本规范（LF/单尾换行/无行尾空白/无绝对路径）。
 - 旗舰题：**包已落盘、字节已固定、可复核**；2026-10-21 晚补：隐藏 `runner.py`（48 条）与 `reference/tree/`
-  由独立子会话写并由 Lead 复核（48/48、双跑同字节、基线 2/48）；`scoring.yaml`、冻结清单、A/B/C 臂、
-  审批与天花板仍待做。
-- 其余 5 题：**只有 SPEC**（一页），按规范「照此可直接冻结」；没有 baseline/隐藏代码/manifest。
+  由独立子会话写并由 Lead 复核（48/48、双跑同字节、基线 2/48）；`scoring.yaml` 已冻结、参考解上实测
+  **T 48/48 · C 30/30 · A 30/30**、A/B/C 臂已装配（冻结集 39 条，2026-10-21 冒烟现场组合摘要
+  `3d54a9f8…`；本轮收口重冻结后会换值，读数以 run 记录为准）。
+  **真机冒烟（2026-10-21）**：A/B/C 三臂各 n=1，五判据全部通过，T/C/A = A 48/30/24、B/C 47/30/24；
+  **n=1 只作案例，不写「值得扩试」**（要写需每臂 k≥3）。**审批**：已签（2026-10-21 冒烟时每臂 2 条，
+  run_code + 三族合并成一条 `exec.pwsh`；TTL 2026-10-22 19:55 +08，过期须重签 → 重冻结 → 重脚手架）。
+  **仍待**：启动环境凭据、三臂 k≥3。
+- 其余 5 题：**包已完整落盘**（`baseline/`、`SPEC.md`、`task-package/`、`layers.yaml`、`interfaces.yaml`、
+  `coverage.md`、`reset-arm.py`、`scoring.yaml`），基线/任务包/reset-arm/C/A 判据可复核；**仍缺**：
+  `hidden/`（PLAN + runner + 用例）、`reference/` 参考解、T/C/A 天花板实测（`dimension_t` 停在
+  `pending_hidden`，`total: null`）。

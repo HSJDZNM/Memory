@@ -1,0 +1,8 @@
+README.md
+config/app.yaml
+docs/config-migration.md
+docs/config.md
+src/shop/config.py
+tests/test_check_config.py
+tests/test_config.py
+tools/check_config.py

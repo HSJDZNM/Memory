@@ -1,0 +1,18 @@
+# bank-data-migration：A3「公开符号最小面」的声明接口上限（--interfaces 的输入）。
+#
+# 口径（与 tools/structure_metrics.py 的 A3 一致）：每个**非测试层**模块的公开定义数
+# （DefinitionFact.private=false，含方法）≤ 这里声明的上限；没声明上限的模块判 fail。
+# 测试层不约束（A3_SKIP_LAYERS）。
+#
+# ledger_migration 的 4 个公开函数（load_schema / read_v1 / migrate_rows / write_v2）+ 2 个余量；
+# 两个 tools 脚本各 1 个公开入口 main + 1 个余量（私有辅助函数以 _ 开头，不计入公开面）。
+# 三个基线 order_*.py 各有 3 个公开定义、本任务不许改，上限 4（契约 + 1 个余量）。
+# 未列出的模块（测试文件）不在 A3 范围内。
+
+src/shop/__init__.py: 0
+src/shop/ledger_migration.py: 6
+src/shop/order_controller.py: 4
+src/shop/order_repository.py: 4
+src/shop/order_service.py: 4
+tools/migrate_ledger.py: 2
+tools/verify_ledger.py: 2

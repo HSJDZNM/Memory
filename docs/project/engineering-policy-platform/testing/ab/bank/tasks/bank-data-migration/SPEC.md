@@ -1,6 +1,7 @@
 # SPEC：数据迁移（`bank-data-migration`）
 
-> **状态**：规格（可直接冻结）。本页 + `bank/README.md` §4 即可产出冻结包。
+> **状态**：规格（本题的冻结依据）；`baseline/`、`task-package/`、`layers.yaml`、`interfaces.yaml`、
+> `coverage.md`、`reset-arm.py`、`scoring.yaml` 已按本页落盘；`hidden/`、`reference/` 与天花板尚未做。
 
 ## 1 场景
 
@@ -19,7 +20,7 @@
 
 起点：`python -m pytest -q` → 3 passed。
 
-## 3 模型要做什么（允许写 8 路径）
+## 3 模型要做什么（允许写 9 路径）
 
 - 新建 `src/shop/ledger_migration.py`（model 层，纯函数 + `yaml.safe_load`）：
   `load_schema(path) -> dict`（键集合严格）、`migrate_rows(rows) -> list[dict]`（校验/映射/排序）、
@@ -31,9 +32,8 @@
 - 改 `README.md`（结构表 + 迁移命令一行）。
 - 迁移后生成 `data/ledger-v2.jsonl`（由脚本产出，算允许写）。
 
-**允许写 8 路径**：`src/shop/ledger_migration.py`、`tools/migrate_ledger.py`、`tools/verify_ledger.py`、
-`tests/test_ledger_migration.py`、`tests/test_migrate_ledger.py`、`tests/test_verify_ledger.py`、
-`docs/migration.md`、`README.md`（+ 产物 `data/ledger-v2.jsonl` 记在 allowed-writes 里，共 9 条）。
+**允许写 9 路径**：上述 8 条 + 产物 `data/ledger-v2.jsonl`（`task-package/allowed-writes.txt` 共 9 行，
+逐行可复核）。
 不许改 `data/ledger-v1.jsonl`、`config/ledger_schema.yaml`、`src/shop/order_*.py`、`conftest.py`、`pytest.ini`。
 
 ## 4 可检测规则点（真实存在）
@@ -45,14 +45,15 @@
 | DOC-001 | missing_docstring | warning | 纯函数模块/类漏 docstring | `allow_with_warnings` |
 | STYLE-001 | style_lint | warning | 迁移行的 JSON 键串/日志串超 100 列 | `allow_with_warnings` |
 | STYLE-002 | style_lint | error | 复制 import 后留下未使用项 | `block`（error） |
-| STYLE-004 | style_lint | warning | 工具脚本 `sys.path.insert` 后的 import 忘加 `# noqa: E402` | `allow_with_warnings` |
+| STYLE-004 | style_lint | warning | 工具脚本先写 `ROOT = Path(...)` 再 `sys.path.insert`、随后 import 忘加 `# noqa: E402`（**实测正例**；裸 insert 后 import 不报，见 `bank/README.md` §2 脚注） | `allow_with_warnings` |
 | STYLE-010 | style_lint | error | 读文件失败时用裸 `except:` | `block`（error） |
 | STYLE-018 | style_lint | warning | 本地区块 import 顺序错 | `allow_with_warnings` |
 | SEC-006 | style_lint | error | `load_schema` 用 `yaml.load(handle, Loader=yaml.Loader)` | `block`（error） |
 | SEC-015 | style_lint | error | 坏行用 `except Exception: pass` 跳过（与「失败关闭」直接冲突） | `block`（error） |
 
 其余：`SEC-008`（SQL 拼接）为 —（数据层是 JSONL，不是 DB）；`SEC-011` 为 ○（变异）；
-`ARCH-001` 为 —（不碰 controller）；`SEC-005/007/009/010/012/014/019/021/022` 为 —；
+`ARCH-001` 为 —（不碰 controller；`scoring.yaml` 已把它的 3 分标 `not_applicable`，C 上限 27）；
+`SEC-005/007/009/010/012/014/019/021/022` 为 —；
 `DOC-002/003/004`、`STYLE-003/005/006/007/008/009/011/012/014/015/016/017`、`SEC-001/002/003/004/017/018` 为 ○。
 
 ## 5 隐藏验收要点（≥30 条；建议 36）

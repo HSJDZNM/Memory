@@ -1,0 +1,7 @@
+# 应用配置。
+# v1 口径：retry 是标量重试次数；app_name / feature_flags 与 v2 同名同义。
+app_name: demo-shop
+retry: 3
+feature_flags:
+  - checkout
+  - search

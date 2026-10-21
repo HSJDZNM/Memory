@@ -1,0 +1,5 @@
+README.md
+docs/fix-notes.md
+src/shop/order_repository.py
+tests/test_order_repository.py
+tests/test_order_service_copy.py

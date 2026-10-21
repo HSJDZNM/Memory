@@ -1,6 +1,7 @@
 # SPEC：文档 / 配置为主的变更（`bank-docs-config`）
 
-> **状态**：规格（可直接冻结）。本页 + `bank/README.md` §4 即可产出冻结包。
+> **状态**：规格（本题的冻结依据）；`baseline/`、`task-package/`、`layers.yaml`、`interfaces.yaml`、
+> `coverage.md`、`reset-arm.py`、`scoring.yaml` 已按本页落盘；`hidden/`、`reference/` 与天花板尚未做。
 
 ## 1 场景
 
@@ -45,11 +46,13 @@
 | DOC-001 | missing_docstring | warning | 加载器/脚本漏 docstring | `allow_with_warnings` |
 | STYLE-001 | style_lint | warning | 迁移说明/错误消息一行超 100 列 | `allow_with_warnings` |
 | STYLE-002 | style_lint | error | 改完留下未使用 import | `block`（error） |
-| STYLE-004 | style_lint | warning | 脚本 `sys.path` 后 import 忘 `# noqa: E402` | `allow_with_warnings` |
 | STYLE-010 | style_lint | error | 脚本用裸 `except:` 吞 YAML 异常 | `block`（error） |
 | STYLE-018 | style_lint | warning | import 分组顺序错 | `allow_with_warnings` |
 
-其余：`ARCH-001` 为 —；`SEC-011` 为 —（不引入随机）；`SEC-015` 为 ○（变异：静默吞坏配置）；
+其余：`ARCH-001` 为 —（不碰 controller；`scoring.yaml` 已把它的 3 分标 `not_applicable`，C 上限 27）；
+`STYLE-004` 为 ○（留作变异；**实测负例**：裸 `sys.path.insert(...)` 后 import 在 ruff 0.14.13 上不报 E402，
+只有先写模块级赋值再 insert+import 才报——见 README §6 与 `coverage.md` §3/§7.7）；`SEC-011` 为 —（不引入随机）；
+`SEC-015` 为 ○（变异：静默吞坏配置）；
 `SEC-005/007/008/009/010/012/014/019/021/022` 为 —；`DOC-002/003/004`、`STYLE-003/005/006/007/008/009/011/012/014/015/016/017`、
 `SEC-001/002/003/004/017/018` 为 ○。
 

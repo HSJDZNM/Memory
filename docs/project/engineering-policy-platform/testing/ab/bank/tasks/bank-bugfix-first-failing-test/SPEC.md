@@ -1,6 +1,7 @@
 # SPEC：修 bug（先有失败测试）（`bank-bugfix-first-failing-test`）
 
-> **状态**：规格（可直接冻结）。本页 + `bank/README.md` §4 即可产出冻结包。
+> **状态**：规格（本题的冻结依据）；`baseline/`、`task-package/`、`layers.yaml`、`interfaces.yaml`、
+> `coverage.md`、`reset-arm.py`、`scoring.yaml` 已按本页落盘；`hidden/`、`reference/` 与天花板尚未做。
 > **本题是题库里的「死锁 canary」**：基线自带失败测试，会持续触发 `TESTING-002`（真违规），
 > 把 04 5.68「多步改动被拆成多次终态判定」压成可读读数。开跑前必须先裁 `bank/README.md` §6 决策 2。
 
@@ -18,7 +19,7 @@
 | 订单项目（11） | `bank-flagship-returns/baseline` 的 11 个文件，但 `src/shop/order_repository.py` 换成**有 bug 的版本**（不复制） |
 | 失败测试（含在 11 里） | `tests/test_order_repository.py` 的两条用例在基线上**失败**（本 SPEC 已把断言写死） |
 
-起点：`python -m pytest -q` → **2 failed, 1 passed**（预期红；这是「先有失败测试」的构造，不允许靠改测试转绿）。
+起点：`python -m pytest -q` → **2 failed, 2 passed**（预期红；这是「先有失败测试」的构造，不允许靠改测试转绿）。
 
 ## 3 模型要做什么（允许写 5 路径）
 
@@ -46,7 +47,7 @@
 | STYLE-018 | style_lint | warning | 新测试文件 import 顺序错 | `allow_with_warnings` |
 
 其余规则：`TESTING-001` 为 ○（只加测试文件不会缺测试；改生产的同时改了测试，正常路径不触发）；
-`ARCH-001` 为 —（不碰 controller）；`SEC-006/011` 与网络/DB/XML/TLS 类为 —；
+`ARCH-001` 为 —（不碰 controller；`scoring.yaml` 已把它的 3 分标 `not_applicable`，C 上限 27）；`SEC-006/011` 与网络/DB/XML/TLS 类为 —；
 `DOC-002/003/004`、`STYLE-003/004/005/006/007/008/009/011/012/014/015/016/017`、`SEC-001/002/003/004/007/017/018` 为 ○。
 逐条理由照旗舰题 `coverage.md` 的模板。
 

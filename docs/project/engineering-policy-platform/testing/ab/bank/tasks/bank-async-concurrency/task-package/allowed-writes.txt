@@ -1,0 +1,10 @@
+README.md
+docs/async.md
+src/shop/notification.py
+src/shop/notify_model.py
+src/shop/notify_worker.py
+tests/test_notification.py
+tests/test_notify_model.py
+tests/test_notify_smoke.py
+tests/test_notify_worker.py
+tools/notify_smoke.py

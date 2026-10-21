@@ -1,0 +1,32 @@
+# bank-crossmodule-refactor：最终树（17 文件）→ 层的唯一声明（A 维度，structure_metrics 1.1 的词汇）。
+#
+# 消费者：python tools/structure_metrics.py --workspace <final-tree> --layers <本文件> --interfaces interfaces.yaml --json
+# 层值闭集 = composition / controller / service / repository / model / test / other / skip（未声明层的 .py 会让 A1 fail）。
+# 文件集 = 14 个基线文件 + 任务创建的 3 个文件（src/shop/order_api.py、tests/test_order_api.py、docs/api.md）；
+# 每多/少一个都让「路径族声明 100%」这句话变成假的。
+#
+# 列在这里的非 .py 文件用 skip（移出测量范围），不是「没有层」：workspace_scope 需要它是显式声明。
+# test：测试文件与测试支撑文件（conftest.py 命中 validation/test-layout.yaml 的 test_support_patterns，
+# 平台口径的层就是 test，AGENTS 第 49 条）。
+# other：生产代码但无分层角色（src/shop/__init__.py）。
+# skip：tools/__init__.py——本题不写工具脚本、也没有任何测试会 import 它，声明 skip 是把
+#   「A9 的静态 import 覆盖在它上面不适用」写成**显式声明**，而不是让它变成一条永远红的谓词；
+#   它仍然逐字节受 A10（树 diff）保护（基线冻结文件之一）。
+
+AGENTS.md: skip
+README.md: skip
+config/refund_policy.yaml: skip
+conftest.py: test
+data/refunds-legacy.jsonl: skip
+docs/api.md: skip
+pytest.ini: skip
+src/shop/__init__.py: other
+src/shop/order_api.py: service
+src/shop/order_controller.py: controller
+src/shop/order_repository.py: repository
+src/shop/order_service.py: service
+tests/test_order_api.py: test
+tests/test_order_controller.py: test
+tests/test_order_repository.py: test
+tests/test_order_service.py: test
+tools/__init__.py: skip
