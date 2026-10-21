@@ -6,8 +6,11 @@
 > 与 `README.md` 的结构表；行为必须逐项不变。
 > **冻结状态**：`task-package/` 5 文件字节已固定（`manifest.sha256` 5/5 可复核）、基线组合摘要可复核、
 > `layers.yaml` / `interfaces.yaml` 可被 `tools/structure_metrics.py` 加载、`reset-arm.py` 已实测；
-> **仍缺**：隐藏验收代码（`hidden/PLAN.md` + `hidden/runner.py`）、参考解（`reference/`）、
-> T/C/A 天花板实测、以及 `scoring.yaml` 的 `dimension_t.total` 与 `case_ids`（本题**不伪造**已冻结的 T）。
+> **hidden + reference + 天花板已完成**：隐藏 34 条（`hidden/PLAN.md` + `hidden/runner.py`）在 14 文件基线上
+> 跑红 **4/34**、在参考树 `reference/tree` 上 **34/34**（两次运行 stdout 逐字节相同）；参考树上实测
+> **T 34/34 · C 30/30 · A 30/30**、`pytest` 8 passed；`scoring.yaml` 的 T 段已冻结
+> （`status: frozen`、`total: 34`、`case_ids` 34 条、两个 hidden 摘要实算）。
+> **`frozen_by` 仍是 `pending_lead_signature`**：冻结 T 不等于 Lead 已签字，签字走 run-manifest。
 > **用法**：Lead 重置基线 → 以任务树为 cwd 起受治会话 → 首消息 = `task-package/first-message.md`；
 > 跑完后按 `task-package/acceptance.md` + 隐藏用例 + 树 diff 判分（或按 `coverage.md` 对接 T/C/A）。
 
@@ -52,7 +55,9 @@
 | `reset-arm.py` | `2c0e243347a1261b2d8f863e98da633824cc88b3dc64c0eadaeff47d6c9dd0fe`（不在 manifest 里；它只冻结基线） |
 | `layers.yaml` | `0947710bf740d009e618ad3059b58432a960c3065933a4c831c0f41f53c2bd81` |
 | `interfaces.yaml` | `73132f8e7069591f6009e31dea41c2d18d450a35db8cf24878ea7417e40fc312` |
-| `scoring.yaml` | 由冻结集现场计算（本文件不写自身摘要的自指）；C/A 段可复核，T 段 `pending_hidden` |
+| `hidden/PLAN.md` | `e7c9162ac1dbd7f1416dc4a64c6cb5b8ad873b4ac7b8171f6ecd1948525b48ff` |
+| `hidden/runner.py` | `e6280652aa3cc0c3ea7847083b75c3e903727efd8d31bcdf571edd31de404122` |
+| `scoring.yaml` | 由冻结集现场计算（本文件不写自身摘要的自指）；C/A 段可复核，T 段已冻结（`total: 34`） |
 | `baseline/`（14 文件组合摘要） | `b6d6d2f72575d56ce8507ad188c75e6e795c80965106be83bef09d00261d2e91` |
 
 复核（Lead 开跑前逐行比对，5/5 必须 ok；任一不符 => 该 run 作废）：
@@ -109,15 +114,25 @@ cd <仓库根>
 
 ## 6 本题的读法（不是「跑完就算」）
 
-- **四个维度分开读**：T（任务完成；`pending_hidden`，计划 ≥30 条见 `coverage.md` §6）、
+- **四个维度分开读**：T（任务完成；隐藏 34 条已冻结，参考树 34/34、基线 4/34，见 `hidden/PLAN.md`）、
   C（规则遵守；`scoring.yaml` 的 8 条规则 × 8 个被测 .py）、A（结构；`layers.yaml` / `interfaces.yaml` +
   `tools/structure_metrics.py`）、过程（平台账本：被拒动作、原因码、`matched / skipped / served_checkers`）。
   **不许把过程读数折算进 T/C/A**（05 §5.3）。
-- **`pending_hidden` 不是 frozen**：`scoring.yaml` 的 `dimension_t.total: null`、`case_ids: []` 是**显式空值**，
-  不是 0 分；隐藏代码落盘、跑过一遍之后再同批冻结。
+- **T 已冻结、签字仍未**：`scoring.yaml` 的 `dimension_t.total: 34` 与 `case_ids`（34 条）取自
+  `hidden/runner.py` 的实际 id 集合；`frozen_by` 保持 `pending_lead_signature`，**不把「冻结 T」写成「Lead 已签字」**。
 - **`allow_with_warnings` 不是失败、也不是通过**：M6 的「待实现」走 `pending_findings`（AGENTS 第 51 条），
   `exit 1` 只表示「不是 ALLOW」；阻断判定只读 `violations`。
 - **n=1 只作案例读数**：不写均值/提升/显著；要写「值得扩试」需每臂 k≥3（05 §5.5）。
+
+### 6.1 天花板实测（2026-10，本宿主；完整命令见 `reference/README.md` §4）
+
+| 维度 | 读数 |
+| --- | --- |
+| T（`reference/tree`） | **34 / 34**，runner 退出 0；两次运行 stdout 逐字节相同（sha256 `66ad022b548205b1b8e6de4b4d7c1db93903e77bf55e606f0fa853afc6d2b462`） |
+| T（14 文件基线） | **4 / 34**，runner 退出 1（只有 `T24`/`EN1`/`EN3`/`EN4` 通过）；两次运行 stdout 逐字节相同（sha256 `b03bb0365d5bde53355748ba97fe4c25726832e9a25150a801a2e603e4961e4c`） |
+| pytest | `8 passed`（基线 3 → 8），退出 0 |
+| A | **10 / 10 pass**，`structure_metrics` 1.1 退出 0（A3 = 5 模块 / 12 个公开定义 / 0 越界；A9 = 5/5 生产文件被测试静态 import） |
+| C | 8 个被测 `.py` 全部 `allow`、**0 条 violations**（error 0 / warning 0）⇒ **30 / 30**；`effective_total = 30`，`ARCH-001` 只在 `order_controller.py`（layer=controller）上参与判定，其余 7 个文件进 `skipped_rules`（`scope_mismatch`） |
 
 ## 7 目录地图与完成度
 
@@ -127,18 +142,20 @@ cd <仓库根>
 | `baseline/` | 14 文件基线树（与旗舰基线逐字节相同） | **已冻结候选**（组合摘要 `b6d6d2f7…` 可复核） |
 | `reset-arm.py` | 逐字节重置 + 逐文件校验 + `reset-manifest.json` + 无绝对路径载荷 | **已实测**（dry-run + 真跑 14/14 ok） |
 | `layers.yaml` / `interfaces.yaml` | A 维度声明（17 文件 → 层；A3 公开面上限） | 已写；**已在基线副本上实测加载**（10/10 谓词 pass） |
-| `scoring.yaml` | T/C/A 机读规格 | **C/A 段可复核；T 段 `pending_hidden`**（不伪造 total / case_ids） |
+| `scoring.yaml` | T/C/A 机读规格 | **C/A 段可复核；T 段已冻结**（`status: frozen`、`total: 34`、`case_ids` 34 条、两个 hidden 摘要；不冒充 Lead 签字） |
 | `coverage.md` | 43 条规则点逐条 ○/— + A1–A10 + 隐藏面 + 实测读数 | 已写（7 直接 / 24 变异 / 12 不适用；9 个探针实测） |
-| `hidden/PLAN.md` + `hidden/runner.py` | 隐藏验收计划与代码 | **未做**（下一批任务；本批只给计划形状，见 `coverage.md` §6） |
-| `reference/` | 参考解（模块/接口/测试/文档要点 + 实现） | **未做**（不参与判分；用于实测 T/C/A 天花板） |
-| 天花板（T/C/A 实测） | 在参考树上跑隐藏 runner / `policy.check` / `structure_metrics` | **未做**（随 reference 一起） |
+| `hidden/PLAN.md` + `hidden/runner.py` | 隐藏验收计划与代码（34 条 = 26 T + 4 EN + 4 I） | **已落盘**（runner 契约同旗舰：`BANK_TASK_TREE` / 唯一 JSON / 0-1-2 / 副本上跑 / 60 秒超时） |
+| `reference/tree` + `reference/README.md` | 参考解（10 条允许写）+ 决策点与读数 | **已落盘**（不参与判分） |
+| 天花板（T/C/A 实测） | 参考树上跑隐藏 runner / `policy.check` / `structure_metrics` | **已实测**：T 34/34（基线红 4/34）· C 30/30 · A 30/30 · pytest 8 passed |
 
 ## 8 边界（引用本包前必须读）
 
 - **本包是任务数据，不是平台规则**：它只描述「要模型做什么、允许写什么、怎么判」，不改任何判定逻辑。
-- **隐藏验收必须独立出题**：写隐藏代码的子会话不得读参考解，也不得看任何实施 diff（dgate2 H1 同一口径）；
-  Lead 只运行与复核。本批**没有**写隐藏代码，因此 `hidden_plan_sha256 / hidden_runner_sha256` 这两个键
-  在 `scoring.yaml` 里是 `hidden_plan_sha256: null` / `hidden_runner_sha256: null`，不是缺失也不是假值。
+- **隐藏验收的独立性（如实记缺口）**：`bank/README.md` §4.3 要求写隐藏代码的子会话不得读参考解、不得看实施 diff
+  （dgate2 H1 同一口径），Lead 只运行与复核。本题的 `hidden/` 与 `reference/` 由**同一个作者子会话**按顺序产出
+  （先 PLAN、先 runner，再建参考树；runner 运行时不读 `reference/`，判据只从 `SPEC.md` / `task-package/` /
+  `baseline/` / `layers.yaml` / `interfaces.yaml` 推出）——**独立性弱于旗舰题**，这条缺口留在 H1 的 run-record 里，
+  不在这里写成「已独立」。`hidden_plan_sha256` / `hidden_runner_sha256` 已实算并写进 `scoring.yaml`。
 - **加键即改协议**：本包的两份载荷（`bank-scoring/2` 与 `bank-crossmodule-refactor.reset-arm/1`）各自带版本；
   加键或改语义必须递增并同批改库里其它引用点（AGENTS 第 55 条）。
 - **改它 = 改构造**：任何改动（哪怕一个字节）都要按 05 §8 记录理由与回退，重新生成

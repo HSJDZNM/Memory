@@ -4,28 +4,28 @@
 # 与 dgate2/scorer/scorer.yaml 的关系：只复用 T/C/A=40/30/30 与 C/A 的口径，**不复制字节**；
 # dgate2 冻结件一个字节不动。本文件自己的轴 = schema_id + version（bank-scoring，现处 2）。
 #
-# **本文件不是完全冻结的**：C 与 A 两段（规则集、被测文件集、冻结文件集、10 条谓词）已按本题
-# 构造写定并可复核；**T 段停在第 16 条纪律要求的位置**——隐藏验收代码还没写，total 与 case_ids
-# 一律不填假值（status: pending_hidden）。隐藏代码落盘并跑过一遍之后，才允许把 total / case_ids
-# 改成实效值并同批更新本文件与 run-manifest。
+# **本文件已冻结（status: frozen）**：C 与 A 两段在构造期写定；T 段在 `hidden/PLAN.md` +
+# `hidden/runner.py` 落盘、基线跑红（4/34）、参考树跑到 34/34 之后同批冻结 total / case_ids /
+# 两个 hidden 摘要（`frozen_by` 仍是 pending_lead_signature——**冻结 T 不等于 Lead 已签字**）。
 #
 # 形状 = **bank-scoring/2**（2026-10-21 §4.2 收口）：顶层 18 键、frozen_inputs 11 键、dimension_t 13 键；
 # 同一版本号下只有一种维度形状——pending 与 frozen 只差取值、不差键集合，顶层 status 是判别符。
-# 本题是 pending：status: pending_hidden、frozen_by: pending_lead_signature、两个 hidden 摘要为 null、
-# dimension_t.freeze_note 非空（写明落盘后同批写 total / case_ids 与两个 hidden 摘要）。
+# 本题是 frozen：status: frozen、total: 34、case_ids 为实际 id 集合、两个 hidden 摘要已实算、
+# dimension_t.freeze_note: null（键集合与 pending 版逐键相同，只差取值）；冻结人不是 Lead，
+# 签字另走 run-manifest。
 # C 维度：file_set 含 src/shop/order_controller.py（层值 controller），ARCH-001 适用，见 rules_rationale。
 schema_id: bank-scoring/2
 version: "2"
 task_id: bank-crossmodule-refactor
 operation_type: 跨模块重构 / 废弃 API（OrderRepository.insert/listing → add/list_all + 兼容门面 + 旧调用点清零，行为不变）
-status: pending_hidden
+status: frozen
 frozen_by: pending_lead_signature
 authority: >-
-  本题库批次：本文件由题库冻结包作者子会话按 SPEC 落盘（不含隐藏验收代码）——C 与 A 两段的输入
-  （规则集、结构谓词、file_set、冻结文件、允许写）与基线字节已冻结、可逐行复核；T 段仍待隐藏代码
-  落盘后再冻结 total 与 case_ids（见 dimension_t.freeze_note）。
-  不要把 status 读成 frozen：frozen 需要 total 与 case_ids 都落定，而这两项只有隐藏代码落盘后才成立；
-  frozen_by 因此是 pending_lead_signature（未经 Lead 签字），不虚构「已冻结」。
+  本题库批次：本文件由题库作者子会话按 SPEC 落盘。C 与 A 两段的输入（规则集、结构谓词、file_set、
+  冻结文件、允许写）与基线字节在构造期冻结、可逐行复核；T 段在隐藏验收代码落盘后**实测冻结**：
+  14 文件基线上 4/34（红）、参考树 `reference/tree` 上 34/34、runner 两次运行逐字节相同，
+  total 与 case_ids 取自 `hidden/runner.py` 的实际 id 集合（见 frozen_inputs 的两个 hidden 摘要）。
+  frozen_by 仍是 pending_lead_signature：**冻结 T 不等于 Lead 已签字**，签字是 run-manifest 的事。
   改本文件任一数值 = 换判据，必须同批重算 frozen_inputs 并重生成 task-package/manifest.sha256。
 
 invariants:
@@ -46,15 +46,15 @@ weights:
 shared_contract: >-
   所有题库题共享同一骨架：T = 隐藏验收通过数（记 passed/total）+ 加权分 round(40 × passed / total)；
   C = 8 条规则 × 3 分（24）+ 冻结文件未改 3 分 + 无旁路 3 分；A = 10 条结构谓词 × 3 分。
-  本题的具体取值（8 个被测 .py、7 个冻结文件、10 条允许写）在下面逐项写定；T 的 total 待隐藏代码。
+  本题的具体取值（8 个被测 .py、7 个冻结文件、10 条允许写、T 的 total = 34）在下面逐项写定。
 
 frozen_inputs:
   task_package_manifest_sha256: 4a423d625dfbbb0b2190a20d5c1a22223c540c7021aab4d6349c5db9239b9923
   baseline_combined_digest: b6d6d2f72575d56ce8507ad188c75e6e795c80965106be83bef09d00261d2e91
   first_message_sha256: e9800a4652f486fd9de8de653f0207f33fc1892c543bf051f9a6ec33d8a02e89
   allowed_writes_sha256: 915044e3aa31a14f92fec88f79bb4b696f47567ee498173a2630061160d4af88
-  hidden_plan_sha256: null
-  hidden_runner_sha256: null
+  hidden_plan_sha256: e7c9162ac1dbd7f1416dc4a64c6cb5b8ad873b4ac7b8171f6ecd1948525b48ff
+  hidden_runner_sha256: e6280652aa3cc0c3ea7847083b75c3e903727efd8d31bcdf571edd31de404122
   layers_sha256: 0947710bf740d009e618ad3059b58432a960c3065933a4c831c0f41f53c2bd81
   interfaces_sha256: 73132f8e7069591f6009e31dea41c2d18d450a35db8cf24878ea7417e40fc312
   command_families_sha256: 6943e9880d83a14d3f439587be460f69f7de6e71b078f5fc2ca1608eb27ee5d9
@@ -65,21 +65,50 @@ frozen_inputs:
 
 dimension_t:
   tool: hidden/runner.py
-  status: pending_hidden
-  total: null
-  case_ids: []
-  planned_min_total: 30
+  status: frozen
+  total: 34
+  case_ids:
+    - T01
+    - T02
+    - T03
+    - T04
+    - T05
+    - T06
+    - T07
+    - T08
+    - T09
+    - T10
+    - T11
+    - T12
+    - T13
+    - T14
+    - T15
+    - T16
+    - T17
+    - T18
+    - T19
+    - T20
+    - T21
+    - T22
+    - T23
+    - T24
+    - T25
+    - T26
+    - EN1
+    - EN2
+    - EN3
+    - EN4
+    - I1
+    - I2
+    - I3
+    - I4
+  planned_min_total: null
   case_groups:
-    - {id_prefix: T, range: T01-T26, count: 26, what: 隐藏行为（旧名清零 / 门面转发与弃用说明 / 行为等价 / 调用链 / 文档 / 树形状）}
-    - {id_prefix: EN, range: EN1-EN4, count: 4, what: 入口（pytest / 收集数 / 定向回归 / 树 diff）}
-    - {id_prefix: I, range: I1-I4, count: 4, what: 接口（OrderRepository.add/list_all、OrderApi.__init__/insert/listing 的签名）}
-  reverse_cases: [T02, T05, T07, T13, T18, T21, T23]
-  freeze_note: >-
-    上表是**计划**（34 条 ≥ planned_min_total 30，按 hidden/PLAN.md 的分组写；计划总条数写在 freeze_note
-    里而不是单独的 planned_total 键——bank-scoring/2 的 dimension_t 只有 13 键）。total 与 case_ids
-    只有在隐藏代码落盘、跑过一遍并确认 id 集合与用例数一致之后才填真值，且**同一批**写 total、
-    case_ids 与 frozen_inputs.hidden_plan_sha256 / hidden_runner_sha256。允许最终条数 ≥30 即可，
-    与计划条数不相等时以实际 id 集合为准，并同批更新本段。
+    - {id_prefix: T, range: T01-T26, count: 26, what: 隐藏行为（旧名清零 / 门面转发与弃用说明 / 行为等价 / 调用链 / 测试与文档 / 树形状）}
+    - {id_prefix: EN, range: EN1-EN4, count: 4, what: 入口（整树 pytest / 收集数 / 定向回归 / 两次运行逐字节相同）}
+    - {id_prefix: I, range: I1-I4, count: 4, what: 接口（OrderRepository.add/list_all、OrderApi.__init__/insert/listing、service/controller 的 create+list_all）}
+  reverse_cases: [T01, T02, T03, T04, T05, T09, T15, T17, T23, T24, T25]
+  freeze_note: null
   contract: >-
     被评树由环境变量 BANK_TASK_TREE 传入；只读被评树（pytest 在树副本上跑）；stdout 唯一载荷
     {schema_version, tree, cases[], summary{passed,total}}；无时戳 / run id / 绝对路径；
@@ -88,12 +117,12 @@ dimension_t:
     BANK_TASK_TREE=<final-tree> .venv/Scripts/python.exe <task-root>/hidden/runner.py
   exit_codes: {0: 全过, 1: 有失败, 2: 跑不成（缺树 / 树不存在 / 用例集合不完整 / 树复制不出来）}
   scoring:
-    weighted: null
+    weighted: round(40 * passed / 34)
     recorded: [passed, total, weighted]
     cannot_judge: >-
-      total 未冻结 = **判不了**：不记 0 分、也不记满分（没有分母就没有分数）；total 冻结后
-      weighted = round(40 * passed / total)。exit 2 同样记「跑不成」并写明原因；
-      缺任一条 id 或 id 集合与 case_ids 不相等同样按跑不成处理（不把「少测了」记成「测过了」）。
+      exit 2 = T 判不了：记「跑不成」并写明原因，**不记 0 分**；缺任一条 id 或 id 集合与 case_ids
+      不相等同样按跑不成处理（不把「少测了」记成「测过了」）。参考树读数 34/34 ⇒ weighted = 40；
+      基线 4/34 ⇒ weighted = round(40 * 4 / 34) = 5（只作红基线记录，不是模型读数）。
   boundary: >-
     T 只读最终树；里程碑顺序、被拒动作不重试、会话内的治理读数属于过程维度，不在 T。
 
