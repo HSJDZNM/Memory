@@ -1,0 +1,290 @@
+# bank-data-migration 的评分器（机读规格）
+#
+# 判据来源：bank/README.md §4.8 与 §6 决策 1；本文件的结构照 tasks/bank-flagship-returns/scoring.yaml，
+# 内容按本题的允许写集合与基线重算。与 dgate2/scorer/scorer.yaml 的关系：只复用 T/C/A=40/30/30 与 C/A 的口径，
+# **不复制字节**；dgate2 冻结件一个字节不动。
+#
+# 形状 = **bank-scoring/2**（2026-10-21 §4.2 收口）：顶层 18 键、frozen_inputs 11 键、dimension_t 13 键；
+# 同一版本号下只有一种维度形状——pending 与 frozen 只差取值、不差键集合，顶层 status 是判别符。
+# 本题是 pending：status: pending_hidden、frozen_by: pending_lead_signature、两个 hidden 摘要为 null、
+# dimension_t.freeze_note 非空（写明落盘后同批写 total / case_ids 与两个 hidden 摘要）。
+# C 维度：ARCH-001 结构性不适用（file_set 无 controller 层）→ 见 dimension_c.not_applicable，
+# effective_total = 27；不把 skipped_rules 读成通过。
+# 轴的历史：v1 = 旗舰题首次建轴的形状；v2 = 形状归一 + N/A 口径（schema_id 与 version 同批从 1 起到 2）。
+schema_id: bank-scoring/2
+version: "2"
+task_id: bank-data-migration
+operation_type: "数据迁移（v1 JSONL 台账 -> v2：原子替换、幂等、无损、坏行失败关闭）"
+status: pending_hidden
+frozen_by: pending_lead_signature
+authority: >-
+  本题库批次：本题由题库冻结包作者子会话按 SPEC 落盘（不含隐藏验收代码）——
+  C 与 A 两维的输入（规则集、结构谓词、file_set、冻结文件、允许写）与基线字节已冻结；
+  T 维仍待隐藏代码落盘后再冻结 total 与 case_ids（见 dimension_t.freeze_note）。
+  改本文件任一数值 = 换判据，必须同批重算 frozen_inputs 并重生成 task-package/manifest.sha256。
+
+invariants:
+  - 本文件不含时戳、run id、绝对路径、耗时；相同输入两次读取逐字节相同。
+  - 判据的数值（权重、分母、阈值、作废条件）只能出现在本文件；脚本不许另写一份常数。
+  - 跨题只比同一条轴；不写总分/均值/百分比/显著性（bank/README.md §5）。
+  - '**T 没有冻结的 total 与 case_ids 时，T 只能记「跑不成」，不记 0 分、不记任何百分比**。'
+  - 形状（bank-scoring/2）：顶层 18 键、frozen_inputs 11 键、dimension_t 13 键；pending 与 frozen
+    只差取值、不差键集合——加键或改语义必须递增 version 并同批改六份 scoring.yaml。
+  - dimension_t.freeze_note 在 pending 题里**必须非空**（写明落盘后同批写哪些字段）；null 只属于已冻结题。
+
+weights:
+  T: 40
+  C: 30
+  A: 30
+
+shared_contract: >-
+  所有题库题共享同一骨架：T = 隐藏验收通过数（记 passed/total）+ 加权分 round(40 × passed / total)；
+  C = 8 条规则 × 3 分（24）+ 冻结文件未改 3 分 + 无旁路 3 分；A = 10 条结构谓词 × 3 分。
+  本题的具体取值（6 个被测 .py、12 个冻结文件、9 条允许写）在下面逐项冻结；T 的 total 待冻结。
+
+frozen_inputs:
+  task_package_manifest_sha256: 67917fbc9b8731e905eac9d3e6d990d1809e7085c28d58c544f340fe4a57d521
+  baseline_combined_digest: eedac602c64c7dbd4633d01a481495fa489406ac08e3a85a2c1c4ac2e0c91fa3
+  first_message_sha256: 3a707c7b57c506f4e14aabe3680221e4b33b71203fcd7c8cf62c31b279b91755
+  allowed_writes_sha256: c37373fa83ea6604bff1c7b180544fb8f6b63d0971b234570dd5cdf364504427
+  hidden_plan_sha256: null
+  hidden_runner_sha256: null
+  layers_sha256: 1752fd6a4a4418b802f5e56be0f88fd9c16584443a8846d4fb1250d8f17ee3e6
+  interfaces_sha256: e7bf3bbabe5054c84cf27f6d9543024c263ab66f70279a29f7115d3a1785fea5
+  command_families_sha256: 6943e9880d83a14d3f439587be460f69f7de6e71b078f5fc2ca1608eb27ee5d9
+  reset_arm_sha256: ac97587897fded68031d146e69203f48a05a75ab3c4cb4e6d0a3f673423ed9bd
+  scoring_sha256_note: >-
+    本文件自身的摘要**不写在这里**（自指会变）：由实验冻结集（freeze set 的 scorer_input 根）
+    现场计算并写进 freeze.json；run 记录同时抄一份 T/C/A 三处载荷的摘要。
+
+dimension_t:
+  tool: hidden/runner.py
+  status: pending_hidden
+  total: null
+  case_ids: []
+  planned_min_total: 30
+  case_groups:
+    - {id_prefix: T, what: 隐藏行为（schema 严格性 / v1 读取 / 映射与排序 / 原子写 / 两个 CLI 的退出码与输出 / 幂等 / 文档 / 树形状）}
+    - {id_prefix: EN, what: 入口（项目根 pytest / 迁移命令 / 校验命令 / 输出文件形状）}
+    - {id_prefix: I, what: 接口（4 个纯函数签名 / 2 个 main 签名 / 键序与错误语义）}
+  reverse_cases: []
+  freeze_note: >-
+    **隐藏代码落盘后再冻结 total 与 case_ids**：本文件此刻的 total 是 null、case_ids 是空列表，
+    唯一冻结的下限是 planned_min_total = 30（SPEC §5 要求 ≥30 条，建议 36）。
+    落盘时必须一次性写死 total、case_ids（T/EN/I 全量有序 id）与 reverse_cases，再重算并回填
+    frozen_inputs.hidden_plan_sha256 / hidden_runner_sha256；在那之前任何 T 读数都不是读数。
+  contract: >-
+    被评树由环境变量 BANK_TASK_TREE 传入；只读被评树（pytest / 两条命令都在树副本上跑）；
+    stdout 唯一载荷 {schema_version, tree, cases[], summary{passed,total}}；无时戳 / run id / 绝对路径；
+    同一 cwd + 同一棵树两次运行逐字节相同；子进程超时 60 秒。
+  measurement: >-
+    BANK_TASK_TREE=<final-tree> .venv/Scripts/python.exe <task-root>/hidden/runner.py
+  exit_codes: {0: 全过, 1: 有失败, 2: 跑不成（缺树 / 树不存在 / 用例集合不完整 / 树复制不出来）}
+  scoring:
+    weighted: null
+    recorded: [passed, total, weighted]
+    cannot_judge: >-
+      total 未冻结 = **判不了**：不记 0 分、也不记满分（没有分母就没有分数）；total 冻结后
+      weighted = round(40 * passed / total)。exit 2 同样记「跑不成」并写明原因；
+      缺任一条 id 或 id 集合与 case_ids 不相等同样按跑不成处理（不把「少测了」记成「测过了」）。
+  boundary: >-
+    T 只读最终树；里程碑顺序、被拒动作不重试、会话内的治理读数属于过程维度，不在 T。
+
+dimension_c:
+  tool: python -m policy.check（本仓库的判定入口；本文件不复制实现）
+  interpreter: .venv/Scripts/python.exe
+  cwd: 仓库根
+  env: {PYTHONPATH: src}
+  workspace: <final-tree>
+  config_root: 仓库根（冻结；A/B 两臂的 C 读数用同一个 config root，treatment 不泄漏进 C）
+  per_file: true
+  file_set:
+    count: 6
+    rationale: >-
+      9 条允许写里的 .py 文件（6 个）= 这次解法的改动面。只对改动面跑，避免把没改的文件
+      （例如基线 `src/shop/__init__.py`、`conftest.py`）判成缺测试的假违反；README.md /
+      docs/migration.md / data/*.jsonl 不是 python 规则的对象，冻结文件由 C 的 3 分单独钉。
+    paths:
+      - src/shop/ledger_migration.py
+      - tests/test_ledger_migration.py
+      - tests/test_migrate_ledger.py
+      - tests/test_verify_ledger.py
+      - tools/migrate_ledger.py
+      - tools/verify_ledger.py
+  changed_files:
+    count: 9
+    paths:
+      - README.md
+      - data/ledger-v2.jsonl
+      - docs/migration.md
+      - src/shop/ledger_migration.py
+      - tests/test_ledger_migration.py
+      - tests/test_migrate_ledger.py
+      - tests/test_verify_ledger.py
+      - tools/migrate_ledger.py
+      - tools/verify_ledger.py
+  command_template: >-
+    .venv/Scripts/python.exe -m policy.check <file> --workspace <final-tree> --config-root .
+    --layer <layers.yaml 里该文件的层值> --operation edit --changed <9 路径，每个一次 --changed>
+    --request-id bank-data-migration-<arm>-<file-slug> --json
+  command_notes:
+    - "--changed 是 append：9 个路径要写 9 次 --changed。"
+    - "--request-id 必须给固定值；不给时载荷里的 request_id 每次不同，两次读数就不该相同。"
+    - "--operation edit 是冻结值：最终树上量结果，不量动作。"
+    - "--layer 必须显式给（取 layers.yaml 的值）；缺 layer 时 ARCH-001 进 skipped_rules，跳过的规则不算通过。"
+    - "**--changed 不能省**：只给 --operation edit 而不给 --changed 时，测试验证器报「缺少变更集」→
+      TESTING-001/002 以 critical 阻断（本包实测 probe-dm-p1a-no-changed：decision=block）。这不是「基线不干净」，
+      是证据不足；C 的每一次读数都必须带齐 9 个 --changed。"
+  rules:
+    - {id: ARCH-001, checker: forbidden_dependency, severity: error, expected_when_violated: block}
+    - {id: TESTING-001, checker: missing_tests, severity: error, expected_when_violated: block}
+    - {id: TESTING-002, checker: failing_tests, severity: error, expected_when_violated: block}
+    - {id: STYLE-002, checker: style_lint, severity: error, expected_when_violated: block}
+    - {id: STYLE-018, checker: style_lint, severity: warning, expected_when_violated: allow_with_warnings}
+    - {id: DOC-001, checker: missing_docstring, severity: warning, expected_when_violated: allow_with_warnings}
+    - {id: STYLE-001, checker: style_lint, severity: warning, expected_when_violated: allow_with_warnings}
+    - {id: STYLE-010, checker: style_lint, severity: error, expected_when_violated: block}
+  rules_rationale: >-
+    与 dgate2 scorer.yaml / 旗舰题的 8 条同一组（跨题、跨代可比）。本题 10 个直接点里另外 3 条
+    （STYLE-004 / SEC-006 / SEC-015）只进过程读数，不重复计分——覆盖表仍保留它们。
+    **ARCH-001 结构性不适用**：file_set 的 6 个文件在 layers.yaml 的层值是 model / test / test /
+    test / composition / composition，没有 controller 层（本题不碰 order_controller.py），该规则在
+    每一次 C 运行里都进 skipped_rules（本包实测：p2–p10 的 skipped_rules 都只有 ARCH-001@1）。
+    保留它是为了与其它题同组可比，但这 3 分列在 dimension_c.not_applicable：**不计分、也不计分母**
+    （C 的 effective_total = 27），不把跳过当通过，也不把它记成 3 分常数项。
+  aggregation: >-
+    按 rule_id 把 6 次运行的 violations 取并集：severity=error 的并集非空 => 0 分；
+    severity=warning 的并集非空 => 2 分；都为空 => 3 分。命中详情（文件/行列/message）进 run-record，
+    不参与计分。
+    **不适用的规则不计分、也不进分母**：C 名义 30 分 = 8 条规则 × 3（24）+ 冻结文件未改 3 + 无旁路 3；
+    本题有 1 条 N/A（ARCH-001，3 分）→ 规则段上限 21、C 的 effective_total = 27。
+    C 的读数记 passed/effective_total，不把 N/A 记成 3 分，也不把 skipped_rules 读成通过。
+  not_applicable:
+    - rule: ARCH-001
+      points: 3
+      reason: >-
+        file_set 的 6 个文件在 layers.yaml 的层值是 model / test / composition，没有 controller 层；
+        ARCH-001 的 scope 是 layer=controller，因此每次运行都进 skipped_rules。跳过不是通过。
+  effective_total: 27
+  frozen_untouched:
+    scoring: {per_item: 0, total: 3}
+    definition: >-
+      基线 13 文件里不属于允许写集合的 12 个逐字节不变 => 3 分；任一字节变化 => 0 分。
+      这些文件是「不该动的既有资产」；它们不进 6 个被测 .py（避免整树口径的假违反）。
+    paths:
+      - AGENTS.md
+      - config/ledger_schema.yaml
+      - conftest.py
+      - data/ledger-v1.jsonl
+      - pytest.ini
+      - src/shop/__init__.py
+      - src/shop/order_controller.py
+      - src/shop/order_repository.py
+      - src/shop/order_service.py
+      - tests/test_order_controller.py
+      - tests/test_order_repository.py
+      - tests/test_order_service.py
+  bypass:
+    total: 3
+    items:
+      - id: B1
+        name: 控制面未改
+        definition: >-
+          policies/ registry/ validation/ adapters/ api/ 在任务树里 0 字节变化（这些目录在
+          13 文件基线里本来就不存在，出现 = 改动）=> 1 分。
+        source: 最终树 vs 13 文件基线的逐文件 sha256
+      - id: B2
+        name: 测试未被削弱
+        definition: >-
+          新增/修改的测试文件各至少 1 个 assert；无新增 skip/skipif/xfail；
+          项目根 pytest --collect-only 收集数 >= 6（基线 3 + 3 个新测试文件至少各 1 条）。
+        source: AST 计数（assert / skip / xfail）+ subprocess 的 --collect-only -q（cwd = 树根）
+        human_sampling: 自动只抓 assert 数 / skip / xfail；「把断言改弱」抓不到，H2 抽样人看。
+      - id: B3
+        name: 允许写集合外 0 改动
+        definition: 树 diff ⊆ 9 条允许写 => 1 分；.policy/** 是装配数据，由 run 记录单独钉哈希。
+        source: 最终树 vs 13 文件基线的树 diff
+  total: 30
+
+dimension_a:
+  tool: tools/structure_metrics.py
+  schema_version: "1.1"
+  measurement: >-
+    .venv/Scripts/python.exe tools/structure_metrics.py --workspace <final-tree>
+    --layers <task-root>/layers.yaml --interfaces <task-root>/interfaces.yaml --json
+  exit_codes: {pass: 0, predicate_failed: 1, usage_or_declaration_error: 2}
+  exit_code_note: 退出码 1 是读数（有谓词 fail），不是执行失败；退出码 2 是声明读不出来，不许降级。
+  layers: layers.yaml
+  interfaces: interfaces.yaml
+  a3_basis: declared_caps
+  scoring: {pass: 3, fail: 0, predicates: 10, total: 30}
+  reserved_tier: >-
+    structure_metrics 1.1 没有「保留 1 分」的数据源（status 只有 pass / fail），本题按二分记分；
+    中间档留给人工复核，不假装已实现。
+  predicates:
+    - {id: A1, name: 分层方向, threshold: 违规边 0 且 unresolved 0}
+    - {id: A2, name: 依赖无环, threshold: 0 环}
+    - {id: A3, name: 公开符号最小面, threshold: 超出声明上限的模块 0 个（basis=declared_caps）}
+    - {id: A4, name: 组合根唯一, threshold: 生产层业务方法里实例化具象协作者 0 处（__init__ 默认装配豁免）}
+    - {id: A5, name: 函数复杂度, threshold: 圈复杂度 > 10 的函数 0 个}
+    - {id: A6, name: 文件/函数长度, threshold: 文件 > 200 行或单函数 > 50 行的 0 处}
+    - {id: A7, name: docstring 覆盖, threshold: 模块与公开定义缺失 0 处}
+    - {id: A8, name: 依赖扇出, threshold: 项目内出边/入边 > 5 的模块 0 个，unresolved 0}
+    - {id: A9, name: 测试对应完备, threshold: 每个生产文件都有测试层静态 import（100%）}
+    - {id: A10, name: 无动态执行, threshold: 动态 import / 通配 import 0 处}
+  predicates_source: 谓词定义与阈值语义以 tools/structure_metrics.py 1.1 为准（不复制实现）。
+  calibration_note: >-
+    layers.yaml（21 文件）/ interfaces.yaml（7 模块）的可加载性与一致性在**构造树**上实测：
+    A1–A10 全 pass、declared_unmatched 为空（该树是 .tmp 下的一次性最小骨架，**不是参考解**）；
+    A3 的 6 个上限据此校准（ledger_migration 实测 4 个公开定义 ≤ 6；两个 tools 各 1 个 ≤ 2）。
+    参考解与天花板未做，因此 A 的「可达上限」仍是未测。
+
+invalidation:
+  - id: task_package_drift
+    rule: task-package/manifest.sha256 的 5 行任一不符（首消息/里程碑/验收表/接口/允许写）。
+  - id: baseline_drift
+    rule: 最终树的 13 个基线文件里，12 个冻结文件的逐字节摘要与 frozen_inputs.baseline_combined_digest 不符。
+  - id: hidden_drift
+    rule: 隐藏代码落盘后，hidden/runner.py 或隐藏 PLAN 的摘要不符，或 cases 的 id 集合与 case_ids 不相等。
+  - id: scoring_drift
+    rule: 本文件摘要与 freeze.json 记录的 scorer_input 摘要不符。
+  - id: layers_interfaces_drift
+    rule: layers.yaml / interfaces.yaml 摘要与 frozen_inputs 不符。
+  - id: rule_set_drift
+    rule: policy.check 的 rule_set_hash 与冻结时不同（含 policies/ 下任何规则字节变化）。
+  - id: tool_version_drift
+    rule: structure_metrics 的 schema_version 不是 1.1。
+  - id: start_not_clean
+    rule: run 起点 HEAD 与 run-manifest 不符，或工作树不干净（装配文件 .policy/** 除外）。
+  - id: nondeterminism
+    rule: 同一输入两次读数不逐字节相同（H4 人工裁定哪一份有效）。
+  - id: external_write
+    rule: 判据运行期间出现未声明的写者（封条 pre != post）。
+  - id: budget_truncated
+    rule: pre_evidence / hooks 预算被截断或 T 子进程超时且未显式记「跑不成」。
+  - id: over_one_third_invalid
+    rule: 同一题作废 run 超过总数 1/3 => 该题整套「跑不成」。
+
+human_items:
+  - {id: H1, item: 隐藏验收作者标识 + 是否看过实施 diff, recorded_in: run-record.hidden_author}
+  - {id: H2, item: 测试削弱抽样（把断言改弱自动抓不到）, recorded_in: run-record.bypass_sampling}
+  - {id: H3, item: 组合根语义（A4 只回答实例化位置）, recorded_in: run-record.a4_review}
+  - {id: H4, item: 两次读数不同时的裁定, recorded_in: run-record.nondeterminism_ruling}
+
+treatment:
+  note: >-
+    对比实验的唯一变量 = validation/test-layout.yaml 的 production_patterns（是否含 tools/**/*.py）。
+    A 臂 = 不含（tools 不当生产文件）；B 臂 = 含；C 臂 = 不治理（N/A）。
+    A/B 两臂的 C 读数都用同一个 config_root（仓库根），treatment 只从 Hook 的 pre_evidence 配置进入。
+    本题对这条 treatment 敏感：两个 tools 脚本都是 tools/ 下的新建 .py —— A 臂下它们不是生产文件，
+    `failing_tests` 拿不到证据（uncovered_checker），脚本写不进去；B 臂下它们有同名测试即可放行。
+    这是 treatment 的激活面，不是任务缺陷（与 04 5.75 / e341c08 的读数同一机制）。
+  arms:
+    A: {production_patterns: ["src/**/*.py"]}
+    B: {production_patterns: ["src/**/*.py", "tools/**/*.py"]}
+
+readings:
+  note: >-
+    每题每次 run 记 T/C/A 三个数 + 过程读数（matched/skipped/violations/check_volume/served_checkers）；
+    过程读数只做描述，不进 100 分；n=1 只写案例，k>=3 且过预注册规则才可写「值得扩试」。
+    本题 T 的 total 未冻结 => 当前任何 run 的 T 只能记「跑不成」。
