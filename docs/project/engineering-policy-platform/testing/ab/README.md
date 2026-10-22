@@ -22,7 +22,7 @@
 
 | 轨道 | 已落盘 / 读数 | 可开跑 | k≥3 |
 | --- | --- | --- | --- |
-| 题库 6 题（`bank/`） | T 天花板已测（旗舰 48/48；5 题 hidden 34/38/40/38/40，参考树全过）；hidden/reference 已落盘（同一子会话，H1 降级） | **未签（使用者）**；旗舰审批已签 ≠ 可开跑 | **未跑**：Gate 0 未过（2026-10-22；async 无激活、主序列差异 1/3 → 不跑 27 run；见 [Gate 0 读数](../../readings/2026-10-22-bank-k3-gate0-activation.md)） |
+| 题库 6 题（`bank/`） | T 天花板已测（旗舰 48/48；5 题 hidden 34/38/40/38/40，参考树全过）；hidden/reference 已落盘（同一子会话，H1 降级） | **未签（使用者）**；旗舰审批已签 ≠ 可开跑 | **未跑**：Gate 0 重跑通过（2026-10-22；async/docs 激活、2/3 → 待 §5.3 签核/27 run；见 [Gate 0 重跑读数](../../readings/2026-10-22-bank-k3-gate0-rerun.md)） |
 
 题库的细节与逐题读数以 `bank/README.md` 与各题 README 为准；本表只给两轴状态。
 
@@ -30,6 +30,6 @@
 
 - 题库 k≥3：3 题、Gate 0、H1 降级与复核、27 run 结构与结论上限——
   [`readings/2026-10-22-bank-k3-deliberations.md`](../../readings/2026-10-22-bank-k3-deliberations.md)。
-- 题库 Gate 0（2026-10-22，四题离线激活探针与停止判定）：[`readings/2026-10-22-bank-k3-gate0-activation.md`](../../readings/2026-10-22-bank-k3-gate0-activation.md)。
+- 题库 Gate 0（2026-10-22）：改造前四题离线探针与停止判定 [`readings/2026-10-22-bank-k3-gate0-activation.md`](../../readings/2026-10-22-bank-k3-gate0-activation.md)；构造改造后重跑通过 [`readings/2026-10-22-bank-k3-gate0-rerun.md`](../../readings/2026-10-22-bank-k3-gate0-rerun.md)。
 - 题库历史读数（旗舰冒烟、天花板、5 题 hidden/reference、七项裁决）：`readings/2026-10-21-bank-*.md`。
 - 判据与口径：[`05-implementation-plan.md`](../../05-implementation-plan.md) §5 与 [`04-open-work.md`](../../04-open-work.md) 5.92。

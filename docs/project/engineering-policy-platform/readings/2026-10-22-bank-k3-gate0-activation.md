@@ -1,5 +1,9 @@
 # 2026-10-22 题库 k≥3 Gate 0 离线激活探针（A/B，四题）
 
+> **2026-10-22 前向注记（errata）**：本读数记录的是**构造改造前**的 Gate 0（未过：async / crossmodule /
+data-migration 无激活、docs-config 方向反转）。按使用者拍板的选择 1 完成构造改造后重跑，
+Gate 0 **通过**——读数见 `readings/2026-10-22-bank-k3-gate0-rerun.md`。原文保留，不改写。
+
 > **性质**：离线、无模型、无真机会话的激活探针（C1-b §3.3 方法的复现）。起点 HEAD `861aad9`；
 > 只写 `.tmp` 一次性现场与本读数；**不改判据、不改任何冻结件、不跑 27 run**。
 > **判据来源**：`readings/2026-10-22-bank-k3-deliberations.md` §3.1（Gate 0 预注册）、
