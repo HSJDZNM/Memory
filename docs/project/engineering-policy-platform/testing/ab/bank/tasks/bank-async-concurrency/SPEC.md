@@ -9,15 +9,16 @@
 有界队列、按 key 幂等去重、可取消、停机时排空、异常不许吞。测试不得依赖墙钟/随机/网络，
 用 `asyncio.run` 与 `queue.join()` 驱动，同一输入重复跑读数一致。
 
-## 2 基线（14 文件；起点全绿，**没有失败测试**）
+## 2 基线（15 文件；起点全绿，**没有失败测试**）
 
 | 组 | 文件 |
 | --- | --- |
 | 订单项目（11） | `bank-flagship-returns/baseline` 的 11 个文件（逐字节） |
-| 脚本包（1） | `tools/__init__.py`（与 `bank-flagship-returns/baseline/tools/__init__.py` **逐字节相同**；它让 `tools` 成为树里的顶层包，`tools.*` 的测试先写才会走「待实现」而**不是**收集失败） |
+| 脚本包（1） | `tools/__init__.py`（与 `bank-flagship-returns/baseline/tools/__init__.py` **逐字节相同**；它让 `tools` 成为树里的顶层包。基线另带 `tests/test_notify_smoke.py` 静态契约测试：工具不存在时 skip，M1 写工具后检查公开面，M8 改写为行为测试） |
 | 同步队列（2） | `src/shop/notification.py`（`NotificationQueue.append/pop/len`）+ `tests/test_notification.py` |
+| 静态契约测试（1） | `tests/test_notify_smoke.py`（工具文件不存在时 `pytest.skip`；M8 改写为行为测试） |
 
-起点：`python -m pytest -q` → 4 passed。
+起点：`python -m pytest -q` → 4 passed, 1 skipped（skip 的是静态契约测试）。
 
 ## 3 模型要做什么（允许写 10 路径）
 
@@ -29,7 +30,7 @@
   `async start(self) -> None` / `async stop(self) -> None`（stop 先排空再退出，取消时抛 `CancelledError` 不许吞）；
   `processed(self) -> list[dict]`（按处理顺序返回副本）；
 - 新建 `tools/notify_smoke.py`：构造 worker、提交 3 个事件（含一个重复 key）、打印 JSON；
-- 新建 `tests/test_notify_model.py`、`tests/test_notify_worker.py`、`tests/test_notify_smoke.py`；
+- 新建 `tests/test_notify_model.py`、`tests/test_notify_worker.py`；把基线的 `tests/test_notify_smoke.py`（静态契约测试）改写为行为测试（M8）；
 - 新建 `docs/async.md`（队列语义 / 幂等 / 取消 / 停机）；改 `README.md` 结构表一行；
 - 改 `src/shop/notification.py` 加一行 deprecation 说明（保留旧队列），并改 `tests/test_notification.py`
   断言该说明存在。

@@ -97,14 +97,14 @@ def main() -> list[dict]: ...    # 跑一次确定性队列，返回去重后的
 必须含 4 个二级标题（逐字、按此顺序）：`## 队列语义`、`## 幂等`、`## 取消`、`## 停机`；
 每个标题下至少一行非空正文。
 
-## 7 新建 3 个测试文件（与生产文件同名）
+## 7 新建 2 个测试文件 + 改写基线静态契约测试
 
 - `tests/test_notify_model.py`：覆盖 A1/A2；
 - `tests/test_notify_worker.py`：覆盖 A3–A8；异步用例用 `asyncio.run` 驱动（**不用** pytest-asyncio），
   共享队列用 `NotificationWorker(queue=shared)`；
-- `tests/test_notify_smoke.py`：文件顶部把项目根插进 `sys.path`，然后
+- `tests/test_notify_smoke.py`（基线静态契约测试，M8 改写为行为测试）：文件顶部把项目根插进 `sys.path`，然后
   `from tools.notify_smoke import main  # noqa: E402`，调用 `main()` 并断言去重后 2 条记录；
-- 每个新测试文件至少 1 个 `assert`；不许 `skip` / `skipif` / `xfail` / 任何标记。
+- 每个新测试文件至少 1 个 `assert`；M8 改写后的测试不许 `skip` / `skipif` / `xfail` / 任何标记（基线静态测试在工具不存在时 skip 是允许的）。
 
 ## 8 错误语义（逐条可测）
 

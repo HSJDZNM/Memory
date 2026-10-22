@@ -1,6 +1,6 @@
 # 参考解（bank-docs-config）
 
-> **它是什么**：本题的**参考实现树** `reference/tree/`（18 文件 = 13 基线 + 5 新建）与它的构造说明。
+> **它是什么**：本题的**参考实现树** `reference/tree/`（18 文件 = 14 基线 + 4 新建）与它的构造说明。
 > **不参与判分**：C/A 的判据与隐藏用例都不读本目录；它只用来实测 T/C/A 的天花板
 > （判据能不能在「一个正确解」上全绿），以及给 Lead 一个可对照的实现。
 > **作者独立性**：本目录与 `hidden/PLAN.md`、`hidden/runner.py` 由**同一子会话**写成，顺序是
@@ -14,7 +14,7 @@
 | `src/shop/config.py` | 新建 | v2 严格加载器：`yaml.safe_load` + 键集合/类型/边界校验；一切不合约抛 `ValueError`，消息只用文件名 |
 | `tools/check_config.py` | 新建 | 只读校验脚本：`main(argv=None) -> int`；合法 0（stdout 一行）、非法 1（stderr 一行）；`sys.path` 注入 + `# noqa: E402` |
 | `tests/test_config.py` | 新建 | 9 个测试函数（含 4 个参数化类型错）覆盖 v2 / 边界 / v1 / 未知键 / 缺键 / 类型错 / 坏 YAML / 副本语义 |
-| `tests/test_check_config.py` | 新建 | 4 个测试函数覆盖退出码 0 / 1、stderr 一行含 `retry_policy`、未知键与只读 |
+| `tests/test_check_config.py` | 改写基线（静态契约测试 → 行为测试） | 4 个测试函数覆盖退出码 0 / 1、stderr 一行含 `retry_policy`、未知键与只读 |
 | `docs/config-migration.md` | 新建 | 三节：键映射 / 回滚 / 校验（回滚写清「配置 + 加载器一起退回」） |
 | `config/app.yaml` | 改 | v2：`app_name: demo-shop` + `retry_policy {3, 100, true}` + `feature_flags [checkout, search]` |
 | `docs/config.md` | 改 | v1 表整段替换为 `## 配置键（v2）` 的 5 行表（键 / 类型 / 默认值 / 迁移注） |
@@ -116,6 +116,6 @@ $env:PYTHONPATH = 'src'
 
 ## 6 参考树摘要（可复核）
 
-- 文件数：**18**（= 13 基线 ∪ 8 允许写；多一个少一个都会让隐藏 T25 与 A 的路径族声明对不上）；
+- 文件数：**18**（= 14 基线 ∪ 8 允许写 = 14 基线 + 4 新建；多一个少一个都会让隐藏 T25 与 A 的路径族声明对不上）；
 - 组合摘要（算法 = 按相对路径排序的 `<sha256>  <relpath>` 清单文本再 sha256，与 `reset-arm.py` 同）：
   **`69b6fda3149dd0da680f763e04d37803e0a2f2e6fde01a919baac8f559b451cf`**。

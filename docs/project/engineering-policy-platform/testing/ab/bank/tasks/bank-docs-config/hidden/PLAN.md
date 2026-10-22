@@ -53,7 +53,7 @@
 | T22 | `docs/config-migration.md`：`## 键映射` / `## 回滚` / `## 校验` 各恰 1 次、按此顺序、每节至少一行非空正文（非标题）；键映射节含 `retry`、`retry_policy.max_attempts`、`retry_policy.backoff_ms`、`retry_policy.jitter`；回滚节含 `retry_policy`、`retry`、`config/app.yaml`；校验节含完整命令 `python tools/check_config.py --config config/app.yaml` | 文件缺失；只有键映射一节；命令写成 `python -m tools.check_config`；回滚节只写「改回去」不点路径 |
 | T23 | `README.md` 恰有一个 `## 配置` 标题；四个二级标题的位置严格递增：`## 结构` < `## 跑测试` < `## 配置` < `## 这份项目为什么长这样`（各恰 1 次）；`## 配置` 节正文同时含 `docs/config.md`、`docs/config-migration.md`、`config/app.yaml` | 配置节插到文末或插在 `## 结构` 前；只链一篇文档；不点配置文件路径 |
 | T24 | `README.md` 去掉 `## 配置` 整节（标题行到下一个二级标题前）后，与**基线 README** 逐行相同（行尾空白去掉、连续空行压成一个、去首尾空行） | 顺手改写「这份项目为什么长这样」的一句；删掉 `## 跑测试` 的代码块；把配置节写成覆盖原小节 |
-| T25 | 最终树文件集合恰为 **18** 条 = 13 基线 ∪ 8 允许写（忽略 `.policy`、隐藏段、`__pycache__`、`*.pyc`）；缺任一允许写、或出现任何额外路径都 fail | 图省事新增 `tools/__init__.py`；留下 `docs/config-v2.md` 草稿；漏写 `docs/config-migration.md` |
+| T25 | 最终树文件集合恰为 **18** 条 = 14 基线 ∪ 8 允许写（= 14 基线 + 4 新建；`tests/test_check_config.py` 属于基线一侧；忽略 `.policy`、隐藏段、`__pycache__`、`*.pyc`）；缺任一允许写、或出现任何额外路径都 fail | 图省事新增 `tools/__init__.py`；留下 `docs/config-v2.md` 草稿；漏写 `docs/config-migration.md` |
 | T26 | 10 个冻结基线文件逐字节不变（`AGENTS.md`、`conftest.py`、`pytest.ini`、`src/shop/__init__.py`、`order_controller.py`、`order_repository.py`、`order_service.py`、`tests/test_order_*.py`）：sha256 与内嵌基线逐条相等 | 给 `order_service.py` 加一行注释；改 `pytest.ini` 的 `testpaths`；顺手「整理」`__init__.py` |
 
 ## 2 EN 组（7 条；入口命令级行为）
@@ -76,7 +76,7 @@
 | I2 | UTF-8 与非 ASCII：`app_name: 演示店`、`feature_flags: [结算]` 能原样读出；读前后文件字节不变 | 用 `open(path)` 依赖宿主默认编码（中文乱码 / UnicodeDecodeError）；读后回写 |
 | I3 | `tools.check_config.main` 是函数，一个参数 `argv` 默认 `None`；`main(["--config", <合法>]) == 0`、`main(["--config", <v1>]) == 1`（返回 int）；AST 有 `if __name__ == "__main__":` 且体内 `SystemExit(main())` 或 `sys.exit(main())` | `def main():` 无参数；`main` 返回 `None` 只靠 `sys.exit` 副作用；缺 `__main__` 守卫 |
 | I4 | 脚本走 `shop.config.load_config`：AST 有 `import shop.config` 或 `from shop.config import ...`；有对 `load_config(...)` 的调用；有对 `sys.path.insert/append` 的调用；源码里没有字符串常量恰为 `max_attempts` / `backoff_ms` / `jitter`（键集合没被重写） | 脚本自己写 `EXPECTED = {"max_attempts", ...}` 重写键集合；只 import 不用；不插 `sys.path` 靠环境碰运气 |
-| I5 | `tests/test_config.py` 至少 5 个 `test_*` 函数、`tests/test_check_config.py` 至少 2 个；各至少 1 条 `assert`；AST 无 `skip` / `skipif` / `xfail` / `importorskip`；`tests/test_config.py` 不 import 任何 `tools` 模块 | 五个 case 塞进一个 test 函数；`@pytest.mark.skip`；test_config.py 顺手 import `tools.check_config` |
+| I5 | `tests/test_config.py` 至少 5 个 `test_*` 函数、`tests/test_check_config.py`（M5 改写后的行为测试，不是基线的静态契约测试）至少 2 个；各至少 1 条 `assert`；AST 无 `skip` / `skipif` / `xfail` / `importorskip`（基线的静态契约测试不在最终树里）；`tests/test_config.py` 不 import 任何 `tools` 模块 | 五个 case 塞进一个 test 函数；`@pytest.mark.skip`；test_config.py 顺手 import `tools.check_config` |
 | I6 | docstring：`src/shop/config.py` 模块与 `load_config` 都有非空 docstring；`tools/check_config.py` 模块与 `main` 都有非空 docstring | 删 docstring（DOC-001 的真实错法）；docstring 写成空串 |
 | I7 | `src/shop/config.py` 不依赖其它 `shop` 模块（model 层纯数据校验）：import 里没有 `shop` / `shop.*`，也没有 `from . import` | `from shop.order_repository import OrderRepository`（让加载器「复用」仓储，同时 A1 分层违规） |
 

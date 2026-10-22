@@ -182,9 +182,9 @@
 - **反向构造**：输出里带时戳 / 随机 id / 内存地址（`id()`）/ dict 顺序不稳 → 红。
 
 ### EN4 `tests/test_notify_smoke.py` 静态 import `main` 并调用
-- **断言要点**：AST 里存在 `from tools.notify_smoke import main`（或 `import tools.notify_smoke`
-  后用 `tools.notify_smoke.main`）；存在对 `main` 的 `Call`；至少 1 个 `assert`；无 `skip`/
-  `skipif`/`xfail`。
+- **断言要点**：最终树里的 `tests/test_notify_smoke.py` 是 **M8 改写后的行为测试**（基线里同名的静态契约测试
+  被它替换）：AST 里存在 `from tools.notify_smoke import main`（或 `import tools.notify_smoke` 后用
+  `tools.notify_smoke.main`）；存在对 `main` 的 `Call`；至少 1 个 `assert`；无 `skip`/`skipif`/`xfail`。
 - **反向构造**：只用 `subprocess` 跑脚本、不静态 import（A9 的静态边断掉 → 这条红，且 A 维度的
   A9 也会红）；只 import 不调用 → 红。
 
@@ -205,10 +205,10 @@
   输出里含 `passed`；不含 `failed` / `error` 计数行。
 - **反向构造**：任一用例失败、收集错误、conftest 报错 → 红。
 
-### EN8 收集数 ≥ 7 且 3 个新测试文件都被收集
-- **断言要点**：`-m pytest --collect-only -q -p no:cacheprovider` 的收集项数 ≥ 7（基线 4 + 3 个
-  新文件各至少 1 条）；输出里出现 `tests/test_notify_model.py::`、`tests/test_notify_worker.py::`、
-  `tests/test_notify_smoke.py::` 三个前缀。
+### EN8 收集数 ≥ 7 且 3 个测试文件都被收集（2 个新建 + 1 个由基线静态测试改写）
+- **断言要点**：`-m pytest --collect-only -q -p no:cacheprovider` 的收集项数 ≥ 7（基线 4 + 2 个新
+  测试文件 + 1 个由基线静态测试改写的 `tests/test_notify_smoke.py`，各至少 1 条）；输出里出现
+  `tests/test_notify_model.py::`、`tests/test_notify_worker.py::`、`tests/test_notify_smoke.py::` 三个前缀。
 - **反向构造**：新测试文件为空、被 `__init__.py` 遮蔽、或写成非 `test_` 前缀 → 红。
 
 ## 4 I 组（接口与树形状）
@@ -227,7 +227,8 @@
 
 ### I3 AST 确定性：无时钟 / 随机 / 网络
 - **断言要点**：对 6 个新 .py（`src/shop/notify_model.py`、`src/shop/notify_worker.py`、
-  `tools/notify_smoke.py`、3 个新测试文件）做 AST 扫描：调用的点分名不得命中
+  `tools/notify_smoke.py`、2 个新建测试文件 + 1 个由基线静态测试改写的行为测试）做 AST 扫描：
+  调用的点分名不得命中
   `time.sleep` / `time.time` / `time.monotonic` / `time.perf_counter` / `random.*` /
   `socket.*` / `requests.*` / `urllib.request.*` / `httpx.*` / `http.client.*`。
 - **反向构造**：`random.random()` 生成 key、`time.sleep(0.01)` 等事件循环、`urllib` 打桩 → 红。
@@ -256,7 +257,7 @@
 
 ### I7 文件集 = 21 且改动 ⊆ 10 条允许写
 - **断言要点**：忽略 `.policy` / `__pycache__` / `.pytest_cache` / `.ruff_cache` / `*.pyc` 后，
-  树内文件集**恰等于** 14 个基线文件 ∪ 7 个新建文件（21 个，无多余文件）；
+  树内文件集**恰等于** 15 个基线文件 ∪ 6 个新建文件（21 个，无多余文件）；
   与基线逐文件 sha256 比较得到的「改动集合」⊆ 10 条允许写。
 - **反向构造**：多写一个 `docs/notes.md` / `tools/__init__.py.bak` → 文件集不等 → 红；
   改了 `src/shop/order_service.py` → 改动集合越界 → 红。
@@ -284,10 +285,10 @@
 
 ## 6 树形状常数（runner 内写死，运行时不读 baseline）
 
-14 个基线文件的 sha256 由包内 `baseline/` 实算（组合摘要
-`d12576d82488d3665ea38bacdb6b1a32e23b08caa979f316ca6ba07aadb581e8`，与 `scoring.yaml` 的
-`frozen_inputs.baseline_combined_digest` 同值）；7 个新建路径与 10 条允许写取
-`task-package/allowed-writes.txt` 与 `SPEC.md` §3。冻结的 11 个 = 14 − 允许写 ∩ 基线（3）。
+15 个基线文件的 sha256 由包内 `baseline/` 实算（组合摘要
+`9739ecf0892fc2ce9a4a6354597f5c0b35aef04c297ee46bd51ac77cec3899d8`，与 `scoring.yaml` 的
+`frozen_inputs.baseline_combined_digest` 同值）；6 个新建路径与 10 条允许写取
+`task-package/allowed-writes.txt` 与 `SPEC.md` §3。冻结的 11 个 = 15 − 允许写 ∩ 基线（4）。
 
 ## 7 作者独立性（本批的诚实边界）
 

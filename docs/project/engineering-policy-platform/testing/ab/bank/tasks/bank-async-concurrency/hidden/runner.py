@@ -53,7 +53,7 @@ CASE_IDS = (
 
 # ---------------------------------------------------------------------------
 # 树形状常数（包内 baseline/ 实算；组合摘要
-# d12576d82488d3665ea38bacdb6b1a32e23b08caa979f316ca6ba07aadb581e8，与 scoring.yaml 同值）
+# 9739ecf0892fc2ce9a4a6354597f5c0b35aef04c297ee46bd51ac77cec3899d8，与 scoring.yaml 同值）
 # ---------------------------------------------------------------------------
 BASELINE_SHA256 = {
     "AGENTS.md": "ef20cdca0d6c43dbb5038449c90a972d44837e4b9ddc17e074f994d5eed669a3",
@@ -78,6 +78,9 @@ BASELINE_SHA256 = {
     "tests/test_notification.py": (
         "628af2e21c268109d6ee9b665ea7b03786ebfad2b0d4b55e68654aed69dcf2db"
     ),
+    "tests/test_notify_smoke.py": (
+        "e90cc935d67ea5890f8c04cf40b245df854adc883480709684c24ba23a48d737"
+    ),
     "tests/test_order_controller.py": (
         "4ac351e0ce611989044e74f2909c856de1e199e921602ab4fe6a874cecc7d069"
     ),
@@ -90,26 +93,31 @@ BASELINE_SHA256 = {
     "tools/__init__.py": "f66ec0041ebb636c9fdee98ff706cda2ef04ca40474f79b84027e1e0cb3618eb",
 }
 
-# 基线里允许改写的 3 个既有文件（allowed-writes 与 baseline 的交集）。
+# 基线里允许改写的 4 个既有文件（allowed-writes 与 baseline 的交集；
+# tests/test_notify_smoke.py 是基线静态契约测试，M8 改写为行为测试）。
 MODIFIABLE_BASELINE = frozenset(
-    {"README.md", "src/shop/notification.py", "tests/test_notification.py"}
+    {
+        "README.md",
+        "src/shop/notification.py",
+        "tests/test_notification.py",
+        "tests/test_notify_smoke.py",
+    }
 )
 
-# 冻结文件 = 基线 14 - 可改写 3 = 11（I6 逐字节校验这 11 个）。
+# 冻结文件 = 基线 15 - 可改写 4 = 11（I6 逐字节校验这 11 个）。
 FROZEN_BASELINE = {
     path: digest
     for path, digest in BASELINE_SHA256.items()
     if path not in MODIFIABLE_BASELINE
 }
 
-# 任务新建的 7 个文件（14 基线 并 7 = 21 文件；I7 用）。
+# 任务新建的 6 个文件（15 基线 并 6 = 21 文件；I7 用）。
 NEW_PATHS = frozenset(
     {
         "docs/async.md",
         "src/shop/notify_model.py",
         "src/shop/notify_worker.py",
         "tests/test_notify_model.py",
-        "tests/test_notify_smoke.py",
         "tests/test_notify_worker.py",
         "tools/notify_smoke.py",
     }
@@ -1164,7 +1172,7 @@ def _en7() -> tuple[bool, str]:
 
 
 def _en8() -> tuple[bool, str]:
-    """收集数 >= 7 且 3 个新测试文件都被收集。"""
+    """收集数 >= 7 且 3 个测试文件（2 个新建 + 1 个由基线静态测试改写）都被收集。"""
     result = _collect_run()
     lines = [line.strip() for line in (result.stdout or "").splitlines()]
     collected = [line for line in lines if "::" in line]
@@ -1300,7 +1308,7 @@ def _i6() -> tuple[bool, str]:
 
 
 def _i7() -> tuple[bool, str]:
-    """文件集恰为 21 个（14 基线 并 7 新建），改动集合 ⊆ 10 条允许写。"""
+    """文件集恰为 21 个（15 基线 并 6 新建），改动集合 ⊆ 10 条允许写。"""
     actual = set(_tree_files())
     extras = sorted(actual - set(EXPECTED_PATHS))
     missing = sorted(set(EXPECTED_PATHS) - actual)

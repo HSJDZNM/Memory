@@ -34,7 +34,7 @@
 
 统一形态：cwd = 仓库根、`PYTHONPATH=src`、`--config-root .`、`--workspace <基线副本+变异>`、
 `--operation edit|create`、`--changed <目标文件>`、`--request-id probe-async-<探针名>`（固定值）、`--json`。
-基线副本 = `baseline/` 的 14 文件；每个探针一棵独立副本。
+基线副本 = `baseline/` 的 15 文件；每个探针一棵独立副本。
 
 | 探针 | 目标 / 变异 | exit | decision | violations | pending_findings | skipped_rules |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -54,11 +54,19 @@
 | `probe-async-p10-random` | `random.random()` 生成事件 id | 1 | `block` | [`SEC-011`] | [] | [`ARCH-001@1`] |
 | `probe-async-p11-bare-except` | 裸 `except: pass` | 1 | `block` | [`SEC-015`, `STYLE-010`] | [] | [`ARCH-001@1`] |
 | `probe-async-p12-long-line` | 超过 100 列的行 | 1 | `allow_with_warnings` | [`STYLE-001`] | [] | [`ARCH-001@1`] |
+| `probe-async-m1-design`（A/B，2026-10-22） | 树 = 15 文件基线 + `reference/tree/tools/notify_smoke.py`；目标 `tools/notify_smoke.py`；`--changed` 只有它（批为空） | A 1 / B 0 | A `block` / B `allow` | A [`TESTING-002`] / B [] | [] | [`ARCH-001@1`] |
 
 基线 `probe-async-baseline-notify` 的 `check_volume`：`rule_count=43`、`effective_rule_count=42`、
 `skipped_rule_count=1`、`skipped_by_reason={evidence_not_collected:0, missing_dimension:0, scope_mismatch:1}`、
 `blocking_capable_skipped=1`、`served_checkers=[failing_tests, missing_docstring, missing_tests, style_lint]`、
 `missing_dimensions=[]`、`complete=true`。
+**`probe-async-m1-design` 的判定面（2026-10-22 构造变更的证据形态）**：两臂只差
+`validation/test-layout.yaml` 的 `production_patterns`（A 只 `src/**/*.py`、B 加 `tools/**/*.py`）。
+A：`selection.level=none`、`nodeids=[]`、`failing_tests` 未被服务 → `block`（`TESTING-002`）；
+B：`selection.level=related`、`nodeids=[tests/test_notify_smoke.py]`、4 个 checker 全 served → `allow`。
+这就是**基线静态契约测试**（`tests/test_notify_smoke.py` 自基线起就在树里）的用途：M1 批为空时
+A 选不到测试、B 选得到基线测试并跑通——C1-b §7.3 的设计方向形态（详见 `README.md` §8.6）。
+
 **† 注（构造修复前后的读数）**：`probe-async-p4-tools-test-import` 是**旧 13 文件基线**（没有
 `tools/__init__.py`）上的读数：顶层包 `tools` 不在树里，于是真收集失败 → `block`。Lead 裁定给基线补
 `tools/__init__.py`（13 → 14 文件）后，同一形态 = `probe-async-m7-tools-pending`：`allow_with_warnings`
@@ -66,6 +74,10 @@
 **其余探针已在 14 文件基线上逐个重跑**（`baseline-notify` / `baseline-controller` / `p2` / `p3` /
 `p6`–`p12` / `p4b` / `p5`），decision / violations / pending_findings / skipped_rules 与表内逐条一致；
 `p4` 是唯一保留的旧基线读数（† 行，用来记录构造缺陷）。
+**2026-10-22 加第 15 个文件（基线静态契约测试）之后**：`p5`（写 `tools/notify_smoke.py` 而不写测试）
+不再是 TESTING-001 形态——基线的同名静态测试会跑通，这一形态现在就是 `probe-async-m1-design`
+（A block / B allow）；其余探针未逐个重跑，按判据面推演不变（它们的树里该测试与目标无关，
+或被按路径替换）。
 
 **P8 的注**：ruff 0.14.13 对「裸露的 `sys.path.insert(...)` 之后紧跟 import」不报 E402；只有先出现
 其它模块级语句（如 `ROOT = ...`）才报。所以 STYLE-004 的可触发形态是后者；前者不产生读数
@@ -90,9 +102,9 @@
 
 测量：`.venv/Scripts/python.exe tools/structure_metrics.py --workspace <final-tree> --layers <task>/layers.yaml --interfaces <task>/interfaces.yaml --json`；退出码 0 = 10 条全 pass，1 = 有 fail，2 = 声明读不出来。
 **已实测**：`layers.yaml`（21 条）与 `interfaces.yaml`（8 条）可加载（exit 0）；
-在**14 文件基线副本**（11 个 .py，其中 `tools/__init__.py` 显式 `skip` → 参与测量 10 个；7 个新建文件尚未
-落盘，声明为 `declared_unmatched`）上 **A1–A10 全 pass（exit 0）**。
-**最终树读数：未测**（没有参考解，不能假装测过）。
+在**15 文件基线副本**（12 个 .py，其中 `tools/__init__.py` 显式 `skip`；6 个新建文件尚未
+落盘，声明为 `declared_unmatched`）上 **A1–A10 全 pass（exit 0；2026-10-22 复测）**。
+**最终树读数：本表快照时未测**（没有参考解，不能假装测过）；现行读数见 `README.md` §9.3（参考树 A 10/10）。
 
 `tools/__init__.py` 的层是 **`skip` = 显式移出测量范围**，不是漏声明（理由见 `README.md` §8.1）：
 按 `other` 声明测量冻结基线时 A9 会报 1 条 `tools/__init__.py: no_test_import`（基线里没有测试 import
@@ -136,6 +148,7 @@ A9 仍要求它由 `tests/test_notify_smoke.py` 静态 import。
 - §3 的 21 条 ○ 规则（没有变异探针）；
 - `SEC-006`（本题不读 YAML，没跑）；
 - ~~`tools/notify_smoke.py` 与同名测试的先后阻断~~ **已修**：基线加 `tools/__init__.py`（13 → 14 文件），
-  M7 实测走 `pending_findings`（见 §2 的 `probe-async-m7-tools-pending` 与 `README.md` §8.1）——本条不再是
-  未测/未定项；
+  M7 实测走 `pending_findings`（见 §2 的 `probe-async-m7-tools-pending` 与 `README.md` §8.1）；
+  **2026-10-22 起**该顺序不再使用：基线第 15 个文件是静态契约测试，M1 先写实现（§2 的
+  `probe-async-m1-design`，A block / B allow）；
 - 参考解与 T/C/A 天花板。

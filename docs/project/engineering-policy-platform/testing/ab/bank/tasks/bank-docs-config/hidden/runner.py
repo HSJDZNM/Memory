@@ -56,8 +56,8 @@ CASE_IDS = (
     + ["I%d" % index for index in range(1, 8)]
 )
 
-# 13 个基线文件（逐字节起点）。来源：包内 baseline/ 的 13 个文件实算 sha256
-# （组合摘要 e259e2440044781413cb1d04bd0a4c4926898be7372126a66f79b5316d2eb8de）。
+# 14 个基线文件（逐字节起点）。来源：包内 baseline/ 的 14 个文件实算 sha256
+# （组合摘要 dd0e563ec8c6473472f5d1705964908c4e2a61a69e31cd8b30b0e2d3b2176773）。
 BASELINE_SHA256 = {
     "AGENTS.md": "ef20cdca0d6c43dbb5038449c90a972d44837e4b9ddc17e074f994d5eed669a3",
     "README.md": "5b4313609e4a28b61b43cd7b58ead2b99866284e532c68b79983cd3698213a5a",
@@ -75,6 +75,9 @@ BASELINE_SHA256 = {
     "src/shop/order_service.py": (
         "080664ff694aad5cb1f50842ae715d72698e40031b97512ddf7328110700fcbe"
     ),
+    "tests/test_check_config.py": (
+        "74195daf2acc69e66de423a664e1239b8c66d5a5f06a40685c4867eed3277d69"
+    ),
     "tests/test_order_controller.py": (
         "4ac351e0ce611989044e74f2909c856de1e199e921602ab4fe6a874cecc7d069"
     ),
@@ -86,26 +89,29 @@ BASELINE_SHA256 = {
     ),
 }
 
-# 基线里允许改写的 3 个既有文件（allowed-writes 与 baseline 的交集）。
-MODIFIABLE_BASELINE = frozenset({"README.md", "config/app.yaml", "docs/config.md"})
+# 基线里允许改写的 4 个既有文件（allowed-writes 与 baseline 的交集）。
+# tests/test_check_config.py 在基线里是静态契约测试，M5 把它改写为行为测试。
+MODIFIABLE_BASELINE = frozenset(
+    {"README.md", "config/app.yaml", "docs/config.md", "tests/test_check_config.py"}
+)
 
-# 冻结文件 = 基线 13 - 可改写 3 = 10（T26 逐字节校验这 10 个）。
+# 冻结文件 = 基线 14 - 可改写 4 = 10（T26 逐字节校验这 10 个）。
 FROZEN_BASELINE = {
     path: digest for path, digest in BASELINE_SHA256.items() if path not in MODIFIABLE_BASELINE
 }
 
-# 任务新建的 5 个文件（13 基线 ∪ 5 新建 = 18 文件；T25 用）。
+# 任务新建的 4 个文件（14 基线 ∪ 4 新建 = 18 文件；T25 用）。
+# tests/test_check_config.py 不在这里：它**在**基线里（静态契约测试），M5 改写为行为测试。
 NEW_PATHS = frozenset(
     {
         "docs/config-migration.md",
         "src/shop/config.py",
-        "tests/test_check_config.py",
         "tests/test_config.py",
         "tools/check_config.py",
     }
 )
 
-# 允许写 8 条 = 基线可改写 3 + 新建 5。
+# 允许写 8 条 = 基线可改写 4 + 新建 4。
 ALLOWED_WRITES = frozenset(MODIFIABLE_BASELINE) | NEW_PATHS
 
 EXPECTED_PATHS = frozenset(BASELINE_SHA256) | NEW_PATHS

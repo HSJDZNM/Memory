@@ -30,7 +30,7 @@
 | `tools/notify_smoke.py` | 新建 | `main() -> list[dict]`；`__main__` 打印单行 JSON（`ensure_ascii=False, sort_keys=True`） |
 | `tests/test_notify_model.py` | 新建 | 7 个用例（13 条 assert） |
 | `tests/test_notify_worker.py` | 新建 | 9 个用例（21 条 assert），含 stuck-queue 取消用例 |
-| `tests/test_notify_smoke.py` | 新建 | 静态 `from tools.notify_smoke import main` + 3 条 assert（A9 的那条静态边） |
+| `tests/test_notify_smoke.py` | 改写基线（静态契约测试 → 行为测试） | 静态 `from tools.notify_smoke import main` + 3 条 assert（A9 的那条静态边） |
 | `docs/async.md` | 新建 | 4 个指定二级标题（队列语义 / 幂等 / 取消 / 停机） |
 | `README.md` | 修改 | 「结构」表加 `src/shop/notify_worker.py` 一行，其它行不动 |
 | `src/shop/notification.py` | 修改 | 模块 docstring 加弃用说明；实现不动 |
@@ -42,7 +42,7 @@
 | --- | --- | --- |
 | T（参考树） | `BANK_TASK_TREE=<reference/tree> .venv/Scripts/python.exe hidden/runner.py` | **38/38**、exit 0、两次输出逐字节相同（sha256 `3d216ebcd82f0606c50f7b5aef6ac677c3588a39ab1593ec103651418b84e98a`，取自仓库根 cwd、树标签为仓库相对路径） |
 | T（基线） | 同一命令，树 = `baseline/` 的副本 | **2/38**、exit 1、两次逐字节相同（sha256 `7941facf266ba8f9ae2a4488cef97254b06db1d96fd1961229a94e39b13542ee`）；只剩 EN7（基线 pytest 绿）与 I6（基线冻结文件当然没变） |
-| pytest | `cd <reference/tree> && python -m pytest -q` | **22 passed**、exit 0（基线 4 → 22） |
+| pytest | `cd <reference/tree> && python -m pytest -q` | **22 passed**、exit 0（基线 4 passed, 1 skipped → 22） |
 | 冒烟 | `cd <reference/tree> && python tools/notify_smoke.py` | exit 0，单行 JSON、恰 2 条（`smoke-1` → `smoke-2`） |
 | A | `python tools/structure_metrics.py --workspace <reference/tree> --layers <task>/layers.yaml --interfaces <task>/interfaces.yaml --json` | **10/10 pass**、exit 0（A1–A10 全 pass；A9 覆盖 8/8 生产文件） |
 | C | 8 次 `python -m policy.check <file> ... --operation edit --changed <10 条> ...`（见 §4） | **8/8 `allow`**、8 次 exit 0、**0 条 error、0 条 warning**；每次 `skipped_rules=[ARCH-001@1]`（scope 不匹配，不是通过）、`blocking_capable_skipped=1`、`complete=true` |
@@ -83,5 +83,5 @@ $env:PYTHONPATH = 'src'
    这与 `bank/README.md` §4.3 的「未参与设计/实施的子会话」不符，如实记在这里，不冒充独立出题。
 5. **参考解不引入任何新依赖**：只用标准库 `asyncio` / `json` / `dataclasses`；没有 pytest-asyncio、
    没有网络/时钟/随机数。
-6. **参考树里没有 `.policy/` 与缓存**：21 个文件 = 14 基线 + 7 新建；参考读数都在副本或
+6. **参考树里没有 `.policy/` 与缓存**：21 个文件 = 15 基线 + 6 新建；参考读数都在副本或
    `PYTHONDONTWRITEBYTECODE=1` 下跑，树本身一个字节没多。

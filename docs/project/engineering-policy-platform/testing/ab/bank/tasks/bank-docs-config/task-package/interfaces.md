@@ -35,10 +35,10 @@ feature_flags: <list[str]，元素都是非空 str；可以是空列表>
    - 校验必须走 `shop.config.load_config`（不许在脚本里重写键集合）；合法：退出码 0，stdout 恰一行非空文本；非法：退出码 1，stderr 恰一行（`ValueError` 的原因，不含绝对路径、不含 traceback）；缺 `--config` 是 argparse 用法错（退出码 2，不要求你处理）。
    - 只读：不写、不改被校验的配置文件。
    - 在项目根被 `python tools/check_config.py` 调用时 `sys.path[0]` 是 `tools/`：要像 `conftest.py` 那样把 `<项目根>/src` 插进 `sys.path` 再 import `shop`；紧随 `shop` 的那条 import 行加 `# noqa: E402`（只此一处豁免）。
-3) 新建 `tests/test_config.py`（至少 5 个测试函数）与 `tests/test_check_config.py`（至少 2 个）：
+3) 新建 `tests/test_config.py`（至少 5 个测试函数）；把基线的 `tests/test_check_config.py`（静态契约测试）改写为行为测试（至少 2 个测试函数）：
    - `test_config.py` 覆盖：v2 合法配置 / v1 `retry` 被拒且消息含 `retry_policy` / 未知键 / 缺键 / 类型错（含 bool 冒充 int）。测试自己构造 YAML 文件（临时目录），**不要依赖 `config/app.yaml` 的当前形态**。
    - `test_check_config.py` 覆盖退出码 0 与 1，并断言 stdout / stderr 的行数与内容；用临时 YAML 文件，不要改仓库里的文件。
-   - 不许 skip / xfail；每个文件至少一条 assert。
+   - M5 改写后的测试不许 skip / xfail；每个文件至少一条 assert（基线静态测试在工具不存在时 skip 是允许的）。
 4) 改 `config/app.yaml` 成 v2：`app_name: demo-shop` 与 `feature_flags` 两项保持不变，把 `retry: 3` 换成 `retry_policy`（`max_attempts: 3`、`backoff_ms: 100`、`jitter: true`）；注释可以更新，但文件里不许再出现顶层 `retry` 键。
 5) 改 `docs/config.md` 成 v2 表（逐字要求见验收表 A6），v1 的口径说明要被替换掉。
 6) 新建 `docs/config-migration.md`（逐字要求见验收表 A7）：键映射写清 `retry: N` -> `retry_policy.max_attempts: N` 与另外两个子键的固定取值（`backoff_ms: 100`、`jitter: true`）；回滚一节写清把 `retry_policy` 换回 `retry: <max_attempts>` 并重跑校验脚本；校验一节写完整命令并写明退出码 0 / 1 的含义。

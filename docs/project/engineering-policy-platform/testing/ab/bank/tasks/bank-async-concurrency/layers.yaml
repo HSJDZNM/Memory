@@ -2,7 +2,7 @@
 #
 # 消费者：python tools/structure_metrics.py --workspace <final-tree> --layers <本文件> --interfaces interfaces.yaml --json
 # 层值闭集 = composition / controller / service / repository / model / test / other / skip（未声明层的 .py 会让 A1 fail）。
-# 文件集 = 14 个基线文件 + 任务创建的 7 个文件（每多/少一个都让「路径族声明 100%」这句话变成假的）。
+# 文件集 = 15 个基线文件 + 任务创建的 6 个文件（每多/少一个都让「路径族声明 100%」这句话变成假的）。
 #
 # 列在这里的非 .py 文件用 skip（移出测量范围），不是「没有层」：workspace_scope 需要它是显式声明。
 # test：测试文件。conftest.py 命中 validation/test-layout.yaml 的 test_support_patterns，

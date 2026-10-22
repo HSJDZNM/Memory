@@ -9,20 +9,25 @@
 > **用法**：Lead 重置基线 → 以任务树为 cwd 起受治会话 → 首消息 = `task-package/first-message.md`；
 > 跑完后按 `acceptance.md` + 隐藏验收 + 基线 diff 判分（C/A 见 `scoring.yaml`、`coverage.md`）。
 
-## 1 基线（13 文件；除允许写集合里的 3 个外只读）
+## 1 基线（14 文件；除允许写集合里的 4 个外只读）
 
 | 组 | 文件 | 来源 |
 | --- | --- | --- |
 | 订单示例项目（11） | `AGENTS.md`、`README.md`、`conftest.py`、`pytest.ini`、`src/shop/__init__.py`、`src/shop/order_repository.py`、`src/shop/order_service.py`、`src/shop/order_controller.py`、`tests/test_order_repository.py`、`tests/test_order_service.py`、`tests/test_order_controller.py` | `bank-flagship-returns/baseline` 的同名 11 文件，**逐字节复制**（复制时逐文件 sha256 断言相同；也与 `examples/dsh/b-plan/sample-project` 逐字节相同） |
 | 配置（1） | `config/app.yaml` | 本包构造：v1 口径（`app_name` / `retry: 3` / `feature_flags` 两项） |
 | 文档（1） | `docs/config.md` | 本包构造：v1 的配置表（键 / 类型 / 默认值 / 说明） |
+| 测试（1） | `tests/test_check_config.py` | 本包构造：**静态契约测试**（`tools/check_config.py` 不存在时 skip，存在时检查公开面）；M5 改写为行为测试（改写后不再 skip） |
 
 - **基线组合摘要**（算法 = 按相对路径排序的 `<sha256>  <relpath>` 清单文本再 sha256，与 `reset-arm.py` 的
-  `_manifest_sha256` 逐字相同）：**`e259e2440044781413cb1d04bd0a4c4926898be7372126a66f79b5316d2eb8de`**（13 文件）。
-- 基线起点干净：`python -m pytest -q` 得到 **3 passed**（exit 0；本包实测，见 §4）。
+  `_manifest_sha256` 逐字相同）：**`dd0e563ec8c6473472f5d1705964908c4e2a61a69e31cd8b30b0e2d3b2176773`**（14 文件）。
+- 基线起点干净：`python -m pytest -q` 得到 **3 passed, 1 skipped**（exit 0；skip 的那条就是静态契约测试，
+  它等 `tools/check_config.py` 出现在 M1；本包实测，见 §4）。
 - **基线里没有**（任务要创建，预置 = 撤掉任务）：`docs/config-migration.md`、`src/shop/config.py`、
-  `tests/test_check_config.py`、`tests/test_config.py`、`tools/check_config.py`。
-  `reset-arm.py` 的 `TASK_CREATED` 会拒绝这 5 个文件出现在基线里。
+  `tests/test_config.py`、`tools/check_config.py`。
+  `reset-arm.py` 的 `TASK_CREATED` 会拒绝这 4 个文件出现在基线里。
+- **`tests/test_check_config.py` 在基线里**（第 14 个文件，静态契约测试）：M1 写 `tools/check_config.py`
+  时它就是「同名测试」，M5 把它改写成行为测试。它**在**允许写集合里（允许写与基线的交集因此是 4 个），
+  最终树仍是 18 文件、逐字节与 `reference/tree` 相同。
 - 基线**没有** `tools/__init__.py`（旗舰 baseline 的 `tools/__init__.py` / `config/refund_policy.yaml` /
   `data/refunds-legacy.jsonl` 属于退货题，不进本题基线）：`python tools/check_config.py` 作为脚本可跑，
   测试 import `tools.check_config` 走 Python 的 namespace package（见 `scoring.yaml` 的 `a9_note`）。
@@ -33,7 +38,8 @@
 `README.md`、`config/app.yaml`、`docs/config-migration.md`、`docs/config.md`、`src/shop/config.py`、
 `tests/test_check_config.py`、`tests/test_config.py`、`tools/check_config.py`。
 
-**允许写交集基线 = 3 个**（`README.md`、`config/app.yaml`、`docs/config.md`）；因此**冻结不动的基线文件 = 10 个**：
+**允许写交集基线 = 4 个**（`README.md`、`config/app.yaml`、`docs/config.md`、`tests/test_check_config.py`）；
+因此**冻结不动的基线文件 = 10 个**：
 `AGENTS.md`、`conftest.py`、`pytest.ini`、`src/shop/__init__.py`、`src/shop/order_controller.py`、
 `src/shop/order_repository.py`、`src/shop/order_service.py`、`tests/test_order_controller.py`、
 `tests/test_order_repository.py`、`tests/test_order_service.py`。这 10 个一个字节都不许改。
@@ -42,18 +48,20 @@
 
 | 路径 | sha256 |
 | --- | --- |
-| `task-package/first-message.md` | `dd47ec6b7c6fc1ad8b4fb9e90ae794cbc0bd02e478d016efb060f95a0b4f53b5` |
-| `task-package/milestones.md` | `55b8949e16f7e659b49f20494ebcc9639aba13eac02bb4d3c28b5eeadfdd6126` |
-| `task-package/acceptance.md` | `a4df181e413cc0e6644dd0aca8bb3c2e1de1bae405a9c58a18571224e77730cc` |
+| `task-package/first-message.md` | `8c303fad01dbb72f602dd37d119423c928548190ce8466314485de27c807ea41` |
+| `task-package/milestones.md` | `d1002ea4d8151d89b31c0d8e766bbfc72212f8a3cdcb186a7236b0a33ef05050` |
+| `task-package/acceptance.md` | `d5573283010d77794476f942a04cb6581daff0a42ba481e298e42fa63995fb42` |
 | `task-package/interfaces.md` | `6e3a42f781e2a52b9cd0aad0b75fb74fe45cf0bf78517e1bdd85e4d43932638c` |
 | `task-package/allowed-writes.txt` | `9290bab8427455963eb135fce2bd3474d78be52084f9d3bb1b3a3babc0fcbb7b` |
-| `task-package/manifest.sha256` | `51a68b23791acb0c87e482fe435cad12fd77434163f49d9348ce114ac14bb772`（5 行，覆盖前 5 文件；与组合摘要同值——清单文本就是被哈希的字节） |
-| `reset-arm.py` | `768638aca01f72e07b686b23229d44be96fa77b0343894d12ffe8229e764e76e`（不在 manifest 里；它只冻结基线） |
-| `layers.yaml` | `d3a40a7578a4d8a5591c0dc95cabe4a302d60e8d2f47b4daf32a05813b206814` |
+| `task-package/manifest.sha256` | `7c1d3ebca6e0fcf4080340516500833ebcebb041da7c4dcaa31e81b3d7ed6031`（5 行，覆盖前 5 文件；与组合摘要同值——清单文本就是被哈希的字节） |
+| `reset-arm.py` | `df79bcd013f98ec64075bbb1c3732ec48c9bc49150ef83f6e2e497861810ec29`（不在 manifest 里；它只冻结基线） |
+| `layers.yaml` | `62ae060026cb4e164d1233cf7b8280ebeb8ad1c107e2fbf509f067f63befbe56` |
 | `interfaces.yaml` | `91c3ce85e337d0fbfabb6d318519c41b487beab52f7a641fd59d131c17b981a2` |
-| `scoring.yaml` | 本批改动前的值 `34ae4b10d86baaeb49f15c4090189d8177372d4ccb5ab8e7611cb46b96fd4a0c`；**T 冻结后已变**（内容改过），现由冻结集现场实算（自指不写进自己，见其 `scoring_sha256_note`） |
-| `hidden/PLAN.md` | `c555a64bb229a723f795f15015abe7dc38034961949fd82e2046ab6ce00852e5`（40 条；T 冻结输入） |
-| `hidden/runner.py` | `9164afea2194377cf80559af20611672b09a9a7c611f4697ad4922a464b72247`（T 冻结输入） |
+| `scoring.yaml` | 不进 manifest（自指不写进自己，见其 `scoring_sha256_note`）：本批内容改过，现值由冻结集现场实算，本表不抄一个会失效的数 |
+| `hidden/PLAN.md` | `126eb8d9222bbc71e121f1d30493acf27b649301c16b1a868aa5a91d94ac9cb8`（40 条；T 冻结输入） |
+| `hidden/runner.py` | `eb95eb2c1977fb7dbb1595cd1099ae72cbf27801f03b3ad718e0618d4a61e5d2`（T 冻结输入） |
+| `baseline/tests/test_check_config.py` | `74195daf2acc69e66de423a664e1239b8c66d5a5f06a40685c4867eed3277d69`（基线第 14 个文件；M5 改写为行为测试） |
+| `baseline/`（14 文件组合摘要） | `dd0e563ec8c6473472f5d1705964908c4e2a61a69e31cd8b30b0e2d3b2176773`（`reset-arm.py` / `hidden/runner.py` / `scoring.yaml` 三处同值） |
 | `coverage.md` | 不进 manifest（覆盖表不是判据输入）；改动它不改判分 |
 
 复核（Lead 开跑前逐行比对，5/5 必须 ok；任一不符 => 该 run 作废）：
@@ -73,7 +81,7 @@ Get-Content "$pkg/manifest.sha256" | ForEach-Object {
 
 ```powershell
 cd <仓库根>
-# 0) 看计划 / 重置（目标树默认 .tmp/bank-docs-config/tree，13 文件；不预置任何任务要创建的文件）
+# 0) 看计划 / 重置（目标树默认 .tmp/bank-docs-config/tree，14 文件；不预置任何任务要创建的文件）
 .venv/Scripts/python.exe docs/project/engineering-policy-platform/testing/ab/bank/tasks/bank-docs-config/reset-arm.py --dry-run
 .venv/Scripts/python.exe docs/project/engineering-policy-platform/testing/ab/bank/tasks/bank-docs-config/reset-arm.py
 #    退出码：0 = 重置并校验通过；1 = 前置缺失（基线缺失/文件数不对/摘要不符/基线混入任务文件）；2 = 校验失败
@@ -86,7 +94,7 @@ cd <仓库根>
 #    用 bank/harness/scaffold_arms.py 建臂时，首消息须显式传 --first-message（它的默认探测只认
 #    task-package/first-message.txt，本题按要求用 .md）；它调 reset-arm.py --target 并读 RESET-ARM-JSON。
 
-# 3) 以任务树根为 cwd 起受治会话；首消息 sha256 必须等于 dd47ec6b...
+# 3) 以任务树根为 cwd 起受治会话；首消息 sha256 必须等于 8c303fad...
 ```
 
 **本题的命令族**（`exec.pwsh`，逐字形态见 `bank/COMMAND-FAMILIES.md` §6）：
@@ -97,9 +105,9 @@ cd <仓库根>
 
 | 命令 | 结果 |
 | --- | --- |
-| 在 13 文件基线副本里 `python -m pytest -q` | `3 passed`，exit 0 |
-| `reset-arm.py --dry-run` | exit 0；打印 13 条期望文件、`baseline manifest sha256: e259e244...`、目标树 `.policy` absent |
-| `reset-arm.py`（默认目标） | exit 0；`13/13 sha256 verified`；`RESET-ARM-JSON` 可解析（`status: ok`、`mismatches: []`）；写出 `.tmp/bank-docs-config/reset-manifest.json` |
+| 在 14 文件基线副本里 `python -m pytest -q` | `3 passed, 1 skipped`，exit 0（skip = 静态契约测试） |
+| `reset-arm.py --dry-run` | exit 0；打印 14 条期望文件、`baseline manifest sha256: dd0e563e...`、目标树 `.policy` absent |
+| `reset-arm.py`（默认目标） | exit 0；`14/14 sha256 verified`；`RESET-ARM-JSON` 可解析（`status: ok`、`mismatches: []`）；写出 `.tmp/bank-docs-config/reset-manifest.json` |
 | `policy.check src/shop/order_controller.py ... --layer controller`（基线树） | `allow`，exit 0；`matched_rules` 43、`skipped_rules` 0、5 个 checker 全 served |
 | `structure_metrics.py --layers ... --interfaces ...`（基线树） | 10/10 pass，exit 0；`layers.entries=18`、`interfaces.entries=6` |
 
@@ -124,9 +132,9 @@ cd <仓库根>
 
 | rule_id | checker | severity | 触发步骤 | 期望 decision | 证据等级 |
 | --- | --- | --- | --- | --- | --- |
-| SEC-006 | style_lint | error | M2 加载器用 `yaml.load(handle, Loader=yaml.Loader)` 代替 `yaml.safe_load` | `block`（`SEC-006@1 error`） | 实测 |
-| TESTING-001 | missing_tests | error | M2 / M4 新建生产 `.py` 却不写同名测试 | `block`（`TESTING-001@1 error`） | 实测 |
-| TESTING-002 | failing_tests | error | M2 / M4 实现与测试不一致，相关测试红 | `block`（`TESTING-002@1 error`） | 规则数据（dgate2 同套规则实测过） |
+| SEC-006 | style_lint | error | M3 的加载器用 `yaml.load(handle, Loader=yaml.Loader)` 代替 `yaml.safe_load` | `block`（`SEC-006@1 error`） | 实测 |
+| TESTING-001 | missing_tests | error | M3 新建 `src/shop/config.py` 却不写 `tests/test_config.py`（`tools/check_config.py` 在 M1 由基线的同名静态契约测试兜底） | `block`（`TESTING-001@1 error`） | 实测 |
+| TESTING-002 | failing_tests | error | M2 / M3 / M5 的实现与测试不一致，相关测试红（M1 的 A 臂是「选不到测试」→ 无证据，同样以 `TESTING-002` 阻断） | `block`（`TESTING-002@1 error`） | 规则数据（dgate2 同套规则实测过） |
 | DOC-001 | missing_docstring | warning | 加载器 / 脚本漏模块或函数 docstring | `allow_with_warnings` | 实测 |
 | STYLE-001 | style_lint | warning | 迁移说明或错误消息一行 > 100 列 | `allow_with_warnings` | 实测 |
 | STYLE-002 | style_lint | error | 改完留下未使用 import | `block`（`STYLE-002@1 error`） | 实测 |
@@ -144,8 +152,8 @@ cd <仓库根>
 | 路径 | 是什么 | 状态 |
 | --- | --- | --- |
 | `task-package/`（6 文件） | 首消息 / 里程碑 / 验收表（A1–A10）/ 接口契约 / 允许写 / manifest | **已落盘**：5/5 哈希复核通过 |
-| `baseline/`（13 文件） | 逐字节基线树（11 个来自旗舰 baseline + 2 个构造） | **已落盘**：组合摘要可复核 |
-| `reset-arm.py` | 逐字节重置 + 摘要校验 + `RESET-ARM-JSON` + `reset-manifest.json` | **已实测**：dry-run + 真跑 13/13 |
+| `baseline/`（14 文件） | 逐字节基线树（11 个来自旗舰 baseline + 3 个构造：`config/app.yaml`、`docs/config.md`、`tests/test_check_config.py`） | **已落盘**：组合摘要可复核 |
+| `reset-arm.py` | 逐字节重置 + 摘要校验 + `RESET-ARM-JSON` + `reset-manifest.json` | **已实测**：dry-run + 真跑 14/14 |
 | `layers.yaml` / `interfaces.yaml` | A 维度声明（18 文件 → 层；6 个非测试模块的公开面上限） | **已落盘**：基线树实测 10/10 pass |
 | `scoring.yaml` | T/C/A 三维判据（T **已冻结**：`frozen`、`total: 40`、40 个 `case_ids`、两个 hidden 摘要实算） | C/A 已写并可复核；T 与 runner 同批冻结 |
 | `coverage.md` | 43 条规则点 + A1–A10 + 隐藏面的逐项覆盖矩阵与实测读数 | 已写（8 直接 / 23 变异 / 12 不适用；`STYLE-004` 记实测负例） |
@@ -161,7 +169,7 @@ cd <仓库根>
 
 | 维度 | 读数 | 一次读数是什么 |
 | --- | --- | --- |
-| T（隐藏验收） | 基线 **2 / 40**；参考树 **40 / 40**（exit 0） | `BANK_TASK_TREE=<tree> python hidden/runner.py`；同一 cwd + 同一棵树两次 stdout 逐字节相同：参考树 `sha256 f56d46d4bca49825b012084b689cd8362017a8febc959145de300baa5ac01b9b`、基线 `sha256 cd34bbe30ce303bf4b564a07691a9dcaeb27e578cbd6895eb70af4c840157c6d`（换 `BANK_TASK_TMPDIR` 不改 payload，见 §7.2） |
+| T（隐藏验收） | 基线 **2 / 40**；参考树 **40 / 40**（exit 0） | `BANK_TASK_TREE=<tree> python hidden/runner.py`；同一 cwd + 同一棵树两次 stdout 逐字节相同：参考树 `sha256 f56d46d4bca49825b012084b689cd8362017a8febc959145de300baa5ac01b9b`、基线 `sha256 7826a048e8629662e699b697d7e76a5594a65922df7cb17a30e3913a9bab0743`（基线这份的 cwd = 仓库根、树 = `.tmp/bank-docs-config/tree`；换 `BANK_TASK_TMPDIR` 不改 payload，见 §7.2） |
 | pytest | **18 passed**，exit 0；`--collect-only -q` = **18 collected** | 在参考树**副本**里跑 `python -m pytest -q`（树本身一个字节都不写） |
 | C（规则遵守） | 4/4 文件 `allow`，**0 条 violations**；`effective_total = 27` → **27 / 27** | 逐文件 `policy.check`（`--changed` 8 条全量、固定 `--request-id`、`--layer` 取 `layers.yaml`）：4 个文件都 `matched_rules` 42、`skipped_rules=[ARCH-001@1]`（`layer != controller`）、`served_checkers=[failing_tests, missing_docstring, missing_tests, style_lint]`、`check_volume.complete=true`、`blocking_capable_skipped=1` |
 | A（结构） | **10 / 10 pass**，exit 0 | `structure_metrics.py --workspace <reference-tree> --layers layers.yaml --interfaces interfaces.yaml --json`；`workspace_scope`：12 个 .py、`undeclared=[]`、`declared_unmatched=[]`、`unresolved=0` |
@@ -169,8 +177,10 @@ cd <仓库根>
 - **C 的逐文件 decision**：`src/shop/config.py`（model）、`tests/test_check_config.py`（test）、
   `tests/test_config.py`（test）、`tools/check_config.py`（composition）全部 `allow` / exit 0；
   ARCH-001 在这 4 个文件上都是 `scope_mismatch` 跳过（**跳过不是通过**），按 `not_applicable` 不计分也不进分母。
-- **基线读数不是 0/40 也不是「跑不成」**：`T26`（10 个冻结文件逐字节）与 `EN1`（基线 3 条测试本来就绿）
-  在基线上成立；其余 38 条按「缺件 / v1 配置 / 缺文档」红。**基线红是构造带来的**，不是 runner 失败。
+- **基线读数不是 0/40 也不是「跑不成」**：`T26`（10 个冻结文件逐字节）与 `EN1`（基线 3 条测试本来就绿，
+  静态契约测试此时 skip、不影响 EN1 的「无失败」判定）在基线上成立；其余 38 条按「缺件 / v1 配置 / 缺文档」红。
+  **基线红是构造带来的**，不是 runner 失败。
+- **stdout 摘要怎么读**：这两个 `sha256` 是 runner 写到 stdout 的字节摘要（UTF-8；Windows 上 `sys.stdout` 把 `\n` 转成 `\r\n`）。PowerShell 5.1 的 `>` 会把输出重新编码成 UTF-16，直接哈希那个文件得不到本值——要复现得用程序捕获原始字节。
 - **文档类目标仍不在规则证据面里**：`.md` / `.yaml` 走验证器路径得到
   `language_coverage.status = not_covered_by_design`、`served_checkers = []`；文档正确性由隐藏 T20–T24 判，
   **不许**把那条 allow 读成「规则查过」。
@@ -206,7 +216,12 @@ cd <仓库根>
    SPEC 只给了键名，取值由本包钉死，否则 A3 / A6 与隐藏用例没有唯一答案。
 6. **`docs/config.md` 的表头与类型列是逐字判据**（A6）：这样「文档与加载器一致」才是机器可判的；
    比较口径是「去掉首尾空白与反引号后逐字相等」，写在 `acceptance.md` 的补充口径里。
-7. **`total` / `case_ids` 先空后冻**：隐藏代码落盘之前不伪造已冻结的 T（`pending_hidden`）；本批
+7. **基线的第 14 个文件是静态契约测试**（`tests/test_check_config.py`）：它不是判据的替代品，而是为了让 M1
+   （写 `tools/check_config.py`）在 T3 下出现设计方向激活——A 臂（`tools` 非生产文件）选不到测试、
+   以 `TESTING-002` 阻断（selection level `none`），B 臂（`tools` 是生产文件）选到这份基线测试并跑通（allow）。
+   静态测试在工具文件不存在时 skip（基线 pytest = 3 passed, 1 skipped）；M5 把它改写为行为测试，
+   因此最终树仍是 18 文件、与 `reference/tree` 逐字节相同。
+8. **`total` / `case_ids` 先空后冻**：隐藏代码落盘之前不伪造已冻结的 T（`pending_hidden`）；本批
    由独立出题子会话写 `hidden/PLAN.md` + `hidden/runner.py`（40 条）后**同批**冻结为
    `frozen / total: 40 / 40 个 case_ids`，两个 hidden 摘要由实算写入（见 §3 与 §7.1），
    `frozen_by` 仍是 `pending_lead_signature`（**不冒充 Lead 签字**）。

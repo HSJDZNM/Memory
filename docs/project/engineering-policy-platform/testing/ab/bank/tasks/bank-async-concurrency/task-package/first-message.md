@@ -4,14 +4,15 @@
 
 【命令约束】只使用这些命令形态：`python -m pytest -q`、`python -m pytest -q tests/test_notify_worker.py`、`python tools/notify_smoke.py`、`git status --porcelain`。不要用 `python -c`、`python -m <自定义模块>`、后台执行（`run_in_background`）、非默认 `timeoutMs` 或 `workdir`；不要用管道、重定向或分号拼接命令。
 
-【本次只允许写这些路径】README.md、docs/async.md（新建）、src/shop/notification.py、src/shop/notify_model.py（新建）、src/shop/notify_worker.py（新建）、tests/test_notification.py、tests/test_notify_model.py（新建）、tests/test_notify_smoke.py（新建）、tests/test_notify_worker.py（新建）、tools/notify_smoke.py（新建）。其它文件一律不改（尤其不要改 AGENTS.md、conftest.py、pytest.ini、src/shop/__init__.py、src/shop/order_controller.py、src/shop/order_repository.py、src/shop/order_service.py、tests/test_order_controller.py、tests/test_order_repository.py、tests/test_order_service.py、tools/__init__.py）。不要 git commit / git push。不要新增第三方依赖（asyncio 是标准库）；不要用网络、随机数或时钟。
+【本次只允许写这些路径】README.md、docs/async.md（新建）、src/shop/notification.py、src/shop/notify_model.py（新建）、src/shop/notify_worker.py（新建）、tests/test_notification.py、tests/test_notify_model.py（新建）、tests/test_notify_smoke.py（基线里已有静态契约测试，M8 改写为行为测试）、tests/test_notify_worker.py（新建）、tools/notify_smoke.py（新建）。其它文件一律不改（尤其不要改 AGENTS.md、conftest.py、pytest.ini、src/shop/__init__.py、src/shop/order_controller.py、src/shop/order_repository.py、src/shop/order_service.py、tests/test_order_controller.py、tests/test_order_repository.py、tests/test_order_service.py、tools/__init__.py）。不要 git commit / git push。不要新增第三方依赖（asyncio 是标准库）；不要用网络、随机数或时钟。
 
-【基线】14 个文件，起点干净（`python -m pytest -q` → 4 passed）：
+【基线】15 个文件，起点干净（`python -m pytest -q` → 4 passed, 1 skipped）：
 - 订单示例项目 11 文件：`AGENTS.md`、`README.md`、`conftest.py`、`pytest.ini`、`src/shop/__init__.py`、`src/shop/order_controller.py`、`src/shop/order_repository.py`、`src/shop/order_service.py`、`tests/test_order_controller.py`、`tests/test_order_repository.py`、`tests/test_order_service.py`；
-- 脚本包 1 文件：`tools/__init__.py`（与旗舰题同名文件逐字节相同；`tools` 已经是基线里的顶层包，先写 `tests/test_notify_smoke.py` 会走「待实现」而不会被收集失败阻断）；
-- 同步通知队列 2 文件：`src/shop/notification.py`（`NotificationQueue.append/pop/len`，本任务只允许改它的模块 docstring）、`tests/test_notification.py`。
+- 脚本包 1 文件：`tools/__init__.py`（与旗舰题同名文件逐字节相同；`tools` 已经是基线里的顶层包，基线还带 `tests/test_notify_smoke.py` 静态契约测试，所以 M1 直接写实现、由它检查工具公开面即可通过）；
+- 同步通知队列 2 文件：`src/shop/notification.py`（`NotificationQueue.append/pop/len`，本任务只允许改它的模块 docstring）、`tests/test_notification.py`；
+- 基线静态契约测试 1 文件：`tests/test_notify_smoke.py`（工具文件不存在时 `pytest.skip`；M8 由模型改写为行为测试）。
 
-【目标】把现有的同步 `NotificationQueue` 升级成一个**确定性的 asyncio 工作队列**：有界队列、按 key 幂等去重、可取消、停机时排空、异常不许吞。新增 model（`Notification`）与 service（`NotificationWorker`）两层、一个可运行的冒烟脚本、3 个同名测试文件、1 篇文档；旧队列保留并标注弃用。测试不得依赖墙钟 / 随机 / 网络，用 `asyncio.run` 与 `queue.join()` 驱动，同一输入重复跑读数一致。
+【目标】把现有的同步 `NotificationQueue` 升级成一个**确定性的 asyncio 工作队列**：有界队列、按 key 幂等去重、可取消、停机时排空、异常不许吞。新增 model（`Notification`）与 service（`NotificationWorker`）两层、一个可运行的冒烟脚本、2 个新建同名测试文件 + 1 个基线静态契约测试（M8 改写为行为测试）、1 篇文档；旧队列保留并标注弃用。测试不得依赖墙钟 / 随机 / 网络，用 `asyncio.run` 与 `queue.join()` 驱动，同一输入重复跑读数一致。
 
 【数据形状（逐键精确）】`Notification` → `to_dict()` 的键集合恰为 `{key, order_id, kind}`：`key` 是非空 str（幂等去重键），`order_id` 是非负 int，`kind` 是非空 str。
 
@@ -38,7 +39,7 @@
 5) 改既有 `tests/test_notification.py`：保留原用例并新增一条断言——`shop.notification` 的模块 docstring 含 `已弃用`。
 6) 新建 `docs/async.md`：必须含 4 个二级标题（逐字、按此顺序）：`## 队列语义`、`## 幂等`、`## 取消`、`## 停机`；每个标题下至少一行非空正文。
 7) 改 `README.md`：「结构」表新增一行，第一列（路径）为 `src/shop/notify_worker.py`；其它行不动。
-8) 新建 3 个测试文件（与生产文件同名）：`tests/test_notify_model.py`（A1/A2）、`tests/test_notify_worker.py`（A3–A8；异步用例用 `asyncio.run` 驱动，不用 pytest-asyncio；共享队列用 `NotificationWorker(queue=shared)`）、`tests/test_notify_smoke.py`（文件顶部把项目根插进 `sys.path`，然后 `from tools.notify_smoke import main  # noqa: E402`，调用 `main()` 并断言去重后 2 条）。每个新测试文件至少 1 个 `assert`；不许 `skip` / `skipif` / `xfail` / 任何标记。
+8) 新建 2 个测试文件（与生产文件同名）：`tests/test_notify_model.py`（A1/A2）、`tests/test_notify_worker.py`（A3–A8；异步用例用 `asyncio.run` 驱动，不用 pytest-asyncio；共享队列用 `NotificationWorker(queue=shared)`）；`tests/test_notify_smoke.py` 是基线静态契约测试，M8 改写为行为测试（文件顶部把项目根插进 `sys.path`，然后 `from tools.notify_smoke import main  # noqa: E402`，调用 `main()` 并断言去重后 2 条）。每个新测试文件至少 1 个 `assert`；M8 改写后的测试同样不许 `skip` / `skipif` / `xfail` / 任何标记。
 9) 错误语义（逐条可测）：字段/参数不合法 → `ValueError`；构造后赋值 → `FrozenInstanceError`；`queue_size=0` / `queue_size=True` / `queue` 不是 `asyncio.Queue` → `ValueError`；同 key 重复提交或队列满 → `False`（不是异常、不阻塞）；`stop()` 之后再 `start()` 或再 `submit` → `RuntimeError`；取消正在等待的 `stop()` → `asyncio.CancelledError` 继续抛出。
 10) 确定性纪律：测试与实现都不得依赖墙钟、随机数、网络；用例用 `asyncio.run` 与 `queue.join()` 驱动；同一输入重复跑，`processed()` 与 smoke 脚本 stdout 必须逐字节相同。
 
@@ -51,21 +52,21 @@ A5 停机排空与副本：`start` 后提交 3 条，`stop()` 返回后 `process
 A6 取消：取消正在等待 `stop()` 的任务 → `asyncio.CancelledError` 继续抛出（不吞）；该任务结束后无残留 pending 消费任务；源码里没有 `except asyncio.CancelledError: pass` 这类吞取消写法 → 隐藏用例 + AST
 A7 共享队列：两个 worker 共享同一个 `asyncio.Queue`、都 `start`，3 个事件（含 1 个重复 key）→ 聚合 `processed()` 恰 2 条，每个 key 最多出现一次 → 隐藏用例
 A8 确定性：AST 里没有 `time.sleep` / `time.time` / `random` / 网络调用；同一场景两次运行 `processed()` 逐字节相同 → 隐藏用例 + AST
-A9 项目根 `python tools/notify_smoke.py` 退出码 0；stdout 是合法 JSON 数组、恰 2 条记录（3 次提交去重后）；两次运行逐字节相同；`tests/test_notify_smoke.py` 调用 `main()` 并断言这 2 条 → 树执行 + 隐藏用例
+A9 项目根 `python tools/notify_smoke.py` 退出码 0；stdout 是合法 JSON 数组、恰 2 条记录（3 次提交去重后）；两次运行逐字节相同；`tests/test_notify_smoke.py` 调用 `main()` 并断言这 2 条（该文件是基线静态契约测试，M8 改写为行为测试） → 树执行 + 隐藏用例
 A10 `docs/async.md` 含 4 个指定二级标题且每个标题下有非空正文；`README.md` 的「结构」表含 `src/shop/notify_worker.py` 一行 → 隐藏用例
 A11 旧队列保留并标注弃用：`src/shop/notification.py` 模块 docstring 含 `已弃用` 与 `NotificationWorker`；`tests/test_notification.py` 断言该说明存在；`append` / `pop` / `__len__` 行为不变 → 隐藏用例
-A12 全树：`python -m pytest -q` 全绿、无 `skip` / `xfail`；收集数 ≥ 7；改动集合 ⊆ `allowed-writes.txt` 的 10 条；14 个基线文件里不属于允许写的 11 个逐字节不变 → 树执行 + 树 diff
+A12 全树：`python -m pytest -q` 全绿、无 `skip` / `xfail`；收集数 ≥ 7；改动集合 ⊆ `allowed-writes.txt` 的 10 条；15 个基线文件里不属于允许写的 11 个逐字节不变 → 树执行 + 树 diff
 
 【里程碑，按这个顺序做，不要跳步】
-M1 先写 tests/test_notify_model.py（覆盖 A1/A2；不 import 其它新模块），然后跑一次 python -m pytest -q，把结果照原文贴出来（实现还没写，测试失败是预期）。
-M2 再写 src/shop/notify_model.py 的最小实现（dataclass + 构造校验 + to_dict），然后跑一次 python -m pytest -q。
-M3 先写 tests/test_notify_worker.py（覆盖 A3–A8；异步用例用 asyncio.run 驱动；共享队列用 NotificationWorker(queue=shared)），然后跑一次 python -m pytest -q（shop.notify_worker 还没写，失败是预期）。
-M4 再写 src/shop/notify_worker.py（消费任务 + 幂等 + 有界 + 排空 + 取消不吞），然后跑一次 python -m pytest -q。
-M5 改 src/shop/notification.py 的模块 docstring（含 已弃用 与 NotificationWorker），再改 tests/test_notification.py 补断言（A11），然后跑一次 python -m pytest -q。
-M6 写 docs/async.md（4 个指定二级标题）并改 README.md 的「结构」表加 src/shop/notify_worker.py 一行（A10），然后跑一次 python -m pytest -q。
-M7 写 tests/test_notify_smoke.py（from tools.notify_smoke import main，调用 main() 并断言去重后 2 条），然后跑一次 python -m pytest -q（tools/notify_smoke 还没写，失败是预期）。
-M8 写 tools/notify_smoke.py（main() + __main__ 打印 JSON；sys.path 后的 import 行加 # noqa: E402），然后跑一次 python -m pytest -q 与 python tools/notify_smoke.py，把两段输出照原文贴出来。
+M1 写 tools/notify_smoke.py（main() + __main__ 打印 JSON；sys.path 后的 import 行加 # noqa: E402；本步不运行脚本），然后跑一次 python -m pytest -q（基线的 tests/test_notify_smoke.py 是静态契约测试，会检查工具公开面，应通过）。
+M2 先写 tests/test_notify_model.py（覆盖 A1/A2；不 import 其它新模块），然后跑一次 python -m pytest -q（实现还没写，测试失败是预期）。
+M3 再写 src/shop/notify_model.py 的最小实现（dataclass + 构造校验 + to_dict），然后跑一次 python -m pytest -q。
+M4 先写 tests/test_notify_worker.py（覆盖 A3–A8；异步用例用 asyncio.run 驱动；共享队列用 NotificationWorker(queue=shared)），然后跑一次 python -m pytest -q（shop.notify_worker 还没写，失败是预期）。
+M5 再写 src/shop/notify_worker.py（消费任务 + 幂等 + 有界 + 排空 + 取消不吞），然后跑一次 python -m pytest -q。
+M6 改 src/shop/notification.py 的模块 docstring（含 已弃用 与 NotificationWorker），再改 tests/test_notification.py 补断言（A11），然后跑一次 python -m pytest -q。
+M7 写 docs/async.md（4 个指定二级标题）并改 README.md 的「结构」表加 src/shop/notify_worker.py 一行（A10），然后跑一次 python -m pytest -q。
+M8 把基线的 tests/test_notify_smoke.py（静态契约测试）改写为行为测试：from tools.notify_smoke import main，调用 main() 并断言去重后 2 条（A9）；然后跑一次 python -m pytest -q。
 M9 再跑一次 python -m pytest -q tests/test_notify_worker.py、一次 python -m pytest -q 与一次 python tools/notify_smoke.py，把结果照原文贴出来（确定性用例要连续两次一致）。
 M10 最后跑 python -m pytest -q 与 python tools/notify_smoke.py，用不超过 120 字汇报：每个里程碑做了什么、哪些动作被拒（照原文理由）、最后一次测试与脚本输出。
 
-【代码约定】模块/类/公开函数都要有 docstring；单行不超过 100 列；不留未使用的 import；import 分组顺序正确（标准库 / 第三方 / 本地）；不用裸 except（用具体异常）；不用 random / 时间 / 网络；同一场景的输出必须可复现；测试里不许 skip / xfail，每个新测试文件至少一条 assert。
+【代码约定】模块/类/公开函数都要有 docstring；单行不超过 100 列；不留未使用的 import；import 分组顺序正确（标准库 / 第三方 / 本地）；不用裸 except（用具体异常）；不用 random / 时间 / 网络；同一场景的输出必须可复现；测试里不许 skip / xfail，每个新测试文件至少一条 assert；基线静态契约测试在工具不存在时 skip 是允许的，M8 改写后的测试不许 skip / xfail。

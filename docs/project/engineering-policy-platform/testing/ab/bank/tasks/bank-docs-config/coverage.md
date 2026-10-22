@@ -39,7 +39,7 @@
 | 其中只由规则数据支撑的 | **1** 条 | TESTING-002（dgate2 用同一套规则实测过，本包未测） |
 | 留作变异（○） | **23** 条 | §3；一处显式缺陷即可命中，不影响「本任务不压这些面」这一结论；含 `STYLE-004`（实测负例） |
 | 结构性不适用（—） | **12** 条 | §4；必须写成「本题不覆盖」，不得从 allow 反推成「查过没问题」 |
-| 结构谓词（A 维度） | **10** 条 | `tools/structure_metrics.py` 1.1；13 文件基线上实测 **10/10 pass**（§7.8） |
+| 结构谓词（A 维度） | **10** 条 | `tools/structure_metrics.py` 1.1；14 文件基线上实测 **10/10 pass**（§7.8） |
 | 隐藏行为面（◐） | **>= 30** 条（计划） | §6；`hidden/` **未落盘**，T 未冻结 |
 
 **怎么读「涵盖程度」**：● 的 8 条是本任务真正压到的判定面；○ 的 23 条说明这些规则在**同一写面上仍然会响**，
@@ -54,9 +54,9 @@
 
 | 规则 ID | checker | 级别 | 触发步骤（省事 / 错法） | 期望 decision | 证据 |
 | --- | --- | --- | --- | --- | --- |
-| SEC-006 | style_lint | error | M2 的加载器用 `yaml.load(handle, Loader=yaml.Loader)` 代替 `yaml.safe_load` | `block` / exit 1 / `SEC-006@1 error` | 实测（§7.2） |
-| TESTING-001 | missing_tests | error | M2 只写 `src/shop/config.py` 不写 `tests/test_config.py`（或 M4 的 `tools/check_config.py` 不写测试） | `block` / `TESTING-001@1 error` | 实测（§7.6） |
-| TESTING-002 | failing_tests | error | M2 / M4 的实现与测试不一致，相关测试红 | `block` / `TESTING-002@1 error` | 规则数据（dgate2） |
+| SEC-006 | style_lint | error | M3 的加载器用 `yaml.load(handle, Loader=yaml.Loader)` 代替 `yaml.safe_load` | `block` / exit 1 / `SEC-006@1 error` | 实测（§7.2） |
+| TESTING-001 | missing_tests | error | M3 只写 `src/shop/config.py` 不写 `tests/test_config.py`（`tools/check_config.py` 在 M1 由基线的同名静态契约测试兜底） | `block` / `TESTING-001@1 error` | 实测（§7.6） |
+| TESTING-002 | failing_tests | error | M2 / M3 / M5 的实现与测试不一致，相关测试红（M1 的 A 臂 selection `none`、`failing_tests` 无证据，同样阻断） | `block` / `TESTING-002@1 error` | 规则数据（dgate2） |
 | DOC-001 | missing_docstring | warning | 加载器或脚本漏模块 / 函数 docstring | `allow_with_warnings` / `DOC-001@1 warning` | 实测（§7.4） |
 | STYLE-001 | style_lint | warning | 迁移说明或 `ValueError` 消息一行超 100 列 | `allow_with_warnings` / `STYLE-001@1 warning` | 实测（§7.5） |
 | STYLE-002 | style_lint | error | 改完留下未使用 import（例如脚本里 `import json` 没用上） | `block` / `STYLE-002@1 error` | 实测（§7.6） |
@@ -124,8 +124,9 @@
 
 ## 5 A 维度结构谓词（10 条；由 `tools/structure_metrics.py` 判）
 
-声明在包内 `layers.yaml`（18 条路径 = 13 基线 + 5 新建）与 `interfaces.yaml`（6 个非测试模块的上限）。
-**基线树实测**：`summary {passed: 10, failed: 0}`、exit 0（§7.8）——5 个新建文件的层声明在基线上是
+声明在包内 `layers.yaml`（18 条路径 = 14 基线 + 4 新建；`tests/test_check_config.py` 属于基线一侧，
+M5 把它从静态契约测试改写成行为测试）与 `interfaces.yaml`（6 个非测试模块的上限）。
+**基线树实测**：`summary {passed: 10, failed: 0}`、exit 0（§7.8）——4 个新建文件的层声明在基线上是
 `workspace_scope.declared_unmatched`（证据，不判 fail），最终树落盘后它们应当被命中。
 
 | 谓词 | 阈值 | 本题的合法形态 | 违规岔口（变异测法） |
@@ -167,7 +168,7 @@
 
 | # | 案例 | 判定 | violations | skipped / 关键读数 | exit |
 | --- | --- | --- | --- | --- | --- |
-| 7.1 | 13 文件基线树的 `src/shop/order_controller.py`（layer=controller） | `allow` | 无 | `matched_rules` 43、`skipped_rules` 0、5 个 checker 全部 served、`complete=true` | 0 |
+| 7.1 | 14 文件基线树的 `src/shop/order_controller.py`（layer=controller） | `allow` | 无 | `matched_rules` 43、`skipped_rules` 0、5 个 checker 全部 served、`complete=true` | 0 |
 | 7.2 | 变异：加载器用 `yaml.load(handle, Loader=yaml.Loader)` | `block` | `SEC-006@1 error` | `skipped_rules=[ARCH-001]`（`scope_mismatch`，`blocking_capable_skipped=1`）；TESTING-001/002 已服务且未报违规 | 1 |
 | 7.3 | 变异：加载器用裸 `except:` 包 YAML 读取 | `block` | `STYLE-010@1 error` | 同上（只有层不匹配的 ARCH-001 被跳过） | 1 |
 | 7.4 | 变异：删掉 `load_config` 的 docstring | `allow_with_warnings` | `DOC-001@1 warning` | 同上 | 1 |
@@ -175,10 +176,10 @@
 | 7.6 | 变异：`src/shop/config.py` 没有 `tests/test_config.py` | `block` | `TESTING-001@1 error` | 同上；`missing_tests` 已服务 | 1 |
 | 7.6b | 变异：加载器里 `import json` 没用上 | `block` | `STYLE-002@1 error` | 同上 | 1 |
 | 7.7 | 变异：`tools/check_config.py` 里 `sys.path.insert(...)` 之后 import `shop`（无 `# noqa`） | **`allow`** | 无 | **E402 没报**（STYLE-004 未命中）；同配置下「模块级赋值之后 import」的对照样例报 E402 | 0 |
-| 7.8 | 13 文件基线上的 `structure_metrics`（`--layers` / `--interfaces` 用本包两份声明） | 10/10 pass | 无 | `layers.entries=18`、`interfaces.entries=6`、`undeclared=[]`、5 个新建文件落 `declared_unmatched` | 0 |
+| 7.8 | 14 文件基线上的 `structure_metrics`（`--layers` / `--interfaces` 用本包两份声明） | 10/10 pass | 无 | `layers.entries=18`、`interfaces.entries=6`、`undeclared=[]`、4 个新建文件落 `declared_unmatched` | 0 |
 | 7.9 | `docs/config.md`（`--language text --layer skip`） | `allow` | 无 | `served_checkers=[]`、`language_coverage.status=not_covered_by_design`、43 条全 skipped（`scope_mismatch`）、`effective_rule_count=0`、`blocking_capable_skipped=24` | 0 |
 
-**证据边界**：7.2–7.7b 与 7.9 是**本次实测**；7.8 是基线树上的实测（最终树落盘后要重跑，A9/A3 才真正覆盖到 5 个新建文件）；
+**证据边界**：7.2–7.7b 与 7.9 是**本次实测**；7.8 是基线树上的实测（最终树落盘后要重跑，A9/A3 才真正覆盖到 4 个新建文件）；
 STYLE-004 记「实测负例」；TESTING-002 与 §3 里除 STYLE-004 外的 22 条未在本任务上实测（不写成覆盖）；
 `ARCH-001` 在 7.2–7.7b 的每次运行里都因 `scope_mismatch` 进 `skipped_rules`——**跳过不等于通过**；
 C 侧已把该 3 分标 `not_applicable`（`effective_total` 27，见 §8）。
@@ -191,6 +192,6 @@ C 侧已把该 3 分标 `not_applicable`（`effective_total` 27，见 §8）。
   不重复计分。
   不把整棵树拿去跑（否则基线 `__init__.py` / `order_*.py` 会被判成缺测试的假违反）。
 - **A 维度**：`layers.yaml` / `interfaces.yaml` 已按 structure_metrics 1.1 的闭集写成；
-  基线树上 10/10 pass 只证明**声明本身可加载且与基线一致**，A3/A9 对 5 个新建文件的覆盖要等最终树。
+  基线树上 10/10 pass 只证明**声明本身可加载且与基线一致**，A3/A9 对 4 个新建文件的覆盖要等最终树。
 - **T 维度**：**未冻结**。`scoring.yaml` 的 `dimension_t.status = pending_hidden`、`case_ids: []`、
   `total: null`、`planned_min_total: 30`；隐藏代码落盘后才冻结 `total` 与 `case_ids`（同批改 PLAN / runner / scoring）。

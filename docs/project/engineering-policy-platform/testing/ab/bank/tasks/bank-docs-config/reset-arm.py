@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""reset-arm.py - 把 bank-docs-config 的任务树重置为 13 文件基线。
+"""reset-arm.py - 把 bank-docs-config 的任务树重置为 14 文件基线。
 
-基线（冻结）= 本包 baseline/ 目录里的 13 个文件：
+基线（冻结）= 本包 baseline/ 目录里的 14 个文件：
   订单示例项目 11 文件（与 bank-flagship-returns/baseline 逐字节相同，也与
   examples/dsh/b-plan/sample-project 逐字节相同）
   + config/app.yaml（v1 配置：app_name / retry: 3 / feature_flags，模型的任务是把它迁到 v2）
   + docs/config.md（v1 的配置表，模型的任务是改成 v2 表）
+  + tests/test_check_config.py（静态契约测试：工具文件不存在时 skip，存在时检查 main() /
+    --config / __main__ 入口；模型在 M5 把它改写为行为测试。基线 pytest = 3 passed, 1 skipped）
 组合摘要见 BASELINE_MANIFEST_SHA256（算法 = 按相对路径排序的「<sha256>  <relpath>」清单文本再 sha256）。
 
 本脚本做四件事（只动目标树里 .policy 之外的部分）：
   1. .policy 原样保留（audit / ledger / approval / registry / config 一个字节不动）；
      只清掉 .policy/pre-evidence 影子副本残留（上一轮取证的临时目录，不是证据）。
-  2. 删掉 .policy 之外的全部文件/目录，逐字节重写 13 个基线文件。
-  3. 逐文件 sha256 校验（13/13 必须一致）+ 没有 .policy 之外的多余文件 + 基线组合摘要一致。
+  2. 删掉 .policy 之外的全部文件/目录，逐字节重写 14 个基线文件。
+  3. 逐文件 sha256 校验（14/14 必须一致）+ 没有 .policy 之外的多余文件 + 基线组合摘要一致。
   4. 打印并写出 <target 的父目录>/reset-manifest.json：基线组合摘要、audit 起始行数
      （ab_measure / measure_all 的 --start-line）、approval sha256。
 
@@ -23,7 +25,7 @@
 
 退出码：
     0 = 重置并校验通过（含 --dry-run）
-    1 = 前置缺失（baseline/ 不存在 / 文件数不是 13 / 基线里出现任务要创建的文件 / 组合摘要不符）
+    1 = 前置缺失（baseline/ 不存在 / 文件数不是 14 / 基线里出现任务要创建的文件 / 组合摘要不符）
     2 = 校验失败（JSON 载荷写明 mismatches / extra / undeletable）
 """
 from __future__ import annotations
@@ -37,17 +39,17 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-BASELINE_FILE_COUNT = 13
-BASELINE_MANIFEST_SHA256 = "e259e2440044781413cb1d04bd0a4c4926898be7372126a66f79b5316d2eb8de"
+BASELINE_FILE_COUNT = 14
+BASELINE_MANIFEST_SHA256 = "dd0e563ec8c6473472f5d1705964908c4e2a61a69e31cd8b30b0e2d3b2176773"
 POLICY_DIR = ".policy"
 PRE_EVIDENCE_DIR = ".policy/pre-evidence"
 AUDIT_NAME = "audit.jsonl"
 APPROVAL_NAME = "approval.json"
 #: 基线里**必须没有**的文件：它们必须由模型在里程碑里亲手写出来（预置 = 撤掉任务）。
+#: tests/test_check_config.py 例外：它**在**基线里（静态契约测试），模型在 M5 把它改写为行为测试。
 TASK_CREATED = (
     "docs/config-migration.md",
     "src/shop/config.py",
-    "tests/test_check_config.py",
     "tests/test_config.py",
     "tools/check_config.py",
 )
@@ -107,7 +109,7 @@ def _is_cache_dir(name: str) -> bool:
 
 
 def _baseline_files() -> dict[str, bytes]:
-    """baseline/ 里的 13 个文件 -> {相对路径: 字节}。"""
+    """baseline/ 里的 14 个文件 -> {相对路径: 字节}。"""
     if not BASELINE.is_dir():
         raise SystemExit(f"reset-arm: 基线树不存在：{_display(BASELINE)}")
     files: dict[str, bytes] = {}
@@ -233,9 +235,9 @@ def _dry_run(files: dict[str, bytes], target: Path) -> int:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """重置目标树并校验 13/13；--dry-run 只打印计划。"""
+    """重置目标树并校验 14/14；--dry-run 只打印计划。"""
     parser = argparse.ArgumentParser(
-        description="把目标树重置为 bank-docs-config 的 13 文件基线"
+        description="把目标树重置为 bank-docs-config 的 14 文件基线"
     )
     parser.add_argument(
         "--target", default=str(DEFAULT_TARGET), help="目标树（默认 .tmp/bank-docs-config/tree）"

@@ -1,7 +1,7 @@
 # 验收表（bank-async-concurrency）
 
 > 判定方式三档：**隐藏用例**（另一子会话按隐藏验收计划实现，最终树只读）、
-> **树执行**（在最终树的副本里跑命令，只看退出码/输出）、**树 diff**（最终树 vs 14 文件基线）。
+> **树执行**（在最终树的副本里跑命令，只看退出码/输出）、**树 diff**（最终树 vs 15 文件基线）。
 > 本表与 first-message.md 的「验收表」逐字对应；改一处必须改另一处。
 
 | id | 检查 | 判定方式 |
@@ -14,7 +14,12 @@
 | A6 | 取消：取消正在等待 `stop()` 的任务 → `asyncio.CancelledError` 继续抛出（不吞）；该任务结束后无残留 pending 消费任务；源码里没有 `except asyncio.CancelledError: pass` 这类吞取消写法 | 隐藏用例 + AST |
 | A7 | 共享队列：两个 worker 共享同一个 `asyncio.Queue`、都 `start`，3 个事件（含 1 个重复 key）→ 聚合 `processed()` 恰 2 条，每个 key 最多出现一次 | 隐藏用例 |
 | A8 | 确定性：AST 里没有 `time.sleep` / `time.time` / `random` / 网络调用；同一场景两次运行 `processed()` 逐字节相同 | 隐藏用例 + AST |
-| A9 | 项目根 `python tools/notify_smoke.py` 退出码 0；stdout 是合法 JSON 数组、恰 2 条记录（3 次提交去重后）；两次运行逐字节相同；`tests/test_notify_smoke.py` 调用 `main()` 并断言这 2 条 | 树执行 + 隐藏用例 |
+| A9 | 项目根 `python tools/notify_smoke.py` 退出码 0；stdout 是合法 JSON 数组、恰 2 条记录（3 次提交去重后）；两次运行逐字节相同；`tests/test_notify_smoke.py` 调用 `main()` 并断言这 2 条（该文件是基线静态契约测试，M8 改写为行为测试） | 树执行 + 隐藏用例 |
 | A10 | `docs/async.md` 含 4 个指定二级标题且每个标题下有非空正文；`README.md` 的「结构」表含 `src/shop/notify_worker.py` 一行 | 隐藏用例 |
 | A11 | 旧队列保留并标注弃用：`src/shop/notification.py` 模块 docstring 含 `已弃用` 与 `NotificationWorker`；`tests/test_notification.py` 断言该说明存在；`append` / `pop` / `__len__` 行为不变 | 隐藏用例 |
-| A12 | 全树：`python -m pytest -q` 全绿、无 `skip` / `xfail`；收集数 ≥ 7；改动集合 ⊆ `allowed-writes.txt` 的 10 条；14 个基线文件里不属于允许写的 11 个逐字节不变 | 树执行 + 树 diff |
+| A12 | 全树：`python -m pytest -q` 全绿、无 `skip` / `xfail`；收集数 ≥ 7；改动集合 ⊆ `allowed-writes.txt` 的 10 条；15 个基线文件里不属于允许写的 11 个逐字节不变 | 树执行 + 树 diff |
+
+> **基线静态契约测试**：`tests/test_notify_smoke.py` 自基线起就存在（静态检查 `tools/notify_smoke.py` 的公开面：
+> 有 `main()`、有 `__main__` 入口、不写文件；工具文件不存在时 `pytest.skip`）。它不是本任务新建的文件；
+> M8 把它改写为行为测试（`from tools.notify_smoke import main` + 调用 + 断言去重后 2 条），改写后的文件
+> 必须无 `skip` / `xfail`（A12）。文件计数：**15 基线 / 6 新建 / 10 允许写 / 11 冻结**。

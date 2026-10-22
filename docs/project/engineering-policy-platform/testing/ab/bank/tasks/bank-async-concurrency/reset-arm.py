@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""reset-arm.py - 把并发/异步题（bank-async-concurrency）的任务树重置为 14 文件基线。
+"""reset-arm.py - 把并发/异步题（bank-async-concurrency）的任务树重置为 15 文件基线。
 
-基线（冻结）= 本包 baseline/ 目录里的 14 个文件：
+基线（冻结）= 本包 baseline/ 目录里的 15 个文件：
   订单示例项目 11 文件（与 bank-flagship-returns/baseline 的同名 11 文件逐字节相同）
   + tools/__init__.py（与 bank-flagship-returns/baseline/tools/__init__.py 逐字节相同）
   + src/shop/notification.py（同步通知队列 v1：append / pop / __len__）
-  + tests/test_notification.py（它的同名测试；基线 4 passed）
+  + tests/test_notification.py（它的同名测试；基线 4 passed, 1 skipped——skip 的是静态契约测试）
+  + tests/test_notify_smoke.py（**基线静态契约测试**：工具文件存在时检查公开面，不存在时 pytest.skip；
+    M8 由模型改写为行为测试，最终树不变）
 组合摘要见 BASELINE_MANIFEST_SHA256（算法 = 按相对路径排序的「<sha256>  <relpath>」清单文本再 sha256）。
 
 本脚本做四件事（只动目标树里 .policy 之外的部分）：
   1. .policy 原样保留（audit / ledger / approval / registry / config 一个字节不动）；
      只清掉 .policy/pre-evidence 影子副本残留（上一轮取证的临时目录，不是证据）。
-  2. 删掉 .policy 之外的全部文件/目录，逐字节重写 14 个基线文件。
-  3. 逐文件 sha256 校验（14/14 必须一致）+ 没有 .policy 之外的多余文件 + 基线组合摘要一致。
+  2. 删掉 .policy 之外的全部文件/目录，逐字节重写 15 个基线文件。
+  3. 逐文件 sha256 校验（15/15 必须一致）+ 没有 .policy 之外的多余文件 + 基线组合摘要一致。
   4. 打印并写出 <target 的父目录>/reset-manifest.json：基线组合摘要、audit 起始行数
      （ab_measure / measure_all 的 --start-line）、approval sha256。
 
@@ -23,7 +25,7 @@
 
 退出码：
     0 = 重置并校验通过（含 --dry-run）
-    1 = 前置缺失（baseline/ 不存在 / 文件数不是 14 / 基线里出现任务要创建的文件 / 组合摘要不符）
+    1 = 前置缺失（baseline/ 不存在 / 文件数不是 15 / 基线里出现任务要创建的文件 / 组合摘要不符）
     2 = 校验失败（JSON 载荷写明 mismatches / extra / undeletable）
 """
 
@@ -38,19 +40,19 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-BASELINE_FILE_COUNT = 14
-BASELINE_MANIFEST_SHA256 = "d12576d82488d3665ea38bacdb6b1a32e23b08caa979f316ca6ba07aadb581e8"
+BASELINE_FILE_COUNT = 15
+BASELINE_MANIFEST_SHA256 = "9739ecf0892fc2ce9a4a6354597f5c0b35aef04c297ee46bd51ac77cec3899d8"
 POLICY_DIR = ".policy"
 PRE_EVIDENCE_DIR = ".policy/pre-evidence"
 AUDIT_NAME = "audit.jsonl"
 APPROVAL_NAME = "approval.json"
 #: 基线里**必须没有**的文件：它们必须由模型在里程碑里亲手写出来（预置 = 撤掉任务）。
+#: tests/test_notify_smoke.py 不在此列：它以**基线静态契约测试**存在，M8 由模型改写为行为测试。
 TASK_CREATED = (
     "docs/async.md",
     "src/shop/notify_model.py",
     "src/shop/notify_worker.py",
     "tests/test_notify_model.py",
-    "tests/test_notify_smoke.py",
     "tests/test_notify_worker.py",
     "tools/notify_smoke.py",
 )
@@ -110,7 +112,7 @@ def _is_cache_dir(name: str) -> bool:
 
 
 def _baseline_files() -> dict[str, bytes]:
-    """baseline/ 里的 14 个文件 -> {相对路径: 字节}。"""
+    """baseline/ 里的 15 个文件 -> {相对路径: 字节}。"""
     if not BASELINE.is_dir():
         raise SystemExit(f"reset-arm: 基线树不存在：{_display(BASELINE)}")
     files: dict[str, bytes] = {}
@@ -236,9 +238,9 @@ def _dry_run(files: dict[str, bytes], target: Path) -> int:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """重置目标树并校验 14/14；--dry-run 只打印计划。"""
+    """重置目标树并校验 15/15；--dry-run 只打印计划。"""
     parser = argparse.ArgumentParser(
-        description="把目标树重置为 bank-async-concurrency 的 14 文件基线"
+        description="把目标树重置为 bank-async-concurrency 的 15 文件基线"
     )
     parser.add_argument(
         "--target", default=str(DEFAULT_TARGET), help="目标树（默认 .tmp/bank-async-concurrency/tree）"

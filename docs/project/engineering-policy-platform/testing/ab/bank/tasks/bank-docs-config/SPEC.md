@@ -10,15 +10,16 @@
 并加一个**只读校验脚本**保证任何 v1 键 / 未知键 / 类型错都在加载期失败关闭。
 本题是「文档/配置为主」的样本：改动面里 `.md` 与 `.yaml` 占多数，Python 只占加载器与脚本。
 
-## 2 基线（13 文件；起点全绿，**没有失败测试**）
+## 2 基线（14 文件；起点全绿（3 passed, 1 skipped），**没有失败测试**）
 
 | 组 | 文件 |
 | --- | --- |
 | 订单项目（11） | `bank-flagship-returns/baseline` 的 11 个文件（逐字节） |
 | 配置（1） | `config/app.yaml`（v1：`retry: 3` + 两个无关键） |
 | 文档（1） | `docs/config.md`（v1 的配置表） |
+| 测试（1） | `tests/test_check_config.py`（静态契约测试：`tools/check_config.py` 不存在时 skip，存在时检查公开面；M5 改写为行为测试） |
 
-起点：`python -m pytest -q` → 3 passed。
+起点：`python -m pytest -q` → 3 passed, 1 skipped（skip 的那条就是静态契约测试）。
 
 ## 3 模型要做什么（允许写 8 路径）
 
@@ -27,7 +28,7 @@
   **v1 的 `retry` 键必须报错并给出迁移提示**；未知键/类型错/缺键一律 `ValueError`；
 - 新建 `tests/test_config.py`（v2 合法 / v1 拒绝 / 未知键 / 类型错 / 缺键）；
 - 新建 `tools/check_config.py`（`--config`，合法 exit 0、非法 exit 1 + 一行原因）；
-- 新建 `tests/test_check_config.py`；
+- 把基线的 `tests/test_check_config.py`（静态契约测试）改写为行为测试；
 - 新建 `docs/config-migration.md`（v1→v2 键映射、回滚、校验命令）；
 - 改 `config/app.yaml` 成 v2；改 `docs/config.md` 成 v2 表（键 / 类型 / 默认值 / 迁移注）；
 - 改 `README.md` 的配置一节链接。
