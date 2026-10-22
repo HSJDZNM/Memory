@@ -8,7 +8,7 @@
 
 ## 0 一句话
 
-async **1 flag（I5）**、docs **2 flag（I5/I7）**、crossmodule **3 flag（T21/T20/T26）**；
+async **2 flag（I5/EN5）**、docs **2 flag（I5/I7）**、crossmodule **3 flag（T21/T20/T26）**；
 三题核心语义 flag 均为 **0**。按预注册阈值：async/docs 在阈值内（keep + 定点修），
 **crossmodule 3 > 2 → 命中「停/重出该题 hidden」的失败关闭条件**。
 **因此「可开跑」不签、27 run 不开**；等使用者裁定（重出 vs 经书面改判的定点修）。
@@ -17,7 +17,7 @@ async **1 flag（I5）**、docs **2 flag（I5/I7）**、crossmodule **3 flag（T
 
 | 题 | 总条数 | keep | flag | 核心语义 flag | 建议 |
 | --- | --- | --- | --- | --- | --- |
-| bank-async-concurrency | 38 | 37 | **1（I5）** | 0 | keep + 定点修（I5 代理） |
+| bank-async-concurrency | 38 | 36 | **2（I5/EN5）** | 0 | keep + 定点修（I5/EN5 代理） |
 | bank-docs-config | 40 | 38 | **2（I5/I7）** | 0 | keep + 定点修（I5/I7） |
 | bank-crossmodule-refactor | 34 | 31 | **3（T21/T20/T26）** | 0 | **按预注册：停/重出该题 hidden**（复核者建议定点修，但阈值字面为 3 > 2） |
 
@@ -26,8 +26,10 @@ async **1 flag（I5）**、docs **2 flag（I5/I7）**、crossmodule **3 flag（T
 - **I5**：判定代理要求测试里某条 assert 的 `ast.unparse` 同时含 `已弃用` 与 `__doc__`；会误伤
   `doc = module.__doc__ or ""; assert "已弃用" in doc` 或 `inspect.getdoc(...)` 这两种满足首消息 L39 的写法。
   建议放宽为「含 已弃用 且含 `__doc__`/`getdoc`」或收窄为「原用例保留 + 无 skip + 有 assert 提及 已弃用」。
-- 反向缺口 7 条（质量缺口，不记 flag）：start 重复幂等、新测试 assert/skip、main() 返回值、注入队列 maxsize、
-  运行中 processed()、A6 的 AST 部分、README「其它行不动」；另 1 条次要（noqa E402 / 第三方依赖）。
+- **EN5**：`docs/async.md` 的正文扫描遇**任意**以 `#` 开头的行就 break，`###` 子标题紧跟二级标题时被判「空正文」；PLAN 自己的口径是「到下一个**二级**标题之间至少一行非空正文」，首消息 A10 也只要求「至少一行非空正文」。
+- 反向缺口 8 条（质量缺口，不记 flag）：start 重复幂等、新测试 assert/skip、main() 返回值、注入队列 maxsize、
+  运行中 processed()、A6 的 AST 部分、README「其它行不动」、EN7 不识别 skip/xfail；另 1 条次要（noqa E402 / 第三方依赖）。
+- 说明：async 有两次独立复核；一次只报 I5，另一次报 I5+EN5（并给出 runner 行号与复现）。本读数采用更严格的一版（2 flag），两者都不改变「≤2、不进停/重出」的结论。
 
 ### 1.2 docs 的 flag
 
@@ -62,7 +64,7 @@ async **1 flag（I5）**、docs **2 flag（I5/I7）**、crossmodule **3 flag（T
 1. **按预注册重出 crossmodule hidden**：另起未参与实施的子会话重写 PLAN+runner（或至少重写三条 flag 用例），
    重跑基线红/参考树天花板、重算 hidden 摘要、重冻结、重跑 H1 复核；成本较高，结论可写「独立重出」。
 2. **书面改判：定点修 + 重冻结 + 重测 + 三条复核**：把 T21/T20/T26 改为「补进首消息/验收表」或「放宽断言」，
-   同批修 async I5、docs I5/I7；重算 hidden/scoring/README 摘要、重冻结、重跑参考树天花板与三条复核。
+   同批修 async I5/EN5、docs I5/I7；重算 hidden/scoring/README 摘要、重冻结、重跑参考树天花板与三条复核。
    这偏离「>2 → 重出」的预注册，必须在读数写「用户改判 + 日期 + 影响面」，不能静默做。
 3. 其他处置（例如换题）需同时说明 Gate 0 的替换规则是否满足（当前 docs 激活、migration 无激活，
    按预注册不允许用 migration 换 docs）。
