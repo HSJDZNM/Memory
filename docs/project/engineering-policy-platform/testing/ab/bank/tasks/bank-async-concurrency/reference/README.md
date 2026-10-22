@@ -18,7 +18,7 @@
 | D6 | `submit` 的判定顺序：关闭 → 类型（`ValueError`）→ 去重（`False`）→ 满（`False`）→ `put_nowait` | 类型错是调用方 bug（异常），去重/满是有意义的返回值；`_seen` 只在**真的入队**之后才写，满队列被拒的 key 之后还能重试 |
 | D7 | 冒烟脚本把 `<root>/src` 插进 `sys.path`，紧随的 import 行加 `# noqa: E402` | 与 `conftest.py` 同一写法；STYLE-004（E402）的**实测**可触发形态是「先有模块级赋值再 import」，本题就是这样（`ROOT = ...`） |
 | D8 | 测试里的异步场景写成**私有**内嵌协程 `_scenario()`，用 `asyncio.run` 驱动 | 不用 pytest-asyncio（首消息明令）；私有前缀是 A7 的要求——A7 对**公开**定义查 docstring，内嵌公开函数会各算一处缺失（首版就是这么红的，见 §5） |
-| D9 | 旧队列只改**模块 docstring**（含 `已弃用` 与 `NotificationWorker` 两个子串），`append` / `pop` / `__len__` 一个字节不动 | SPEC §3 与 A11 的原文；`tests/test_notification.py` 新增一条断言把说明钉住（I5 要求断言本身引用 `__doc__`） |
+| D9 | 旧队列只改**模块 docstring**（含 `已弃用` 与 `NotificationWorker` 两个子串），`append` / `pop` / `__len__` 一个字节不动 | SPEC §3 与 A11 的原文；`tests/test_notification.py` 新增一条断言把说明钉住（I5 要求断言提及 `已弃用`；2026-10-22 定点修后不再强制引用 `__doc__`） |
 | D10 | 有界性用 `queue.full()` + `put_nowait()`，不 `await put()` | 「满 → 返回 `False`，不阻塞、不静默丢」；`await put()` 会在满时挂住（T12 用 20 秒预算判红，不挂死 runner） |
 
 ## 2 交付面（10 条允许写）
@@ -40,13 +40,16 @@
 
 | 维度 | 命令 | 读数 |
 | --- | --- | --- |
-| T（参考树） | `BANK_TASK_TREE=<reference/tree> .venv/Scripts/python.exe hidden/runner.py` | **38/38**、exit 0、两次输出逐字节相同（sha256 `3d216ebcd82f0606c50f7b5aef6ac677c3588a39ab1593ec103651418b84e98a`，取自仓库根 cwd、树标签为仓库相对路径） |
-| T（基线） | 同一命令，树 = `baseline/` 的副本 | **2/38**、exit 1、两次逐字节相同（sha256 `7941facf266ba8f9ae2a4488cef97254b06db1d96fd1961229a94e39b13542ee`）；只剩 EN7（基线 pytest 绿）与 I6（基线冻结文件当然没变） |
+| T（参考树） | `BANK_TASK_TREE=<reference/tree> .venv/Scripts/python.exe hidden/runner.py` | **38/38**、exit 0、两次输出逐字节相同（sha256 `acf67b9950f1641c77db5f349de7cecfa49fa0f76d393e6a723d7933dded80f5`，取自仓库根 cwd、树标签为仓库相对路径；2026-10-22 修复后） |
+| T（基线） | 同一命令，树 = `<task>/baseline` | **2/38**、exit 1、两次逐字节相同（sha256 `a6294c63da6b3149532a602a39bb4737bf9d29ca8f0b4b6723eb1b444881f47d`）；只剩 EN7（基线 pytest 绿）与 I6（基线冻结文件当然没变） |
 | pytest | `cd <reference/tree> && python -m pytest -q` | **22 passed**、exit 0（基线 4 passed, 1 skipped → 22） |
 | 冒烟 | `cd <reference/tree> && python tools/notify_smoke.py` | exit 0，单行 JSON、恰 2 条（`smoke-1` → `smoke-2`） |
 | A | `python tools/structure_metrics.py --workspace <reference/tree> --layers <task>/layers.yaml --interfaces <task>/interfaces.yaml --json` | **10/10 pass**、exit 0（A1–A10 全 pass；A9 覆盖 8/8 生产文件） |
 | C | 8 次 `python -m policy.check <file> ... --operation edit --changed <10 条> ...`（见 §4） | **8/8 `allow`**、8 次 exit 0、**0 条 error、0 条 warning**；每次 `skipped_rules=[ARCH-001@1]`（scope 不匹配，不是通过）、`blocking_capable_skipped=1`、`complete=true` |
 | C 计分 | 7 条适用规则 × 3 + 冻结文件 3 + 无旁路 3 | **27/27**（`effective_total=27`；ARCH-001 的 3 分 `not_applicable`） |
+
+> **历史读数**：2026-10-22 H1 定点修前/旧 14 文件基线标签的哈希 `3d216ebc…`（参考树）与
+> `7941facf…`（基线）不再用于本批；本表是修复后新 runner 的读数，T 条数仍 38。
 
 旁路三项（C 的 3 分）也逐条实测：控制面目录（`policies/`、`registry/`、`validation/`、`adapters/`、`api/`）
 在参考树里**都不存在**；每个新测试文件都有 assert 且无 `skip` / `skipif` / `xfail`（13 / 21 / 3 条 assert）；

@@ -1086,7 +1086,7 @@ def _en5() -> tuple[bool, str]:
         body = False
         for line in lines[start + 1 :]:
             stripped = line.strip()
-            if stripped.startswith("#"):
+            if stripped.startswith("# ") or stripped.startswith("## "):
                 break
             if stripped:
                 body = True
@@ -1282,7 +1282,7 @@ def _i5() -> tuple[bool, str]:
     """tests/test_notification.py 断言弃用说明且保留原用例。"""
     module = _parse_tree_file("tests/test_notification.py")
     asserts = [ast.unparse(node) for node in ast.walk(module) if isinstance(node, ast.Assert)]
-    documented = any("已弃用" in text and "__doc__" in text for text in asserts)
+    documented = any("已弃用" in text for text in asserts)
     _check_all(
         [
             ("asserts_doc", documented),

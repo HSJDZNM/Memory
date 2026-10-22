@@ -241,10 +241,10 @@
 - **反向构造**：删掉旧队列 / 改成异步 / docstring 只写 `deprecated` 而不含两个指定子串 → 红。
 
 ### I5 `tests/test_notification.py` 断言弃用说明且保留原用例
-- **断言要点**：AST 里有一个 `assert`，其源码（`ast.unparse`）同时引用 `__doc__`（或 `doc`）
-  与子串 `已弃用`；原用例 `test_sync_queue_keeps_order_and_length` 仍在；该文件无
-  `skip`/`skipif`/`xfail`。
-- **反向构造**：只改生产文件不改测试（没有断言 → 红）、删掉原用例 → 红。这条同时钉住
+- **断言要点**：AST 里有一个 `assert`，其源码（`ast.unparse`）含子串 `已弃用`；**不**再要求同时引用
+  `__doc__`（2026-10-22 H1 定点修：`doc = module.__doc__ or ""` / `inspect.getdoc` 等合法写法不误伤）。
+  原用例 `test_sync_queue_keeps_order_and_length` 仍在；该文件无 `skip`/`skipif`/`xfail`。
+- **反向构造**：只改生产文件不改测试（没有断言提及 `已弃用` → 红）、删掉原用例 → 红。这条同时钉住
   acceptance A11 的「测试断言该说明存在」。
 
 ### I6 11 个冻结基线文件逐字节不变

@@ -70,9 +70,9 @@
 | `reset-arm.py` | `07a741da5afdcac16daea4b5f38d76eca50aea3a72f80d05f17297be73d61621`（不在 manifest 里；它只冻结基线） |
 | `layers.yaml` | `5d7b37fc4fae069c4968b17dfffb45d0ee308dbac6395707e4f1af3e6648536e` |
 | `interfaces.yaml` | `fad6848215cdc0567619e6ccec334904eca76a4c2c929b8bdd04849883ecdeb4` |
-| `scoring.yaml` | `46c35cb07747a58f4789278065edacfddaf685761cdd58f3e2d163052b55ca23`（自指摘要不写进自己；本行是**2026-10-22 Lead 签字之后**的现算值，freeze.json 另记） |
-| `hidden/PLAN.md` | `31afb5c9ab7a197fa75cd5745b725cc2153e1018f1400fad0ca7c98074d35e04`（38 条，见 §9） |
-| `hidden/runner.py` | `2eecd6daabb9a042688b72da1cd81cd6db969b1d14869822c4e23581b93fe43e`（单文件自包含） |
+| `scoring.yaml` | `bea34888c595cbdda25410dca24b9d0b6a77aa3e7d6190e960af9fb873c0d499`（自指摘要不写进自己；本行是**2026-10-22 H1 重冻之后**的现算值，freeze.json 另记） |
+| `hidden/PLAN.md` | `599da13ad30168ff6dff4a31c5c4d8e434fae96c6b03bd6fdcc0c866c5289222`（38 条，见 §9） |
+| `hidden/runner.py` | `ecaf97387f8ecc7f8d5fe7c2adec9c870fae6252b5947aeae7e6df57421177e1`（单文件自包含） |
 
 复核：对 `task-package/` 的前 5 个文件各算一次 sha256，与 `manifest.sha256` 的 5 行逐行比对
 （本包构建时 **5/5 ok**；任一不符 => 该 run 作废）。
@@ -273,16 +273,16 @@ A 10/10；基线 T 仍 2/38。构造变更的理由、改法与旧读数作废�
 
 | 树 | 命令 | exit | passed/total | 两次输出 sha256 |
 | --- | --- | --- | --- | --- |
-| 基线 | `BANK_TASK_TREE=<任务包>/baseline python hidden/runner.py` | 1 | **2 / 38** | `2253782fe0c1e81f39d8e9048af275f42af2008554fa0c7d26c79a1bf01fa578`（两次相同） |
-| 参考树 | 同一命令（`BANK_TASK_TREE=<任务包>/reference/tree`） | 0 | **38 / 38** | `5dcf6e588006afa47a5af3cdff8f842b7a1a8630a00085af0df96cad9c4f5977`（两次相同） |
+| 基线 | `BANK_TASK_TREE=<任务包>/baseline python hidden/runner.py` | 1 | **2 / 38** | `a6294c63da6b3149532a602a39bb4737bf9d29ca8f0b4b6723eb1b444881f47d`（两次相同） |
+| 参考树 | 同一命令（`BANK_TASK_TREE=<任务包>/reference/tree`） | 0 | **38 / 38** | `acf67b9950f1641c77db5f349de7cecfa49fa0f76d393e6a723d7933dded80f5`（两次相同） |
 
 - 38 条 = **T01–T23**（模型 / worker 核心行为）、**EN1–EN8**（入口：冒烟脚本、文档、README、全树 pytest、
   收集数）、**I1–I7**（接口与树形状：签名、AST 确定性、旧队列弃用、冻结文件、改动集合）；**反向用例 8 条**：
   T04 / T05 / T06 / T13 / T18 / T19 / T20 / T22。逐条的断言要点与反向构造见 `hidden/PLAN.md`。
 - 两次输出的 sha256 是**载荷的函数**：依赖 `tree` 标签（= `BANK_TASK_TREE` 的仓库相对形式）与
-  runner 的树形状常数（I7 的 `changed` 计数随基线集合变化，本批 3 → 4）。上表是 2026-10-22 用
-  **仓库相对路径**复测的值；换一个标签或用旧常数，哈希就不同（那不是判定变化）。旧 14 文件基线的
-  哈希 `7941facf…` 仍留在 `reference/README.md` §3 的历史读数里。
+  runner 的树形状常数（I7 的 `changed` 计数随基线集合变化，本批 3 → 4）。上表是 2026-10-22
+  **H1 定点修后**用仓库相对路径复测的值；换一个标签或用旧常数，哈希就不同（那不是判定变化）。
+  旧 14 文件基线的 `7941facf…` 与旧参考树 `3d216ebc…` 只留在 `reference/README.md` §3 的历史读数脚注里。
 - 基线为什么只过 2 条：`EN7`（基线 pytest 本来就绿，是必要条件不是充分条件）与 `I6`
   （基线当然没动冻结文件）；其余 36 条因缺文件 / 缺语义而红。**起点红**是设计目标，不是缺陷。
 - 契约：树只从 `BANK_TASK_TREE` 读、**只在副本上跑**（pytest / 冒烟 / 导入都在临时副本里，退出即删）、
