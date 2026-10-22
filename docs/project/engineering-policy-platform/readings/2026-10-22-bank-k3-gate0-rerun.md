@@ -28,7 +28,7 @@ async 与 docs-config 各加一条**基线静态契约测试**、把工具写步
 - **最终树不变**：两题 `reference/tree` 的 git 改动为 0；参考树 hidden 分别 **38/38、40/40**；
   基线 pytest 分别 **4 passed + 1 skipped**、**3 passed + 1 skipped**（skip 的是静态契约测试）。
 - **隐藏件只改常数/清单/注释**：id 与总数不变（38 / 40）；scoring 只改 `frozen_inputs` 与计数文本；
-  `frozen_by` 仍是 `pending_lead_signature`（Lead 签字是 §5.3 的另一件事）。
+  `frozen_by` 在改造后仍为 `pending_lead_signature`（Lead 签字是 §5.3 的另一件事；2026-10-22 已在 §5.3 签为 `Lead`，见 `readings/2026-10-22-bank-k3-lead-frozen-by.md`）。
 
 ## 2 方法与输入
 

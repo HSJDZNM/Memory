@@ -6,26 +6,26 @@
 #
 # **本文件已冻结（status: frozen）**：C 与 A 两段在构造期写定；T 段在 `hidden/PLAN.md` +
 # `hidden/runner.py` 落盘、基线跑红（4/34）、参考树跑到 34/34 之后同批冻结 total / case_ids /
-# 两个 hidden 摘要（`frozen_by` 仍是 pending_lead_signature——**冻结 T 不等于 Lead 已签字**）。
+# 两个 hidden 摘要（2026-10-22 由 Lead 签字：`frozen_by` = Lead——**冻结 T 不等于“可开跑”**）。
 #
 # 形状 = **bank-scoring/2**（2026-10-21 §4.2 收口）：顶层 18 键、frozen_inputs 11 键、dimension_t 13 键；
 # 同一版本号下只有一种维度形状——pending 与 frozen 只差取值、不差键集合，顶层 status 是判别符。
 # 本题是 frozen：status: frozen、total: 34、case_ids 为实际 id 集合、两个 hidden 摘要已实算、
-# dimension_t.freeze_note: null（键集合与 pending 版逐键相同，只差取值）；冻结人不是 Lead，
-# 签字另走 run-manifest。
+# dimension_t.freeze_note: null（键集合与 pending 版逐键相同，只差取值）；2026-10-22 由 Lead 签字
+# （frozen_by = Lead），可开跑另由使用者签。
 # C 维度：file_set 含 src/shop/order_controller.py（层值 controller），ARCH-001 适用，见 rules_rationale。
 schema_id: bank-scoring/2
 version: "2"
 task_id: bank-crossmodule-refactor
 operation_type: 跨模块重构 / 废弃 API（OrderRepository.insert/listing → add/list_all + 兼容门面 + 旧调用点清零，行为不变）
 status: frozen
-frozen_by: pending_lead_signature
+frozen_by: Lead
 authority: >-
   本题库批次：本文件由题库作者子会话按 SPEC 落盘。C 与 A 两段的输入（规则集、结构谓词、file_set、
   冻结文件、允许写）与基线字节在构造期冻结、可逐行复核；T 段在隐藏验收代码落盘后**实测冻结**：
   14 文件基线上 4/34（红）、参考树 `reference/tree` 上 34/34、runner 两次运行逐字节相同，
   total 与 case_ids 取自 `hidden/runner.py` 的实际 id 集合（见 frozen_inputs 的两个 hidden 摘要）。
-  frozen_by 仍是 pending_lead_signature：**冻结 T 不等于 Lead 已签字**，签字是 run-manifest 的事。
+  frozen_by = Lead（2026-10-22）：**冻结 T 不等于“可开跑”**，后者由使用者另签。
   改本文件任一数值 = 换判据，必须同批重算 frozen_inputs 并重生成 task-package/manifest.sha256。
 
 invariants:

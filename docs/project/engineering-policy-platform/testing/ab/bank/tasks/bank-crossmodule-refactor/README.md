@@ -10,7 +10,7 @@
 > 跑红 **4/34**、在参考树 `reference/tree` 上 **34/34**（两次运行 stdout 逐字节相同）；参考树上实测
 > **T 34/34 · C 30/30 · A 30/30**、`pytest` 8 passed；`scoring.yaml` 的 T 段已冻结
 > （`status: frozen`、`total: 34`、`case_ids` 34 条、两个 hidden 摘要实算）。
-> **`frozen_by` 仍是 `pending_lead_signature`**：冻结 T 不等于 Lead 已签字，签字走 run-manifest。
+> **`frozen_by` = `Lead`（2026-10-22）**：冻结 T/C/A 判据；“可开跑”仍由使用者另签。
 > **用法**：Lead 重置基线 → 以任务树为 cwd 起受治会话 → 首消息 = `task-package/first-message.md`；
 > 跑完后按 `task-package/acceptance.md` + 隐藏用例 + 树 diff 判分（或按 `coverage.md` 对接 T/C/A）。
 
@@ -119,7 +119,7 @@ cd <仓库根>
   `tools/structure_metrics.py`）、过程（平台账本：被拒动作、原因码、`matched / skipped / served_checkers`）。
   **不许把过程读数折算进 T/C/A**（05 §5.3）。
 - **T 已冻结、签字仍未**：`scoring.yaml` 的 `dimension_t.total: 34` 与 `case_ids`（34 条）取自
-  `hidden/runner.py` 的实际 id 集合；`frozen_by` 保持 `pending_lead_signature`，**不把「冻结 T」写成「Lead 已签字」**。
+  `hidden/runner.py` 的实际 id 集合；`frozen_by` = `Lead`（2026-10-22），**不把「冻结 T」写成「可开跑」**。
 - **`allow_with_warnings` 不是失败、也不是通过**：M6 的「待实现」走 `pending_findings`（AGENTS 第 51 条），
   `exit 1` 只表示「不是 ALLOW」；阻断判定只读 `violations`。
 - **n=1 只作案例读数**：不写均值/提升/显著；要写「值得扩试」需每臂 k≥3（05 §5.5）。

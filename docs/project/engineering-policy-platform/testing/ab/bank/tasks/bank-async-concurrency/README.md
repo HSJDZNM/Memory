@@ -9,7 +9,7 @@
 > `total: 38`、`case_ids = T01-T23 / EN1-EN8 / I1-I7`、两个 hidden 摘要是实算值。
 > **实测天花板**：参考树 T **38/38**、A **10/10**、C **27/27**（`effective_total = 27`）、
 > `pytest` 22 passed；基线 T **2/38**（起点红）。逐条读数见 **§9**。
-> `frozen_by` 仍是 `pending_lead_signature`：冻结的是读数依据，**Lead 签字是另一件事**。
+> `frozen_by` = `Lead`（2026-10-22）：冻结的是读数依据，**“可开跑”仍由使用者另签**。
 > **用法**：Lead 重置基线 → 以任务树为 cwd 起受治会话 → 首消息 = `task-package/first-message.md`；
 > 跑完后按 `acceptance.md` + 隐藏验收（`hidden/runner.py`）+ 树 diff 判分。
 
@@ -70,7 +70,7 @@
 | `reset-arm.py` | `07a741da5afdcac16daea4b5f38d76eca50aea3a72f80d05f17297be73d61621`（不在 manifest 里；它只冻结基线） |
 | `layers.yaml` | `5d7b37fc4fae069c4968b17dfffb45d0ee308dbac6395707e4f1af3e6648536e` |
 | `interfaces.yaml` | `fad6848215cdc0567619e6ccec334904eca76a4c2c929b8bdd04849883ecdeb4` |
-| `scoring.yaml` | `81d07aa082a28b5d5c26fc4a8a163552d5aa6cec4b01bd03981df25b02254b50`（自指摘要不写进自己；本行是**2026-10-22 构造变更之后**的现算值，freeze.json 另记） |
+| `scoring.yaml` | `46c35cb07747a58f4789278065edacfddaf685761cdd58f3e2d163052b55ca23`（自指摘要不写进自己；本行是**2026-10-22 Lead 签字之后**的现算值，freeze.json 另记） |
 | `hidden/PLAN.md` | `31afb5c9ab7a197fa75cd5745b725cc2153e1018f1400fad0ca7c98074d35e04`（38 条，见 §9） |
 | `hidden/runner.py` | `2eecd6daabb9a042688b72da1cd81cd6db969b1d14869822c4e23581b93fe43e`（单文件自包含） |
 
@@ -141,7 +141,7 @@ python docs/project/engineering-policy-platform/testing/ab/bank/tasks/bank-async
 | `baseline/` | 15 文件基线树（逐字节；含与旗舰逐字节相同的 `tools/__init__.py` 与基线静态契约测试 `tests/test_notify_smoke.py`） | **已落盘**（组合摘要可复核；pytest 4 passed, 1 skipped） |
 | `reset-arm.py` | 逐字节重置 + 摘要校验 + reset-manifest.json | **已实测**（dry-run + 真跑 15/15；三种前置失败都退出 1） |
 | `layers.yaml` / `interfaces.yaml` | A 维度声明（最终树 21 文件 → 层；非测试模块公开面上限） | **已写**；`structure_metrics` 加载通过，**基线副本（15 文件）与参考树都 A1–A10 全 pass**（§9.3；`tools/__init__.py` 显式 `skip` 移出测量范围，理由见 §8.1）；6 个新建文件在基线副本里声明为 unmatched |
-| `scoring.yaml` | T/C/A 三维判据 | **已冻结**（`status: frozen`、`dimension_t.status: frozen`、`total: 38`、38 条 `case_ids`、`freeze_note: null`；`frozen_by` 仍是 `pending_lead_signature`） |
+| `scoring.yaml` | T/C/A 三维判据 | **已冻结**（`status: frozen`、`dimension_t.status: frozen`、`total: 38`、38 条 `case_ids`、`freeze_note: null`；`frozen_by` = `Lead`（2026-10-22）） |
 | `coverage.md` | 43 条规则点 ○/—、A1–A10、隐藏行为面、实测读数 | **已写**（未实测项如实标未测） |
 | `hidden/` | `PLAN.md`（38 条：T01–T23 / EN1–EN8 / I1–I7）+ `runner.py`（单文件自包含） | **已完成**：基线 **2/38**、参考树 **38/38**；两次输出逐字节相同（§9） |
 | `reference/` | 参考解（`README.md` 决策点 + `tree/` 21 文件） | **已完成**：`pytest` 22 passed、`smoke` 2 条、允许写 10 条逐条落地（§9） |

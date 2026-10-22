@@ -8,11 +8,11 @@
 #   dimension_t.status = frozen，total = 38，case_ids = T01-T23 / EN1-EN8 / I1-I7；
 #   hidden/runner.py 与 hidden/PLAN.md 已落盘并在参考树上实测 38/38（基线 2/38），
 #   frozen_inputs 的两个 hidden 摘要是实算值（不是 null、不是空串）。
-#   **冻结的是 T 的读数依据，不是 Lead 签字**：frozen_by 仍是 pending_lead_signature。
+#   **冻结的是 T 的读数依据，不是“可开跑”**：frozen_by = Lead（2026-10-22）；可开跑仍由使用者签。
 #
 # 形状 = **bank-scoring/2**（2026-10-21 §4.2 收口）：顶层 18 键、frozen_inputs 11 键、dimension_t 13 键；
 # 同一版本号下只有一种维度形状——pending 与 frozen 只差取值、不差键集合，顶层 status 是判别符。
-# 本题是 frozen：status: frozen、frozen_by: pending_lead_signature、两个 hidden 摘要为实算值。
+# 本题是 frozen：status: frozen、frozen_by: Lead（2026-10-22）、两个 hidden 摘要为实算值。
 # C 维度：ARCH-001 结构性不适用（file_set 无 controller 层）→ 见 dimension_c.not_applicable，
 # effective_total = 27；不把 skipped_rules 读成通过。
 schema_id: bank-scoring/2
@@ -20,12 +20,12 @@ version: "2"
 task_id: bank-async-concurrency
 operation_type: 并发 / 异步（同步通知队列 → 确定性 asyncio 工作队列：有界、幂等、取消、停机排空）
 status: frozen
-frozen_by: pending_lead_signature
+frozen_by: Lead
 authority: >-
   本文件与题库其余冻结件同批可复核、可回退。冻结对象 = 本文件字节 + frozen_inputs 的十个摘要
   （hidden_plan_sha256 / hidden_runner_sha256 现为实算值，写死当天与 total / case_ids 同批落盘）；
-  改任一项 = 换判据。T 的 total = 38 与 case_ids 已冻结，但本文件**仍未经 Lead 签字**
-  （frozen_by = pending_lead_signature）——冻结的是读数依据，签字是另一件事。
+  改任一项 = 换判据。T 的 total = 38 与 case_ids 已冻结；本文件由 Lead 于 2026-10-22 签字
+  （frozen_by = Lead）——冻结的是读数依据，不是“可开跑”（后者由使用者另签）。
 
 invariants:
   - 本文件不含时戳、run id、绝对路径、耗时；相同输入两次读取逐字节相同。

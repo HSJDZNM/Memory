@@ -7,12 +7,12 @@
 # 冻结状态（读之前先看这条）：C 与 A 两维的判据、输入摘要与文件集**已落盘可复核**；
 # T 维已由**独立出题子会话**按 hidden/PLAN.md 落盘 hidden/runner.py 并实测冻结：
 # dimension_t.status = frozen、total = 40、case_ids 与 runner 的 CASE_IDS 逐个相等，
-# frozen_inputs 的两个 hidden 摘要由实算写入（不是手抄）。**未经 Lead 签字**（frozen_by 仍是
-# pending_lead_signature），所以顶层 status = frozen 只表示「T 的判据已冻结」，不表示可开跑。
+# frozen_inputs 的两个 hidden 摘要由实算写入（不是手抄）。**由 Lead 于 2026-10-22 签字**
+# （frozen_by = Lead）；顶层 status = frozen 只表示「T 的判据已冻结」，不表示可开跑（使用者另签）。
 #
 # 形状 = **bank-scoring/2**（2026-10-21 §4.2 收口）：顶层 18 键、frozen_inputs 11 键、dimension_t 13 键；
 # 同一版本号下只有一种维度形状——pending 与 frozen 只差取值、不差键集合，顶层 status 是判别符。
-# 本题是 frozen：status: frozen、frozen_by: pending_lead_signature、两个 hidden 摘要为实算值。
+# 本题是 frozen：status: frozen、frozen_by: Lead（2026-10-22）、两个 hidden 摘要为实算值。
 # dimension_t.case_groups 是实际分组（T 26 + EN 7 + I 7 = 40；逐条见 hidden/PLAN.md）。
 # C 维度：ARCH-001 结构性不适用（file_set 无 controller 层）→ 见 dimension_c.not_applicable，
 # effective_total = 27；不把 skipped_rules 读成通过。
@@ -21,12 +21,12 @@ version: "2"
 task_id: bank-docs-config
 operation_type: 文档 / 配置为主的变更（配置键 retry→retry_policy 迁移 + 加载器 + 校验脚本 + 文档同步）
 status: frozen
-frozen_by: pending_lead_signature
+frozen_by: Lead
 authority: >-
   本文件由题库冻结包作者子会话按 SPEC 与 bank/README.md §4 写成；C / A 两维的判据与输入摘要已落盘，
   可逐行复核。T 维由**独立出题子会话**按 hidden/PLAN.md 落盘 hidden/runner.py 后同批冻结
   （total 40 / case_ids 与 runner 的 CASE_IDS 逐个相等 / 两个 hidden 摘要实算）。
-  **未经 Lead 签字**（frozen_by = pending_lead_signature），不虚构「可开跑」。
+  由 Lead 于 2026-10-22 签字（frozen_by = Lead）；不虚构「可开跑」（使用者另签）。
 
 invariants:
   - 本文件不含时戳、run id、绝对路径、耗时；相同输入两次读取逐字节相同。

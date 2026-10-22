@@ -5,7 +5,7 @@
 > 迁移说明与 `README.md` 的配置一节同步到 v2。改动面以 `.md` / `.yaml` 为主，Python 只有两个文件。
 > **冻结状态**：基线 + task-package + C/A 判据 + **hidden（T 已冻结）+ reference + 天花板已完成**
 > （§7 与 §7.1 的实测读数）。T = **40 条**（`hidden/PLAN.md`），`scoring.yaml` 的 `case_ids` 与
-> runner 的 `CASE_IDS` 逐个相等。**未经 Lead 签字**（`frozen_by = pending_lead_signature`）。
+> runner 的 `CASE_IDS` 逐个相等。**由 Lead 于 2026-10-22 签字**（`frozen_by = Lead`）；“可开跑”仍由使用者另签。
 > **用法**：Lead 重置基线 → 以任务树为 cwd 起受治会话 → 首消息 = `task-package/first-message.md`；
 > 跑完后按 `acceptance.md` + 隐藏验收 + 基线 diff 判分（C/A 见 `scoring.yaml`、`coverage.md`）。
 
@@ -224,7 +224,7 @@ cd <仓库根>
 8. **`total` / `case_ids` 先空后冻**：隐藏代码落盘之前不伪造已冻结的 T（`pending_hidden`）；本批
    由独立出题子会话写 `hidden/PLAN.md` + `hidden/runner.py`（40 条）后**同批**冻结为
    `frozen / total: 40 / 40 个 case_ids`，两个 hidden 摘要由实算写入（见 §3 与 §7.1），
-   `frozen_by` 仍是 `pending_lead_signature`（**不冒充 Lead 签字**）。
+   `frozen_by` = `Lead`（2026-10-22；只冻结 T/C/A 判据，**不签“可开跑”**）。
 
 ## 9 边界（引用本包前必须读）
 
