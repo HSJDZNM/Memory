@@ -26,17 +26,18 @@ Gate 0 已通过；最终 3 题的判据已由 Lead 冻结；3 份 per-task 冻�
 
 ### 2.1 重签 4 条审批（每臂 2 条；TTL 7 天）
 
-在仓库根执行（把 `<使用者名>` 换成签发人；脚本在 `.tmp/k3/sign-approvals.ps1`）：
+在仓库根执行（把 `$name` 换成签发人；旧条子用的是 `dshznm`；脚本在 `.tmp/k3/sign-approvals.ps1`）：
 
 ```powershell
+$name = "dshznm"   # 改成你的签发人名字
 $env:PYTHONPATH = "src"
 $py = ".venv\Scripts\python.exe"
 $union = 'command=(?:(?:^python -m pytest( .*)?$)|(?:^uv run python -m pytest( .*)?$)|(?:^pytest( .*)?$)|(?:^python -m unittest( .*)?$)|(?:^python tools/[A-Za-z0-9_./-]+\.py( .*)?$)|(?:^python scripts/[A-Za-z0-9_./-]+[.]py( .*)?$)|(?:^python -m (policy\.check|retrieval\.cli|enforcement\.cli|adapters\.dsh\.hooks)( .*)?$)|(?:^git (status|diff|log|show|ls-files|rev-parse)( .*)?$)|(?:^Get-Content( .*)?$)|(?:^Select-String( .*)?$)|(?:^Test-Path( .*)?$)|(?:^Write-Output( .*)?$)|(?:^Get-ChildItem( .*)?$))'
 foreach ($arm in @("A","B")) {
   $cfg = ".tmp/k3/arm-configs/$arm"
   $req = ".tmp/k3/approval-requests/$arm"
-  & $py -m enforcement.cli approve --registry "$cfg/tool-registry.local.yaml" --approved "$cfg/tool-registry.approved.json" --request "$req/run-code-request.json" --out "$cfg/approval.json" --granted-by <使用者名> --roles reviewer --binding pattern --param-pattern 'code=(?s).*' --param-pattern 'description=.*' --max-uses 1000 --ttl 604800 --approval-id approval-run-code
-  & $py -m enforcement.cli approve --registry "$cfg/tool-registry.local.yaml" --approved "$cfg/tool-registry.approved.json" --request "$req/shell-request-tests.json" --out "$cfg/approval.json" --granted-by <使用者名> --roles reviewer --binding pattern --param-pattern $union --param-pattern 'description=.*' --max-uses 1000 --ttl 604800 --approval-id approval-pwsh-all
+  & $py -m enforcement.cli approve --registry "$cfg/tool-registry.local.yaml" --approved "$cfg/tool-registry.approved.json" --request "$req/run-code-request.json" --out "$cfg/approval.json" --granted-by $name --roles reviewer --binding pattern --param-pattern 'code=(?s).*' --param-pattern 'description=.*' --max-uses 1000 --ttl 604800 --approval-id approval-run-code
+  & $py -m enforcement.cli approve --registry "$cfg/tool-registry.local.yaml" --approved "$cfg/tool-registry.approved.json" --request "$req/shell-request-tests.json" --out "$cfg/approval.json" --granted-by $name --roles reviewer --binding pattern --param-pattern $union --param-pattern 'description=.*' --max-uses 1000 --ttl 604800 --approval-id approval-pwsh-all
   Write-Output "$arm last_exit=$LASTEXITCODE"
 }
 ```
