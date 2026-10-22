@@ -8,6 +8,10 @@
 
 ## 0 一句话
 
+> **2026-10-22 更正与裁决状态**：async 的 flag 数由 1 更正为 **2（I5、EN5）**，本读数已按 2 更新；
+> 一次性裁决备忘（`.tmp/deliberation/h1-threshold.md`）推荐「定点修 + 重冻结 + 重测 + 第三人复核」，
+> **前置是使用者书面改判**；未改判前按预注册停在可开跑前（crossmodule 3 > 2），27 run 不开。
+
 async **2 flag（I5/EN5）**、docs **2 flag（I5/I7）**、crossmodule **3 flag（T21/T20/T26）**；
 三题核心语义 flag 均为 **0**。按预注册阈值：async/docs 在阈值内（keep + 定点修），
 **crossmodule 3 > 2 → 命中「停/重出该题 hidden」的失败关闭条件**。
@@ -53,7 +57,8 @@ async **2 flag（I5/EN5）**、docs **2 flag（I5/I7）**、crossmodule **3 flag
 ## 2 失败关闭与当前状态
 
 - 命中 `readings/2026-10-22-bank-k3-deliberations.md` §3.2 与 05 §8 第 11 条的
-  「单题 flag >2 → 停/重出该题 hidden」；也命中交接提示 §10 的「H1 复核 flag 超阈值」。
+  「单题 flag >2 → 停/重出该题 hidden」；阈值原文只在 `readings/2026-10-22-bank-k3-deliberations.md` §3.2
+  （05 §8 第 11 条引用它；现行 handoff 只有 §0–§6，不存在 §10——本读数原引用已按 2026-10-22 更正）。
 - **「可开跑」不签、27 run 不开**；1 臂 re-smoke 已完成的读数（`readings/2026-10-22-bank-k3-resmoke.md`）
   仍然有效，但它不替代 H1 门。
 - 已就绪且不受影响：3 份 freeze、臂配置、run-record、审批（TTL 到 2026-10-29T12:38Z）。
