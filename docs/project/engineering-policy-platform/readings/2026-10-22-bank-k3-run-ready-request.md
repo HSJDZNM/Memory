@@ -61,7 +61,12 @@ foreach ($arm in @("A","B")) {
 - **9 树 scaffold exit 0**（3 题 × A/B/C；A/B 的 `.policy/approval.json` records=2、placeholders=0；C 无审批）。
 - **3 份 freeze `--check --strict` PASS**（摘要见 §1）。
 - `run_session` dry-run（async A）：freeze / arm-tree / dsh 0.2.1-rc.2 / sandbox `danger-full-access` 全绿；
-  **唯一 blocker = `missing_credential`**（`DEEPSEEK_API_KEY` 不在 harness 进程环境）。
+  唯一 blocker 曾是 `missing_credential`。
+- **1 臂 re-smoke 已完成**（2026-10-22 21:0x，async A，真机 n=1，不计入 k）：exit 0、`invalid=[]`、
+  246 条读数、11 提议 / 11 settle（9 allowed / 2 blocked）、墙钟 323.5 s；M1 `tools/notify_smoke.py`
+  被 `policy_block` 拦下（批次 settle=blocked），最终树 20/21——设计方向阻断在真机复现。
+  读数 `readings/2026-10-22-bank-k3-resmoke.md`。
+- 剩余：**H1 第三方逐条复核**（3 题，进行中）与**使用者签「可开跑」**；然后 27 run。
 
 ## 4 签完之后 Lead 会做（不需要使用者再操作）
 
