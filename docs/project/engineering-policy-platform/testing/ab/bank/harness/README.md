@@ -9,6 +9,7 @@
 | `freeze_manifest.py` | 实验集 → 确定性冻结清单（`<sha256>  <仓库相对路径>` 行 + 组合摘要），`--write` / `--check` / `--check --strict` | `AB_FREEZE_MANIFEST_SCHEMA_VERSION = "1.0"`（首次建轴） |
 | `scaffold_arms.py` | 任务包 + 臂（A/B/C）+ 目标目录 → 臂树 + `arm-manifest.json`；`--check` 只校验 | `AB_ARM_MANIFEST_SCHEMA_VERSION = "1.0"`（首次建轴） |
 | `run_session.py` | 一次 run 的包装器；**默认 dry-run**，`--execute` 才真跑 | `AB_RUN_SCHEMA_VERSION = "1.1"`（1.0 首次建轴；1.1 多一份 `launch`） |
+| `materialize_arm_config.py` | 臂配置模板（`${REPO_ROOT}` 占位）→ 一次性物化副本 + `materialized.json`；`--template/--target/--repo-root` | `AB_ARM_CONFIG_MATERIALIZATION_SCHEMA_VERSION = "1.0"`（首次建轴） |
 | `_ab_harness_common.py` | 三者共用的口径：确定性 JSON、仓库相对路径、组合摘要、通配、脱敏 | — |
 | `tests/unit/test_ab_harness.py` | 纯函数与退出码回归（55 例，不 spawn dsh、不写共享 `.tmp` 路径） | — |
 
@@ -214,6 +215,8 @@ JSON，键集合固定（多一个键就是声明错误，退出 2）。所有�
 >
 > 实验集声明自己的轴 `AB_FREEZE_SET_SCHEMA_VERSION = "1.0"` 也一并登记（它与冻结清单轴**独立演进**：
 > 声明加了字段不会自动改变清单的形状，反之亦然）。
+>
+> `materialize_arm_config.py` 的 `AB_ARM_CONFIG_MATERIALIZATION_SCHEMA_VERSION = "1.0"`（臂配置模板 → 物化副本的 `materialized.json` 载荷，**1.0 = 首次建轴**：模板/副本两目录组合摘要、`${REPO_ROOT}` 替换计数、逐文件双摘要；不含绝对路径；模板本身是受跟踪冻结输入，物化副本是一次性现场）。
 
 ## 9 与 dgate2 既有工具的关系（**不改它们**）
 

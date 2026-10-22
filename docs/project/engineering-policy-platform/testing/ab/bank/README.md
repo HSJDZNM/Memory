@@ -203,7 +203,7 @@ warning 级 = `allow_with_warnings`（判定取决于是否另有 error）；`TE
 | 任务包元数据（若将来机读） | `BANK_TASK_PACKAGE_SCHEMA_VERSION` | 1.0 | 轴名：`task_id / operation_type / baseline_files / allowed_writes / hidden_count / first_message_sha256`；加键即递增 |
 | 覆盖表（若将来机读） | `BANK_COVERAGE_SCHEMA_VERSION` | 1.0 | 轴名：`rule_id / checker / severity / coverage_class / evidence_level / trigger_step / expected_decision / verified_by` |
 | 题库 run-manifest | `BANK_RUN_MANIFEST_SCHEMA_VERSION` | 1.1（**规划值，尚未实现**：= dgate2 1.1 的 18 字段 + 题库 9 字段的复合载荷；1.0 从未实现，随 dgate2 1.1 作废） | 与 dgate2 的 `RUN_MANIFEST_SCHEMA_VERSION` **各自独立**；不许把题库字段塞进 dgate2 的载荷 |
-| 题库 run-record | `BANK_RUN_RECORD_SCHEMA_VERSION` | 1.0 | 三态维度 + per-task 命令；与 `RUN_RECORD_SCHEMA_VERSION` 独立 |
+| 题库 run-record | `BANK_RUN_RECORD_SCHEMA_VERSION` | 1.0（**已实现**：`run-record/collect.py`） | 顶层 10 键 + `platform_generation` + T/C/A + `process`；test-layout 从 `pre_evidence.registry_root` 取；与 `RUN_RECORD_SCHEMA_VERSION` 独立 |
 | 隐藏 runner | `BANK_HIDDEN_RUNNER_SCHEMA_VERSION` | 1.0 | `cases/summary` 形状；加键即递增 |
 | reset-manifest | 包内自述（`schema: <task-id>.reset-arm/1`） | 1 | 每包自己的自述，不跨题复用 |
 
