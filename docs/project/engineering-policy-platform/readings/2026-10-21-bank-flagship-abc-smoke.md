@@ -71,3 +71,9 @@ T 分 A 48/48、B/C 47/48（T05 幂等键类型），A 维三臂都 24/30（A5/A
 - `.tmp/bank/run1/{A,B,C}/.policy/audit.jsonl`、`enforcement-ledger.jsonl`、`pre-evidence-batches/session-*.jsonl`
 - `.tmp/bank/score-{A,B,C}.json`（T/C/A 逐文件读数）；`.tmp/bank/launch_arm.py`（含三处环境修法的启动器）
 - 冻结集：`.tmp/bank/freeze.json`（`3d54a9f8…`，39 条）；臂清单：A `8a70ec78…` / B `8d3b43f4…` / C `6dc36c87…`
+
+## 7 errata（2026-10-22）
+
+1. **C 30/30 的分解**：§4 表注的「24 规则 + 3 冻结 + 1 B2 + 1 B3」写法不完整——正确分解是 **8 规则 × 3（24）+ 冻结 3 + 旁路 B1/B2/B3 各 1（3）= 30**。
+2. **冻结集摘要**：§2 与 §6 的 `3d54a9f8…`（39 条）是**冒烟现场**值；收口重冻结后当前值为 `2028dd5c…`（39 条，`.tmp/bank/freeze.json`）。
+3. **`.policy` 计入 tree diff** 是已知边界（§2 末条、§5），不是任务树多出的文件。

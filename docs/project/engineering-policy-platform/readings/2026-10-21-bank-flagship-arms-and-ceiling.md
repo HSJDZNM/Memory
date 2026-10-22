@@ -88,3 +88,8 @@ A8 红在 `src/shop/refund_model.py`（入边 6 > 5）。处理：**改参考解
 - `.tmp/bank/freeze.json` / `exp-set.json` / `arm-configs/{A,B}` / `run1/{A,B,C}`（一次性现场，`cleanup` 会删）
 - `.tmp/bank/ceiling.json`（T/C/A 逐文件读数）与 `.tmp/bank/approval-commands.ps1`
 - `readings/2026-10-21-bank-seven-adjudications.md` §1；`bank/README.md` §4/§5
+
+## 7 errata（2026-10-22）
+
+1. **冻结集摘要**：§3 的「37 条 `95e93f9f…`」是**签名前**值；使用者签审批后为 39 条 `3d54a9f8…`（冒烟现场），收口重冻结后当前值为 `2028dd5c…`（39 条，`.tmp/bank/freeze.json`）。
+2. **A/B 臂配置与审批事实以 smoke 读数为准**：§4 的「每臂 4 条（三族分开签）」与签核现场不符——实际每臂 2 条（`run_code` + 三族并成一条 `exec.pwsh`；同一工具重签是取代），见 `readings/2026-10-21-bank-flagship-abc-smoke.md` 与 `.tmp/bank/arm-configs/*/approval.json`。

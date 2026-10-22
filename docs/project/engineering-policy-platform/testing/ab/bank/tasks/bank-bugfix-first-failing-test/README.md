@@ -8,9 +8,9 @@
 > **冻结状态 = frozen（T 已冻结，Lead 签字仍待）**：`baseline/` 11 文件逐字节落盘、
 > `task-package/manifest.sha256` 5/5 可复核、`reset-arm.py` 已实测 11/11；
 > **hidden + reference + 天花板已完成**——`hidden/PLAN.md` 38 条 + `hidden/runner.py` 已落盘，
-> 参考解 `reference/tree/`（13 文件）已写，参考树上实测 **T 38/38 · C 27/27 · A 10/10（30/30）**
+> 参考解 `reference/tree/`（13 文件）已写，参考树上实测 **T 38/38 · C 27/27（effective_total=27；ARCH-001 N/A 3 分不计分不计分母）· A 10/10（30/30）**
 > （读数见 §10）；`scoring.yaml` 的 `dimension_t` 已从 `pending_hidden` 转 `frozen`（total 38、case_ids 38 条），
-> `frozen_by` 仍是 `pending_lead_signature`——**只冻结 T 的判据，签「可开跑」仍属 Lead**。
+> `frozen_by` 仍是 `pending_lead_signature`——**只冻结 T 的判据；`frozen_by` 由 Lead 签，签「可开跑」由使用者，两者不是同一件事**。
 > **用法**：Lead 重置基线 → 以任务树为 cwd 起受治会话 → 首消息 = `task-package/first-message.md`；
 > 跑完后按 `acceptance.md` + 隐藏验收 + 基线 diff 判分（或按 `coverage.md` 对接 T/C/A）。
 

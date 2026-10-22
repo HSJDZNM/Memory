@@ -98,32 +98,48 @@
 
 **不需要**：`python -m policy.check`（判定自动）；`Get-Content` 读配置（用文件工具 + `check_config`）。
 
-## 7 审批条子怎么签（Lead 用；每题一条，按族并入同一 `approval.json`）
+## 7 审批条子怎么签（Lead 用；每工具一条记录，重签是取代）
 
 以旗舰题为例（`$g` = 任务树根；注册表与已审核哈希在 `$g/.policy/`；实例化路径以实际装配为准）：
+
+**先记住一条约束**：一个 `approval.json` 里**每个 `tool_id` 只保留一条记录**，同一工具再签是**取代**（`--replace` 才是清空已有记录）。所以 `exec.pwsh` 的 `tests` / `scripts` / `readonly` 三族**不能分开签成三条**——后一条会把前一条覆盖；正确做法是**一条 `exec.pwsh` 的 `command` 模式（b-plan 本地注册表 13 条 `allowed_commands` 的三族并集，仍是 `allowed_commands` 的子集）+ 一条 `exec.run_code`**，共两条记录。
 
 ```powershell
 # 0) 先审核本地注册表（若用了副本）并核对
 python -m enforcement.cli registry --registry "$g/.policy/tool-registry.yaml" --approved "$g/.policy/tool-registry.approved.json" --approve --reviewer <name>
 python -m enforcement.cli registry --registry "$g/.policy/tool-registry.yaml" --approved "$g/.policy/tool-registry.approved.json" --verify
 
-# 1) tests 族（覆盖 python -m pytest 的所有形态）
+# 1) exec.run_code（code 是整段 Python，用 (?s) 让 . 跨行；description 通配）
+python -m enforcement.cli approve --registry "$g/.policy/tool-registry.yaml" --approved "$g/.policy/tool-registry.approved.json" --request "$g/.policy/run-code-request.json" --out "$g/.policy/approval.json" --granted-by <name> --roles reviewer --binding pattern --max-uses 1000 --ttl 604800 --param-pattern 'code=(?s).*' --param-pattern 'description=.*' --approval-id approval-run-code
+
+# 2) exec.pwsh：一条记录，command = b-plan 本地注册表 13 条的并集（仍是该 allowed_commands 的子集）
+#    并集逐条来自 examples/dsh/b-plan/tool-registry.local.yaml 的 13 条 allowed_commands
+#    （tests 4 条 + readonly 6 条 + scripts 3 条 = 13 条）；题库题面用到 Get-Content /
+#    Select-String / Test-Path，仓库 1.4 的 7 条覆盖不到。外层 (?:...) 与 --family 的
+#    union_pattern 并法相同，可用 resolve_family 复核；命令族权威仍以注册表 command_families 为准。
+$union = 'command=(?:(?:^python -m pytest( .*)?$)|(?:^uv run python -m pytest( .*)?$)|(?:^pytest( .*)?$)|(?:^python -m unittest( .*)?$)|(?:^python tools/[A-Za-z0-9_./-]+\.py( .*)?$)|(?:^python scripts/[A-Za-z0-9_./-]+[.]py( .*)?$)|(?:^python -m (policy\.check|retrieval\.cli|enforcement\.cli|adapters\.dsh\.hooks)( .*)?$)|(?:^git (status|diff|log|show|ls-files|rev-parse)( .*)?$)|(?:^Get-Content( .*)?$)|(?:^Select-String( .*)?$)|(?:^Test-Path( .*)?$)|(?:^Write-Output( .*)?$)|(?:^Get-ChildItem( .*)?$))'
+python -m enforcement.cli approve --registry "$g/.policy/tool-registry.yaml" --approved "$g/.policy/tool-registry.approved.json" --request "$g/.policy/shell-request.json" --out "$g/.policy/approval.json" --granted-by <name> --roles reviewer --binding pattern --max-uses 1000 --ttl 604800 --param-pattern $union --param-pattern 'description=.*' --approval-id approval-pwsh-all
+```
+
+**反例（原来的三步写法；错在把一个工具签成三条记录）**：
+
+```powershell
+# 下面三条都指向 exec.pwsh：第 1 条 tests 被第 2 条 scripts 取代，再被第 3 条 readonly 取代；
+# 最终文件里只剩 readonly 一条记录，tests / scripts 的命令会 approval_invalid。
+# --family 本身没问题，错的是对同一个 tool_id 分开签三次。
 python -m enforcement.cli approve --registry "$g/.policy/tool-registry.yaml" --approved "$g/.policy/tool-registry.approved.json" --request "$g/.policy/shell-request.json" --out "$g/.policy/approval.json" --granted-by <name> --roles reviewer --binding pattern --max-uses 1000 --ttl 86400 --family exec.pwsh:tests --param-pattern "description=.*" --approval-id approval-tests
-
-# 2) scripts 族（覆盖 python tools/*.py 与 python -m policy.check 等；并入同一文件，默认不 --replace）
 python -m enforcement.cli approve --registry "$g/.policy/tool-registry.yaml" --approved "$g/.policy/tool-registry.approved.json" --request "$g/.policy/shell-request.json" --out "$g/.policy/approval.json" --granted-by <name> --roles reviewer --binding pattern --max-uses 1000 --ttl 86400 --family exec.pwsh:scripts --param-pattern "description=.*" --approval-id approval-scripts
-
-# 3) readonly 族
 python -m enforcement.cli approve --registry "$g/.policy/tool-registry.yaml" --approved "$g/.policy/tool-registry.approved.json" --request "$g/.policy/shell-request.json" --out "$g/.policy/approval.json" --granted-by <name> --roles reviewer --binding pattern --max-uses 1000 --ttl 86400 --family exec.pwsh:readonly --param-pattern "description=.*" --approval-id approval-readonly
 ```
 
 **三条纪律**：
-1. **逐格覆盖**：条子只声明 `description` 与族命令；`timeoutMs` / `workdir` / `run_in_background` 由审批协议 1.3 的**默认值**覆盖（省略 = 只接受默认值）。
+1. **逐格覆盖**：条子只声明 `description` 与命令；`timeoutMs` / `workdir` / `run_in_background` 由审批协议 1.3 的**默认值**覆盖（省略 = 只接受默认值）。
    模型若带非默认值，条子会 `approval_invalid`，拒绝理由会点名缺的参数——照抄重签同一 `--approval-id` 是**取代**。
-2. **命令参数不用手写**：`--family` 把族的白名单并成一条整串模式；族与白名单的一致性由
+2. **命令参数手写并集，族数据仍是权威**：三族并成一条 `command` 是审批层的写法；命令形态仍由注册表 `command_families` / `allowed_commands` 定义，
+   改族 = 改注册表 = 必须重新审核并重签这条 `exec.pwsh` 记录。族与白名单的一致性由
    `python tools/approval_allowlist_audit.py --check --registry <副本> --approved <已审核>` 双向比对（0 命中才算齐）。
 3. **审批绑上下文摘要**：每条 `approval.json` 必须按**这棵树**签发；换树 = 重签。run-manifest 记
-   `approval_sha256` 与三个族的 id。
+   `approval_sha256` 与两条记录的 id（`approval-run-code` / `approval-pwsh-all`）。
 
 ## 8 一页速查：每题需要的族
 

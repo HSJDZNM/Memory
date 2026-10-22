@@ -10,7 +10,7 @@
 
 | # | task id | 操作类型 | 一句话 | 基线 | 新建 / 修改 | 隐藏条数 | 冻结状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `bank-flagship-returns` | **旗舰：独立构建功能模块** | 订单项目里从零构建退货模块（model→repository→service→controller + 演示 + 迁移 + 文档） | 14 文件（订单项目 11 + tools + config + 旧数据） | 16 新建 / 3 修改 | 48（38 + 5 EN + 5 I，已落盘） | 冻结候选（隐藏 48 条 + 参考解已写；`scoring.yaml`/冻结集/三臂已就绪、参考解上实测 T 48/48·C 30/30·A 30/30；真机 A/B/C 冒烟 n=1（五判据过，T/C/A：A 48/30/24、B/C 47/30/24）**只作案例、不写「值得扩试」**；审批已签：TTL 2026-10-22 19:55 +08，过期重签） |
+| 1 | `bank-flagship-returns` | **旗舰：独立构建功能模块** | 订单项目里从零构建退货模块（model→repository→service→controller + 演示 + 迁移 + 文档） | 14 文件（订单项目 11 + tools + config + 旧数据） | 16 新建 / 3 修改 | 48（38 + 5 EN + 5 I，已落盘） | 冻结候选（隐藏 48 条 + 参考解已写；`scoring.yaml`/冻结集/三臂已就绪、参考解上实测 T 48/48·C 30/30·A 30/30；真机 A/B/C 冒烟 n=1（五判据过，T/C/A：A 48/30/24、B/C 47/30/24）**只作案例、不写「值得扩试」**；审批已签：TTL ≤2026-10-22 20:09 +08（`approval.json` 的 `expires_at=2026-10-22T12:09Z`；文档旧值 19:55 作废），过期须重签 + 重冻结 + 重脚手架） |
 | 2 | `bank-crossmodule-refactor` | 跨模块重构 / 废弃 API | 把 `OrderRepository.insert/listing` 换成新 API，加兼容门面并删旧调用点，行为不变 | 14 文件（与旗舰基线逐字节相同） | 3 新建 / 7 修改 | 34（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 34/34、C 30/30、A 10/10；可开跑签字待） |
 | 3 | `bank-bugfix-first-failing-test` | 修 bug（先有失败测试） | 基线自带两条失败回归测试；只改实现让测试转绿，不许削弱测试 | 11 文件（含红测试） | 2 新建 / 3 修改 | 38（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 38/38、C 27/27、A 10/10；死锁读数见 §6 决策 2；可开跑签字待） |
 | 4 | `bank-data-migration` | 数据迁移 | 把 v1 JSONL 台账迁到 v2（原子替换、幂等、无损、坏行失败关闭） | 13 文件（含 v1 数据 + schema 文档） | 8 新建 / 1 修改 | 40（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 40/40、C 27/27、A 10/10；可开跑签字待） |
@@ -95,6 +95,8 @@ warning 级 = `allow_with_warnings`（判定取决于是否另有 error）；`TE
 | `interfaces.md` | 接口契约（签名、数据形状、错误语义）；与首消息一致 |
 | `allowed-writes.txt` | 显式路径集合（字母序）；「允许写 ∩ 基线 = 可改的既有文件」，「基线 − 允许写 = 冻结文件」 |
 | `manifest.sha256` | 前 5 文件的 `<sha256>  <name>`；不含自身；组合摘要记在任务 README / run-manifest |
+
+**C′（快照 vs 权威）**：`acceptance.md` / `coverage.md` 是**构造期快照**：`acceptance.md` 被 `task-package/manifest.sha256` 钉住，改一个字节即换构造；`coverage.md` 正文是构造期覆盖声明。引用时以各题 `README.md` 的「天花板读数」节与受跟踪读数为**权威**；快照与权威不一致时以权威为准，并在读数里写明，**不许直接改 `task-package/`**。
 
 ### 4.2 基线 `baseline/` + `reset-arm.py`
 
@@ -182,14 +184,16 @@ warning 级 = `allow_with_warnings`（判定取决于是否另有 error）；`TE
    与 `reference/tree/`（同一子会话写、未读 `reference/`）。
 5. **审批条子与命令族**：用仓库 `registry/tool-registry.yaml`（7 条白名单）还是
    `examples/dsh/b-plan/tool-registry.local.yaml`（13 条，多 `Get-Content`/`Select-String`/`Test-Path`）？
-   题库题面只依赖仓库 7 条（`pytest` / `tools/*.py` / `git status|diff|log|show` / `Write-Output` / `Get-ChildItem`）；
-   若 Lead 要签 `tests`/`scripts`/`readonly` 三族，建议 `--max-uses 1000 --ttl 86400`
-   并在 run-manifest 记 `approval_sha256` 与族清单。
+   **已裁（2026-10-22；物证 = 冒烟现场 `.tmp/bank/arm-configs/{A,B}/approval.json`）**：用 b-plan 本地 13 条
+   （题库题面需要 `Get-Content` / `Select-String` / `Test-Path`，仓库 7 条覆盖不到）；每臂 **2 条**
+   （`run_code` + 三族并成一条 `exec.pwsh` 的 13 条 union），`--ttl 604800`（7 天）、`--max-uses 1000`；
+   **重签是取代、每工具只留一条记录**（配方见 `COMMAND-FAMILIES.md` §7），run-manifest 记
+   `approval_sha256` 与两条记录的 id。
 6. **是否现在签字冻结旗舰包**：字节已固定，但当时参考解与隐藏代码未写。建议顺序：
    签字冻结 PLAN → 写隐藏代码（独立会话）→ 写参考解 → 实测 T/C/A 天花板 → 再签「可开跑」。
    **已裁（2026-10-21）**：按该顺序执行；PLAN 已冻结、隐藏代码与参考解已写、参考解天花板已实测
    （T 48/48 · C 30/30 · A 30/30），真机 A/B/C 冒烟 n=1 已完成（五判据过）；**尚未签「可开跑」**
-   （审批已签：TTL 2026-10-22 19:55 +08，过期重签）。
+   （审批已签：TTL ≤2026-10-22 20:09 +08（`approval.json` 的 `expires_at=2026-10-22T12:09Z`；文档旧值 19:55 作废），过期须重签 + 重冻结 + 重脚手架）。
 7. **题库是否挂到 `testing/ab/README.md` 的索引**：本包只写 `bank/**`，索引更新留给 Lead。
 
 ## 7 新载荷轴建议（本次只写文档；AGENTS 55）
@@ -220,7 +224,7 @@ warning 级 = `allow_with_warnings`（判定取决于是否另有 error）；`TE
   `3d54a9f8…`；本轮收口重冻结后会换值，读数以 run 记录为准）。
   **真机冒烟（2026-10-21）**：A/B/C 三臂各 n=1，五判据全部通过，T/C/A = A 48/30/24、B/C 47/30/24；
   **n=1 只作案例，不写「值得扩试」**（要写需每臂 k≥3）。**审批**：已签（2026-10-21 冒烟时每臂 2 条，
-  run_code + 三族合并成一条 `exec.pwsh`；TTL 2026-10-22 19:55 +08，过期须重签 → 重冻结 → 重脚手架）。
+  run_code + 三族合并成一条 `exec.pwsh`；TTL ≤2026-10-22 20:09 +08（`approval.json` 的 `expires_at=2026-10-22T12:09Z`；文档旧值 19:55 作废），过期须重签 + 重冻结 + 重脚手架）。
   **仍待**：启动环境凭据、三臂 k≥3。
 - 其余 5 题：**包 + `hidden/`（PLAN + runner）+ `reference/` + 天花板已完成**（2026-10-21 深夜）：
   基线/任务包/reset-arm/C/A 判据可复核；T 已冻结（total 34/38/40/38/40），参考树全过、基线红；
