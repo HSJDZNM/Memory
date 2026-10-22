@@ -20,7 +20,7 @@ Gate 0 已通过；最终 3 题的判据已由 Lead 冻结；3 份 per-task 冻�
 | 3 份 per-task 冻结清单 | async `sha256:7caf8825a3fdd3d0e520394e7b04b9d8d996b82d9dbf9a5d3d8f1f239f50e1af`（120 条）；docs `sha256:bba785a8e5ea1495ad37d3b3ab5a7753b72d6c9c0b7095614aae6b9c500cba0f`（119 条）；crossmodule `sha256:da07a934e5b027a39cc9a1f987a2bb4ddaf98151ad0c0807725576cfb1668509`（119 条）；三份 `--check --strict` PASS |
 | 臂配置模板 | A `cbece9bb…` / B `a579fdb7…`（`bank/arm-configs/{A,B}`，`${REPO_ROOT}` 占位，4 文件/臂）；物化副本 A `b24040ad…` / B `b8ec3544…`（`.tmp/k3/arm-configs/{A,B}`） |
 | 最小 run-record | `bank/run-record/collect.py`，`BANK_RUN_RECORD_SCHEMA_VERSION = 1.0`；参考树上 async T 38/38·C 8/8·A 10/10、docs T 40/40·C 4/4·A 10/10，两次逐字节相同 |
-| 未签字审批 | 物化臂配置里没有 `approval.json`（scaffold 会写未签字占位；本请求就是重签） |
+| 审批 | **已签（2026-10-22 20:38 +08，TTL 7 天）**：每臂 2 条；A `approval.json` `282b4925…`、B `3c697d97…`；到期 `2026-10-29T12:38Z`（+08 20:38） |
 
 ## 2 使用者要做的两件事
 
@@ -56,7 +56,14 @@ foreach ($arm in @("A","B")) {
 - 由使用者在本机启动环境里提供；Lead 不读取该文件。re-smoke 用 1 个臂（A 臂优先）验证
   run_session 1.1 的自动化路径（隔离 DSH_HOME / profile 沙箱覆盖 / TEMP 重定向），不计入 k。
 
-## 3 签完之后 Lead 会做（不需要使用者再操作）
+## 3 预检状态（2026-10-22 20:5x，Lead）
+
+- **9 树 scaffold exit 0**（3 题 × A/B/C；A/B 的 `.policy/approval.json` records=2、placeholders=0；C 无审批）。
+- **3 份 freeze `--check --strict` PASS**（摘要见 §1）。
+- `run_session` dry-run（async A）：freeze / arm-tree / dsh 0.2.1-rc.2 / sandbox `danger-full-access` 全绿；
+  **唯一 blocker = `missing_credential`**（`DEEPSEEK_API_KEY` 不在 harness 进程环境）。
+
+## 4 签完之后 Lead 会做（不需要使用者再操作）
 
 1. `freeze_manifest --check --strict` ×3（确认签字没有改动被冻结的输入；审批不在冻结集里，按 run 记录）；
 2. `scaffold_arms.py` 建 9 棵树（3 题 × 3 臂，每 run 一个父目录）；
@@ -65,16 +72,16 @@ foreach ($arm in @("A","B")) {
 5. 建「可开跑」读数：3 份 freeze 摘要 + 审批 sha + TTL + Gate 0 + H1 决定 + H2 计划；
    由**使用者**签「可开跑」，再由 Lead 跑 27 run。
 
-## 4 回执（使用者填）
+## 5 回执（使用者填）
 
 | 项 | 值 |
 | --- | --- |
-| A 臂 `approval.json` sha256 | （待填） |
-| B 臂 `approval.json` sha256 | （待填） |
-| 签发时间 / TTL 到期 | （待填） |
-| 凭据已注入启动环境 | 是 / 否 |
+| A 臂 `approval.json` sha256 | `282b4925908ca1f378056cb28d647eea71d85e9c371a4c547876ccbbc8c45782` |
+| B 臂 `approval.json` sha256 | `3c697d97c58476f2e3db6d557d1e4dd57e02f0e37c92ac4c0fa05839b91d47ab` |
+| 签发时间 / TTL 到期 | 2026-10-22T12:38Z / 2026-10-29T12:38Z（+08 20:38） |
+| 凭据已注入启动环境 | **否**（2026-10-22 20:5x 复核：`DEEPSEEK_API_KEY` 不在 harness 进程环境） |
 
-## 5 边界
+## 6 边界
 
 - 本读数**不是**「可开跑」签字；27 run 未跑、H1 复核未做、P1–P6/dry-run/re-smoke 未做。
 - 若批内重签或 TTL 不覆盖窗口：该批 run 作废，不得与旧 run 合并。
