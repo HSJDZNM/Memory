@@ -346,6 +346,8 @@
 
 | P-MNT-017 | 2026-10-22T21:10:00+08:00 | 题库 · 1 臂 re-smoke（async A，真机 n=1） | Lead（编排）+ 使用者（注入凭据/执行） | HEAD 79ccfb3；只跑 1 题 1 臂 1 次；不改判据/冻结件；使用者注入 `DEEPSEEK_API_KEY`（不打印/不落盘） | `run_session --execute`（async A，danger-full-access）：验证 1.1 的隔离 DSH_HOME / profile 沙箱覆盖 / TEMP 重定向；读审计、批次账本、post 与树 diff | **exit 0、`invalid=[]`**；246 条读数（137 审计 / 11 提议 / 11 settle：9 allowed + 2 blocked）；`post_validated` 13 + `repair` 3、`post_error` 5（executed=false，04 5.90 回声）；staged 链 56 条 0 断裂；elapsed max 2166 ms；墙钟 323.5 s；**M1 `tools/notify_smoke.py` 被 `policy_block` 拦下（settle=blocked），最终树 20/21——设计方向阻断真机复现** | `readings/2026-10-22-bank-k3-resmoke.md`；`.tmp/k3/runs/bank-async-concurrency-A-resmoke/`（一次性） | 五条冒烟判据（05 §5.5 n=1 只作案例） | 任务未完成是 treatment 直接结果，不是跑不成；**不计入 k**；`post_error` 是已知边界 | H1 复核 → 可开跑读数签字 → 27 run |
 
+| P-MNT-018 | 2026-10-22T21:40:00+08:00 | 题库 · H1 第三方逐条可追溯性复核（3 题） | 3 个独立子会话（非 hidden 作者）+ Lead 汇总 | HEAD 3ed9529；只读复核；不改 hidden/任务包/判据；不跑 runner/ci_local/真机 | 逐条读 `hidden/runner.py` 实际断言，回到 `first-message.md` 句子/验收项或 `acceptance.md` A# 建立追溯；对合法替代解检查误伤；反向缺口单列；三题分别 38 / 40 / 34 条 | **async 1 flag（I5）、docs 2 flag（I5/I7）、crossmodule 3 flag（T21/T20/T26）**；三题核心语义 flag 均 0。按预注册「单题 flag >2 → 停/重出」：**crossmodule 命中，可开跑不签、27 run 不开**；复核者建议三处均可定点修，但阈值字面 3>2，未自行放宽 | `readings/2026-10-22-bank-k3-h1-review.md`；`.tmp/k3/h1/*.md`（一次性） | `readings/2026-10-22-bank-k3-deliberations.md` §3.2；05 §8 第 11 条；交接提示 §10 | 复核者建议与预注册阈值不一致，按失败关闭停在裁定点；未改任何冻结件 | 等使用者裁定：① 重出 crossmodule hidden；② 书面改判「定点修 T21/T20/T26 + 重冻结/重测/三条复核」；裁定后同批处理 async I5、docs I5/I7 → 可开跑读数 |
+
 ### 7.9 维护任务 · 偏离记录（2026-10-21）
 
 | id | 时间 | 事件 | 命中条件 | 影响范围 | 处置 | 证据指针 |
