@@ -1,6 +1,6 @@
 # 隐藏验收 PLAN（bank-docs-config）
 
-> **它是什么**：本题隐藏验收的**冻结清单**——40 条用例（T01–T26 / EN1–EN7 / I1–I7），
+> **它是什么**：本题隐藏验收的**冻结清单**——39 条用例（T01–T26 / EN1–EN7 / I1–I6；I7 已按 2026-10-22 H1 改判删除），
 > 每条写清「断言要点」与「反向构造（什么形态会让这条红）」。`hidden/runner.py` 逐条实现本清单；
 > 两者同批落盘，id 集合必须逐个相等（`runner.py` 的 `CASE_IDS` 是本文件的机读副本）。
 > **不参与判分的东西**：参考解实现、过程账本、会话读数；T 只读最终树。
@@ -12,7 +12,7 @@
   pytest / 脚本 / 模块导入全在树的副本里跑（临时目录，退出即删）；
 - stdout 唯一载荷（UTF-8）：
   `{"schema_version": "1.0", "tree": "<相对标签>", "cases": [{"id", "pass", "detail"}], "summary": {"passed", "total"}}`；
-  **无时戳 / run id / 绝对路径**；`cases` 顺序固定 `T01..T26, EN1..EN7, I1..I7`；
+  **无时戳 / run id / 绝对路径**；`cases` 顺序固定 `T01..T26, EN1..EN7, I1..I6`；
   同一 cwd + 同一棵树两次运行**逐字节相同**；
 - 退出码：**全过 0 / 有失败 1 / 跑不成 2**。2 = 「判不了」（缺 `BANK_TASK_TREE`、树不存在、
   用例集合不完整、树复制失败、PyYAML 不可用），**不是 0 分**；
@@ -68,7 +68,7 @@
 | EN6 | 只读：对树内 `config/app.yaml` 与一个临时 v1 文件，运行前后 sha256 相同 | 脚本解析后回写（顺手格式化）；把配置「规范化」后覆盖 |
 | EN7 | 缺 `--config`：`python tools/check_config.py` 退出码 **2**（argparse 用法错）、stderr 非空 | 把 `--config` 写成可选 + 默认路径（退出码 0/1）；自己 `sys.exit(1)` 代替用法错 |
 
-## 3 I 组（7 条；接口契约）
+## 3 I 组（6 条；接口契约；I7 已按 2026-10-22 H1 改判删除）
 
 | id | 断言要点 | 反向构造（这条红的方式） |
 | --- | --- | --- |
@@ -78,18 +78,17 @@
 | I4 | 脚本走 `shop.config.load_config`：AST 有 `import shop.config` 或 `from shop.config import ...`；有对 `load_config(...)` 的调用；有对 `sys.path.insert/append` 的调用；源码里没有字符串常量恰为 `max_attempts` / `backoff_ms` / `jitter`（键集合没被重写） | 脚本自己写 `EXPECTED = {"max_attempts", ...}` 重写键集合；只 import 不用；不插 `sys.path` 靠环境碰运气 |
 | I5 | `tests/test_config.py` 至少 5 个 `test_*` 函数、`tests/test_check_config.py`（M5 改写后的行为测试，不是基线的静态契约测试）至少 2 个；各至少 1 条 `assert`；AST 无 `skip` / `skipif` / `xfail` / `importorskip`（基线的静态契约测试不在最终树里）；`tests/test_config.py` 不 import 任何 `tools` 模块 | 五个 case 塞进一个 test 函数；`@pytest.mark.skip`；test_config.py 顺手 import `tools.check_config` |
 | I6 | docstring：`src/shop/config.py` 模块与 `load_config` 都有非空 docstring；`tools/check_config.py` 模块与 `main` 都有非空 docstring | 删 docstring（DOC-001 的真实错法）；docstring 写成空串 |
-| I7 | `src/shop/config.py` 不依赖其它 `shop` 模块（model 层纯数据校验）：import 里没有 `shop` / `shop.*`，也没有 `from . import` | `from shop.order_repository import OrderRepository`（让加载器「复用」仓储，同时 A1 分层违规） |
 
-## 4 计数与映射（40 条）
+## 4 计数与映射（39 条）
 
 | 组 | 条目 | 数 | A 验收表对应 |
 | --- | --- | --- | --- |
 | T | T01–T26 | 26 | A1 / A2 / A3 / A6 / A7 / A8 / A10 |
 | EN | EN1–EN7 | 7 | A3 / A4 / A9 |
-| I | I1–I7 | 7 | A1 / A4 / A5 / A9 |
-| **合计** | `T01..T26, EN1..EN7, I1..I7` | **40** | `scoring.yaml` 的 `dimension_t.total = 40`、`case_ids` 与本表逐个相等 |
+| I | I1–I6 | 6 | A1 / A4 / A5 / A9 |
+| **合计** | `T01..T26, EN1..EN7, I1..I6` | **39** | `scoring.yaml` 的 `dimension_t.total = 39`、`case_ids` 与本表逐个相等；I7 已按 H1 改判删除 |
 
-`scoring.yaml` 里的 `planned_min_total = 30` 是**下限**；本 PLAN 落在 34–40 的建议区间内（40）。
+`scoring.yaml` 里的 `planned_min_total = 30` 是**下限**；本 PLAN 落在 34–40 的建议区间内（39）。
 
 ## 5 已知边界（不写进断言的面，以及为什么）
 

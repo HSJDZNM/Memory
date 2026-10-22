@@ -1,7 +1,7 @@
 # 覆盖矩阵（bank-docs-config）
 
-> **2026-10-21 深夜状态（本覆盖表快照之后）**：本题 hidden/PLAN.md（40 条）与 hidden/runner.py、
-> reference/tree/ 与天花板已落盘并实测：T 基线 2/40、参考树 40/40；C effective_total 27/27；A 10/10。
+> **2026-10-21 深夜状态（本覆盖表快照之后）**：本题 hidden/PLAN.md（39 条）与 hidden/runner.py、
+> reference/tree/ 与天花板已落盘并实测：T 基线 2/39、参考树 39/39；C effective_total 27/27；A 10/10。
 > 本文正文里「hidden 未实现 / 未测 / pending_hidden」的措辞是该批落地前的快照；当前读数以本题
 > README 的「天花板读数」节与 reference/README.md 为准。
 

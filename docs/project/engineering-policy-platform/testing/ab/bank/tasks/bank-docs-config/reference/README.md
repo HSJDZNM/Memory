@@ -32,7 +32,7 @@
    `_validate_integer` 带最小值参数；两个字段的错法不共用一条 `if`，避免「1/0 冒充 bool」漏判。
 4. **顶层先查 `retry` 再查未知键**：v1 的 `retry` 必须给出 `retry_policy` 迁移提示，而不是被当成
    「未知键 timeout」那样的一句话；这条顺序决定 T04 的消息判据。
-5. **加载器不 import 任何 `shop` 模块**（A1 的 model 层 + 隐藏 I7）：配置校验是纯数据变换，
+5. **加载器不 import 任何 `shop` 模块**（A1 的 model 层；原隐藏 I7 已按 2026-10-22 H1 改判删除）：配置校验是纯数据变换，
    不借仓储/服务。
 6. **脚本的 `sys.path` 注入写在模块级**：`python tools/check_config.py` 时 `sys.path[0]` 是 `tools/`，
    不注入就 import 不到 `shop`；注入后的第一条 `shop` import 带 `# noqa: E402`（题面的代码约定）。
@@ -48,7 +48,7 @@
 
 | 维度 | 读数 | 说明 |
 | --- | --- | --- |
-| T（隐藏验收） | **40 / 40**，exit 0 | `BANK_TASK_TREE=<reference/tree> python hidden/runner.py`；两次运行 stdout **逐字节相同**（sha256 `f56d46d4bca49825b012084b689cd8362017a8febc959145de300baa5ac01b9b`；换 `BANK_TASK_TMPDIR` 也不改 payload） |
+| T（隐藏验收） | **39 / 39**，exit 0 | `BANK_TASK_TREE=<reference/tree> python hidden/runner.py`；两次运行 stdout **逐字节相同**（sha256 `6b55369d9b51ec8c93ebf9bb1bd73252f6b1ff7f7778b8a6d989fa990aa599d4`；本批在 `DSH_PYTEST_MODE_SHIM=1` 下取得，见任务 README §7.1 注） |
 | pytest | **18 passed**，exit 0；`--collect-only -q` = **18 collected** | 在树副本里跑 `python -m pytest -q` / `--collect-only -q`（树本身不写） |
 | A（结构） | **10 / 10 pass**，exit 0 | `structure_metrics.py --workspace reference/tree --layers layers.yaml --interfaces interfaces.yaml --json`；`workspace_scope`：12 个 .py、`undeclared=[]`、`declared_unmatched=[]`、`unresolved=0`、`files_digest sha256:d18ee574c0831e5d6267bcbf7690fae4cbe83436500c38bdfaf95972a823ec1f` |
 | C（规则） | **4 / 4 文件 `allow`，0 条 violations**；`effective_total = 27` → **27 / 27** | 逐文件一次 `policy.check`（`--changed` 8 条全量、固定 `--request-id`）；每个文件 `matched_rules` 42、`skipped_rules = [ARCH-001@1]`（`layer model/test/composition != controller`）、`served_checkers = [failing_tests, missing_docstring, missing_tests, style_lint]`、`check_volume.complete = true`、`blocking_capable_skipped = 1` |
@@ -98,8 +98,8 @@ $env:PYTHONPATH = 'src'
 
 ## 5 与 SPEC 的偏差
 
-1. **`total` 取 40 而不是 SPEC §5 建议的 32**：SPEC 说「≥30，建议 32」，本次按 bank/README §4.3 的
-   30–40 区间取了 40（T 26 / EN 7 / I 7），分组用 `T / EN / I`（本题子会话的硬要求），而
+1. **`total` 原取 40、现为 39 而不是 SPEC §5 建议的 32**：SPEC 说「≥30，建议 32」，本次按 bank/README §4.3 的
+   30–40 区间原取 40（T 26 / EN 7 / I 7）；2026-10-22 H1 改判删除 I7 后为 39（T 26 / EN 7 / I 6），分组用 `T / EN / I`（本题子会话的硬要求），而
    `scoring.yaml` 原来的 `planned_groups_note` 计划用的是 `T/V/D/S/EN` 前缀——**同一批**已把
    `dimension_t.case_groups` 改成实际分组，`case_ids` 与 runner 的 `CASE_IDS` 逐个相等。
 2. **`tests/test_check_config.py` 自己插项目根**：接口没写这一条（只写了脚本要插 `src`）。

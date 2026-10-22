@@ -1,4 +1,4 @@
-"""bank-docs-config 隐藏验收 runner：T01-T26 + EN1-EN7 + I1-I7（40 条）。
+"""bank-docs-config 隐藏验收 runner：T01-T26 + EN1-EN7 + I1-I6（39 条；I7 已按 H1 改判删除）。
 
 用法::
 
@@ -12,7 +12,7 @@
 
       {"schema_version": "1.0", "tree": "<相对标签>",
        "cases": [{"id": "T01", "pass": true, "detail": "ok"}, ...],
-       "summary": {"passed": 40, "total": 40}}
+       "summary": {"passed": 39, "total": 39}}
 
   载荷不含时戳 / run id / 绝对路径；同一 cwd + 同一棵树两次运行逐字节相同；
 - 退出码：全过 0 / 有失败 1 / 跑不成 2（缺 BANK_TASK_TREE、树不存在、用例集合不完整、
@@ -53,7 +53,7 @@ COLLECTED_MIN = 10
 CASE_IDS = (
     ["T%02d" % index for index in range(1, 27)]
     + ["EN%d" % index for index in range(1, 8)]
-    + ["I%d" % index for index in range(1, 8)]
+    + ["I%d" % index for index in range(1, 7)]
 )
 
 # 14 个基线文件（逐字节起点）。来源：包内 baseline/ 的 14 个文件实算 sha256
@@ -481,12 +481,19 @@ def _assert_count(module):
 
 
 def _test_function_count(module):
-    return sum(
-        1
-        for node in module.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name.startswith("test_")
-    )
+    count = 0
+    for node in module.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name.startswith("test_"):
+                count += 1
+        elif isinstance(node, ast.ClassDef):
+            count += sum(
+                1
+                for child in node.body
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and child.name.startswith("test_")
+            )
+    return count
 
 
 def _has_main_guard(module):
@@ -1161,7 +1168,7 @@ def _en7():
 
 
 # ---------------------------------------------------------------------------
-# 3 接口契约（I1-I7）
+# 3 接口契约（I1-I6）
 # ---------------------------------------------------------------------------
 def _i1():
     load = _loader()
@@ -1280,29 +1287,6 @@ def _i6():
     return True, "module and public docstrings present"
 
 
-def _i7():
-    module = _parse_tree_file(LOADER_PATH)
-    forbidden = []
-    for node in ast.walk(module):
-        if isinstance(node, ast.Import):
-            forbidden.extend(
-                alias.name
-                for alias in node.names
-                if alias.name == "shop" or alias.name.startswith("shop.")
-            )
-        elif isinstance(node, ast.ImportFrom):
-            if node.level:
-                forbidden.append("." * node.level + (node.module or ""))
-            module_name = node.module or ""
-            if module_name == "shop" or module_name.startswith("shop."):
-                forbidden.append(module_name)
-    _expect(
-        not forbidden,
-        "the model layer imports shop modules: " + ", ".join(sorted(set(forbidden))),
-    )
-    return True, "src/shop/config.py imports no shop module"
-
-
 # ---------------------------------------------------------------------------
 # 用例表 / 单条包装 / main
 # ---------------------------------------------------------------------------
@@ -1346,7 +1330,6 @@ CASES = [
     ("I4", _i4),
     ("I5", _i5),
     ("I6", _i6),
-    ("I7", _i7),
 ]
 
 
@@ -1386,7 +1369,7 @@ def main():
     if yaml is None:
         return _cannot_run("PyYAML is unavailable")
     if [case_id for case_id, _func in CASES] != CASE_IDS:
-        return _cannot_run("case registry is not T01..T26 / EN1..EN7 / I1..I7")
+        return _cannot_run("case registry is not T01..T26 / EN1..EN7 / I1..I6")
 
     try:
         _shared_copy()
