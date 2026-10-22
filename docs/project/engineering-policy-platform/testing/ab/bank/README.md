@@ -14,8 +14,8 @@
 | 2 | `bank-crossmodule-refactor` | 跨模块重构 / 废弃 API | 把 `OrderRepository.insert/listing` 换成新 API，加兼容门面并删旧调用点，行为不变 | 14 文件（与旗舰基线逐字节相同） | 3 新建 / 7 修改 | 34（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 34/34、C 30/30、A 10/10；可开跑签字待） |
 | 3 | `bank-bugfix-first-failing-test` | 修 bug（先有失败测试） | 基线自带两条失败回归测试；只改实现让测试转绿，不许削弱测试 | 11 文件（含红测试） | 2 新建 / 3 修改 | 38（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 38/38、C 27/27、A 10/10；死锁读数见 §6 决策 2；可开跑签字待） |
 | 4 | `bank-data-migration` | 数据迁移 | 把 v1 JSONL 台账迁到 v2（原子替换、幂等、无损、坏行失败关闭） | 13 文件（含 v1 数据 + schema 文档） | 8 新建 / 1 修改 | 40（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 40/40、C 27/27、A 10/10；可开跑签字待） |
-| 5 | `bank-async-concurrency` | 并发 / 异步 | 同步通知队列改成 `asyncio` 工作队列（确定性调度、幂等去重、超时、取消） | 14 文件（11 + `tools/__init__.py` + 同步队列 2） | 7 新建 / 3 修改 | 38（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 38/38、C 27/27、A 10/10；可开跑签字待） |
-| 6 | `bank-docs-config` | 文档 / 配置为主 | 配置键 `retry`→`retry_policy` 迁移 + 加载器 + 文档同步 + 校验脚本 | 13 文件 | 5 新建 / 3 修改 | 40（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 40/40、C 27/27、A 10/10；STYLE-004 实测负例见 §2；可开跑签字待） |
+| 5 | `bank-async-concurrency` | 并发 / 异步 | 同步通知队列改成 `asyncio` 工作队列（确定性调度、幂等去重、超时、取消） | 15 文件（11 + `tools/__init__.py` + 同步队列 2 + 基线静态契约测试 1） | 6 新建 / 4 修改 | 38（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 38/38、C 27/27、A 10/10；可开跑签字待） |
+| 6 | `bank-docs-config` | 文档 / 配置为主 | 配置键 `retry`→`retry_policy` 迁移 + 加载器 + 文档同步 + 校验脚本 | 14 文件（含基线静态契约测试 1） | 4 新建 / 4 修改 | 40（T/EN/I，已落盘） | hidden + reference + 天花板已完成（T 40/40、C 27/27、A 10/10；STYLE-004 实测负例见 §2；可开跑签字待） |
 
 每题的完整内容在 `tasks/<id>/`：旗舰是**冻结包**（见 §4，另有 `hidden/` 与 `reference/`），其余
 5 题也各有完整包（`baseline/`、`SPEC.md`、`task-package/`、`layers.yaml`、`interfaces.yaml`、
