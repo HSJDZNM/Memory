@@ -44,8 +44,8 @@
 
 | 维度 | 读数 | 证据 |
 | --- | --- | --- |
-| T（隐藏） | **34 / 34**，runner 退出 0 | 两次运行 stdout **逐字节相同**，sha256 = `66ad022b548205b1b8e6de4b4d7c1db93903e77bf55e606f0fa853afc6d2b462` |
-| T（基线红） | **4 / 34**，runner 退出 1 | 仅 `T24`（冻结文件本来就对）、`EN1`（基线 3 passed）、`EN3`、`EN4` 通过；两次运行逐字节相同，sha256 = `b03bb0365d5bde53355748ba97fe4c25726832e9a25150a801a2e603e4961e4c` |
+| T（隐藏） | **33 / 33**，runner 退出 0 | 两次运行 stdout **逐字节相同**，sha256 = `3a0d46b5e9c0a6ed875ecbbb5a927cd6067b348ebb0ce38c00ca454467e573ba`（T21 已按 2026-10-22 H1 改判删除） |
+| T（基线红） | **4 / 33**，runner 退出 1 | 仅 `T24`（冻结文件本来就对）、`EN1`（基线 3 passed）、`EN3`、`EN4` 通过；两次运行逐字节相同，sha256 = `f32db9c4a011dbab25293e8c5ebe032da1fb5165721c50fb23e04fbba63f2064` |
 | pytest | `8 passed`（基线 3 → 8） | 参考树副本里 `python -m pytest -q`，退出 0 |
 | A（结构） | **10 / 10 pass**，`structure_metrics` 退出 0 | `schema_version: 1.1`；A3 = 5 模块 / 12 个公开定义 / 0 越界；A9 = 5/5 生产文件被测试静态 import |
 | C（规则） | **8 / 8 allow，0 条 violations**（error 0、warning 0） | `effective_total = 30`（8 条规则 × 3 + 冻结 3 + 旁路 3）⇒ **30 / 30**；`ARCH-001` 在 7 个非 controller 层进 `skipped_rules`（`scope_mismatch`），在 `src/shop/order_controller.py` 上真参与判定 |
@@ -73,7 +73,7 @@
 $TASK = 'docs/project/engineering-policy-platform/testing/ab/bank/tasks/bank-crossmodule-refactor'
 $TREE = "$TASK/reference/tree"
 
-# T：隐藏验收（34/34，退出 0；两次运行 stdout 逐字节相同）
+# T：隐藏验收（33/33，退出 0；两次运行 stdout 逐字节相同）
 $env:BANK_TASK_TREE = $TREE
 .venv/Scripts/python.exe "$TASK/hidden/runner.py"
 

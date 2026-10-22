@@ -1,7 +1,8 @@
 # 跨模块重构题覆盖矩阵（bank-crossmodule-refactor）
 
-> **2026-10-21 深夜状态（本覆盖表快照之后）**：本题 hidden/PLAN.md（34 条）与 hidden/runner.py、
-> reference/tree/ 与天花板已落盘并实测：T 基线 4/34、参考树 34/34；C effective_total 30/30；A 10/10。
+> **2026-10-21 深夜状态（本覆盖表快照之后）**：本题 hidden/PLAN.md（33 条）与 hidden/runner.py、
+> reference/tree/ 与天花板已落盘并实测：T 基线 4/33、参考树 33/33；C effective_total 30/30；A 10/10。
+> 正文 §1/§6 的「计划 34 条（含 T21）」是快照；2026-10-22 H1 改判删除 T21 后实际为 33，见本题 README/PLAN。
 > 本文正文里「hidden 未实现 / 未测 / pending_hidden」的措辞是该批落地前的快照；当前读数以本题
 > README 的「天花板读数」节与 reference/README.md 为准。
 
@@ -135,7 +136,7 @@ error → `block`，warning → `allow_with_warnings`。**全部未在本任务�
 > 所以 `layers.yaml` 把它声明成 `skip`（显式移出测量范围）——这不是「A9 覆盖了它」，
 > 而是「A9 不判它」；它仍然逐字节受 `scoring.yaml` 的 `frozen_untouched` 保护。
 
-## 6 只能靠隐藏验收（◐，规则表达不了；计划 34 条，**均未实现**）
+## 6 只能靠隐藏验收（◐，规则表达不了；计划 34 条（快照；现为 33，T21 已删），**均未实现**）
 
 **状态：未测**。`hidden/PLAN.md` 与 `hidden/runner.py` 属于下一批任务；下表是**计划骨架**
 （id 与判据），`scoring.yaml` 的 `dimension_t.total` / `case_ids` 因此仍是 `null` / `[]`。

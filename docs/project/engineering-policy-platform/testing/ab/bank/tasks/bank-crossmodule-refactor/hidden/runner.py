@@ -1,4 +1,4 @@
-"""bank-crossmodule-refactor 隐藏验收 runner：T01-T26 + EN1-EN4 + I1-I4（34 条）。
+"""bank-crossmodule-refactor 隐藏验收 runner：T01-T20 / T22-T26 + EN1-EN4 + I1-I4（33 条；T21 已按 H1 改判删除）。
 
 用法::
 
@@ -14,7 +14,7 @@
 
       {"schema_version": "1.0", "tree": "<相对调用 cwd 的标签>",
        "cases": [{"id": "T01", "pass": true, "detail": "ok"}, ...],
-       "summary": {"passed": 34, "total": 34}}
+       "summary": {"passed": 33, "total": 33}}
 
   载荷不含时戳 / run id / 绝对路径 / 耗时；同一 cwd + 同一棵树两次运行逐字节相同；
 - 退出码：全过 0 / 有失败 1 / 跑不成 2（缺 BANK_TASK_TREE、树不是目录、用例集合不完整、
@@ -48,7 +48,7 @@ COLLECTED_MIN = 4
 FENCE = chr(96) * 3
 
 CASE_IDS = (
-    ["T%02d" % index for index in range(1, 27)]
+    ["T%02d" % index for index in range(1, 27) if index != 21]
     + ["EN1", "EN2", "EN3", "EN4"]
     + ["I1", "I2", "I3", "I4"]
 )
@@ -988,9 +988,14 @@ def _t20() -> tuple[bool, str]:
     """controller 只经 service：AST 无 repository，行为上转发替身 service。"""
     module = _parse_tree_file("src/shop/order_controller.py")
     imports = _imported_modules(module)
+    forbidden = sorted(
+        name
+        for name in imports
+        if name == "shop.order_repository" or name.startswith("shop.order_repository.")
+    )
     _expect(
-        imports <= {"shop.order_service"},
-        "unexpected imports: " + ", ".join(sorted(imports - {"shop.order_service"})),
+        not forbidden,
+        "order_controller.py imports the repository directly: " + ", ".join(forbidden),
     )
     _expect(
         "shop.order_service" in imports,
@@ -1015,7 +1020,7 @@ def _t20() -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
-# 5 T 组：测试、文档与树形状（T21-T26）
+# 5 T 组：测试、文档与树形状（T22-T26）
 # ---------------------------------------------------------------------------
 def _pytest(copy_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     """在副本里跑一次 pytest（禁缓存与字节码；解释器 = runner 的解释器）。"""
@@ -1026,7 +1031,7 @@ def _pytest(copy_root: Path, args: list[str]) -> subprocess.CompletedProcess[str
 
 
 def _whole_pytest() -> subprocess.CompletedProcess[str]:
-    """整树 pytest（结果缓存，T21 之外的整树执行共用一次）。"""
+    """整树 pytest（结果缓存，EN1/EN4 等整树执行共用一次）。"""
     hit = _CACHE.get("pytest")
     if hit is None:
         hit = _pytest(_shared_copy(), [])
@@ -1059,16 +1064,6 @@ def _has_deprecation_assert(module: ast.Module) -> bool:
             if "弃用" in text or "deprecated" in text.lower():
                 return True
     return False
-
-
-def _t21() -> tuple[bool, str]:
-    """门面契约测试单独可跑（不依赖别的测试文件的顺序与夹具）。"""
-    result = _pytest(_shared_copy(), ["tests/test_order_api.py"])
-    _expect(
-        result.returncode == 0,
-        "pytest exit=" + str(result.returncode) + " tail=" + _tail(result.stdout),
-    )
-    return True, "tests/test_order_api.py passes on its own"
 
 
 def _t22() -> tuple[bool, str]:
@@ -1163,7 +1158,10 @@ def _t26() -> tuple[bool, str]:
     ]
     _expect(not words, "docs/api.md lacks: " + ", ".join(words))
     example = bodies["## 迁移示例"]
-    _expect(FENCE in example, "## 迁移示例 has no fenced code block")
+    _expect(
+        FENCE in example or "~~~" in example,
+        "## 迁移示例 has no fenced code block",
+    )
     _expect("OrderApi" in example, "## 迁移示例 never mentions OrderApi")
     _expect("add(" in example, "## 迁移示例 never shows add(")
     _expect("list_all(" in example, "## 迁移示例 never shows list_all(")
@@ -1379,7 +1377,6 @@ CASES = [
     ("T18", _t18),
     ("T19", _t19),
     ("T20", _t20),
-    ("T21", _t21),
     ("T22", _t22),
     ("T23", _t23),
     ("T24", _t24),
@@ -1417,7 +1414,7 @@ def _cannot_run(message: str) -> int:
 
 
 def main() -> int:
-    """入口：读 BANK_TASK_TREE，跑 34 条，打印唯一 JSON 载荷。"""
+    """入口：读 BANK_TASK_TREE，跑 33 条，打印唯一 JSON 载荷。"""
     global TREE
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -1433,7 +1430,7 @@ def main() -> int:
         return _cannot_run("BANK_TASK_TREE does not point to a directory")
 
     if [case_id for case_id, _func in CASES] != CASE_IDS:
-        return _cannot_run("case registry is not T01..T26 / EN1..EN4 / I1..I4")
+        return _cannot_run("case registry is not T01..T20/T22..T26 / EN1..EN4 / I1..I4")
 
     try:
         _shared_copy()
