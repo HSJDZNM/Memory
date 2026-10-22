@@ -98,8 +98,8 @@ crossmodule 剩余 flag=1，≤2）。**新 freeze 的 1 臂 re-smoke 已完成*
 
 ## 5 签名
 
-open_run_signed_by: （待签）
-open_run_signed_at: （待签）
+open_run_signed_by: user:dshznm
+open_run_signed_at: 2026-10-23T06:22:48+08:00
 
 - 签名范围：3 个 task id + 上述 3 份 freeze 摘要 + A/B 审批 sha + TTL + Gate 0 + H1 改判 + H2 计划 + 27 run 计划。
 - 签名方式：使用者执行 `.tmp/k3/sign-open-run.ps1`，或回复「我签可开跑」由 Lead 落。
